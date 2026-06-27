@@ -1,0 +1,178 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "ConsoleHistoryEntry",
+  "url": "http://octofhir.io/StructureDefinition/ConsoleHistoryEntry",
+  "name": "ConsoleHistoryEntry",
+  "title": "Console History Entry Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "ConsoleHistoryEntry",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A single executed REST console request/response, persisted per-user for cross-browser history. High write volume.",
+  "differential": {
+    "element": [
+      {
+        "id": "ConsoleHistoryEntry",
+        "path": "ConsoleHistoryEntry",
+        "short": "Executed console request record",
+        "definition": "Captures one executed request and its response summary for replay and diffing."
+      },
+      {
+        "id": "ConsoleHistoryEntry.user",
+        "path": "ConsoleHistoryEntry.user",
+        "short": "User id",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.method",
+        "path": "ConsoleHistoryEntry.method",
+        "short": "HTTP method",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.path",
+        "path": "ConsoleHistoryEntry.path",
+        "short": "Request path",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.targetType",
+        "path": "ConsoleHistoryEntry.targetType",
+        "short": "Target FHIR resource type (e.g. Patient)",
+        "definition": "FHIR resource type the request targeted. Named targetType to avoid colliding with the resource discriminator key.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.requestHeaders",
+        "path": "ConsoleHistoryEntry.requestHeaders",
+        "short": "Request headers as JSON map (redacted)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.requestBody",
+        "path": "ConsoleHistoryEntry.requestBody",
+        "short": "Request body",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.status",
+        "path": "ConsoleHistoryEntry.status",
+        "short": "HTTP status code",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.statusText",
+        "path": "ConsoleHistoryEntry.statusText",
+        "short": "HTTP status text",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.durationMs",
+        "path": "ConsoleHistoryEntry.durationMs",
+        "short": "Round-trip duration in ms",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.responseSize",
+        "path": "ConsoleHistoryEntry.responseSize",
+        "short": "Response size in bytes",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.responseBody",
+        "path": "ConsoleHistoryEntry.responseBody",
+        "short": "Response body (truncated above 256KB)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.serverTiming",
+        "path": "ConsoleHistoryEntry.serverTiming",
+        "short": "Server-Timing header value",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.executedAt",
+        "path": "ConsoleHistoryEntry.executedAt",
+        "short": "Execution timestamp",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "dateTime" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.pinned",
+        "path": "ConsoleHistoryEntry.pinned",
+        "short": "Pinned flag (exempt from pruning)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.note",
+        "path": "ConsoleHistoryEntry.note",
+        "short": "User note",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.collection",
+        "path": "ConsoleHistoryEntry.collection",
+        "short": "Originating collection id",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.mode",
+        "path": "ConsoleHistoryEntry.mode",
+        "short": "Builder mode used (pro|builder|raw)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.responseHeaders",
+        "path": "ConsoleHistoryEntry.responseHeaders",
+        "short": "Response headers as JSON map",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleHistoryEntry.tag",
+        "path": "ConsoleHistoryEntry.tag",
+        "short": "Free-form tag",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      }
+    ]
+  }
+}

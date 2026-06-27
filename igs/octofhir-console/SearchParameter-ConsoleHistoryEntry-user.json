@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "ConsoleHistoryEntry-user",
+  "url": "http://octofhir.org/fhir/SearchParameter/ConsoleHistoryEntry-user",
+  "name": "ConsoleHistoryEntryUser",
+  "status": "active",
+  "description": "Search console history by owning user id",
+  "code": "user",
+  "base": ["ConsoleHistoryEntry"],
+  "type": "token",
+  "expression": "ConsoleHistoryEntry.user"
+}

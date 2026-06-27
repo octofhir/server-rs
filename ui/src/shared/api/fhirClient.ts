@@ -285,6 +285,13 @@ const INTERNAL_RESOURCES = new Set([
 	"RevokedToken",
 	"App",
 	"AuthSession",
+	// octofhir-ui IG
+	"UserPreference",
+	// octofhir-console IG
+	"ConsoleCollection",
+	"ConsoleSavedRequest",
+	"ConsoleEnvironment",
+	"ConsoleHistoryEntry",
 ]);
 
 // Create a custom client that routes internal resources to root and others to /fhir

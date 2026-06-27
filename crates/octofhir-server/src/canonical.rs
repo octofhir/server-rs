@@ -640,6 +640,20 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         fhir_version,
         crate::bootstrap::EMBEDDED_NOTIFICATIONS_RESOURCES,
     );
+    let ui_fut = load_embedded_package(
+        &postgres_store,
+        "octofhir-ui",
+        "0.1.0",
+        fhir_version,
+        crate::bootstrap::EMBEDDED_UI_RESOURCES,
+    );
+    let console_fut = load_embedded_package(
+        &postgres_store,
+        "octofhir-console",
+        "0.1.0",
+        fhir_version,
+        crate::bootstrap::EMBEDDED_CONSOLE_RESOURCES,
+    );
     let need_subscription = fhir_version == "R4" || fhir_version == "R4B";
     let need_sof_compat = cfg.sql_on_fhir.enabled && fhir_version == "R4";
 
@@ -669,7 +683,15 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         }
     };
 
-    let _ = tokio::join!(auth_fut, app_fut, notif_fut, sub_fut, sof_fut);
+    let _ = tokio::join!(
+        auth_fut,
+        app_fut,
+        notif_fut,
+        ui_fut,
+        console_fut,
+        sub_fut,
+        sof_fut
+    );
     tracing::info!(
         elapsed_ms = embedded_start.elapsed().as_millis(),
         "Embedded packages loaded (parallel)"

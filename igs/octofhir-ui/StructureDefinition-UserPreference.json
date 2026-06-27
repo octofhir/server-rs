@@ -1,0 +1,66 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "UserPreference",
+  "url": "http://octofhir.io/StructureDefinition/UserPreference",
+  "name": "UserPreference",
+  "title": "User Preference Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "UserPreference",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "Generic per-user UI preference keyed by (user, namespace, key). Reusable across the whole admin UI, not console-specific.",
+  "differential": {
+    "element": [
+      {
+        "id": "UserPreference",
+        "path": "UserPreference",
+        "short": "Per-user UI preference",
+        "definition": "A single user preference value, namespaced so different UI features share one store."
+      },
+      {
+        "id": "UserPreference.user",
+        "path": "UserPreference.user",
+        "short": "User id",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "UserPreference.namespace",
+        "path": "UserPreference.namespace",
+        "short": "Preference namespace",
+        "definition": "Logical grouping, e.g. console, console.keys, console.layout, ui.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "UserPreference.key",
+        "path": "UserPreference.key",
+        "short": "Preference key",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "UserPreference.value",
+        "path": "UserPreference.value",
+        "short": "JSON-encoded value",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "UserPreference.updatedAt",
+        "path": "UserPreference.updatedAt",
+        "short": "Last update timestamp",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "dateTime" }]
+      }
+    ]
+  }
+}

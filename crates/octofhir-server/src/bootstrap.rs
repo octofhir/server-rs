@@ -237,6 +237,83 @@ pub const EMBEDDED_SUBSCRIPTION_RESOURCES: &[(&str, &str)] = &[(
     include_str!("../../../igs/octofhir-subscription/StructureDefinition-SubscriptionTopic.json"),
 )];
 
+/// Embedded octofhir-ui IG resources (generic admin-UI resources, e.g. UserPreference)
+pub const EMBEDDED_UI_RESOURCES: &[(&str, &str)] = &[
+    (
+        "StructureDefinition-UserPreference.json",
+        include_str!("../../../igs/octofhir-ui/StructureDefinition-UserPreference.json"),
+    ),
+    (
+        "SearchParameter-UserPreference-user.json",
+        include_str!("../../../igs/octofhir-ui/SearchParameter-UserPreference-user.json"),
+    ),
+    (
+        "SearchParameter-UserPreference-namespace.json",
+        include_str!("../../../igs/octofhir-ui/SearchParameter-UserPreference-namespace.json"),
+    ),
+    (
+        "SearchParameter-UserPreference-key.json",
+        include_str!("../../../igs/octofhir-ui/SearchParameter-UserPreference-key.json"),
+    ),
+];
+
+/// Embedded octofhir-console IG resources (REST console: collections, saved requests,
+/// environments, history)
+pub const EMBEDDED_CONSOLE_RESOURCES: &[(&str, &str)] = &[
+    (
+        "StructureDefinition-ConsoleCollection.json",
+        include_str!("../../../igs/octofhir-console/StructureDefinition-ConsoleCollection.json"),
+    ),
+    (
+        "StructureDefinition-ConsoleSavedRequest.json",
+        include_str!("../../../igs/octofhir-console/StructureDefinition-ConsoleSavedRequest.json"),
+    ),
+    (
+        "StructureDefinition-ConsoleEnvironment.json",
+        include_str!("../../../igs/octofhir-console/StructureDefinition-ConsoleEnvironment.json"),
+    ),
+    (
+        "StructureDefinition-ConsoleHistoryEntry.json",
+        include_str!("../../../igs/octofhir-console/StructureDefinition-ConsoleHistoryEntry.json"),
+    ),
+    (
+        "SearchParameter-ConsoleHistoryEntry-user.json",
+        include_str!("../../../igs/octofhir-console/SearchParameter-ConsoleHistoryEntry-user.json"),
+    ),
+    (
+        "SearchParameter-ConsoleHistoryEntry-executedAt.json",
+        include_str!(
+            "../../../igs/octofhir-console/SearchParameter-ConsoleHistoryEntry-executedAt.json"
+        ),
+    ),
+    (
+        "SearchParameter-ConsoleHistoryEntry-status.json",
+        include_str!(
+            "../../../igs/octofhir-console/SearchParameter-ConsoleHistoryEntry-status.json"
+        ),
+    ),
+    (
+        "SearchParameter-ConsoleSavedRequest-owner.json",
+        include_str!(
+            "../../../igs/octofhir-console/SearchParameter-ConsoleSavedRequest-owner.json"
+        ),
+    ),
+    (
+        "SearchParameter-ConsoleSavedRequest-collection.json",
+        include_str!(
+            "../../../igs/octofhir-console/SearchParameter-ConsoleSavedRequest-collection.json"
+        ),
+    ),
+    (
+        "SearchParameter-ConsoleCollection-owner.json",
+        include_str!("../../../igs/octofhir-console/SearchParameter-ConsoleCollection-owner.json"),
+    ),
+    (
+        "SearchParameter-ConsoleEnvironment-owner.json",
+        include_str!("../../../igs/octofhir-console/SearchParameter-ConsoleEnvironment-owner.json"),
+    ),
+];
+
 /// Bootstraps admin user from configuration.
 ///
 /// Creates an admin user with the "admin" role if:

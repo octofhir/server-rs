@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "ConsoleCollection-owner",
+  "url": "http://octofhir.org/fhir/SearchParameter/ConsoleCollection-owner",
+  "name": "ConsoleCollectionOwner",
+  "status": "active",
+  "description": "Search console collections by owner user id",
+  "code": "owner",
+  "base": ["ConsoleCollection"],
+  "type": "token",
+  "expression": "ConsoleCollection.owner"
+}

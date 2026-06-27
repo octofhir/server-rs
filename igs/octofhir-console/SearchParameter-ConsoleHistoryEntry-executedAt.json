@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "ConsoleHistoryEntry-executedAt",
+  "url": "http://octofhir.org/fhir/SearchParameter/ConsoleHistoryEntry-executedAt",
+  "name": "ConsoleHistoryEntryExecutedAt",
+  "status": "active",
+  "description": "Search console history by execution timestamp",
+  "code": "executedAt",
+  "base": ["ConsoleHistoryEntry"],
+  "type": "date",
+  "expression": "ConsoleHistoryEntry.executedAt"
+}

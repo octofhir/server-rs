@@ -1,0 +1,99 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "ConsoleEnvironment",
+  "url": "http://octofhir.io/StructureDefinition/ConsoleEnvironment",
+  "name": "ConsoleEnvironment",
+  "title": "Console Environment Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "ConsoleEnvironment",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A named set of REST console variables (with initial/current duality), optionally scoped to a collection.",
+  "differential": {
+    "element": [
+      {
+        "id": "ConsoleEnvironment",
+        "path": "ConsoleEnvironment",
+        "short": "Console environment",
+        "definition": "A named variable set resolved into {{var}} placeholders during request execution."
+      },
+      {
+        "id": "ConsoleEnvironment.name",
+        "path": "ConsoleEnvironment.name",
+        "short": "Environment name",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleEnvironment.owner",
+        "path": "ConsoleEnvironment.owner",
+        "short": "Owner user id",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleEnvironment.scope",
+        "path": "ConsoleEnvironment.scope",
+        "short": "Scope",
+        "definition": "global or collection.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "ConsoleEnvironment.collection",
+        "path": "ConsoleEnvironment.collection",
+        "short": "Collection id (when scope=collection)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleEnvironment.variable",
+        "path": "ConsoleEnvironment.variable",
+        "short": "Variable",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "ConsoleEnvironment.variable.key",
+        "path": "ConsoleEnvironment.variable.key",
+        "short": "Variable name",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleEnvironment.variable.initialValue",
+        "path": "ConsoleEnvironment.variable.initialValue",
+        "short": "Initial (persisted) value",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleEnvironment.variable.currentValue",
+        "path": "ConsoleEnvironment.variable.currentValue",
+        "short": "Current (session) value",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleEnvironment.variable.secret",
+        "path": "ConsoleEnvironment.variable.secret",
+        "short": "Secret flag",
+        "definition": "If true, the stored value is ciphertext (client-side encrypted) and masked in the UI.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      }
+    ]
+  }
+}

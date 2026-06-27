@@ -1,0 +1,138 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "ConsoleSavedRequest",
+  "url": "http://octofhir.io/StructureDefinition/ConsoleSavedRequest",
+  "name": "ConsoleSavedRequest",
+  "title": "Console Saved Request Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "ConsoleSavedRequest",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A saved REST console request: method, path, headers, body, variable extractions for response chaining.",
+  "differential": {
+    "element": [
+      {
+        "id": "ConsoleSavedRequest",
+        "path": "ConsoleSavedRequest",
+        "short": "Saved console request",
+        "definition": "A reusable REST request stored in a collection, with optional response-chaining extractions."
+      },
+      {
+        "id": "ConsoleSavedRequest.name",
+        "path": "ConsoleSavedRequest.name",
+        "short": "Request name",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.collection",
+        "path": "ConsoleSavedRequest.collection",
+        "short": "Parent collection id",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.folder",
+        "path": "ConsoleSavedRequest.folder",
+        "short": "Folder name within the collection",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.owner",
+        "path": "ConsoleSavedRequest.owner",
+        "short": "Owner user id",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.method",
+        "path": "ConsoleSavedRequest.method",
+        "short": "HTTP method",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.path",
+        "path": "ConsoleSavedRequest.path",
+        "short": "Request path (relative URL incl. query string)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.headers",
+        "path": "ConsoleSavedRequest.headers",
+        "short": "Request headers as JSON map",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.body",
+        "path": "ConsoleSavedRequest.body",
+        "short": "Request body",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.preRequest",
+        "path": "ConsoleSavedRequest.preRequest",
+        "short": "Pre-request script / FHIRPath",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.extract",
+        "path": "ConsoleSavedRequest.extract",
+        "short": "Response-chaining extraction",
+        "definition": "Extract a value from this request's response into a variable for later requests.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.extract.varName",
+        "path": "ConsoleSavedRequest.extract.varName",
+        "short": "Target variable name",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.extract.fhirpath",
+        "path": "ConsoleSavedRequest.extract.fhirpath",
+        "short": "FHIRPath expression",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.order",
+        "path": "ConsoleSavedRequest.order",
+        "short": "Notebook position",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "ConsoleSavedRequest.tag",
+        "path": "ConsoleSavedRequest.tag",
+        "short": "Free-form tag",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      }
+    ]
+  }
+}

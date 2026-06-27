@@ -1,0 +1,100 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "ConsoleCollection",
+  "url": "http://octofhir.io/StructureDefinition/ConsoleCollection",
+  "name": "ConsoleCollection",
+  "title": "Console Collection Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "ConsoleCollection",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A named folder of saved REST console requests, owned by a user and optionally shared.",
+  "differential": {
+    "element": [
+      {
+        "id": "ConsoleCollection",
+        "path": "ConsoleCollection",
+        "short": "REST console collection",
+        "definition": "Groups saved console requests into a named, optionally shared collection."
+      },
+      {
+        "id": "ConsoleCollection.name",
+        "path": "ConsoleCollection.name",
+        "short": "Collection name",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleCollection.description",
+        "path": "ConsoleCollection.description",
+        "short": "Collection description",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleCollection.owner",
+        "path": "ConsoleCollection.owner",
+        "short": "Owner user id",
+        "definition": "Id of the user who owns this collection.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleCollection.visibility",
+        "path": "ConsoleCollection.visibility",
+        "short": "Visibility",
+        "definition": "private (owner only) or shared (readable by others per AccessPolicy).",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "ConsoleCollection.environment",
+        "path": "ConsoleCollection.environment",
+        "short": "Default environment id",
+        "definition": "Id of the ConsoleEnvironment selected by default for this collection.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleCollection.folder",
+        "path": "ConsoleCollection.folder",
+        "short": "Nested folder",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "ConsoleCollection.folder.name",
+        "path": "ConsoleCollection.folder.name",
+        "short": "Folder name",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleCollection.folder.parent",
+        "path": "ConsoleCollection.folder.parent",
+        "short": "Parent folder name",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "ConsoleCollection.tag",
+        "path": "ConsoleCollection.tag",
+        "short": "Free-form tag",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      }
+    ]
+  }
+}

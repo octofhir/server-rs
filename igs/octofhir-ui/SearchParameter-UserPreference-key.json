@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "UserPreference-key",
+  "url": "http://octofhir.org/fhir/SearchParameter/UserPreference-key",
+  "name": "UserPreferenceKey",
+  "status": "active",
+  "description": "Search user preferences by key",
+  "code": "key",
+  "base": ["UserPreference"],
+  "type": "token",
+  "expression": "UserPreference.key"
+}

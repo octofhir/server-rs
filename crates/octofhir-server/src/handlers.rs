@@ -6706,7 +6706,8 @@ pub async fn api_packages_search(
 // =============================================================================
 
 /// Internal resource types that are served at the root level (not under /fhir).
-/// These are administrative resources defined in the octofhir-auth IG.
+/// These are administrative resources defined in the octofhir-auth / octofhir-app /
+/// octofhir-ui / octofhir-console IGs.
 const INTERNAL_RESOURCE_TYPES: &[&str] = &[
     "User",
     "Role",
@@ -6716,6 +6717,13 @@ const INTERNAL_RESOURCE_TYPES: &[&str] = &[
     "CustomOperation",
     "App",
     "AuthSession",
+    // octofhir-ui IG
+    "UserPreference",
+    // octofhir-console IG
+    "ConsoleCollection",
+    "ConsoleSavedRequest",
+    "ConsoleEnvironment",
+    "ConsoleHistoryEntry",
 ];
 
 /// Check if a resource type is an internal resource type.
