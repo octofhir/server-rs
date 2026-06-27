@@ -5,13 +5,11 @@ import {
   Card,
   Drawer,
   IconClock,
-  IconDots,
   IconDownload,
   IconPin,
   IconPinFilled,
   IconSearch,
   IconTrash,
-  Menu,
   Text,
   TextInput,
 } from "@octofhir/ui-kit";
@@ -168,6 +166,7 @@ function HistoryEntryCard({
             <ActionIcon
               size="sm"
               variant="subtle"
+              aria-label={entry.isPinned ? "Unpin" : "Pin"}
               onClick={(e) => {
                 e.stopPropagation();
                 onTogglePin();
@@ -176,24 +175,17 @@ function HistoryEntryCard({
               {entry.isPinned ? <IconPinFilled size={14} /> : <IconPin size={14} />}
             </ActionIcon>
 
-            <Menu position="bottom-end">
-              <Menu.Target>
-                <ActionIcon size="sm" variant="subtle" onClick={(e) => e.stopPropagation()}>
-                  <IconDots size={14} />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item
-                  color="danger"
-                  leftSection={<IconTrash size={14} />}
-                  onClick={() => {
-                    onDelete();
-                  }}
-                >
-                  Delete
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              aria-label="Delete"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+            >
+              <IconTrash size={14} />
+            </ActionIcon>
           </div>
         </div>
 

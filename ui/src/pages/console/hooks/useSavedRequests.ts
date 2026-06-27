@@ -1,7 +1,7 @@
 import { notifications } from "@octofhir/ui-kit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/shared/api/hooks/useAuth";
-import { savedRequestService } from "../services/savedRequestService";
+import { savedRequestService, setSavedRequestUser } from "../services/savedRequestService";
 
 const KEY = ["console-saved"];
 
@@ -9,6 +9,9 @@ export function useSavedRequests() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const userId = user?.sub ?? "anonymous";
+
+  // Ensure the service is scoped to the current user before the queries run.
+  setSavedRequestUser(userId);
 
   const collectionsQuery = useQuery({
     queryKey: [...KEY, "collections", userId],
