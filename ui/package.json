@@ -24,6 +24,7 @@
 		"@monaco-editor/react": "^4.7.0",
 		"@octofhir/ui-kit": "workspace:*",
 		"@tanstack/react-query": "^5.101.0",
+		"@xyflow/react": "^12.11.1",
 		"dayjs": "^1.11.21",
 		"dexie": "^4.4.4",
 		"effector": "^23.4.4",

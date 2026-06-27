@@ -1,0 +1,125 @@
+.flowWrap {
+  width: 100%;
+  height: 100%;
+  min-height: 460px;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  overflow: hidden;
+  background: var(--octo-surface-1);
+}
+
+.empty {
+  padding: var(--octo-spacing-xl);
+  text-align: center;
+  color: var(--octo-text-secondary);
+}
+
+.node {
+  width: 248px;
+  padding: 8px 12px;
+  border-radius: var(--octo-radius-md);
+  border: 1px solid var(--octo-border-subtle);
+  border-left-width: 3px;
+  background: var(--octo-surface-2);
+  box-shadow: var(--octo-shadow-xs);
+  font-size: var(--octo-typography-size-xs);
+}
+
+.node[data-kind="scan"] {
+  border-left-color: var(--octo-accent-fire);
+}
+.node[data-kind="index"] {
+  border-left-color: var(--octo-accent-positive);
+}
+.node[data-kind="join"] {
+  border-left-color: var(--octo-accent-primary);
+}
+.node[data-kind="sort"],
+.node[data-kind="agg"] {
+  border-left-color: var(--octo-accent-warm);
+}
+.node[data-warn="1"] {
+  box-shadow: 0 0 0 1px var(--octo-accent-fire);
+}
+
+.nodeHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nodeType {
+  font-weight: 700;
+  color: var(--octo-text-primary);
+}
+
+.tag,
+.loops {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--octo-accent-primary) 16%, transparent);
+  color: var(--octo-accent-primary);
+}
+
+.loops {
+  margin-left: auto;
+  background: color-mix(in srgb, var(--octo-accent-warm) 18%, transparent);
+  color: var(--octo-accent-warm);
+}
+
+.nodeDetail {
+  margin-top: 2px;
+  font-family: var(--octo-typography-mono, ui-monospace, monospace);
+  color: var(--octo-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cond {
+  display: flex;
+  gap: 6px;
+  margin-top: 3px;
+  align-items: baseline;
+}
+
+.condLabel {
+  flex-shrink: 0;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--octo-text-secondary);
+}
+
+.condValue {
+  font-family: var(--octo-typography-mono, ui-monospace, monospace);
+  color: var(--octo-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nodeMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--octo-text-secondary);
+}
+
+.metaWarn {
+  color: var(--octo-accent-fire);
+  font-weight: 600;
+}
+
+.handle {
+  width: 6px;
+  height: 6px;
+  background: var(--octo-border-subtle);
+  border: none;
+}
+
+.minimap {
+  background: var(--octo-surface-1);
+}

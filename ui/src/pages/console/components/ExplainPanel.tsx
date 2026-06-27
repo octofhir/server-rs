@@ -3,6 +3,7 @@ import { Database, RefreshCw, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { parseExplainTarget, useExplainQuery } from "../hooks/useExplainQuery";
 import styles from "./ExplainPanel.module.css";
+import { PlanFlow } from "./PlanFlow";
 
 interface ExplainPanelProps {
   opened: boolean;
@@ -96,6 +97,7 @@ export function ExplainPanel({ opened, onClose, path }: ExplainPanelProps) {
               <Tabs.Tab value="sql">
                 <Database size={14} /> SQL
               </Tabs.Tab>
+              <Tabs.Tab value="graph">Graph</Tabs.Tab>
               <Tabs.Tab value="plan">Plan</Tabs.Tab>
             </Tabs.List>
 
@@ -104,6 +106,9 @@ export function ExplainPanel({ opened, onClose, path }: ExplainPanelProps) {
             </Tabs.Panel>
             <Tabs.Panel value="sql" className={styles.panel}>
               <SqlView result={result} />
+            </Tabs.Panel>
+            <Tabs.Panel value="graph" className={styles.panel}>
+              <PlanFlow plan={result.explain_plan} />
             </Tabs.Panel>
             <Tabs.Panel value="plan" className={styles.panel}>
               <PlanView plan={result.explain_plan} analyzed={result.analyzed} />
