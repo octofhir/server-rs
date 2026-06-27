@@ -173,7 +173,7 @@ impl From<Response> for GraphQLResponse {
 /// defense-in-depth check to ensure the context is present.
 pub async fn graphql_handler(
     State(state): State<GraphQLState>,
-    auth_context: Option<Extension<AuthContext>>,
+    auth_context: Option<Extension<Arc<AuthContext>>>,
     headers: HeaderMap,
     Json(request): Json<GraphQLRequest>,
 ) -> impl IntoResponse {
@@ -194,7 +194,7 @@ pub async fn graphql_handler(
         request,
         None,
         None,
-        auth_context.map(|Extension(ctx)| ctx),
+        auth_context.map(|Extension(ctx)| (*ctx).clone()),
         None,
     )
     .await
@@ -210,7 +210,7 @@ pub async fn graphql_handler(
 /// Authentication is required for all GraphQL requests.
 pub async fn graphql_handler_get(
     State(state): State<GraphQLState>,
-    auth_context: Option<Extension<AuthContext>>,
+    auth_context: Option<Extension<Arc<AuthContext>>>,
     headers: HeaderMap,
     Query(params): Query<GraphQLQueryParams>,
 ) -> impl IntoResponse {
@@ -238,7 +238,7 @@ pub async fn graphql_handler_get(
         request,
         None,
         None,
-        auth_context.map(|Extension(ctx)| ctx),
+        auth_context.map(|Extension(ctx)| (*ctx).clone()),
         None,
     )
     .await
@@ -256,7 +256,7 @@ pub async fn graphql_handler_get(
 /// and sets `AuthContext` in request extensions.
 pub async fn instance_graphql_handler(
     State(state): State<GraphQLState>,
-    auth_context: Option<Extension<AuthContext>>,
+    auth_context: Option<Extension<Arc<AuthContext>>>,
     headers: HeaderMap,
     Path((resource_type, resource_id)): Path<(String, String)>,
     Json(request): Json<GraphQLRequest>,
@@ -283,7 +283,7 @@ pub async fn instance_graphql_handler(
         request,
         Some(resource_type),
         Some(resource_id),
-        auth_context.map(|Extension(ctx)| ctx),
+        auth_context.map(|Extension(ctx)| (*ctx).clone()),
         None,
     )
     .await

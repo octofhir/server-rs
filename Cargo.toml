@@ -42,11 +42,11 @@ octofhir-fhir-model = { version = "0.1.13", features = ["http-client", "caching"
 async-lsp = { version = "0.2", features = ["tokio"] }
 lsp-types = "0.97"
 
-banshee_parser = "0.1.0"
-banshee_syntax = "0.1.0"
-banshee_hir = "0.1.0"
-banshee_completion = "0.1.0"
-banshee_format = "0.1.0"
+banshee_parser = "0.2.3"
+banshee_syntax = "0.2.3"
+banshee_hir = "0.2.3"
+banshee_completion = "0.2.3"
+banshee_format = "0.2.3"
 text-size = "1.1"
 
 # Test utilities

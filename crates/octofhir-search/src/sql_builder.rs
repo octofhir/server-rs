@@ -855,12 +855,18 @@ impl FhirQueryBuilder {
                 let start_param = params.len();
                 params.extend(p.clone());
 
-                // Replace $1, $2, etc. with actual parameter numbers
-                let mut result = sql.clone();
-                for i in (1..=p.len()).rev() {
-                    result = result.replace(&format!("${i}"), &format!("${}", start_param + i));
-                }
-                Ok(result)
+                // Renumber the Raw block's local placeholders ($1, $2, …) by the
+                // current offset. A naive string-replace is unsafe here: replacing
+                // "$1" also matches the "$1" inside "$12", and a freshly written
+                // "$12" can be re-corrupted by a later "$1" pass. Match every
+                // `$<digits>` once, in a single regression-free pass.
+                static PLACEHOLDER_RE: std::sync::LazyLock<regex::Regex> =
+                    std::sync::LazyLock::new(|| regex::Regex::new(r"\$(\d+)").unwrap());
+                let result = PLACEHOLDER_RE.replace_all(sql, |caps: &regex::Captures| {
+                    let n: usize = caps[1].parse().unwrap_or(0);
+                    format!("${}", start_param + n)
+                });
+                Ok(result.into_owned())
             }
 
             SearchCondition::Array {

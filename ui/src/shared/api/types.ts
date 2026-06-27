@@ -172,6 +172,28 @@ export interface DbTableInfo {
   name: string;
   tableType: string;
   rowEstimate?: number;
+  deadRows?: number;
+  tableSizeBytes?: number;
+  indexesSizeBytes?: number;
+  totalSizeBytes?: number;
+  lastVacuum?: string;
+  lastAutovacuum?: string;
+  lastAnalyze?: string;
+  lastAutoanalyze?: string;
+}
+
+export type MaintenanceOp = "vacuum" | "vacuum_analyze" | "vacuum_full" | "analyze" | "reindex";
+
+export interface MaintenanceRequest {
+  op: MaintenanceOp;
+  concurrently?: boolean;
+}
+
+export interface MaintenanceResponse {
+  success: boolean;
+  op: string;
+  executionTimeMs?: number;
+  message: string;
 }
 
 export interface TablesResponse {
@@ -192,6 +214,7 @@ export interface DbIndexInfo {
   isPrimary: boolean;
   indexType: string;
   sizeBytes?: number;
+  definition?: string;
 }
 
 export interface TableDetailResponse {

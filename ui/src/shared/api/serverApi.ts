@@ -8,6 +8,8 @@ import type {
   HttpResponse,
   HttpMethod,
   InstallEvent,
+  MaintenanceRequest,
+  MaintenanceResponse,
   OperationDefinition,
   OperationsResponse,
   OperationUpdateRequest,
@@ -45,12 +47,7 @@ export class ApiResponseError extends Error {
   statusText: string;
   responseData: unknown;
 
-  constructor(
-    message: string,
-    status: number,
-    statusText: string,
-    responseData: unknown,
-  ) {
+  constructor(message: string, status: number, statusText: string, responseData: unknown) {
     super(message);
     this.name = "ApiResponseError";
     this.status = status;
@@ -89,17 +86,18 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string";
+  // `null` is how the server serializes an absent optional (serde None).
+  return value == null || typeof value === "string";
 }
 
 function isOptionalNumber(value: unknown): boolean {
-  return value === undefined || isNumber(value);
+  return value == null || isNumber(value);
 }
 
 function assertResponse<T>(
   value: unknown,
   guard: (item: unknown) => item is T,
-  context: string,
+  context: string
 ): T {
   if (!guard(value)) {
     throw new Error(`${context}: invalid response`);
@@ -143,7 +141,9 @@ function isServerSettings(value: unknown): value is ServerSettings {
   );
 }
 
-function isCategorizedResourceTypesResponse(value: unknown): value is CategorizedResourceTypesResponse {
+function isCategorizedResourceTypesResponse(
+  value: unknown
+): value is CategorizedResourceTypesResponse {
   return (
     isRecord(value) &&
     Array.isArray(value.types) &&
@@ -153,7 +153,7 @@ function isCategorizedResourceTypesResponse(value: unknown): value is Categorize
         typeof item.name === "string" &&
         (item.category === "fhir" || item.category === "system" || item.category === "custom") &&
         isOptionalString(item.url) &&
-        typeof item.package === "string",
+        typeof item.package === "string"
     ) &&
     isRecord(value.counts) &&
     isNumber(value.counts.all) &&
@@ -229,7 +229,7 @@ function isEnrichedSearchParam(value: unknown): boolean {
       (chain) =>
         isRecord(chain) &&
         typeof chain.target_type === "string" &&
-        isStringArray(chain.target_params),
+        isStringArray(chain.target_params)
     ) &&
     typeof value.is_common === "boolean"
   );
@@ -255,7 +255,7 @@ function isRestConsoleResponse(value: unknown): value is RestConsoleResponse {
     value.suggestions.api_endpoints.every(isAutocompleteSuggestion) &&
     isRecord(value.search_params) &&
     Object.values(value.search_params).every(
-      (params) => Array.isArray(params) && params.every(isRestConsoleSearchParam),
+      (params) => Array.isArray(params) && params.every(isRestConsoleSearchParam)
     ) &&
     Array.isArray(value.resources) &&
     value.resources.every(
@@ -269,20 +269,20 @@ function isRestConsoleResponse(value: unknown): value is RestConsoleResponse {
           (include) =>
             isRecord(include) &&
             typeof include.param_code === "string" &&
-            isStringArray(include.target_types),
+            isStringArray(include.target_types)
         ) &&
         Array.isArray(resource.rev_includes) &&
         resource.rev_includes.every(
           (include) =>
             isRecord(include) &&
             typeof include.param_code === "string" &&
-            isStringArray(include.target_types),
+            isStringArray(include.target_types)
         ) &&
         isStringArray(resource.sort_params) &&
         Array.isArray(resource.type_operations) &&
         resource.type_operations.every(isOperationCapabilityInfo) &&
         Array.isArray(resource.instance_operations) &&
-        resource.instance_operations.every(isOperationCapabilityInfo),
+        resource.instance_operations.every(isOperationCapabilityInfo)
     ) &&
     Array.isArray(value.system_operations) &&
     value.system_operations.every(isOperationCapabilityInfo) &&
@@ -293,7 +293,7 @@ function isRestConsoleResponse(value: unknown): value is RestConsoleResponse {
         typeof param.name === "string" &&
         isOptionalString(param.description) &&
         typeof param.supported === "boolean" &&
-        isStringArray(param.examples),
+        isStringArray(param.examples)
     )
   );
 }
@@ -333,7 +333,7 @@ function isQueryHistoryResponse(value: unknown): value is QueryHistoryResponse {
         isOptionalNumber(entry.rowCount) &&
         typeof entry.isError === "boolean" &&
         isOptionalString(entry.errorMessage) &&
-        typeof entry.createdAt === "string",
+        typeof entry.createdAt === "string"
     )
   );
 }
@@ -348,7 +348,7 @@ function isTablesResponse(value: unknown): value is TablesResponse {
         typeof table.schema === "string" &&
         typeof table.name === "string" &&
         typeof table.tableType === "string" &&
-        isOptionalNumber(table.rowEstimate),
+        isOptionalNumber(table.rowEstimate)
     )
   );
 }
@@ -365,7 +365,7 @@ function isTableDetailResponse(value: unknown): value is TableDetailResponse {
         typeof column.name === "string" &&
         typeof column.dataType === "string" &&
         typeof column.isNullable === "boolean" &&
-        isOptionalString(column.defaultValue),
+        isOptionalString(column.defaultValue)
     ) &&
     Array.isArray(value.indexes) &&
     value.indexes.every(
@@ -376,7 +376,7 @@ function isTableDetailResponse(value: unknown): value is TableDetailResponse {
         typeof index.isUnique === "boolean" &&
         typeof index.isPrimary === "boolean" &&
         typeof index.indexType === "string" &&
-        isOptionalNumber(index.sizeBytes),
+        isOptionalNumber(index.sizeBytes)
     )
   );
 }
@@ -396,17 +396,29 @@ function isActiveQueriesResponse(value: unknown): value is ActiveQueriesResponse
         isOptionalString(query.queryStart) &&
         isOptionalNumber(query.durationMs) &&
         isOptionalString(query.waitEventType) &&
-        isOptionalString(query.waitEvent),
+        isOptionalString(query.waitEvent)
     )
   );
 }
 
 function isTerminateQueryResponse(value: unknown): value is TerminateQueryResponse {
-  return isRecord(value) && typeof value.success === "boolean" && typeof value.terminated === "boolean";
+  return (
+    isRecord(value) && typeof value.success === "boolean" && typeof value.terminated === "boolean"
+  );
 }
 
 function isDropIndexResponse(value: unknown): value is DropIndexResponse {
   return isRecord(value) && typeof value.success === "boolean" && typeof value.message === "string";
+}
+
+function isMaintenanceResponse(value: unknown): value is MaintenanceResponse {
+  return (
+    isRecord(value) &&
+    typeof value.success === "boolean" &&
+    typeof value.op === "string" &&
+    typeof value.message === "string" &&
+    isOptionalNumber(value.executionTimeMs)
+  );
 }
 
 function isGraphQLResponse(value: unknown): value is GraphQLResponse {
@@ -423,14 +435,14 @@ function isGraphQLResponse(value: unknown): value is GraphQLResponse {
               (Array.isArray(error.locations) &&
                 error.locations.every(
                   (location) =>
-                    isRecord(location) &&
-                    isNumber(location.line) &&
-                    isNumber(location.column),
+                    isRecord(location) && isNumber(location.line) && isNumber(location.column)
                 ))) &&
             (error.path === undefined ||
               (Array.isArray(error.path) &&
-                error.path.every((path) => typeof path === "string" || typeof path === "number"))) &&
-            (error.extensions === undefined || isRecord(error.extensions)),
+                error.path.every(
+                  (path) => typeof path === "string" || typeof path === "number"
+                ))) &&
+            (error.extensions === undefined || isRecord(error.extensions))
         ))) &&
     (value.extensions === undefined || isRecord(value.extensions))
   );
@@ -448,7 +460,9 @@ function isOperationDefinition(value: unknown): value is OperationDefinition {
     typeof value.public === "boolean" &&
     typeof value.module === "string" &&
     (value.app === undefined ||
-      (isRecord(value.app) && typeof value.app.id === "string" && typeof value.app.name === "string"))
+      (isRecord(value.app) &&
+        typeof value.app.id === "string" &&
+        typeof value.app.name === "string"))
   );
 }
 
@@ -472,7 +486,7 @@ function isPackageListResponse(value: unknown): value is PackageListResponse {
         typeof pkg.version === "string" &&
         isOptionalString(pkg.fhirVersion) &&
         isNumber(pkg.resourceCount) &&
-        isOptionalString(pkg.installedAt),
+        isOptionalString(pkg.installedAt)
     ) &&
     typeof value.serverFhirVersion === "string"
   );
@@ -491,9 +505,7 @@ function isPackageDetailResponse(value: unknown): value is PackageDetailResponse
     Array.isArray(value.resourceTypes) &&
     value.resourceTypes.every(
       (resource) =>
-        isRecord(resource) &&
-        typeof resource.resourceType === "string" &&
-        isNumber(resource.count),
+        isRecord(resource) && typeof resource.resourceType === "string" && isNumber(resource.count)
     )
   );
 }
@@ -509,7 +521,7 @@ function isPackageResourcesResponse(value: unknown): value is PackageResourcesRe
         isOptionalString(resource.url) &&
         isOptionalString(resource.name) &&
         isOptionalString(resource.version) &&
-        typeof resource.resourceType === "string",
+        typeof resource.resourceType === "string"
     ) &&
     isNumber(value.total)
   );
@@ -535,7 +547,7 @@ function isPackageSearchResponse(value: unknown): value is PackageSearchResponse
         typeof pkg.name === "string" &&
         isStringArray(pkg.versions) &&
         isOptionalString(pkg.description) &&
-        typeof pkg.latestVersion === "string",
+        typeof pkg.latestVersion === "string"
     ) &&
     isNumber(value.total)
   );
@@ -589,7 +601,7 @@ class ServerApiClient {
   private async request(
     endpoint: string,
     options: RequestInit = {},
-    requestOptions: RequestOptions = {},
+    requestOptions: RequestOptions = {}
   ): Promise<HttpResponse<unknown>> {
     const url = `${this.baseUrl}${endpoint}`;
     const timeoutMs = requestOptions.timeoutMs ?? this.defaultTimeout;
@@ -644,7 +656,10 @@ class ServerApiClient {
 
     if (!rawBody) {
       data = undefined;
-    } else if (contentType?.includes("application/json") || contentType?.includes("application/fhir+json")) {
+    } else if (
+      contentType?.includes("application/json") ||
+      contentType?.includes("application/fhir+json")
+    ) {
       data = JSON.parse(rawBody);
     } else {
       data = rawBody;
@@ -668,7 +683,7 @@ class ServerApiClient {
         `HTTP ${response.status}: ${response.statusText}`,
         response.status,
         response.statusText,
-        data,
+        data
       );
     }
 
@@ -711,7 +726,7 @@ class ServerApiClient {
     return assertResponse(
       response.data,
       isCategorizedResourceTypesResponse,
-      "getResourceTypesCategorized",
+      "getResourceTypesCategorized"
     );
   }
 
@@ -749,25 +764,23 @@ class ServerApiClient {
    *   ["123", "active"]
    * );
    */
-  async executeSql(
-    query: string,
-    params?: SqlValue[],
-    timeoutMs?: number,
-  ): Promise<SqlResponse> {
+  async executeSql(query: string, params?: SqlValue[], timeoutMs?: number): Promise<SqlResponse> {
     const body: { query: string; params?: SqlValue[] } = { query };
     if (params && params.length > 0) {
       body.params = params;
     }
     const safeTimeoutMs =
-      timeoutMs != null && Number.isFinite(timeoutMs) && timeoutMs > 0
-        ? timeoutMs
-        : undefined;
-    const response = await this.request("/api/$sql", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }, {
-      timeoutMs: safeTimeoutMs,
-    });
+      timeoutMs != null && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined;
+    const response = await this.request(
+      "/api/$sql",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+      {
+        timeoutMs: safeTimeoutMs,
+      }
+    );
     return assertResponse(response.data, isSqlResponse, "executeSql");
   }
 
@@ -802,7 +815,7 @@ class ServerApiClient {
 
   async getTableDetail(schema: string, table: string): Promise<TableDetailResponse> {
     const response = await this.request(
-      `/api/db-console/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`,
+      `/api/db-console/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`
     );
     return assertResponse(response.data, isTableDetailResponse, "getTableDetail");
   }
@@ -823,9 +836,21 @@ class ServerApiClient {
   async dropIndex(schema: string, indexName: string): Promise<DropIndexResponse> {
     const response = await this.request(
       `/api/db-console/indexes/${encodeURIComponent(schema)}/${encodeURIComponent(indexName)}`,
-      { method: "DELETE" },
+      { method: "DELETE" }
     );
     return assertResponse(response.data, isDropIndexResponse, "dropIndex");
+  }
+
+  async runMaintenance(
+    schema: string,
+    table: string,
+    req: MaintenanceRequest
+  ): Promise<MaintenanceResponse> {
+    const response = await this.request(
+      `/api/db-console/maintenance/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`,
+      { method: "POST", body: JSON.stringify(req) }
+    );
+    return assertResponse(response.data, isMaintenanceResponse, "runMaintenance");
   }
 
   /**
@@ -851,7 +876,7 @@ class ServerApiClient {
   async executeGraphQL(
     query: string,
     variables?: Record<string, unknown>,
-    operationName?: string,
+    operationName?: string
   ): Promise<GraphQLResponse> {
     const body: { query: string; variables?: Record<string, unknown>; operationName?: string } = {
       query,
@@ -1000,7 +1025,7 @@ class ServerApiClient {
    */
   async getPackageDetails(name: string, version: string): Promise<PackageDetailResponse> {
     const response = await this.request(
-      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}`
     );
     return assertResponse(response.data, isPackageDetailResponse, "getPackageDetails");
   }
@@ -1011,7 +1036,7 @@ class ServerApiClient {
   async getPackageResources(
     name: string,
     version: string,
-    params?: { resourceType?: string; limit?: number; offset?: number },
+    params?: { resourceType?: string; limit?: number; offset?: number }
   ): Promise<PackageResourcesResponse> {
     const queryParams = new URLSearchParams();
     if (params?.resourceType) queryParams.set("resource_type", params.resourceType);
@@ -1026,9 +1051,13 @@ class ServerApiClient {
   /**
    * Get full content of a specific resource from a package.
    */
-  async getPackageResourceContent(name: string, version: string, resourceUrl: string): Promise<unknown> {
+  async getPackageResourceContent(
+    name: string,
+    version: string,
+    resourceUrl: string
+  ): Promise<unknown> {
     const response = await this.request(
-      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/resources/${encodeURIComponent(resourceUrl)}`,
+      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/resources/${encodeURIComponent(resourceUrl)}`
     );
     return response.data;
   }
@@ -1038,7 +1067,7 @@ class ServerApiClient {
    */
   async getPackageFhirSchema(name: string, version: string, resourceUrl: string): Promise<unknown> {
     const response = await this.request(
-      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/fhirschema/${encodeURIComponent(resourceUrl)}`,
+      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/fhirschema/${encodeURIComponent(resourceUrl)}`
     );
     return response.data;
   }
@@ -1047,9 +1076,7 @@ class ServerApiClient {
    * Lookup available versions for a package from the FHIR registry.
    */
   async lookupPackage(name: string): Promise<PackageLookupResponse> {
-    const response = await this.request(
-      `/api/packages/lookup/${encodeURIComponent(name)}`,
-    );
+    const response = await this.request(`/api/packages/lookup/${encodeURIComponent(name)}`);
     return assertResponse(response.data, isPackageLookupResponse, "lookupPackage");
   }
 
@@ -1058,9 +1085,7 @@ class ServerApiClient {
    * Supports partial matching (ILIKE) - spaces in the query are treated as wildcards.
    */
   async searchPackages(query: string): Promise<PackageSearchResponse> {
-    const response = await this.request(
-      `/api/packages/search?q=${encodeURIComponent(query)}`,
-    );
+    const response = await this.request(`/api/packages/search?q=${encodeURIComponent(query)}`);
     return assertResponse(response.data, isPackageSearchResponse, "searchPackages");
   }
 
@@ -1098,7 +1123,7 @@ class ServerApiClient {
     request: PackageInstallRequest,
     onEvent: (event: import("./types").InstallEvent) => void,
     onError?: (error: Error) => void,
-    onComplete?: () => void,
+    onComplete?: () => void
   ): () => void {
     const controller = new AbortController();
     const url = `${this.baseUrl}/api/packages/install/stream`;

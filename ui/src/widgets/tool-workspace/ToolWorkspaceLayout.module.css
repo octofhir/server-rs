@@ -1,14 +1,29 @@
 .body {
 	overflow: hidden;
+	min-height: 0;
+	height: 100%;
 }
 
 .content {
+	display: flex;
+	flex-direction: column;
 	min-height: 0;
+	height: 100%;
 	padding-bottom: 0;
+}
+
+/* ui-kit WorkspacePageLayout renders a <main> between content and our .main.
+   Stretch it so height flows down to the tool body. */
+.content > main {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
 }
 
 .main {
 	display: flex;
 	flex-direction: column;
+	flex: 1;
 	min-height: 0;
 }

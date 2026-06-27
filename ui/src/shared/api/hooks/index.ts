@@ -18,6 +18,7 @@ export {
   useDbTables,
   useDropIndex,
   useQueryHistory,
+  useRunMaintenance,
   useSaveHistory,
   useTableDetail,
   useTerminateQuery,

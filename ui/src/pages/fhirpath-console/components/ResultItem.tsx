@@ -1,91 +1,90 @@
-import { Badge, Code, Collapse, Text } from "@octofhir/ui-kit";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { useState } from "react";
-import type { FhirPathResult } from "../types";
 import classes from "../FhirPathConsolePage.module.css";
+import type { FhirPathResult } from "../types";
 
 interface Props {
-	result: FhirPathResult;
+  result: FhirPathResult;
 }
 
 export function ResultItem({ result }: Props) {
-	const [expanded, setExpanded] = useState(false);
-	const isComplex = typeof result.value === "object" && result.value !== null;
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const isComplex = typeof result.value === "object" && result.value !== null;
 
-	const typeColor = getTypeColor(result.datatype);
+  const copyText = isComplex
+    ? JSON.stringify(result.value, null, 2)
+    : formatPrimitiveValue(result.value);
 
-	return (
-		<div className={classes.resultItem}>
-			<div className={classes.resultItemContent}>
-				<div className={classes.resultHeader}>
-					<Text size="xs" c="dimmed">
-						[{result.index}]
-					</Text>
-					<Badge size="sm" color={typeColor}>
-						{result.datatype}
-					</Badge>
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(copyText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  };
 
-					{isComplex ? (
-						<button
-							type="button"
-							onClick={() => setExpanded(!expanded)}
-							className={classes.resultToggle}
-							aria-expanded={expanded}
-							aria-label={`${expanded ? "Collapse" : "Expand"} ${result.datatype} object`}
-						>
-							<span aria-hidden="true">
-								{expanded ? (
-									<ChevronDown size={14} />
-								) : (
-									<ChevronRight size={14} />
-								)}
-							</span>
-							<Text size="sm" c="dimmed">
-								{result.datatype} object
-							</Text>
-						</button>
-					) : (
-						<Code className={classes.resultCode}>
-							{formatPrimitiveValue(result.value)}
-						</Code>
-					)}
-				</div>
+  return (
+    <div className={classes.resultItem}>
+      <div className={classes.resultItemContent}>
+        <div className={classes.resultHeader}>
+          <span className={classes.resultIndex}>[{result.index}]</span>
+          <span className={`${classes.typeTag} ${typeClass(result.datatype)}`}>
+            {result.datatype}
+          </span>
 
-				{isComplex && (
-					<Collapse in={expanded}>
-						<Code block className={classes.resultJson}>
-							{JSON.stringify(result.value, null, 2)}
-						</Code>
-					</Collapse>
-				)}
-			</div>
-		</div>
-	);
+          {isComplex ? (
+            <button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              className={classes.resultToggle}
+              aria-expanded={expanded}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${result.datatype} object`}
+            >
+              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {result.datatype} object
+            </button>
+          ) : (
+            <span className={classes.resultValue}>{formatPrimitiveValue(result.value)}</span>
+          )}
+
+          <button
+            type="button"
+            className={classes.copyBtn}
+            onClick={handleCopy}
+            aria-label="Copy value"
+            title="Copy value"
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+        </div>
+
+        {isComplex && expanded && (
+          <pre className={classes.resultJson}>{JSON.stringify(result.value, null, 2)}</pre>
+        )}
+      </div>
+    </div>
+  );
 }
 
-function getTypeColor(datatype: string): string {
-	if (
-		datatype === "string" ||
-		datatype === "code" ||
-		datatype === "id" ||
-		datatype === "uri" ||
-		datatype === "url"
-	)
-		return "green";
-	if (datatype === "integer" || datatype === "decimal") return "blue";
-	if (datatype === "boolean") return "orange";
-	if (
-		datatype === "date" ||
-		datatype === "dateTime" ||
-		datatype === "time"
-	)
-		return "cyan";
-	return "violet"; // Complex types
+function typeClass(datatype: string): string {
+  if (
+    datatype === "string" ||
+    datatype === "code" ||
+    datatype === "id" ||
+    datatype === "uri" ||
+    datatype === "url"
+  )
+    return classes.typeString;
+  if (datatype === "integer" || datatype === "decimal") return classes.typeNumber;
+  if (datatype === "boolean") return classes.typeBool;
+  if (datatype === "date" || datatype === "dateTime" || datatype === "time")
+    return classes.typeDate;
+  return classes.typeComplex;
 }
 
 function formatPrimitiveValue(value: unknown): string {
-	if (typeof value === "string") return `"${value}"`;
-	if (typeof value === "boolean") return value ? "true" : "false";
-	if (typeof value === "number") return value.toString();
-	return String(value);
+  if (typeof value === "string") return `"${value}"`;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return value.toString();
+  return String(value);
 }

@@ -173,6 +173,14 @@ pub struct DbTableInfo {
     pub name: String,
     pub table_type: String,
     pub row_estimate: Option<i64>,
+    pub dead_rows: Option<i64>,
+    pub table_size_bytes: Option<i64>,
+    pub indexes_size_bytes: Option<i64>,
+    pub total_size_bytes: Option<i64>,
+    pub last_vacuum: Option<String>,
+    pub last_autovacuum: Option<String>,
+    pub last_analyze: Option<String>,
+    pub last_autoanalyze: Option<String>,
 }
 
 /// GET /api/db-console/tables
@@ -182,10 +190,24 @@ pub async fn list_tables(
 ) -> Result<Response, ApiError> {
     check_db_console_access(&state.config.db_console, &auth_context)?;
 
+    // pg_*_size() require a regclass; build a fully-qualified quoted ident.
+    // Only base tables/matviews have on-disk size; views report NULL.
     let rows = sqlx_core::query::query(
         "SELECT t.table_schema, t.table_name, t.table_type, \
-                COALESCE(s.n_live_tup, 0)::bigint AS row_estimate \
+                COALESCE(s.n_live_tup, 0)::bigint AS row_estimate, \
+                COALESCE(s.n_dead_tup, 0)::bigint AS dead_rows, \
+                c.oid AS rel_oid, \
+                CASE WHEN c.oid IS NULL THEN NULL ELSE pg_table_size(c.oid) END::bigint AS table_size_bytes, \
+                CASE WHEN c.oid IS NULL THEN NULL ELSE pg_indexes_size(c.oid) END::bigint AS indexes_size_bytes, \
+                CASE WHEN c.oid IS NULL THEN NULL ELSE pg_total_relation_size(c.oid) END::bigint AS total_size_bytes, \
+                s.last_vacuum::text AS last_vacuum, \
+                s.last_autovacuum::text AS last_autovacuum, \
+                s.last_analyze::text AS last_analyze, \
+                s.last_autoanalyze::text AS last_autoanalyze \
          FROM information_schema.tables t \
+         LEFT JOIN pg_namespace nsp ON nsp.nspname = t.table_schema \
+         LEFT JOIN pg_class c ON c.relname = t.table_name AND c.relnamespace = nsp.oid \
+                              AND c.relkind IN ('r', 'm', 'p') \
          LEFT JOIN pg_stat_user_tables s \
            ON s.schemaname = t.table_schema AND s.relname = t.table_name \
          WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema') \
@@ -202,6 +224,14 @@ pub async fn list_tables(
             name: row.try_get::<String, _>("table_name").unwrap_or_default(),
             table_type: row.try_get::<String, _>("table_type").unwrap_or_default(),
             row_estimate: row.try_get::<i64, _>("row_estimate").ok(),
+            dead_rows: row.try_get::<i64, _>("dead_rows").ok(),
+            table_size_bytes: row.try_get::<i64, _>("table_size_bytes").ok(),
+            indexes_size_bytes: row.try_get::<i64, _>("indexes_size_bytes").ok(),
+            total_size_bytes: row.try_get::<i64, _>("total_size_bytes").ok(),
+            last_vacuum: row.try_get::<String, _>("last_vacuum").ok(),
+            last_autovacuum: row.try_get::<String, _>("last_autovacuum").ok(),
+            last_analyze: row.try_get::<String, _>("last_analyze").ok(),
+            last_autoanalyze: row.try_get::<String, _>("last_autoanalyze").ok(),
         })
         .collect();
 
@@ -230,6 +260,8 @@ pub struct DbIndexInfo {
     pub is_primary: bool,
     pub index_type: String,
     pub size_bytes: Option<i64>,
+    /// Full `CREATE INDEX …` definition from pg_get_indexdef (includes expressions/WHERE).
+    pub definition: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,6 +315,7 @@ pub async fn get_table_detail(
              ix.indisunique AS is_unique, \
              ix.indisprimary AS is_primary, \
              pg_relation_size(i.oid) AS size_bytes, \
+             pg_get_indexdef(i.oid) AS definition, \
              array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))::text[] AS columns \
          FROM pg_index ix \
          JOIN pg_class t ON t.oid = ix.indrelid \
@@ -309,6 +342,7 @@ pub async fn get_table_detail(
             is_primary: row.try_get::<bool, _>("is_primary").unwrap_or(false),
             index_type: row.try_get::<String, _>("index_type").unwrap_or_default(),
             size_bytes: row.try_get::<i64, _>("size_bytes").ok(),
+            definition: row.try_get::<String, _>("definition").ok(),
         })
         .collect();
 
@@ -1132,6 +1166,94 @@ pub async fn drop_index(
         Json(json!({
             "success": true,
             "message": format!("Index {}.{} dropped", schema, index_name)
+        })),
+    )
+        .into_response())
+}
+
+// ============================================================================
+// Table Maintenance (VACUUM / ANALYZE / REINDEX)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaintenanceRequest {
+    /// One of: "vacuum", "vacuum_full", "vacuum_analyze", "analyze", "reindex".
+    pub op: String,
+    /// Use CONCURRENTLY where supported (reindex). Ignored for vacuum/analyze.
+    #[serde(default)]
+    pub concurrently: bool,
+}
+
+/// POST /api/db-console/maintenance/{schema}/{table}
+///
+/// Runs a maintenance command against a single table. Admin mode only.
+/// VACUUM/VACUUM FULL/ANALYZE/REINDEX run in autocommit (no surrounding txn).
+pub async fn run_maintenance(
+    State(state): State<AppState>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
+    Path((schema, table)): Path<(String, String)>,
+    Json(req): Json<MaintenanceRequest>,
+) -> Result<Response, ApiError> {
+    check_db_console_access(&state.config.db_console, &auth_context)?;
+
+    // Maintenance is DDL-adjacent and can take heavy locks — admin only.
+    if !matches!(
+        state.config.db_console.sql_mode,
+        crate::config::SqlMode::Admin
+    ) {
+        return Err(ApiError::forbidden("Table maintenance requires admin mode"));
+    }
+
+    if !is_valid_identifier(&schema) || !is_valid_identifier(&table) {
+        return Err(ApiError::bad_request("Invalid schema or table name"));
+    }
+
+    let target = format!("\"{}\".\"{}\"", schema, table);
+    let sql = match req.op.as_str() {
+        "vacuum" => format!("VACUUM {}", target),
+        "vacuum_analyze" => format!("VACUUM ANALYZE {}", target),
+        "vacuum_full" => format!("VACUUM FULL {}", target),
+        "analyze" => format!("ANALYZE {}", target),
+        "reindex" => {
+            if req.concurrently {
+                format!("REINDEX TABLE CONCURRENTLY {}", target)
+            } else {
+                format!("REINDEX TABLE {}", target)
+            }
+        }
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown maintenance op: {}",
+                other
+            )));
+        }
+    };
+
+    warn!(
+        op = %req.op,
+        schema = %schema,
+        table = %table,
+        user = ?auth_context.user.as_ref().map(|u| &u.username),
+        "Running table maintenance"
+    );
+
+    let started = std::time::Instant::now();
+    sqlx_core::query::query(AssertSqlSafe(sql.clone()))
+        .execute(state.db_pool.as_ref())
+        .await
+        .map_err(|e| ApiError::internal(format!("Maintenance failed: {}", e)))?;
+    let elapsed_ms = started.elapsed().as_millis() as i64;
+
+    info!(op = %req.op, schema = %schema, table = %table, elapsed_ms, "Maintenance completed");
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "op": req.op,
+            "executionTimeMs": elapsed_ms,
+            "message": format!("{} completed on {}.{}", req.op, schema, table),
         })),
     )
         .into_response())

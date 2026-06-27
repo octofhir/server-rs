@@ -1904,6 +1904,10 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             "/api/db-console/indexes/{schema}/{index_name}",
             axum::routing::delete(crate::operations::db_console_api::drop_index),
         )
+        .route(
+            "/api/db-console/maintenance/{schema}/{table}",
+            axum::routing::post(crate::operations::db_console_api::run_maintenance),
+        )
         // LSP WebSocket endpoints (authenticated)
         .route("/api/lsp/pg", get(crate::lsp::pg_lsp_websocket_handler))
         .route(

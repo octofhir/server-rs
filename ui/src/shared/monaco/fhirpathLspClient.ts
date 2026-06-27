@@ -839,6 +839,75 @@ class FhirPathLspConnection {
 		);
 		disposables.push(completionProvider);
 
+		// Hover: surface property/function documentation inline.
+		const hoverProvider = monaco.languages.registerHoverProvider(
+			FHIRPATH_LANGUAGE_ID,
+			{
+				provideHover: async (model, position) => {
+					try {
+						const response = await this.sendRequest<LspHover | null>(
+							"textDocument/hover",
+							{
+								textDocument: { uri: model.uri.toString() },
+								position: toLspPosition(position),
+							},
+						);
+						if (!response || !response.contents) return null;
+						const value = normalizeHoverContents(response.contents);
+						if (!value) return null;
+						return {
+							range: response.range
+								? toMonacoRange(response.range)
+								: undefined,
+							contents: [{ value, supportThemeIcons: true }],
+						};
+					} catch (error) {
+						logDebug("[fhirpath-lsp] hover failed:", error);
+						return null;
+					}
+				},
+			},
+		);
+		disposables.push(hoverProvider);
+
+		// Signature help: show function parameters while typing inside (...).
+		const signatureProvider =
+			monaco.languages.registerSignatureHelpProvider(FHIRPATH_LANGUAGE_ID, {
+				signatureHelpTriggerCharacters: ["(", ","],
+				signatureHelpRetriggerCharacters: [","],
+				provideSignatureHelp: async (model, position) => {
+					try {
+						const response = await this.sendRequest<LspSignatureHelp | null>(
+							"textDocument/signatureHelp",
+							{
+								textDocument: { uri: model.uri.toString() },
+								position: toLspPosition(position),
+							},
+						);
+						if (!response || !response.signatures?.length) return null;
+						return {
+							value: {
+								signatures: response.signatures.map((sig) => ({
+									label: sig.label,
+									documentation: normalizeDocumentation(sig.documentation),
+									parameters: (sig.parameters ?? []).map((p) => ({
+										label: p.label,
+										documentation: normalizeDocumentation(p.documentation),
+									})),
+								})),
+								activeSignature: response.activeSignature ?? 0,
+								activeParameter: response.activeParameter ?? 0,
+							},
+							dispose: () => {},
+						};
+					} catch (error) {
+						logDebug("[fhirpath-lsp] signatureHelp failed:", error);
+						return null;
+					}
+				},
+			});
+		disposables.push(signatureProvider);
+
 		return disposables;
 	}
 

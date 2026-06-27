@@ -24,8 +24,8 @@ export function LoginPage() {
 	const passwordId = useId();
 
 	const from =
-		(location.state as { from?: { pathname: string } } | null)?.from?.pathname ??
-		"/";
+		(location.state as { from?: { pathname: string } } | null)?.from
+			?.pathname ?? "/";
 
 	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -39,7 +39,11 @@ export function LoginPage() {
 	};
 
 	const errorMessage =
-		loginError instanceof Error ? loginError.message : loginError ? "Login failed" : null;
+		loginError instanceof Error
+			? loginError.message
+			: loginError
+				? "Login failed"
+				: null;
 	const isFormValid = username.trim() !== "" && password.trim() !== "";
 
 	return (
@@ -116,10 +120,6 @@ export function LoginPage() {
 						>
 							Sign in
 						</Button>
-
-						<Text variant="caption-1" color="secondary" className={classes.footer}>
-							Powered by Gravity UI
-						</Text>
 					</form>
 				</Card>
 			</div>

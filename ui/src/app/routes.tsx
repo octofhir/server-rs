@@ -7,6 +7,7 @@ import { LoginPage } from "@/pages/login";
 import { DashboardPage } from "@/pages/dashboard";
 import { SettingsPage } from "@/pages/settings";
 import { DbConsolePage } from "@/pages/db-console";
+import { DatabasePage } from "@/pages/database";
 import { GraphQLConsolePage } from "@/pages/graphql-console";
 import { FhirPathConsolePage } from "@/pages/fhirpath-console";
 import { CqlConsole } from "@/pages/CqlConsole";
@@ -14,7 +15,14 @@ import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { RestConsolePage } from "@/pages/console";
 import { OperationsPage, OperationDetailPage } from "@/pages/operations";
 import { AppsPage, AppDetailPage } from "@/pages/apps";
-import { ClientsPage, UsersPage, UserDetailPage, RolesPage, AccessPoliciesPage, IdentityProvidersPage } from "@/pages/auth";
+import {
+  ClientsPage,
+  UsersPage,
+  UserDetailPage,
+  RolesPage,
+  AccessPoliciesPage,
+  IdentityProvidersPage,
+} from "@/pages/auth";
 import { SessionsPage } from "@/pages/sessions";
 import { PackagesPage, PackageDetailPage } from "@/pages/packages";
 import { LogsViewerPage } from "@/pages/logs";
@@ -39,13 +47,13 @@ export function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
 
       {/* Protected routes - require authentication */}
-		<Route element={<ProtectedLayout />}>
-			{/* Main */}
-			<Route index element={<DashboardPage />} />
-			<Route path="/resources" element={<ResourceBrowserPage />} />
-			<Route path="/resources/:type" element={<ResourceBrowserPage />} />
-			<Route path="/resources/:type/:id" element={<ResourceBrowserPage />} />
-			<Route path="/console" element={<RestConsolePage />} />
+      <Route element={<ProtectedLayout />}>
+        {/* Main */}
+        <Route index element={<DashboardPage />} />
+        <Route path="/resources" element={<ResourceBrowserPage />} />
+        <Route path="/resources/:type" element={<ResourceBrowserPage />} />
+        <Route path="/resources/:type/:id" element={<ResourceBrowserPage />} />
+        <Route path="/console" element={<RestConsolePage />} />
 
         {/* Packages */}
         <Route path="/packages" element={<PackagesPage />} />
@@ -70,6 +78,7 @@ export function AppRoutes() {
         <Route path="/auth/sessions" element={<SessionsPage />} />
 
         {/* Tools */}
+        <Route path="/database" element={<DatabasePage />} />
         <Route path="/db-console" element={<DbConsolePage />} />
         <Route path="/graphql" element={<GraphQLConsolePage />} />
         <Route path="/fhirpath" element={<FhirPathConsolePage />} />

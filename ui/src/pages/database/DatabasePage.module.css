@@ -1,0 +1,226 @@
+.container {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  gap: var(--mantine-spacing-md, 16px);
+  padding: var(--mantine-spacing-md, 16px);
+}
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: var(--mantine-spacing-md, 16px);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.listPanel,
+.detailPanel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 12px;
+  background: var(--app-surface-1);
+  overflow: hidden;
+}
+
+.detailPanel {
+  background: var(--app-surface-2);
+}
+
+/* Centered placeholder when no table is selected. */
+.detailEmpty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.listControls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+/* Pill tab bar for table categories. */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--app-surface-2);
+  border: 1px solid var(--app-border-subtle);
+}
+
+.tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-text-muted, #868e96);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.tab:hover {
+  color: var(--app-text, #212529);
+}
+
+.tab[data-active] {
+  background: var(--app-surface-1);
+  color: var(--app-text, #212529);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.tabCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--app-surface-3, rgb(0 0 0 / 6%));
+  color: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tab[data-active] .tabCount {
+  background: var(--app-accent-soft, rgb(79 70 229 / 14%));
+  color: var(--app-accent, #4f46e5);
+}
+
+.tableWrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Lock column widths so the table doesn't jitter when rows change on search/filter. */
+.tableWrap table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.tableWrap td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nameText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Detail ── */
+
+.detailRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.detailHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.detailTitleBlock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.maintenanceBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.statCard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 8px;
+  background: var(--app-surface-1);
+}
+
+.detailScroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.detailSections {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 12px;
+}
+
+.sectionLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.centeredLoader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+@media (max-width: 1100px) {
+  .body {
+    grid-template-columns: 1fr;
+  }
+}

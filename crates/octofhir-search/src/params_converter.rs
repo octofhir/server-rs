@@ -163,7 +163,17 @@ pub fn build_native_ir_query_from_params_with_config(
     // `&`-repetition (one entry per occurrence). Each String can still contain
     // a comma list. Iterate per entry so repeated occurrences AND naturally
     // through SqlBuilder.add_condition (which AND's top-level conditions).
-    for (key, value_entries) in &params.parameters {
+    // Iterate in a deterministic (key-sorted) order. `params.parameters` is a
+    // HashMap, whose iteration order is randomized per process run. The order
+    // here fixes the order of conditions in the SqlBuilder, which in turn fixes
+    // both the generated placeholder numbering AND the order `extract_params()`
+    // re-binds values on a query-cache hit. If the two disagree (e.g. SQL built
+    // under one HashMap order, params re-extracted under another), bound values
+    // land in the wrong placeholder slots — surfacing as intermittent
+    // "invalid input syntax for type json / timestamp" DB errors.
+    let mut sorted_entries: Vec<_> = params.parameters.iter().collect();
+    sorted_entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (key, value_entries) in sorted_entries {
         // Skip control parameters
         if is_control_param(key) {
             continue;

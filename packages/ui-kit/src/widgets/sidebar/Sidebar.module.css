@@ -6,7 +6,10 @@
     width: var(--_w);
     height: 100%;
     box-sizing: border-box;
-    background: var(--octo-surface-1, #fff);
+    /* Emerald-infused brand surface: glow at the top fading into the base. */
+    background:
+        radial-gradient(135% 55% at 0% 0%, rgb(16 185 129 / 16%) 0%, transparent 58%),
+        linear-gradient(180deg, rgb(16 185 129 / 9%) 0%, var(--octo-surface-1, #fff) 38%);
     border-right: 1px solid var(--octo-border-subtle, #dee2e6);
     transition: width var(--octo-motion-slow, 200ms) var(--octo-motion-ease, ease);
     overflow: hidden;

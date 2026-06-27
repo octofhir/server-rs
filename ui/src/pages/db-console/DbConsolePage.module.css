@@ -2,11 +2,11 @@
 
 .container {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: 1fr;
   grid-template-rows: auto 1fr;
   grid-template-areas:
-    "rail toolbar"
-    "rail workspace";
+    "toolbar"
+    "workspace";
   height: 100vh;
   background: var(--octo-surface-1);
   overflow: hidden;
