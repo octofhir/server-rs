@@ -334,12 +334,15 @@ pub fn build_indexed_date_inplace(
     let segments = crate::sql_builder::fhirpath_to_jsonb_path(expression, resource_type);
     // Precompiled jsonpath[] literals — must be built through the SAME helpers as
     // the index DDL (functional_indexes.rs) so the functional GiST index matches.
-    let lower_jpa =
-        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_lower_paths(&segments));
-    let upper_jpa =
-        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_upper_paths(&segments));
-    let scalar_jpa =
-        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_scalar_paths(&segments));
+    let lower_jpa = crate::sql_builder::paths_to_jsonpath_array(
+        &crate::sql_builder::date_lower_paths(&segments),
+    );
+    let upper_jpa = crate::sql_builder::paths_to_jsonpath_array(
+        &crate::sql_builder::date_upper_paths(&segments),
+    );
+    let scalar_jpa = crate::sql_builder::paths_to_jsonpath_array(
+        &crate::sql_builder::date_scalar_paths(&segments),
+    );
     let period_jpa = crate::sql_builder::paths_to_jsonpath_array(
         &crate::sql_builder::date_period_object_paths(&segments),
     );
@@ -397,7 +400,9 @@ pub(crate) fn single_occurrence_guard(col: &str, segments: &[String]) -> String 
     }
     for p in date_period_object_paths(segments) {
         let acc = build_jsonb_accessor(col, &p, false);
-        arms.push(format!("(jsonb_typeof({acc}) = 'object' AND NOT ({acc} ? 'event'))"));
+        arms.push(format!(
+            "(jsonb_typeof({acc}) = 'object' AND NOT ({acc} ? 'event'))"
+        ));
     }
     if arms.is_empty() {
         return "false".to_string();

@@ -51,18 +51,22 @@ export const EmptyState = forwardRef<HTMLDivElement, EmptyStateProps>(function E
             {actions != null && (
                 <div className={styles.actions}>
                     {Array.isArray(actions)
-                        ? actions.map((action, i) => (
-                              <Button
-                                  key={typeof action.text === "string" ? action.text : i}
-                                  variant={action.variant ?? "filled"}
-                                  color={action.color}
-                                  onClick={action.onClick}
-                                  disabled={action.disabled}
-                                  leftSection={action.icon}
-                              >
-                                  {action.text}
-                              </Button>
-                          ))
+                        ? actions.map((action, i) =>
+                              isValidElement(action) ? (
+                                  action
+                              ) : (
+                                  <Button
+                                      key={typeof action.text === "string" ? action.text : i}
+                                      variant={action.variant ?? "filled"}
+                                      color={action.color}
+                                      onClick={action.onClick}
+                                      disabled={action.disabled}
+                                      leftSection={action.icon}
+                                  >
+                                      {action.text}
+                                  </Button>
+                              ),
+                          )
                         : actions}
                 </div>
             )}

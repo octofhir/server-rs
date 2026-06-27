@@ -37,13 +37,11 @@ impl SearchDebugPlan {
 
 /// Symbolic form of the cheap min/max hull the GiST date functional index is
 /// built on (the indexable prefilter).
-const DATE_HULL_EXPR: &str =
-    "tstzrange(fhir_extract_date_min(resource, paths), fhir_extract_date_max(resource, paths), '[]')";
+const DATE_HULL_EXPR: &str = "tstzrange(fhir_extract_date_min(resource, paths), fhir_extract_date_max(resource, paths), '[]')";
 
 /// Symbolic form of the exact per-occurrence date multirange used to recheck the
 /// hull prefilter (never indexed).
-const DATE_RANGE_EXPR: &str =
-    "fhir_extract_date_multirange(resource, scalar_paths, period_paths)";
+const DATE_RANGE_EXPR: &str = "fhir_extract_date_multirange(resource, scalar_paths, period_paths)";
 
 /// Symbolic form of the normalized text-blob expression the in-place string
 /// predicates (and the matching trigram GIN functional index) are built on.
@@ -207,7 +205,9 @@ fn date_sql_shape(predicate: &DatePredicate) -> String {
             )
         }
         DatePredicate::NotContains { .. } => {
-            format!("NOT EXISTS (SELECT 1 FROM unnest({DATE_RANGE_EXPR}) g WHERE g <@ tstzrange($lo, $hi, '[)'))")
+            format!(
+                "NOT EXISTS (SELECT 1 FROM unnest({DATE_RANGE_EXPR}) g WHERE g <@ tstzrange($lo, $hi, '[)'))"
+            )
         }
         DatePredicate::Overlap { lo, hi } => {
             let lo_expr = debug_bound_expr(*lo, "$lo", "NULL");
@@ -245,12 +245,7 @@ fn date_sql_shape(predicate: &DatePredicate) -> String {
 }
 
 fn debug_string_clause(clause: &StringClause) -> DebugPredicate {
-    let trgm_index = || {
-        Some(string_index_name(
-            &clause.resource_type,
-            &clause.param_code,
-        ))
-    };
+    let trgm_index = || Some(string_index_name(&clause.resource_type, &clause.param_code));
     let (strategy, expected_index, sql_shape) = match &clause.predicate {
         StringPredicate::Prefix { .. } => (
             IndexStrategy::JsonbExpressionIndex,
@@ -313,8 +308,7 @@ fn number_sql_shape(predicate: &NumberPredicate) -> String {
     match predicate {
         NumberPredicate::Comparison { prefix, .. } => match prefix {
             SearchPrefix::Eq | SearchPrefix::Ap => {
-                "(resource->>path)::numeric >= $lo AND (resource->>path)::numeric < $hi"
-                    .to_string()
+                "(resource->>path)::numeric >= $lo AND (resource->>path)::numeric < $hi".to_string()
             }
             SearchPrefix::Ne => {
                 "NOT ((resource->>path)::numeric >= $lo AND (resource->>path)::numeric < $hi)"
@@ -517,9 +511,7 @@ fn debug_reference_clause(resource_type: &str, clause: &ReferenceClause) -> Debu
                         .to_string(),
                 )
             } else if *require_no_system {
-                traversal(
-                    "EXISTS identifier WHERE ident.system IS NULL AND ident.value = $value",
-                )
+                traversal("EXISTS identifier WHERE ident.system IS NULL AND ident.value = $value")
             } else {
                 (
                     IndexStrategy::JsonbContainment,

@@ -308,7 +308,8 @@ mod tests {
             }],
         };
 
-        build_gin_quantity_search(&mut builder, &param, &[vec!["valueQuantity".to_string()]]).unwrap();
+        build_gin_quantity_search(&mut builder, &param, &[vec!["valueQuantity".to_string()]])
+            .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
         // Union min/max btree prefilter on the value, plus an `@?` recheck carrying

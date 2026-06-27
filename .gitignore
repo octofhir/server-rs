@@ -39,6 +39,15 @@ config/local.toml
 # Documentation build
 /docs/build/
 
+# UI-kit research / planning docs — never commit (local scratch only)
+/docs/ui-audit.md
+/docs/ui-kit-migration-plan.md
+/docs/ui-kit-research.md
+/docs/ui-refactor-plan.md
+/docs/ui-kit-competitive-roadmap.md
+/docs/ui-*.md
+/docs/ui-kit-*.md
+
 .fhir
 *.pem
 k6-private

@@ -6,12 +6,13 @@
 //! built via `dispatch_search` against the chained alias' resource JSONB, so
 //! all per-type in-place predicate logic is reused.
 
+use crate::ir::sql::{SelectStmt, SqlExpr, SqlFrom, SqlTerm};
 use crate::parameters::{SearchModifier, SearchParameter, SearchParameterType};
 use crate::parser::{ParsedParam, SearchParameterParser};
 use crate::registry::SearchParameterRegistry;
-use crate::ir::sql::{SelectStmt, SqlExpr, SqlFrom, SqlTerm};
 use crate::sql_builder::{
-    SqlBuilder, SqlBuilderError, SqlParam, fhirpath_to_jsonb_path, jsonb_reference_match_exists_expr,
+    SqlBuilder, SqlBuilderError, SqlParam, fhirpath_to_jsonb_path,
+    jsonb_reference_match_exists_expr,
 };
 use std::sync::Arc;
 
@@ -355,7 +356,11 @@ fn render_has_level(
     let src_alias = format!("has{depth}");
 
     let segments = fhirpath_to_jsonb_path(
-        clause.source_ref_def.expression.as_deref().unwrap_or_default(),
+        clause
+            .source_ref_def
+            .expression
+            .as_deref()
+            .unwrap_or_default(),
         &clause.source_type,
     );
     let ref_predicate = format!(
@@ -623,8 +628,7 @@ mod tests {
     #[test]
     fn has_renders_inplace_no_sidecar() {
         let reg = registry();
-        let clause =
-            HasClause::parse("_has:Observation:patient:code", "1234", &reg).unwrap();
+        let clause = HasClause::parse("_has:Observation:patient:code", "1234", &reg).unwrap();
         let mut builder = SqlBuilder::with_resource_column("r.resource");
         render_has_clause(&mut builder, &clause, "Patient", &reg).unwrap();
         let sql = builder.build_where_clause().unwrap();

@@ -26,9 +26,9 @@
 //! }
 //! ```
 
-use sqlx_core::sql_str::AssertSqlSafe;
 use serde::{Deserialize, Serialize};
 use sqlx_core::query_as::query_as;
+use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

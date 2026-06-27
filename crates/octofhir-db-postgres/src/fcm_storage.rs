@@ -1949,7 +1949,10 @@ impl SearchStorage for PostgresPackageStore {
 
         let sql = format!("{} WHERE url IS NOT NULL", Self::RESOURCE_SELECT);
 
-        let rows = match query(AssertSqlSafe((&sql).to_string())).fetch_all(&self.pool).await {
+        let rows = match query(AssertSqlSafe((&sql).to_string()))
+            .fetch_all(&self.pool)
+            .await
+        {
             Ok(rows) => rows,
             Err(e) => {
                 warn!("Failed to get cache entries: {}", e);

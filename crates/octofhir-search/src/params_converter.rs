@@ -473,12 +473,15 @@ fn try_fold_repeated_date_window(
     let segments = fhirpath_to_jsonb_path(expression, resource_type);
     // Precompiled jsonpath[] literals (compiled once, not per row) — built via the
     // same helper as the index DDL so the functional GiST index still matches.
-    let lower_jpa =
-        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_lower_paths(&segments));
-    let upper_jpa =
-        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_upper_paths(&segments));
-    let scalar_jpa =
-        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_scalar_paths(&segments));
+    let lower_jpa = crate::sql_builder::paths_to_jsonpath_array(
+        &crate::sql_builder::date_lower_paths(&segments),
+    );
+    let upper_jpa = crate::sql_builder::paths_to_jsonpath_array(
+        &crate::sql_builder::date_upper_paths(&segments),
+    );
+    let scalar_jpa = crate::sql_builder::paths_to_jsonpath_array(
+        &crate::sql_builder::date_scalar_paths(&segments),
+    );
     let period_jpa = crate::sql_builder::paths_to_jsonpath_array(
         &crate::sql_builder::date_period_object_paths(&segments),
     );
@@ -1330,11 +1333,7 @@ mod tests {
     fn representative_native_ir_queries_keep_expected_sql_shape() {
         let registry = representative_registry();
         let cases = [
-            (
-                "Patient",
-                "_id=pat-1&_count=10",
-                ["r.id = $1", "LIMIT 11"],
-            ),
+            ("Patient", "_id=pat-1&_count=10", ["r.id = $1", "LIMIT 11"]),
             (
                 "Patient",
                 "_lastUpdated=ge2024-01-01&_lastUpdated=le2024-12-31&_count=10",
@@ -1383,7 +1382,10 @@ mod tests {
             (
                 "Observation",
                 "value-quantity=ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
-                ["fhir_qty_extract_max_numeric(r.resource, ARRAY['$.\"valueQuantity\".\"value\"'::jsonpath]", ">= 100"],
+                [
+                    "fhir_qty_extract_max_numeric(r.resource, ARRAY['$.\"valueQuantity\".\"value\"'::jsonpath]",
+                    ">= 100",
+                ],
             ),
         ];
 
@@ -1423,7 +1425,12 @@ mod tests {
             "public",
         )
         .unwrap();
-        let composite_sql = composite.builder.with_raw_resource(true).build().unwrap().sql;
+        let composite_sql = composite
+            .builder
+            .with_raw_resource(true)
+            .build()
+            .unwrap()
+            .sql;
         // This fixture's code-value-quantity resolves to the top-level code +
         // valueQuantity sub-params (SafeIndependent), rendered as a decomposed
         // numeric + containment predicate.
@@ -1783,10 +1790,7 @@ mod tests {
             built.sql
         );
         assert_eq!(
-            built
-                .sql
-                .matches("<@ tstzrange(")
-                .count(),
+            built.sql.matches("<@ tstzrange(").count(),
             2,
             "two comma values should produce two OR'd in-place range predicates: {}",
             built.sql
@@ -1811,7 +1815,8 @@ mod tests {
         // `&& tstzrange($lo, NULL, ..)`. Both in-place range predicates must be
         // present, OR'd together — and ge no longer emits a `<@` contained-by branch.
         assert!(
-            built.sql.contains("&& tstzrange(NULL,") && built.sql.matches("&& tstzrange(").count() >= 2,
+            built.sql.contains("&& tstzrange(NULL,")
+                && built.sql.matches("&& tstzrange(").count() >= 2,
             "two prefixed comma values should produce two OR'd in-place range predicates: {}",
             built.sql
         );
@@ -1888,10 +1893,7 @@ mod tests {
             built.sql
         );
         assert_eq!(
-            built
-                .sql
-                .matches("<@ tstzrange(")
-                .count(),
+            built.sql.matches("<@ tstzrange(").count(),
             2,
             "each eq value rechecks containment of some occurrence range: {}",
             built.sql
@@ -1999,7 +2001,11 @@ mod tests {
     fn string_query_builder_uses_inplace_normalization_and_exact_raw_value() {
         let registry = string_registry_with_expression();
         let cases = [
-            ("family=Müller", "fhir_text_blob(fhir_extract_text", "muller%"),
+            (
+                "family=Müller",
+                "fhir_text_blob(fhir_extract_text",
+                "muller%",
+            ),
             (
                 "family=Van+Pelt",
                 "fhir_text_blob(fhir_extract_text",
@@ -2767,7 +2773,10 @@ mod tests {
             "Patient",
         )
         .unwrap();
-        assert!(!folded, "_lastUpdated must never fold to the JSONB date window");
+        assert!(
+            !folded,
+            "_lastUpdated must never fold to the JSONB date window"
+        );
     }
 
     #[test]

@@ -27,6 +27,8 @@ pub use parameters::{
 pub use parser::{ParsedParameters, SearchParameterParser};
 pub use registry::SearchParameterRegistry;
 pub use sql_builder::{
+    // Typed per-param extraction function codegen
+    AnnotatedPath,
     // Fluent query builder
     BuiltQuery,
     ChainJoin,
@@ -46,18 +48,12 @@ pub use sql_builder::{
     SqlParam,
     SqlValue,
     build_jsonb_accessor,
+    build_typed_extract_fn,
     escape_identifier,
     fhirpath_to_jsonb_path,
-    // Typed per-param extraction function codegen
-    AnnotatedPath,
-    build_typed_extract_fn,
     typed_extract_fn_name,
 };
 // Chaining / reverse-chaining now live in the IR (`ir::chain`).
-pub use ir::chain::{
-    ChainClause, ChainError, ChainLink, HasClause, HasTail, is_chained_parameter,
-    is_reverse_chain_parameter, render_chain_clause, render_has_clause,
-};
 pub use config_watcher::{
     ConfigCallback, ConfigWatcher, ReloadableTerminologyProvider, WatcherConfig, WatcherError,
     WatcherHandle, watch_and_reload,
@@ -65,6 +61,10 @@ pub use config_watcher::{
 pub use include::{
     IncludeError, IncludeParam, extract_includes, extract_revincludes, is_include_parameter,
     is_revinclude_parameter, parse_include, parse_revinclude,
+};
+pub use ir::chain::{
+    ChainClause, ChainError, ChainLink, HasClause, HasTail, is_chained_parameter,
+    is_reverse_chain_parameter, render_chain_clause, render_has_clause,
 };
 pub use query_cache::{
     CacheError, CacheStatsSnapshot, ParamPosition, ParamValueType, PreparedQuery, QueryCache,

@@ -1,0 +1,26 @@
+.option {
+    display: flex;
+    align-items: baseline;
+    gap: var(--octo-spacing-xs, 8px);
+    min-width: 0;
+}
+.optionTitle {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--octo-text-primary, #1a1b1e);
+}
+.optionCode {
+    flex: none;
+    font-family: var(--octo-font-mono, ui-monospace, monospace);
+    font-size: var(--octo-typography-size-xs, 0.75rem);
+    color: var(--octo-text-muted, #868e96);
+}
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--octo-spacing-sm, 8px);
+    width: 100%;
+}

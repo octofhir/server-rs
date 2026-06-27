@@ -5,6 +5,8 @@ export * from "./Badge";
 export * from "./SegmentedRadioGroup";
 export * from "./ActionIcon";
 export * from "./Select";
+export * from "./Combobox";
+export * from "./Autocomplete";
 export * from "./Checkbox";
 export * from "./Switch";
 export * from "./NumberInput";
@@ -26,6 +28,7 @@ export * from "./ResizablePanels";
 // === Data display ===
 export * from "./Card";
 export * from "./Table";
+export * from "./DataTable";
 export * from "./Tabs";
 export * from "./Accordion";
 export * from "./Text";

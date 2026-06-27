@@ -24,6 +24,33 @@ export class HttpError extends Error {
 type FhirSearchParams = Record<string, string | number | boolean | undefined>;
 type FhirCreateResource<T extends FhirResource> = Partial<T> & Pick<T, "resourceType">;
 
+/**
+ * Some backend collections (auth admin entities like User/Client/Role) return
+ * search entries without a `resourceType` field. Downstream FHIR guards drop
+ * those records, so back-fill the searched type onto any entry that is missing
+ * it. Real FHIR resources already carry `resourceType` and stay untouched.
+ */
+function backfillBundleResourceType<T extends FhirResource>(
+  bundle: Bundle<T>,
+  resourceType: string
+): Bundle<T> {
+  for (const entry of bundle.entry ?? []) {
+    const resource = entry.resource as Record<string, unknown> | undefined;
+    if (resource && typeof resource === "object" && !resource.resourceType) {
+      resource.resourceType = resourceType;
+    }
+  }
+  return bundle;
+}
+
+/** Single-resource counterpart of {@link backfillBundleResourceType} (for read responses). */
+function backfillResourceType(data: unknown, resourceType: string): unknown {
+  if (data && typeof data === "object" && !(data as Record<string, unknown>).resourceType) {
+    (data as Record<string, unknown>).resourceType = resourceType;
+  }
+  return data;
+}
+
 export class FhirClient {
   private baseUrl: string;
   private defaultTimeout: number;
@@ -134,7 +161,8 @@ export class FhirClient {
       method: "GET",
       url: `/${resourceType}/${id}`,
     });
-    return assertFhirResource(response.data, `read ${resourceType}/${id}`) as T;
+    const data = backfillResourceType(response.data, resourceType);
+    return assertFhirResource(data, `read ${resourceType}/${id}`) as T;
   }
 
   async search<T extends FhirResource = FhirResource>(
@@ -156,7 +184,8 @@ export class FhirClient {
       url,
     });
 
-    return assertFhirBundle(response.data, `search ${resourceType}`) as Bundle<T>;
+    const bundle = assertFhirBundle(response.data, `search ${resourceType}`) as Bundle<T>;
+    return backfillBundleResourceType(bundle, resourceType);
   }
 
   async create<T extends FhirResource = FhirResource>(resource: FhirCreateResource<T>): Promise<T> {
@@ -296,7 +325,8 @@ class OctoFhirClient extends FhirClient {
       method: "GET",
       url: `${baseUrl}/${resourceType}/${id}`,
     });
-    return assertFhirResource(response.data, `read ${resourceType}/${id}`) as T;
+    const data = backfillResourceType(response.data, resourceType);
+    return assertFhirResource(data, `read ${resourceType}/${id}`) as T;
   }
 
   async search<T extends FhirResource = FhirResource>(
@@ -318,7 +348,8 @@ class OctoFhirClient extends FhirClient {
       url,
     });
 
-    return assertFhirBundle(response.data, `search ${resourceType}`) as Bundle<T>;
+    const bundle = assertFhirBundle(response.data, `search ${resourceType}`) as Bundle<T>;
+    return backfillBundleResourceType(bundle, resourceType);
   }
 
   async create<T extends FhirResource = FhirResource>(resource: FhirCreateResource<T>): Promise<T> {

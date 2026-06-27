@@ -2,12 +2,12 @@
 //!
 //! This module contains the SQL queries for basic resource operations.
 
-use sqlx_core::sql_str::AssertSqlSafe;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx_core::query::query;
 use sqlx_core::query_as::query_as;
 use sqlx_core::query_scalar::query_scalar;
+use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::{PgPool, PgTransaction};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -26,11 +26,10 @@ fn chrono_to_time(dt: DateTime<Utc>) -> OffsetDateTime {
 ///
 /// Transaction IDs (txid) are used as version IDs for FHIR resources.
 pub async fn create_transaction(pool: &PgPool) -> Result<i64, StorageError> {
-    let txid: i64 =
-        query_scalar("SELECT nextval('_transaction_txid_seq') AS txid")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| StorageError::internal(format!("Failed to create transaction: {e}")))?;
+    let txid: i64 = query_scalar("SELECT nextval('_transaction_txid_seq') AS txid")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to create transaction: {e}")))?;
 
     Ok(txid)
 }
@@ -93,20 +92,21 @@ pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, S
            RETURNING id, txid, created_at, updated_at, resource"#
     );
 
-    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(&id)
-        .bind(now)
-        .bind(resource)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            // Check for unique constraint violation
-            if e.to_string().contains("duplicate key") {
-                StorageError::already_exists(resource_type, &id)
-            } else {
-                StorageError::internal(format!("Failed to create resource: {e}"))
-            }
-        })?;
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(&id)
+            .bind(now)
+            .bind(resource)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| {
+                // Check for unique constraint violation
+                if e.to_string().contains("duplicate key") {
+                    StorageError::already_exists(resource_type, &id)
+                } else {
+                    StorageError::internal(format!("Failed to create resource: {e}"))
+                }
+            })?;
 
     // Use the resource returned from DB (with meta already set)
     let resource = row.4;
@@ -170,19 +170,20 @@ pub async fn create_raw(
            RETURNING id, txid, created_at, updated_at, resource::text"#
     );
 
-    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, String) = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(&id)
-        .bind(now)
-        .bind(resource)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("duplicate key") {
-                StorageError::already_exists(resource_type, &id)
-            } else {
-                StorageError::internal(format!("Failed to create resource: {e}"))
-            }
-        })?;
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, String) =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(&id)
+            .bind(now)
+            .bind(resource)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("duplicate key") {
+                    StorageError::already_exists(resource_type, &id)
+                } else {
+                    StorageError::internal(format!("Failed to create resource: {e}"))
+                }
+            })?;
 
     let created_at_time = chrono_to_time(row.2);
     let updated_at_time = chrono_to_time(row.3);
@@ -201,16 +202,19 @@ pub async fn create_raw(
 pub async fn exists(pool: &PgPool, resource_type: &str, id: &str) -> Result<bool, StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    let sql = format!(
-        r#"SELECT EXISTS(SELECT 1 FROM "{table}" WHERE id = $1 AND status != 'deleted')"#
-    );
+    let sql =
+        format!(r#"SELECT EXISTS(SELECT 1 FROM "{table}" WHERE id = $1 AND status != 'deleted')"#);
 
-    let exists: (bool,) = query_as(AssertSqlSafe((&sql).to_string())).bind(id).fetch_one(pool).await.map_err(|e| {
-        if e.to_string().contains("does not exist") {
-            return StorageError::internal(format!("Table does not exist: {e}"));
-        }
-        StorageError::internal(format!("Failed to check resource existence: {e}"))
-    })?;
+    let exists: (bool,) = query_as(AssertSqlSafe((&sql).to_string()))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!("Table does not exist: {e}"));
+            }
+            StorageError::internal(format!("Failed to check resource existence: {e}"))
+        })?;
 
     Ok(exists.0)
 }
@@ -233,17 +237,18 @@ pub async fn read(
            WHERE id = $1"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            // Table might not exist - return None instead of error
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("Table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to read resource: {e}"))
-        })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                // Table might not exist - return None instead of error
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("Table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read resource: {e}"))
+            })?;
 
     match row {
         Some((row_id, txid, created_at, updated_at, mut resource, status)) => {
@@ -308,16 +313,17 @@ pub async fn read_raw(
            WHERE id = $1"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String, String)> = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("Table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to read resource: {e}"))
-        })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String, String)> =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("Table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read resource: {e}"))
+            })?;
 
     match row {
         Some((row_id, txid, created_at, updated_at, resource_json, status)) => {
@@ -637,13 +643,17 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
 
     let sql = format!(r#"DELETE FROM "{table}" WHERE id = $1"#);
 
-    let _result = query(AssertSqlSafe((&sql).to_string())).bind(id).execute(pool).await.map_err(|e| {
-        // Table might not exist, but that's OK for idempotent delete
-        if e.to_string().contains("does not exist") {
-            return StorageError::internal(format!("Table does not exist: {e}"));
-        }
-        StorageError::internal(format!("Failed to delete resource: {e}"))
-    })?;
+    let _result = query(AssertSqlSafe((&sql).to_string()))
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            // Table might not exist, but that's OK for idempotent delete
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!("Table does not exist: {e}"));
+            }
+            StorageError::internal(format!("Failed to delete resource: {e}"))
+        })?;
 
     // Per FHIR spec: delete is idempotent, so success regardless of whether
     // any rows were affected (resource didn't exist or was already deleted)
@@ -674,17 +684,18 @@ pub async fn vread(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(AssertSqlSafe((&current_sql).to_string()))
-        .bind(id)
-        .bind(version_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("Table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to read version: {e}"))
-        })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> =
+        query_as(AssertSqlSafe((&current_sql).to_string()))
+            .bind(id)
+            .bind(version_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("Table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read version: {e}"))
+            })?;
 
     if let Some((row_id, txid, created_at, updated_at, resource)) = row {
         let created_at_time = chrono_to_time(created_at);
@@ -706,17 +717,18 @@ pub async fn vread(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(AssertSqlSafe((&history_sql).to_string()))
-        .bind(id)
-        .bind(version_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("History table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to read version from history: {e}"))
-        })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> =
+        query_as(AssertSqlSafe((&history_sql).to_string()))
+            .bind(id)
+            .bind(version_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("History table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read version from history: {e}"))
+            })?;
 
     match row {
         Some((row_id, txid, created_at, updated_at, resource)) => {
@@ -759,17 +771,18 @@ pub async fn vread_raw(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> = query_as(AssertSqlSafe((&current_sql).to_string()))
-        .bind(id)
-        .bind(version_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("Table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to read version: {e}"))
-        })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
+        query_as(AssertSqlSafe((&current_sql).to_string()))
+            .bind(id)
+            .bind(version_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("Table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read version: {e}"))
+            })?;
 
     if let Some((row_id, txid, created_at, updated_at, resource_json)) = row {
         let created_at_time = chrono_to_time(created_at);
@@ -791,17 +804,18 @@ pub async fn vread_raw(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> = query_as(AssertSqlSafe((&history_sql).to_string()))
-        .bind(id)
-        .bind(version_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("History table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to read version from history: {e}"))
-        })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
+        query_as(AssertSqlSafe((&history_sql).to_string()))
+            .bind(id)
+            .bind(version_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("History table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read version from history: {e}"))
+            })?;
 
     match row {
         Some((row_id, txid, created_at, updated_at, resource_json)) => {
@@ -896,19 +910,20 @@ pub async fn create_with_tx(
         )
     };
 
-    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(&id)
-        .bind(now)
-        .bind(resource)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("duplicate key") {
-                StorageError::already_exists(resource_type, &id)
-            } else {
-                StorageError::internal(format!("Failed to create resource: {e}"))
-            }
-        })?;
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(&id)
+            .bind(now)
+            .bind(resource)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("duplicate key") {
+                    StorageError::already_exists(resource_type, &id)
+                } else {
+                    StorageError::internal(format!("Failed to create resource: {e}"))
+                }
+            })?;
 
     let resource = row.4;
     let created_at_time = chrono_to_time(row.2);
@@ -1238,12 +1253,16 @@ pub async fn delete_with_tx(
     let _ = txid;
     let sql = format!(r#"DELETE FROM "{table}" WHERE id = $1"#);
 
-    let _result = query(AssertSqlSafe((&sql).to_string())).bind(id).execute(&mut **tx).await.map_err(|e| {
-        if e.to_string().contains("does not exist") {
-            return StorageError::internal(format!("Table does not exist: {e}"));
-        }
-        StorageError::internal(format!("Failed to delete resource: {e}"))
-    })?;
+    let _result = query(AssertSqlSafe((&sql).to_string()))
+        .bind(id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!("Table does not exist: {e}"));
+            }
+            StorageError::internal(format!("Failed to delete resource: {e}"))
+        })?;
 
     // Per FHIR spec: delete is idempotent
     Ok(())
@@ -1266,16 +1285,17 @@ pub async fn read_with_tx(
            WHERE id = $1"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(id)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("Table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to read resource: {e}"))
-        })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("Table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read resource: {e}"))
+            })?;
 
     match row {
         Some((row_id, txid, created_at, updated_at, resource, status)) => {

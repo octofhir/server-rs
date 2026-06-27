@@ -160,7 +160,6 @@ impl PostgresStorage {
         })
     }
 
-
     /// Retrieves history across all resource types (system-level history).
     ///
     /// This is a PostgreSQL-specific extension that queries history

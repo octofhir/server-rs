@@ -18,8 +18,8 @@ use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::{
     ir::StringClause, ir::render_indexed_string_clauses_as_or,
-    ir::render_string_array_clauses_as_or,
-    ir::render_string_human_name_clauses_as_or, ir::render_string_path_clauses_as_or,
+    ir::render_string_array_clauses_as_or, ir::render_string_human_name_clauses_as_or,
+    ir::render_string_path_clauses_as_or,
 };
 
 /// In-place string search on the resource JSONB (no sidecar): predicates run over
@@ -53,7 +53,8 @@ pub fn build_indexed_string_inplace(
     };
 
     let clauses = StringClause::from_parsed_param(param, resource_type)?;
-    if let Some(sql) = render_indexed_string_clauses_as_or(builder, &clauses, &blob_expr, &arr_expr) {
+    if let Some(sql) = render_indexed_string_clauses_as_or(builder, &clauses, &blob_expr, &arr_expr)
+    {
         builder.add_condition(sql);
     }
     Ok(())
@@ -286,7 +287,10 @@ mod tests {
         build_indexed_string_inplace(&mut builder, &param, "Patient", &def).unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("fhir_extract_text(resource,"), "clause: {clause}");
+        assert!(
+            clause.contains("fhir_extract_text(resource,"),
+            "clause: {clause}"
+        );
         assert!(!clause.contains("fhir_s_patient_name"), "clause: {clause}");
     }
 }

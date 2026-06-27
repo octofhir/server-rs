@@ -319,7 +319,8 @@ mod tests {
         assert!(clause.contains("resource->'class' @>"), "got: {clause}");
         let json: Vec<String> = builder.params().iter().map(|p| p.as_str()).collect();
         assert!(
-            json.iter().any(|p| p.contains("\"system\":\"http://terminology.hl7.org/CodeSystem/v3-ActCode\"")
+            json.iter().any(|p| p
+                .contains("\"system\":\"http://terminology.hl7.org/CodeSystem/v3-ActCode\"")
                 && p.contains("\"code\":\"AMB\"")),
             "no system+code containment in params: {json:?}"
         );

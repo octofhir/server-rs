@@ -1,4 +1,3 @@
-import { ChevronLeft, ChevronRight, CircleAlert as CircleExclamation, Code, FileText, Search as Magnifier, X as Xmark } from "lucide-react";
 import {
   ActionIcon,
   Alert,
@@ -17,7 +16,16 @@ import {
   Text,
   TextInput,
 } from "@octofhir/ui-kit";
-import { useEffect, useMemo, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert as CircleExclamation,
+  Code,
+  FileText,
+  Search as Magnifier,
+  X as Xmark,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   type FhirCatalogCategoryFilter,
@@ -71,6 +79,7 @@ export function ResourceBrowserPage() {
   const selectedId = routeId ?? null;
   const [typeFilter, setTypeFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<FhirCatalogCategoryFilter>("all");
+  const searchRef = useRef<HTMLInputElement>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedResource, setEditedResource] = useState("");
   const [currentBundle, setCurrentBundle] = useState<FhirBundle | null>(null);
@@ -129,6 +138,21 @@ export function ResourceBrowserPage() {
       setIsEditMode(false);
     }
   }, [selectedResource]);
+
+  // Global "/" shortcut focuses the type search (only on the catalog level)
+  useEffect(() => {
+    if (selectedType) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedType]);
 
   // Memoize category filter data to avoid infinite re-renders
   const categoryFilterData = useMemo(
@@ -267,42 +291,63 @@ export function ResourceBrowserPage() {
     );
   }
 
-  // Resource Types Table
+  // Resource Types Catalog — flat tile grid
   const renderResourceTypesTable = () => (
-    <div className={classes.tablePanel}>
-      <div className={classes.panelHeader}>
-        <div className={classes.toolbar}>
-          <div className={classes.filtersRow}>
-            <SegmentedControl
-              size="sm"
-              value={categoryFilter}
-              onUpdate={(val) => {
-                if (isCatalogCategoryFilter(val)) {
-                  setCategoryFilter(val);
-                }
-              }}
-              options={categoryFilterData.map((option) => ({
-                value: option.value,
-                content: option.label,
-              }))}
-            />
-            <TextInput
-              placeholder="Search resources..."
-              aria-label="Search resource types"
-              size="sm"
-              leftSection={<Magnifier width={14} height={14} aria-hidden="true" />}
-              value={typeFilter}
-              onChange={(value) => setTypeFilter(value)}
-              className={classes.searchInput}
-            />
-          </div>
-          <Badge color="primary">{filteredTypes.length} Types</Badge>
-        </div>
+    <div className={classes.catalogPanel}>
+      <div className={classes.catalogToolbar}>
+        <SegmentedControl
+          size="sm"
+          value={categoryFilter}
+          onUpdate={(val) => {
+            if (isCatalogCategoryFilter(val)) {
+              setCategoryFilter(val);
+            }
+          }}
+          options={categoryFilterData.map((option) => ({
+            value: option.value,
+            content: option.label,
+          }))}
+        />
+        <TextInput
+          ref={searchRef}
+          placeholder="Search resource types…"
+          aria-label="Search resource types"
+          size="sm"
+          leftSection={<Magnifier width={14} height={14} aria-hidden="true" />}
+          rightSection={
+            typeFilter ? (
+              <ActionIcon
+                variant="subtle"
+                size="xs"
+                aria-label="Clear search"
+                onClick={() => setTypeFilter("")}
+              >
+                <Xmark width={12} height={12} aria-hidden="true" />
+              </ActionIcon>
+            ) : (
+              <kbd className={classes.kbdHint}>/</kbd>
+            )
+          }
+          value={typeFilter}
+          onChange={(value) => setTypeFilter(value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && typeFilter) {
+              event.preventDefault();
+              setTypeFilter("");
+            }
+          }}
+          className={classes.searchInput}
+        />
+        <span className={classes.resultCount}>
+          {filteredTypes.length} {filteredTypes.length === 1 ? "type" : "types"}
+        </span>
       </div>
 
       {resourceTypesLoading ? (
-        <div className={classes.listPadding}>
-          <ListSkeleton rows={8} />
+        <div className={classes.typeGrid} aria-hidden="true">
+          {Array.from({ length: 18 }, (_, index) => `tile-skeleton-${index}`).map((key) => (
+            <Skeleton key={key} className={classes.tileSkeleton} />
+          ))}
         </div>
       ) : resourceTypesError ? (
         <EmptyState
@@ -349,23 +394,23 @@ export function ResourceBrowserPage() {
         )
       ) : (
         <ScrollArea className={`${classes.scrollArea} custom-scrollbar`}>
-          <div className={classes.listPadding}>
-            <RecordList
-              items={filteredTypeViews.map((item) => ({
-                id: item.id,
-                title: item.name,
-                subtitle: item.packageName,
-                description: item.definitionUrl ?? "No canonical URL",
-                meta: [
-                  {
-                    id: "category",
-                    label: item.category,
-                    tone: item.categoryTone,
-                  },
-                ],
-              }))}
-              onSelect={(item) => handleTypeSelect(item.id)}
-            />
+          <div className={classes.typeGrid}>
+            {filteredTypeViews.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={classes.typeTile}
+                data-category={item.category}
+                title={item.definitionUrl ?? item.name}
+                onClick={() => handleTypeSelect(item.id)}
+              >
+                <span className={classes.typeTileTop}>
+                  <span className={classes.typeName}>{item.name}</span>
+                  <span className={classes.typeCategoryDot} aria-hidden="true" />
+                </span>
+                <span className={classes.typePackage}>{item.packageName}</span>
+              </button>
+            ))}
           </div>
         </ScrollArea>
       )}
@@ -377,12 +422,18 @@ export function ResourceBrowserPage() {
     <div className={classes.tablePanel} style={{ height: "100%" }}>
       <div className={classes.panelHeader}>
         <div className={classes.toolbar}>
+          <Text variant="body-2" color="secondary" className={classes.overline}>
+            <strong>{selectedType}s</strong>
+          </Text>
           <div className={classes.titleRow}>
+            {currentBundle && (
+              <Badge color="primary">{currentBundle.total ?? resources.length} Total</Badge>
+            )}
             {(hasNextPage || hasPrevPage) && (
               <div className={classes.paginationActions}>
                 <ActionIcon
-                  variant="outline"
-                  size="md"
+                  variant="subtle"
+                  size="sm"
                   aria-label="Previous page"
                   disabled={!hasPrevPage || followLinkMutation.isPending}
                   onClick={handlePrevPage}
@@ -390,8 +441,8 @@ export function ResourceBrowserPage() {
                   <ChevronLeft width={16} height={16} aria-hidden="true" />
                 </ActionIcon>
                 <ActionIcon
-                  variant="outline"
-                  size="md"
+                  variant="subtle"
+                  size="sm"
                   aria-label="Next page"
                   disabled={!hasNextPage || followLinkMutation.isPending}
                   onClick={handleNextPage}
@@ -400,13 +451,7 @@ export function ResourceBrowserPage() {
                 </ActionIcon>
               </div>
             )}
-            <Text variant="body-2" color="secondary" className={classes.overline}>
-              <strong>{selectedType}s</strong>
-            </Text>
           </div>
-          {currentBundle && (
-            <Badge color="primary">{currentBundle.total ?? resources.length} Total</Badge>
-          )}
         </div>
       </div>
 

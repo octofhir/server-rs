@@ -1,0 +1,22 @@
+.option {
+    display: flex;
+    align-items: center;
+    gap: var(--octo-spacing-xs, 8px);
+    min-width: 0;
+}
+.optionBody {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.optionTitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--octo-text-primary, #1a1b1e);
+}
+.optionSecondary,
+.optionRef {
+    font-size: var(--octo-typography-size-xs, 0.75rem);
+    color: var(--octo-text-muted, #868e96);
+}

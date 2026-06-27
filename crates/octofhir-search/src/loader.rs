@@ -8,8 +8,7 @@ use serde_json::Value;
 
 use crate::common::register_common_parameters;
 use crate::parameters::{
-    ElementTypeHint, SearchModifier, SearchParameter, SearchParameterComponent,
-    SearchParameterType,
+    ElementTypeHint, SearchModifier, SearchParameter, SearchParameterComponent, SearchParameterType,
 };
 use crate::registry::SearchParameterRegistry;
 

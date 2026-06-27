@@ -1,4 +1,3 @@
-use sqlx_core::sql_str::AssertSqlSafe;
 use octofhir_db_postgres::{PostgresStorage, SchemaManager, migrations};
 use octofhir_search::{
     BuiltQuery, ElementTypeHint, SearchParameter, SearchParameterRegistry, SearchParameterType,
@@ -8,6 +7,7 @@ use octofhir_search::{
 use octofhir_storage::FhirStorage;
 use serde_json::{Value, json};
 use sqlx_core::query_as::query_as;
+use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::{PgPool, PgPoolOptions};
 use std::collections::hash_map::DefaultHasher;
 use std::env;

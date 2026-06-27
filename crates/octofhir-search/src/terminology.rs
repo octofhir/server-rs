@@ -423,11 +423,7 @@ impl HybridTerminologyProvider {
         // otherwise return None so the caller falls back to the remote terminology
         // server instead of falsely rejecting a valid code (e.g. ISO-4217 currency
         // codes whose code system is not enumerable locally).
-        if complete {
-            Some(false)
-        } else {
-            None
-        }
+        if complete { Some(false) } else { None }
     }
 
     /// Try to validate code against local CodeSystem.
@@ -748,15 +744,18 @@ impl TerminologyProvider for HybridTerminologyProvider {
                         display: None,
                         message: Some(format!("Terminology server error: {e}")),
                     };
-                    self.vs_validation_negative_cache
-                        .insert(cache_key.clone(), (negative.clone(), std::time::Instant::now()));
+                    self.vs_validation_negative_cache.insert(
+                        cache_key.clone(),
+                        (negative.clone(), std::time::Instant::now()),
+                    );
                     self.vs_validation_inflight.remove(&cache_key);
                     return Ok(negative);
                 }
             }
         };
 
-        self.vs_validation_cache.insert(cache_key.clone(), result.clone());
+        self.vs_validation_cache
+            .insert(cache_key.clone(), result.clone());
         self.vs_validation_inflight.remove(&cache_key);
         Ok(result)
     }
