@@ -114,10 +114,10 @@
 }
 
 .handle {
-  width: 6px;
-  height: 6px;
-  background: var(--octo-border-subtle);
-  border: none;
+  width: 9px;
+  height: 9px;
+  background: var(--octo-accent-primary);
+  border: 2px solid var(--octo-surface-2);
 }
 
 .minimap {

@@ -3,6 +3,7 @@ import {
   Controls,
   type Edge,
   Handle,
+  MarkerType,
   MiniMap,
   type Node,
   type NodeProps,
@@ -46,8 +47,8 @@ type PlanNodeData = {
 };
 
 const NODE_W = 260;
-const X_GAP = 36;
-const Y_GAP = 168;
+const X_GAP = 48;
+const Y_GAP = 200;
 
 // Condition fields worth surfacing, in display order.
 const COND_KEYS: [string, string][] = [
@@ -173,14 +174,26 @@ function buildGraph(root: PgPlan): { nodes: Node[]; edges: Edge[] } {
 
     if (parentId) {
       const rowLabel =
-        actualRows != null ? String(actualRows) : planRows != null ? `~${planRows}` : "";
+        actualRows != null ? `${actualRows} rows` : planRows != null ? `~${planRows} rows` : "";
       edges.push({
         id: `${parentId}-${myId}`,
         source: parentId,
         target: myId,
+        type: "smoothstep",
         label: rowLabel,
+        labelShowBg: true,
+        labelBgPadding: [6, 2],
+        labelBgBorderRadius: 6,
+        labelBgStyle: { fill: "var(--octo-surface-3)" },
+        labelStyle: { fill: "var(--octo-text-secondary)", fontSize: 11, fontWeight: 600 },
         animated: (loops ?? 1) > 1,
-        style: { stroke: "var(--octo-border-subtle)" },
+        style: { stroke: "var(--octo-accent-primary)", strokeWidth: 2 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 18,
+          height: 18,
+          color: "var(--octo-accent-primary)",
+        },
       });
     }
     return x;
