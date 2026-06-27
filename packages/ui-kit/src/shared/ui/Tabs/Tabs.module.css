@@ -25,9 +25,12 @@
 }
 
 .tab:hover { color: var(--octo-text-primary, #1a1b1e); }
-.tab[data-selected] {
+.tab[data-selected],
+.tab[data-state="active"],
+.tab[aria-selected="true"] {
     color: var(--octo-accent-primary, #4263eb);
     border-bottom-color: var(--octo-accent-primary, #4263eb);
+    font-weight: var(--octo-typography-weight-semibold, 600);
 }
 .tab:focus-visible {
     outline: 2px solid var(--octo-focus-ring, #91a7ff);
