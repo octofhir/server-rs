@@ -1,0 +1,97 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-md);
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.envBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.envChip {
+  padding: 3px 10px;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-pill);
+  background: var(--octo-surface-2);
+  color: var(--octo-text-secondary);
+  font-size: var(--octo-typography-size-xs);
+  cursor: pointer;
+}
+
+.envChip[data-active="1"] {
+  border-color: var(--octo-accent-primary);
+  background: var(--octo-accent-primary-bg);
+  color: var(--octo-accent-primary);
+  font-weight: 600;
+}
+
+.newRow {
+  display: flex;
+  gap: var(--octo-spacing-xs);
+  align-items: center;
+}
+
+.newRow > :first-child {
+  flex: 1;
+}
+
+.editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+}
+
+.editorHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sectionLabel {
+  font-size: var(--octo-typography-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--octo-text-secondary);
+}
+
+.varList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.varRow {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.editorActions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--octo-spacing-xs);
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: var(--octo-spacing-xl);
+  text-align: center;
+}

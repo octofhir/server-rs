@@ -1,6 +1,14 @@
 import { Button, Collapse, Resizable, Text, useDisclosure, useHotkeys } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
-import { Bookmark, History as ClockArrowRotateLeft, Eye, Gauge, Inbox, Play } from "lucide-react";
+import {
+  Bookmark,
+  History as ClockArrowRotateLeft,
+  Eye,
+  Gauge,
+  Inbox,
+  Layers,
+  Play,
+} from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
@@ -9,12 +17,14 @@ import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector
 import { BuilderModeEditor } from "./components/BuilderModeEditor";
 import { CollectionsPanel } from "./components/CollectionsPanel";
 import { CommandPalette } from "./components/CommandPalette";
+import { EnvironmentPanel } from "./components/EnvironmentPanel";
 import { ExplainPanel } from "./components/ExplainPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { ModeControl } from "./components/ModeControl";
 import { RequestBar } from "./components/RequestBar";
 import { RequestOptionTabs } from "./components/RequestBuilderAccordion";
 import { ResponseViewer } from "./components/ResponseViewer";
+import { useEnvironments } from "./hooks/useEnvironments";
 import { useRestConsoleMeta } from "./hooks/useRestConsoleMeta";
 import { useSendConsoleRequest } from "./hooks/useSendConsoleRequest";
 import styles from "./RestConsolePage.module.css";
@@ -48,8 +58,11 @@ export function RestConsolePage() {
   });
 
   const sendMutation = useSendConsoleRequest();
+  // Keep the active-environment variable resolver in sync (even with panels closed).
+  const { active: activeEnv } = useEnvironments();
   const [historyOpened, historyHandlers] = useDisclosure(false);
   const [savedOpened, savedHandlers] = useDisclosure(false);
+  const [envOpened, envHandlers] = useDisclosure(false);
   const [explainOpened, explainHandlers] = useDisclosure(false);
   const [inspectorOpened, { toggle: toggleInspector }] = useDisclosure(false);
 
@@ -108,6 +121,12 @@ export function RestConsolePage() {
           <ModeControl />
         </div>
         <div className={styles.toolbarActions}>
+          <Button variant="subtle" size="md" onClick={envHandlers.open}>
+            <Button.Icon>
+              <Layers size={16} />
+            </Button.Icon>
+            {activeEnv ? activeEnv.name : "Env"}
+          </Button>
           <Button variant="subtle" size="md" onClick={savedHandlers.open}>
             <Button.Icon>
               <Bookmark size={16} />
@@ -234,6 +253,7 @@ export function RestConsolePage() {
       <CommandPalette />
       <HistoryPanel opened={historyOpened} onClose={historyHandlers.close} />
       <CollectionsPanel opened={savedOpened} onClose={savedHandlers.close} />
+      <EnvironmentPanel opened={envOpened} onClose={envHandlers.close} />
       <ExplainPanel opened={explainOpened} onClose={explainHandlers.close} path={rawPath} />
     </div>
   );
