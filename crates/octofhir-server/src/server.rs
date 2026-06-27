@@ -1854,6 +1854,10 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             "/api/__introspect/rest-console",
             get(crate::rest_console::introspect),
         )
+        .route(
+            "/api/console/explain",
+            post(crate::rest_console::explain_search),
+        )
         // Operations registry API
         .route("/api/operations", get(handlers::api_operations))
         .route(

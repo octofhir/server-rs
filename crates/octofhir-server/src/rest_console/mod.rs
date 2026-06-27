@@ -19,6 +19,9 @@ use crate::operations::definition::OperationDefinition;
 use crate::operations::registry::OperationRegistry;
 use crate::server::AppState;
 
+pub mod explain;
+pub use explain::explain_search;
+
 const BASE_PATH: &str = "/fhir";
 const SCHEMA_VERSION: u8 = 3;
 
