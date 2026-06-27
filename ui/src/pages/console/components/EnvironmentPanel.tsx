@@ -105,14 +105,17 @@ export function EnvironmentPanel({ opened, onClose }: Props) {
           <div className={styles.editor}>
             <div className={styles.editorHead}>
               <Text className={styles.sectionLabel}>{active.name} variables</Text>
-              <ActionIcon
-                size="sm"
+              <Button
+                size="xs"
                 variant="subtle"
-                aria-label="Delete environment"
+                color="fire"
                 onClick={() => removeEnvironment(active.id)}
               >
-                <Trash2 size={14} />
-              </ActionIcon>
+                <Button.Icon>
+                  <Trash2 size={13} />
+                </Button.Icon>
+                Delete env
+              </Button>
             </div>
 
             <div className={styles.varList}>
