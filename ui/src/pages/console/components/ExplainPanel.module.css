@@ -1,0 +1,122 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-md);
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--octo-spacing-sm);
+  min-width: 0;
+}
+
+.target {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-sm);
+  min-width: 0;
+}
+
+.toolbarActions {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-sm);
+  flex-shrink: 0;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--octo-spacing-xl);
+}
+
+.tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-top: var(--octo-spacing-sm);
+}
+
+.irList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+}
+
+.irRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--octo-spacing-sm);
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-2);
+}
+
+.irHead {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-xs);
+}
+
+.mono,
+.shape,
+.code {
+  font-family: var(--octo-typography-mono, ui-monospace, monospace);
+}
+
+.shape {
+  margin: 0;
+  font-size: var(--octo-typography-size-xs);
+  color: var(--octo-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sqlView,
+.planView {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+}
+
+.code {
+  margin: 0;
+  padding: var(--octo-spacing-md);
+  font-size: var(--octo-typography-size-xs);
+  line-height: 1.5;
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-3);
+  border: 1px solid var(--octo-border-subtle);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.planMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
