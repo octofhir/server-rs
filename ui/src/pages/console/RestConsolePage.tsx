@@ -1,6 +1,6 @@
-import { Button, Collapse, Text, useDisclosure, useHotkeys, Resizable } from "@octofhir/ui-kit";
-import { Eye, History as ClockArrowRotateLeft, Play } from "lucide-react";
+import { Button, Collapse, Resizable, Text, useDisclosure, useHotkeys } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
+import { History as ClockArrowRotateLeft, Eye, Inbox, Play } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
@@ -15,7 +15,7 @@ import { RequestOptionTabs } from "./components/RequestBuilderAccordion";
 import { ResponseViewer } from "./components/ResponseViewer";
 import { useRestConsoleMeta } from "./hooks/useRestConsoleMeta";
 import { useSendConsoleRequest } from "./hooks/useSendConsoleRequest";
-import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
+import styles from "./RestConsolePage.module.css";
 import {
   $body,
   $customHeaders,
@@ -24,13 +24,11 @@ import {
   $rawPath,
   setCommandPaletteOpen,
 } from "./state/consoleStore";
-import styles from "./RestConsolePage.module.css";
 
 export function RestConsolePage() {
   const { isPending, data, resourceTypes, allSuggestions, searchParamsByResource } =
     useRestConsoleMeta();
 
-  // Console state
   const {
     method,
     rawPath,
@@ -47,16 +45,10 @@ export function RestConsolePage() {
     setCommandPaletteOpen,
   });
 
-  // Send request mutation
   const sendMutation = useSendConsoleRequest();
-
-  // History drawer
   const [historyOpened, historyHandlers] = useDisclosure(false);
-
-  // Inspector
   const [inspectorOpened, { toggle: toggleInspector }] = useDisclosure(false);
 
-  // Metadata for inspector
   const inspectorMetadata: QueryInputMetadata = useMemo(
     () => ({
       resourceTypes,
@@ -67,7 +59,6 @@ export function RestConsolePage() {
     [resourceTypes, searchParamsByResource, allSuggestions, data]
   );
 
-  // Parse AST and diagnostics for inspector
   const inspectorAst = useMemo(() => parseQueryAst(rawPath || "/fhir/"), [rawPath]);
   const inspectorDiagnostics = useMemo(
     () => computeDiagnostics(inspectorAst, inspectorMetadata),
@@ -75,12 +66,7 @@ export function RestConsolePage() {
   );
 
   const handleSend = useCallback(() => {
-    sendMutation.mutate({
-      method,
-      path: rawPath,
-      body,
-      headers: customHeaders,
-    });
+    sendMutation.mutate({ method, path: rawPath, body, headers: customHeaders });
   }, [sendMutation, method, rawPath, body, customHeaders]);
 
   const handleOpenPalette = useCallback(
@@ -102,130 +88,148 @@ export function RestConsolePage() {
 
   useHotkeys(hotkeys);
 
+  const hasResponse = Boolean(sendMutation.data) || sendMutation.isPending;
+
   return (
-    <ToolWorkspaceLayout
-      className="page-enter"
-      title="REST Console"
-      description="Build, send, and inspect FHIR REST requests"
-      maxWidth={1280}
-      toolbar={<ModeControl />}
-      actions={
-        <div className={styles.actions}>
-          <Button
-            variant="subtle"
-            size="md"
-            onClick={toggleInspector}
-          >
-            <Button.Icon><Eye size={16} /></Button.Icon>
-            Inspector
-          </Button>
-          <Button
-            variant="subtle"
-            size="md"
-            onClick={historyHandlers.open}
-          >
-            <Button.Icon><ClockArrowRotateLeft size={16} /></Button.Icon>
-            History
-          </Button>
-        </div>
-      }
-    >
+    <div className={`${styles.container} page-enter`}>
       <Helmet>
         <title>REST Console</title>
       </Helmet>
 
-          <div className={styles.rootResizable}>
-            <Resizable.Group orientation="vertical">
-              <Resizable.Pane defaultSize={50} minSize={25}>
-                <section className={styles.requestPanel} style={{ height: "100%", overflow: "auto" }}>
-                  {mode === "pro" ? (
-                    <RequestBar
-                      allSuggestions={allSuggestions}
-                      searchParamsByResource={searchParamsByResource}
-                      capabilities={data}
-                      isLoading={isPending}
-                      isSending={sendMutation.isPending}
-                      onSend={handleSend}
-                    />
-                  ) : (
-                    <div className={styles.builderContent}>
-                       <BuilderModeEditor
-                        allSuggestions={allSuggestions}
-                        searchParamsByResource={searchParamsByResource}
-                        capabilities={data}
-                        isLoading={isPending}
-                      />
-                      <div className={styles.builderActions}>
-                        <Button
-                          size="lg"
-                          variant="filled"
-                          onClick={handleSend}
-                          loading={sendMutation.isPending}
-                        >
-                          <Button.Icon><Play size={18} /></Button.Icon>
-                          Execute Request
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Additional request options (Tabs, Headers, Body) */}
-                  <div className={styles.requestOptions}>
-                    <RequestOptionTabs />
-                  </div>
-                </section>
-              </Resizable.Pane>
+      <header className={styles.toolbar}>
+        <div className={styles.toolbarLeft}>
+          <Text variant="header-2" className={styles.title}>
+            REST Console
+          </Text>
+          <ModeControl />
+        </div>
+        <div className={styles.toolbarActions}>
+          <Button variant="subtle" size="md" onClick={toggleInspector}>
+            <Button.Icon>
+              <Eye size={16} />
+            </Button.Icon>
+            Inspector
+          </Button>
+          <Button variant="subtle" size="md" onClick={historyHandlers.open}>
+            <Button.Icon>
+              <ClockArrowRotateLeft size={16} />
+            </Button.Icon>
+            History
+          </Button>
+        </div>
+      </header>
 
-              <Resizable.Handle />
+      <div className={styles.workspace}>
+        {/* Request bar / builder — always visible at the top */}
+        <section className={styles.requestRegion}>
+          {mode === "pro" ? (
+            <RequestBar
+              allSuggestions={allSuggestions}
+              searchParamsByResource={searchParamsByResource}
+              capabilities={data}
+              isLoading={isPending}
+              isSending={sendMutation.isPending}
+              onSend={handleSend}
+            />
+          ) : (
+            <div className={styles.builderContent}>
+              <BuilderModeEditor
+                allSuggestions={allSuggestions}
+                searchParamsByResource={searchParamsByResource}
+                capabilities={data}
+                isLoading={isPending}
+              />
+              <div className={styles.builderActions}>
+                <Button
+                  size="lg"
+                  variant="filled"
+                  onClick={handleSend}
+                  loading={sendMutation.isPending}
+                >
+                  <Button.Icon>
+                    <Play size={18} />
+                  </Button.Icon>
+                  Execute Request
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
 
-              <Resizable.Pane defaultSize={50} minSize={25}>
-                <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
-                  {/* Inspector (collapsible) */}
-                  <Collapse in={inspectorOpened}>
-                    <section className={styles.inspectorPanel} style={{ marginBottom: 12 }}>
-                      <QueryInspector
-                        ast={inspectorAst}
-                        diagnostics={inspectorDiagnostics}
-                        metadata={inspectorMetadata}
-                        response={
-                          sendMutation.data
-                            ? {
-                                status: sendMutation.data.status,
-                                statusText: sendMutation.data.statusText,
-                                durationMs: sendMutation.data.durationMs,
-                                body: sendMutation.data.body,
-                                requestPath: sendMutation.data.requestPath,
-                              }
-                          : undefined
-                        }
-                      />
-                    </section>
-                  </Collapse>
-
-                  {/* Response Section */}
-                  <section style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-                    {sendMutation.data || sendMutation.isPending ? (
-                      <div className={styles.responseSection} style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
-                        <Text variant="caption-1" className={styles.sectionLabel}>
-                          Response
-                        </Text>
-                        <div className={styles.responsePanel} style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-                          <ResponseViewer response={sendMutation.data} isLoading={sendMutation.isPending} />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className={styles.emptyResponse}>
-                        <Text variant="body-2">Execute a request to see the response payload here.</Text>
-                      </div>
-                    )}
-                  </section>
+        {/* Split: request options (top) ⇄ response (bottom) */}
+        <div className={styles.split}>
+          <Resizable.Group orientation="vertical">
+            <Resizable.Pane defaultSize={42} minSize={20}>
+              <div className={styles.panel}>
+                <div className={styles.panelHeader}>
+                  <span className={styles.panelLabel}>Request</span>
                 </div>
-              </Resizable.Pane>
-            </Resizable.Group>
-          </div>
+                <div className={styles.panelBody}>
+                  <RequestOptionTabs />
+                </div>
+              </div>
+            </Resizable.Pane>
+
+            <Resizable.Handle />
+
+            <Resizable.Pane defaultSize={58} minSize={20}>
+              <div className={styles.panel}>
+                <div className={styles.panelHeader}>
+                  <span className={styles.panelLabel}>Response</span>
+                  {sendMutation.data ? (
+                    <Text variant="caption-1" color="secondary">
+                      {sendMutation.data.status} {sendMutation.data.statusText} ·{" "}
+                      {sendMutation.data.durationMs}ms
+                    </Text>
+                  ) : null}
+                </div>
+
+                <Collapse in={inspectorOpened}>
+                  <section className={styles.inspectorPanel}>
+                    <QueryInspector
+                      ast={inspectorAst}
+                      diagnostics={inspectorDiagnostics}
+                      metadata={inspectorMetadata}
+                      response={
+                        sendMutation.data
+                          ? {
+                              status: sendMutation.data.status,
+                              statusText: sendMutation.data.statusText,
+                              durationMs: sendMutation.data.durationMs,
+                              body: sendMutation.data.body,
+                              requestPath: sendMutation.data.requestPath,
+                            }
+                          : undefined
+                      }
+                    />
+                  </section>
+                </Collapse>
+
+                {hasResponse ? (
+                  <div className={styles.responseBody}>
+                    <ResponseViewer
+                      response={sendMutation.data}
+                      isLoading={sendMutation.isPending}
+                    />
+                  </div>
+                ) : (
+                  <div className={styles.emptyResponse}>
+                    <Inbox size={32} className={styles.emptyIcon} />
+                    <Text variant="body-1">No response yet</Text>
+                    <Text variant="body-2" color="secondary">
+                      Build a request and press <span style={{ fontWeight: 600 }}>⌘ Enter</span> to
+                      run it.
+                    </Text>
+                  </div>
+                )}
+              </div>
+            </Resizable.Pane>
+          </Resizable.Group>
+        </div>
+      </div>
 
       <CommandPalette />
       <HistoryPanel opened={historyOpened} onClose={historyHandlers.close} />
-    </ToolWorkspaceLayout>
+    </div>
   );
 }

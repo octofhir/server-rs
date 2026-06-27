@@ -44,11 +44,17 @@ export function setHistoryUser(userId: string | null | undefined): void {
   currentUserId = userId || ANONYMOUS_USER;
 }
 
+/** FHIR `string` rejects empty values, so map "" / whitespace-only to undefined. */
+function nonEmpty(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value.trim().length === 0 ? undefined : value;
+}
+
 function safeStringify(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return nonEmpty(value);
   try {
-    return JSON.stringify(value);
+    return nonEmpty(JSON.stringify(value));
   } catch {
     return undefined;
   }
@@ -88,19 +94,19 @@ function toResource(
     user: currentUserId,
     method: entry.method,
     path: entry.path,
-    targetType: entry.resourceType,
+    targetType: nonEmpty(entry.resourceType),
     requestHeaders: safeStringify(entry.headers),
-    requestBody: entry.body,
+    requestBody: nonEmpty(entry.body),
     status: entry.responseStatus,
-    statusText: entry.responseStatusText,
+    statusText: nonEmpty(entry.responseStatusText),
     durationMs: entry.responseDurationMs,
     responseSize: responseBodyStr ? responseBodyStr.length : undefined,
     responseBody: responseBodyStr,
     responseHeaders: safeStringify(entry.responseHeaders),
     executedAt: entry.requestedAt,
     pinned: entry.isPinned ?? false,
-    note: entry.note,
-    mode: entry.mode,
+    note: nonEmpty(entry.note),
+    mode: nonEmpty(entry.mode),
     tag: entry.tags,
   };
 }
@@ -136,12 +142,15 @@ function fromResource(r: ConsoleHistoryEntryResource): HistoryEntry {
 export class HistoryService {
   async addEntry(entry: Omit<HistoryEntry, "id" | "timestamp">): Promise<string> {
     const id = crypto.randomUUID();
+    // Not signed in yet — skip server write (avoids 401 before auth resolves).
+    if (currentUserId === ANONYMOUS_USER) return id;
     const resource = toResource(entry, id);
     const created = await fhirClient.create(resource);
     return (created as unknown as ConsoleHistoryEntryResource).id ?? id;
   }
 
   async getAll(limit = 100): Promise<HistoryEntry[]> {
+    if (currentUserId === ANONYMOUS_USER) return [];
     const bundle = await fhirClient.search<ConsoleHistoryEntryResource>("ConsoleHistoryEntry", {
       user: currentUserId,
       _count: limit * 2,

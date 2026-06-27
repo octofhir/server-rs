@@ -39,6 +39,8 @@ const namespaceLoads = new Map<string, Promise<void>>();
 const cacheKey = (namespace: string, key: string) => `${namespace}::${key}`;
 
 async function loadNamespace(namespace: string): Promise<void> {
+  // Not signed in yet — skip server reads (avoids 401 before auth resolves).
+  if (currentUserId === ANON) return;
   const existing = namespaceLoads.get(namespace);
   if (existing) return existing;
 
@@ -63,6 +65,8 @@ async function loadNamespace(namespace: string): Promise<void> {
 }
 
 async function upsert(namespace: string, key: string, value: string): Promise<void> {
+  // Not signed in yet — skip server writes (avoids 401 before auth resolves).
+  if (currentUserId === ANON) return;
   await loadNamespace(namespace);
   const k = cacheKey(namespace, key);
   const existing = cache.get(k);
