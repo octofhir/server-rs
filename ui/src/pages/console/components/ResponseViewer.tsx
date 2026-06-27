@@ -7,11 +7,13 @@ import {
   IconCheck,
   IconX,
   Link,
+  Modal,
   OperationOutcomePanel,
   SegmentedControl,
   Skeleton,
   Text,
 } from "@octofhir/ui-kit";
+import { Braces } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -23,8 +25,31 @@ import {
   type RequestResponse,
 } from "@/entities/rest-console-response";
 import { JsonViewer } from "@/shared/ui-react/JsonViewer";
-import { deriveBundleColumns, formatFhirValue } from "./fhirBundleTable";
+import { deriveBundleColumns, formatFhirValue, isComplexValue } from "./fhirBundleTable";
 import styles from "./ResponseViewer.module.css";
+
+function ValueCell({ value }: { value: unknown }) {
+  const [open, setOpen] = useState(false);
+  const text = formatFhirValue(value);
+  // Only fall back to a JSON inspector when the value can't be summarised.
+  const needsJson = isComplexValue(value) && (text === "" || text.includes("{…}"));
+  if (!needsJson) {
+    return <Text variant="body-2">{text || "—"}</Text>;
+  }
+  return (
+    <>
+      <button type="button" className={styles.jsonChip} onClick={() => setOpen(true)}>
+        <Braces size={12} />
+        <span className={styles.jsonChipText}>view</span>
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Field value" size="lg">
+        <div className={styles.jsonPop}>
+          <JsonViewer data={value} maxHeight={520} />
+        </div>
+      </Modal>
+    </>
+  );
+}
 
 type ResourceEntry = {
   resource: Record<string, unknown> & { resourceType: string; id?: string };
@@ -81,7 +106,7 @@ function buildBundleColumns(
       sortable: true,
       filterable: true,
       accessor: (e) => formatFhirValue(e.resource[col.key]),
-      cell: (e) => <Text variant="body-2">{formatFhirValue(e.resource[col.key]) || "—"}</Text>,
+      cell: (e) => <ValueCell value={e.resource[col.key]} />,
     });
   }
   return columns;
@@ -129,7 +154,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
   const statusTheme = getConsoleResponseStatusTone(response.status);
 
   return (
-    <div>
+    <div className={styles.viewer}>
       {/* Status header */}
       <div className={styles.header}>
         <div className={styles.status}>
@@ -206,10 +231,11 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
             data={resourceEntries as ResourceEntry[]}
             columns={buildBundleColumns(resourceEntries as ResourceEntry[], handleOpenResource)}
             getRowId={(e) => e.resource.id ?? e.fullUrl ?? e.resource.resourceType}
-            size="sm"
+            size="xs"
             striped
             highlightOnHover
             stickyHeader
+            fillHeight
             paginated
             pageSize={25}
           />

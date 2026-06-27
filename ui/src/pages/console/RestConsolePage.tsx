@@ -169,9 +169,6 @@ export function RestConsolePage() {
           <Resizable.Group orientation="vertical">
             <Resizable.Pane defaultSize={42} minSize={20}>
               <div className={styles.panel}>
-                <div className={styles.panelHeader}>
-                  <span className={styles.panelLabel}>Request</span>
-                </div>
                 <div className={styles.panelBody}>
                   <RequestOptionTabs />
                 </div>
@@ -182,16 +179,6 @@ export function RestConsolePage() {
 
             <Resizable.Pane defaultSize={58} minSize={20}>
               <div className={styles.panel}>
-                <div className={styles.panelHeader}>
-                  <span className={styles.panelLabel}>Response</span>
-                  {sendMutation.data ? (
-                    <Text variant="caption-1" color="secondary">
-                      {sendMutation.data.status} {sendMutation.data.statusText} ·{" "}
-                      {sendMutation.data.durationMs}ms
-                    </Text>
-                  ) : null}
-                </div>
-
                 <Collapse in={inspectorOpened}>
                   <section className={styles.inspectorPanel}>
                     <QueryInspector

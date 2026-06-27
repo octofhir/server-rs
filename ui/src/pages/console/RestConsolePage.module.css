@@ -67,7 +67,6 @@
 /* The request bar / builder card sits at the top, always visible */
 .requestRegion {
   flex-shrink: 0;
-  border: 1px solid var(--octo-border-subtle);
   border-radius: var(--octo-radius-lg);
   background: var(--octo-surface-2);
   box-shadow: var(--octo-shadow-xs);
@@ -94,29 +93,10 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border: 1px solid var(--octo-border-subtle);
   border-radius: var(--octo-radius-lg);
   background: var(--octo-surface-2);
+  box-shadow: var(--octo-shadow-xs);
   overflow: hidden;
-}
-
-.panelHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--octo-spacing-sm);
-  padding: 8px var(--octo-spacing-md);
-  border-bottom: 1px solid var(--octo-border-subtle);
-  background: var(--octo-surface-3);
-  flex-shrink: 0;
-}
-
-.panelLabel {
-  font-size: var(--octo-typography-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--octo-text-secondary);
 }
 
 .panelBody {
@@ -133,10 +113,9 @@
 
 .inspectorPanel {
   padding: var(--octo-spacing-md);
-  margin-bottom: var(--octo-spacing-sm);
-  border: 1px solid var(--octo-accent-primary);
+  margin: var(--octo-spacing-sm) var(--octo-spacing-md) 0;
   border-radius: var(--octo-radius-md);
-  background: color-mix(in srgb, var(--octo-accent-primary) 6%, var(--octo-surface-2));
+  background: color-mix(in srgb, var(--octo-accent-primary) 7%, var(--octo-surface-3));
 }
 
 .emptyResponse {

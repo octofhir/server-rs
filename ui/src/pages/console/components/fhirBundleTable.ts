@@ -110,6 +110,12 @@ export function formatFhirValue(value: unknown): string {
   return "";
 }
 
+/** True when a value is a nested object/array worth expanding as JSON. */
+export function isComplexValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((v) => isObject(v) || Array.isArray(v));
+  return isObject(value);
+}
+
 export interface BundleColumn {
   key: string;
   header: string;
