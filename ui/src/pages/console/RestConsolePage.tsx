@@ -1,12 +1,13 @@
 import { Button, Collapse, Resizable, Text, useDisclosure, useHotkeys } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
-import { History as ClockArrowRotateLeft, Eye, Gauge, Inbox, Play } from "lucide-react";
+import { Bookmark, History as ClockArrowRotateLeft, Eye, Gauge, Inbox, Play } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
 import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector";
 import { BuilderModeEditor } from "./components/BuilderModeEditor";
+import { CollectionsPanel } from "./components/CollectionsPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { ExplainPanel } from "./components/ExplainPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -48,6 +49,7 @@ export function RestConsolePage() {
 
   const sendMutation = useSendConsoleRequest();
   const [historyOpened, historyHandlers] = useDisclosure(false);
+  const [savedOpened, savedHandlers] = useDisclosure(false);
   const [explainOpened, explainHandlers] = useDisclosure(false);
   const [inspectorOpened, { toggle: toggleInspector }] = useDisclosure(false);
 
@@ -106,6 +108,12 @@ export function RestConsolePage() {
           <ModeControl />
         </div>
         <div className={styles.toolbarActions}>
+          <Button variant="subtle" size="md" onClick={savedHandlers.open}>
+            <Button.Icon>
+              <Bookmark size={16} />
+            </Button.Icon>
+            Saved
+          </Button>
           <Button variant="subtle" size="md" onClick={explainHandlers.open}>
             <Button.Icon>
               <Gauge size={16} />
@@ -225,6 +233,7 @@ export function RestConsolePage() {
 
       <CommandPalette />
       <HistoryPanel opened={historyOpened} onClose={historyHandlers.close} />
+      <CollectionsPanel opened={savedOpened} onClose={savedHandlers.close} />
       <ExplainPanel opened={explainOpened} onClose={explainHandlers.close} path={rawPath} />
     </div>
   );

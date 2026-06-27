@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { setHistoryUser } from "@/pages/console/services/historyService";
+import { setSavedRequestUser } from "@/pages/console/services/savedRequestService";
 import { setPreferencesUser } from "../userPreferences";
 import { useAuth } from "./useAuth";
 
@@ -15,5 +16,6 @@ export function usePreferenceUserSync(): void {
   useEffect(() => {
     setPreferencesUser(userId);
     setHistoryUser(userId);
+    setSavedRequestUser(userId);
   }, [userId]);
 }

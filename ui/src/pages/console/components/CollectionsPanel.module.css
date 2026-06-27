@@ -1,0 +1,112 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-md);
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.saveForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+  padding: var(--octo-spacing-md);
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-2);
+}
+
+.saveActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--octo-spacing-xs);
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-md);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.groupLabel {
+  font-size: var(--octo-typography-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--octo-text-secondary);
+  padding: 0 2px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-xs);
+}
+
+.itemMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.itemMain:hover {
+  background: var(--octo-surface-3);
+}
+
+.itemHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.itemName {
+  font-weight: 600;
+  color: var(--octo-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemPath {
+  font-family: var(--octo-typography-mono, ui-monospace, monospace);
+  font-size: var(--octo-typography-size-xs);
+  color: var(--octo-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: var(--octo-spacing-xl);
+  text-align: center;
+}
+
+.emptyIcon {
+  color: var(--octo-text-secondary);
+  opacity: 0.6;
+}
