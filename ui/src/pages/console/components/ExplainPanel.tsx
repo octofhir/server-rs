@@ -46,7 +46,7 @@ export function ExplainPanel({ opened, onClose, path }: ExplainPanelProps) {
       open={opened}
       onOpenChange={(next) => !next && onClose()}
       placement="right"
-      size={640}
+      size={860}
       title="Explain Query"
     >
       <div className={styles.root}>
