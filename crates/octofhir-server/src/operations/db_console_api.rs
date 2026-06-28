@@ -1,7 +1,6 @@
 //! DB Console API endpoints for schema browsing, query history,
 //! active query management, and index operations.
 
-use sqlx_core::sql_str::AssertSqlSafe;
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -12,6 +11,7 @@ use octofhir_search::SearchParameterType;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx_core::row::Row;
+use sqlx_core::sql_str::AssertSqlSafe;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{info, warn};

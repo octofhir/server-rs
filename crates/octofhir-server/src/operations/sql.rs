@@ -32,7 +32,6 @@
 //! lsp_enabled = true
 //! ```
 
-use sqlx_core::sql_str::AssertSqlSafe;
 use axum::{
     Extension, Json,
     extract::State,
@@ -44,6 +43,7 @@ use serde_json::{Value, json};
 use sqlx_core::column::Column;
 use sqlx_core::query::Query;
 use sqlx_core::row::Row;
+use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::{PgArguments, Postgres};
 use std::sync::Arc;
 use std::time::Instant;

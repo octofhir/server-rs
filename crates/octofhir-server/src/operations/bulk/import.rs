@@ -20,7 +20,6 @@
 //! }
 //! ```
 
-use sqlx_core::sql_str::AssertSqlSafe;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::{StreamExt, stream};
@@ -29,6 +28,7 @@ use octofhir_search::SearchParameterRegistry;
 use serde_json::{Value, json};
 use sqlx_core::query::query;
 use sqlx_core::query_as::query_as;
+use sqlx_core::sql_str::AssertSqlSafe;
 use uuid::Uuid;
 
 use crate::async_jobs::AsyncJobRequest;

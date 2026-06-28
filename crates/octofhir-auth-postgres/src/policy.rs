@@ -148,7 +148,14 @@ impl<'a> PolicyStorage<'a> {
         let id_str = id.to_string();
 
         // Allocate a fresh txid from the global sequence.
-        let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
+        let row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ) = query_as(
             r#"
             INSERT INTO accesspolicy (id, txid, created_at, updated_at, resource, status)
             VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
@@ -693,7 +700,14 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
         // Use INSERT ... ON CONFLICT DO UPDATE for upsert.
         // Allocate a fresh txid from the global sequence on insert.
         let id_str = id.to_string();
-        let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
+        let row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ) = query_as(
             r#"
             INSERT INTO accesspolicy (id, txid, created_at, updated_at, resource, status)
             VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')

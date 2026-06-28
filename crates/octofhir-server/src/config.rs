@@ -1245,10 +1245,12 @@ pub mod loader {
                         merged.search.composite_index.push(spec);
                     }
                     Some(_) => {}
-                    None => return Err(format!(
-                        "invalid OCTOFHIR__SEARCH__COMPOSITE_INDEXES entry '{entry}' \
+                    None => {
+                        return Err(format!(
+                            "invalid OCTOFHIR__SEARCH__COMPOSITE_INDEXES entry '{entry}' \
                          (want ResourceType.param=system|code)"
-                    )),
+                        ));
+                    }
                 }
             }
         }

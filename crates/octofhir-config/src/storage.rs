@@ -185,11 +185,10 @@ impl ConfigStorage {
         };
 
         // Create transaction
-        let txid: (i64,) =
-            query_as("SELECT nextval('_transaction_txid_seq') AS txid")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| ConfigError::database(format!("Failed to create transaction: {e}")))?;
+        let txid: (i64,) = query_as("SELECT nextval('_transaction_txid_seq') AS txid")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| ConfigError::database(format!("Failed to create transaction: {e}")))?;
 
         // Upsert configuration
         let result: (Uuid, DateTime<Utc>) = query_as(

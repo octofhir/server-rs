@@ -8,11 +8,11 @@
 //! By default `analyze = false`, so we only plan the query (no execution, no data
 //! touched). `analyze = true` runs `EXPLAIN (ANALYZE)` and therefore executes the query.
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use octofhir_search::ir::SearchDebugPlan;
 use octofhir_search::{
-    build_native_ir_query_from_params_with_config, parse_query_string, ParamsSearchConfig,
-    SqlValue, UnknownParamHandling,
+    ParamsSearchConfig, SqlValue, UnknownParamHandling,
+    build_native_ir_query_from_params_with_config, parse_query_string,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;

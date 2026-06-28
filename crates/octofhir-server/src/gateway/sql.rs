@@ -3,7 +3,6 @@
 //! **Security Note**: This handler only supports READ-ONLY queries (SELECT)
 //! to prevent accidental or malicious data modification.
 
-use sqlx_core::sql_str::AssertSqlSafe;
 use axum::{
     Json,
     body::Body,
@@ -14,6 +13,7 @@ use serde_json::{Value, json};
 use sqlx_core::column::Column;
 use sqlx_core::query::query;
 use sqlx_core::row::Row;
+use sqlx_core::sql_str::AssertSqlSafe;
 use std::collections::HashMap;
 use tracing::{debug, info, instrument, warn};
 

@@ -2,12 +2,12 @@
 //!
 //! PostgreSQL storage for operations registry.
 
-use sqlx_core::sql_str::AssertSqlSafe;
 use async_trait::async_trait;
 use octofhir_core::{AppReference, OperationDefinition};
 use sqlx_core::error::Error as SqlxError;
 use sqlx_core::query::query;
 use sqlx_core::row::Row;
+use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::PgPool;
 
 /// Error type for operation storage

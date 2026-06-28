@@ -167,11 +167,10 @@ impl DatabaseSource {
         is_secret: bool,
     ) -> Result<(), ConfigError> {
         // First create a transaction entry
-        let txid: (i64,) =
-            query_as("SELECT nextval('_transaction_txid_seq') AS txid")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| ConfigError::database(format!("Failed to create transaction: {e}")))?;
+        let txid: (i64,) = query_as("SELECT nextval('_transaction_txid_seq') AS txid")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| ConfigError::database(format!("Failed to create transaction: {e}")))?;
 
         // Upsert the configuration
         query(

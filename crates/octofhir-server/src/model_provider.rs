@@ -419,11 +419,7 @@ impl ModelProvider for OctoFhirModelProvider {
                                     type_name: mapped_type,
                                     singleton: Some(element_is_singleton(element)),
                                     is_empty: Some(false),
-                                    namespace: if schema_type
-                                        .chars()
-                                        .next()
-                                        .unwrap()
-                                        .is_uppercase()
+                                    namespace: if schema_type.chars().next().unwrap().is_uppercase()
                                     {
                                         Some("FHIR".to_string())
                                     } else {

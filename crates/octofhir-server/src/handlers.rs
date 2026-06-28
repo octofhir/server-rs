@@ -1,4 +1,3 @@
-use sqlx_core::sql_str::AssertSqlSafe;
 use crate::bootstrap::ADMIN_ACCESS_POLICY_ID;
 use crate::gateway::{App, PathValidationError, validate_app_operations};
 use crate::mapping::{IdPolicy, json_from_envelope, validate_payload_structure};
@@ -22,6 +21,7 @@ use octofhir_fhir_model::ModelProvider;
 use octofhir_storage::StorageError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sqlx_core::sql_str::AssertSqlSafe;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -3911,8 +3911,7 @@ async fn process_transaction(
     // as resolved `Type/id` strings. After Phase 2 rewrites urn:uuid references
     // into these strings, reference existence validation must treat them as
     // existing: they are not committed to storage yet but will be after commit.
-    let known_refs: std::collections::HashSet<String> =
-        reference_map.values().cloned().collect();
+    let known_refs: std::collections::HashSet<String> = reference_map.values().cloned().collect();
 
     // Phase 2: Build resolved entries — replace all urn:uuid references using the complete map
     let mut resolved_entries: Vec<(usize, Value)> = Vec::new();

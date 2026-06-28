@@ -225,7 +225,8 @@ impl ViewDefinitionRunOperation {
         limit: Option<usize>,
     ) -> Result<Value, OperationError> {
         let resources = if inline.is_empty() {
-            self.load_source_resources(state, &view_def.resource).await?
+            self.load_source_resources(state, &view_def.resource)
+                .await?
         } else {
             inline
         };

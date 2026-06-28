@@ -248,34 +248,19 @@ impl FhirPathOperation {
                         type_name.to_string(),
                         ("valueCodeableConcept", json_value.to_json()),
                     ),
-                    "Coding" => (
-                        type_name.to_string(),
-                        ("valueCoding", json_value.to_json()),
-                    ),
+                    "Coding" => (type_name.to_string(), ("valueCoding", json_value.to_json())),
                     "Reference" => (
                         type_name.to_string(),
                         ("valueReference", json_value.to_json()),
                     ),
-                    "Period" => (
-                        type_name.to_string(),
-                        ("valuePeriod", json_value.to_json()),
-                    ),
-                    "Range" => (
-                        type_name.to_string(),
-                        ("valueRange", json_value.to_json()),
-                    ),
-                    "Ratio" => (
-                        type_name.to_string(),
-                        ("valueRatio", json_value.to_json()),
-                    ),
+                    "Period" => (type_name.to_string(), ("valuePeriod", json_value.to_json())),
+                    "Range" => (type_name.to_string(), ("valueRange", json_value.to_json())),
+                    "Ratio" => (type_name.to_string(), ("valueRatio", json_value.to_json())),
                     "ContactPoint" => (
                         type_name.to_string(),
                         ("valueContactPoint", json_value.to_json()),
                     ),
-                    _ => (
-                        type_name.to_string(),
-                        ("resource", json_value.to_json()),
-                    ),
+                    _ => (type_name.to_string(), ("resource", json_value.to_json())),
                 }
             }
             _ => ("unknown".to_string(), ("valueString", json!("{}"))),
