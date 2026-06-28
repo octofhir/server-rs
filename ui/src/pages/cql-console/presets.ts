@@ -1,27 +1,53 @@
 /**
- * Quick-start content for the CQL console: example expressions and sample
- * resources users can insert with one click.
+ * Quick-start content for the CQL console.
+ *
+ * Examples stick to features the engine actually evaluates: `library`, `using`,
+ * `context`, `parameter` and multiple `define` statements. (valueset / include /
+ * define function are not yet supported by the parser, so they're avoided here.)
  */
 
 export type SampleKey = "patient" | "observation" | "none";
 
-export interface ExpressionExample {
+export interface CqlExample {
   label: string;
-  expression: string;
-  /** Sample resource this expression is meant to run against. */
+  /** Full source inserted into the editor. */
+  source: string;
+  /** Sample context resource this example is meant to run against. */
   sample?: SampleKey;
 }
 
-export const EXPRESSION_EXAMPLES: ExpressionExample[] = [
-  { label: "Arithmetic", expression: "1 + 1", sample: "none" },
-  { label: "Boolean", expression: "true and false", sample: "none" },
-  { label: "String concat", expression: "'Hello' + ' ' + 'World'", sample: "none" },
-  { label: "Comparison", expression: "5 > 3", sample: "none" },
-  { label: "List", expression: "{1, 2, 3, 4, 5}", sample: "none" },
-  { label: "List count", expression: "Count({1, 2, 3, 4, 5})", sample: "none" },
-  { label: "Interval", expression: "Interval[3, 5]", sample: "none" },
-  { label: "Coalesce", expression: "Coalesce(null, 'fallback')", sample: "none" },
+const ADULT_CHECK = `library AdultCheck version '1.0.0'
+using FHIR version '4.0.1'
+context Patient
+
+define Birth: Patient.birthDate
+define IsAdult: AgeInYears() >= 18
+define Greeting: 'Hello, ' + First(Patient.name.given)`;
+
+const ARITHMETIC = `library Playground version '1.0.0'
+
+define Sum: 1 + 2 + 3
+define Product: 6 * 7
+define Comparison: 5 > 3
+define Numbers: { 1, 2, 3, 4, 5 }
+define Total: Count({ 1, 2, 3, 4, 5 })
+define Average: Avg({ 10.0, 20.0, 30.0 })`;
+
+const INTERVALS = `library Intervals version '1.0.0'
+
+define Range: Interval[3, 10]
+define Low: start of Range
+define High: end of Range
+define Width: width of Range
+define Contains: 5 in Range`;
+
+export const CQL_EXAMPLES: CqlExample[] = [
+  { label: "Arithmetic", source: ARITHMETIC, sample: "none" },
+  { label: "Intervals", source: INTERVALS, sample: "none" },
+  { label: "Patient (context)", source: ADULT_CHECK, sample: "patient" },
 ];
+
+export const DEFAULT_SOURCE = ARITHMETIC;
 
 export interface SampleResource {
   key: SampleKey;

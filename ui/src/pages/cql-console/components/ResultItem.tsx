@@ -1,20 +1,22 @@
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { useState } from "react";
 import classes from "../CqlConsolePage.module.css";
-import type { CqlDatatype, CqlEvaluationResult } from "../types";
+import type { CqlDatatype, CqlDefine } from "../types";
 
 interface Props {
-  result: CqlEvaluationResult;
+  define: CqlDefine;
+  /** Hide the define name (single-expression mode). */
+  hideName?: boolean;
 }
 
-export function ResultItem({ result }: Props) {
-  const [expanded, setExpanded] = useState(true);
+export function ResultItem({ define, hideName }: Props) {
+  const isComplex = typeof define.value === "object" && define.value !== null;
+  const [expanded, setExpanded] = useState(isComplex);
   const [copied, setCopied] = useState(false);
-  const isComplex = typeof result.value === "object" && result.value !== null;
 
   const copyText = isComplex
-    ? JSON.stringify(result.value, null, 2)
-    : formatPrimitiveValue(result.value);
+    ? JSON.stringify(define.value, null, 2)
+    : formatPrimitiveValue(define.value);
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(copyText).then(() => {
@@ -27,8 +29,9 @@ export function ResultItem({ result }: Props) {
     <div className={classes.resultItem}>
       <div className={classes.resultItemContent}>
         <div className={classes.resultHeader}>
-          <span className={`${classes.typeTag} ${typeClass(result.datatype)}`}>
-            {result.datatype}
+          {!hideName && <span className={classes.defineName}>{define.name}</span>}
+          <span className={`${classes.typeTag} ${typeClass(define.datatype)}`}>
+            {define.datatype}
           </span>
 
           {isComplex ? (
@@ -37,15 +40,15 @@ export function ResultItem({ result }: Props) {
               onClick={() => setExpanded(!expanded)}
               className={classes.resultToggle}
               aria-expanded={expanded}
-              aria-label={`${expanded ? "Collapse" : "Expand"} ${result.datatype}`}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${define.name}`}
             >
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              {Array.isArray(result.value)
-                ? `list (${result.value.length})`
-                : `${result.datatype} object`}
+              {Array.isArray(define.value)
+                ? `list (${define.value.length})`
+                : `${define.datatype} object`}
             </button>
           ) : (
-            <span className={classes.resultValue}>{formatPrimitiveValue(result.value)}</span>
+            <span className={classes.resultValue}>{formatPrimitiveValue(define.value)}</span>
           )}
 
           <button
@@ -60,7 +63,7 @@ export function ResultItem({ result }: Props) {
         </div>
 
         {isComplex && expanded && (
-          <pre className={classes.resultJson}>{JSON.stringify(result.value, null, 2)}</pre>
+          <pre className={classes.resultJson}>{JSON.stringify(define.value, null, 2)}</pre>
         )}
       </div>
     </div>

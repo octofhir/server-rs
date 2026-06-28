@@ -5,12 +5,22 @@ use crate::data_provider::FhirServerDataProvider;
 use crate::error::{CqlError, CqlResult};
 use crate::library_cache::LibraryCache;
 use crate::terminology_provider::CqlTerminologyProvider;
+use indexmap::IndexMap;
 use octofhir_cql::parse;
 use octofhir_cql_eval::CqlEngine;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// A single validation finding from [`CqlService::validate_source`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ValidationIssue {
+    pub severity: String,
+    pub message: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+}
 
 pub struct CqlService {
     engine: Arc<CqlEngine>,
@@ -76,7 +86,7 @@ impl CqlService {
         context_value: Option<Value>,
         parameters: HashMap<String, Value>,
     ) -> CqlResult<Value> {
-        // Wrap expression in minimal library structure
+        // Wrap expression in a minimal ad-hoc library with a single `Result` define.
         let library_cql = format!(
             r#"library Adhoc version '1.0.0'
 
@@ -86,9 +96,27 @@ define Result:
             expression
         );
 
-        // Parse CQL expression to AST
-        let ast_library =
-            parse(&library_cql).map_err(|e| CqlError::ParseError(format!("{:?}", e)))?;
+        let results = self
+            .eval_source(&library_cql, context_type, context_value, parameters)
+            .await?;
+
+        Ok(results.get("Result").cloned().unwrap_or(Value::Null))
+    }
+
+    /// Parse, compile and evaluate raw CQL library source, returning every
+    /// `define` statement's value keyed by name.
+    ///
+    /// Shared by ad-hoc expression evaluation, stored-library evaluation and
+    /// inline library-source evaluation.
+    async fn eval_source(
+        &self,
+        cql_source: &str,
+        context_type: Option<&str>,
+        context_value: Option<Value>,
+        parameters: HashMap<String, Value>,
+    ) -> CqlResult<IndexMap<String, Value>> {
+        // Parse CQL source to AST
+        let ast_library = parse(cql_source).map_err(|e| CqlError::ParseError(format!("{}", e)))?;
 
         // Convert AST to ELM
         let elm_library = {
@@ -119,22 +147,56 @@ define Result:
 
         let mut ctx = ctx_builder.build();
 
-        // Evaluate the ELM library
+        // Evaluate the ELM library — returns every define's value
         let results = self
             .engine
             .evaluate_library(&elm_library, &mut ctx)
             .map_err(|e| CqlError::EvaluationError(format!("{:?}", e)))?;
 
-        // Get the "Result" definition from the library
-        if let Some(result_value) = results.get("Result") {
-            if let Some(json) = super::data_provider::cql_value_to_json(result_value) {
-                Ok(json)
-            } else {
-                Ok(Value::Null)
-            }
-        } else {
-            Ok(Value::Null)
+        // Convert every definition to JSON, preserving source (define) order
+        let mut json_results = IndexMap::new();
+        for (name, value) in results {
+            let json = super::data_provider::cql_value_to_json(&value).unwrap_or(Value::Null);
+            json_results.insert(name, json);
         }
+
+        Ok(json_results)
+    }
+
+    /// Evaluate an inline CQL library (full source with one or more `define`
+    /// statements) and return every definition's value keyed by name.
+    ///
+    /// Unlike [`evaluate_library`](Self::evaluate_library), the source is supplied
+    /// directly rather than loaded from a stored `Library` resource — powering the
+    /// interactive CQL console.
+    pub async fn evaluate_library_source(
+        &self,
+        cql_source: &str,
+        context_type: Option<&str>,
+        context_value: Option<Value>,
+        parameters: HashMap<String, Value>,
+    ) -> CqlResult<IndexMap<String, Value>> {
+        if cql_source.trim().is_empty() {
+            return Err(CqlError::InvalidParameter(
+                "Library source cannot be empty".to_string(),
+            ));
+        }
+
+        tracing::info!("Evaluating inline CQL library source");
+
+        let results = tokio::time::timeout(
+            Duration::from_millis(self.config.evaluation_timeout_ms),
+            self.eval_source(cql_source, context_type, context_value, parameters),
+        )
+        .await
+        .map_err(|_| {
+            CqlError::Timeout(format!(
+                "Library evaluation timed out after {}ms",
+                self.config.evaluation_timeout_ms
+            ))
+        })??;
+
+        Ok(results)
     }
 
     pub async fn evaluate_library(
@@ -160,8 +222,7 @@ define Result:
 
         // Parse library CQL source to AST
         let cql_source = &_library.cql_source;
-        let ast_library =
-            parse(cql_source).map_err(|e| CqlError::ParseError(format!("{:?}", e)))?;
+        let ast_library = parse(cql_source).map_err(|e| CqlError::ParseError(format!("{}", e)))?;
 
         // Convert AST to ELM
         let elm_library = {
@@ -205,6 +266,27 @@ define Result:
         }
 
         Ok(json_results)
+    }
+
+    /// Parse-only validation — no ELM conversion, no evaluation, no data
+    /// provider. Fast enough to run on every keystroke (debounced) to surface
+    /// syntax errors early. Returns an empty list when the source is valid.
+    ///
+    /// Note: cql-rs spans are currently placeholders, so `line`/`column` are not
+    /// yet populated — only the message is reliable.
+    pub fn validate_source(&self, cql_source: &str) -> Vec<ValidationIssue> {
+        if cql_source.trim().is_empty() {
+            return Vec::new();
+        }
+        match parse(cql_source) {
+            Ok(_) => Vec::new(),
+            Err(e) => vec![ValidationIssue {
+                severity: "error".to_string(),
+                message: format!("{}", e),
+                line: None,
+                column: None,
+            }],
+        }
     }
 
     pub fn cache_stats(&self) -> crate::library_cache::CacheStats {

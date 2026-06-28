@@ -1,10 +1,10 @@
 /**
- * Multi-line Monaco editor for CQL expressions.
+ * Monaco editor for CQL source — a single expression or a full library
+ * (`library` / `using` / `context` / `parameter` / multiple `define`).
  *
- * CQL has no LSP/language server wired up (unlike FHIRPath), so this is a plain
- * plaintext editor that reuses the shared octofhir Monaco theme and exposes an
- * imperative `insertSnippet` handle for the function palette. Ctrl/Cmd+Enter
- * triggers the parent's submit callback.
+ * CQL has no LSP server wired up, so this registers a lightweight Monarch
+ * grammar for syntax highlighting and exposes an imperative `insertSnippet`
+ * handle for the function palette. Ctrl/Cmd+Enter triggers submit.
  */
 
 import Editor, { type OnChange, type OnMount } from "@monaco-editor/react";
@@ -16,23 +16,25 @@ import {
   OCTOFHIR_THEME_DARK,
   OCTOFHIR_THEME_LIGHT,
 } from "@/shared/monaco/lspClient";
+import { CQL_LANGUAGE_ID, ensureCqlLanguageRegistered } from "../cqlLanguage";
 
 ensureOctofhirThemes();
+ensureCqlLanguageRegistered();
 
-export interface CqlExpressionEditorHandle {
+export interface CqlSourceEditorHandle {
   insertSnippet: (snippet: string) => void;
   focus: () => void;
 }
 
-export interface CqlExpressionEditorProps {
+export interface CqlSourceEditorProps {
   value: string;
   onChange: (value: string) => void;
   onSubmit?: () => void;
   height?: string | number;
 }
 
-export const CqlExpressionEditor = forwardRef<CqlExpressionEditorHandle, CqlExpressionEditorProps>(
-  function CqlExpressionEditor({ value, onChange, onSubmit, height = "100%" }, ref) {
+export const CqlSourceEditor = forwardRef<CqlSourceEditorHandle, CqlSourceEditorProps>(
+  function CqlSourceEditor({ value, onChange, onSubmit, height = "100%" }, ref) {
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const onSubmitRef = useRef(onSubmit);
     onSubmitRef.current = onSubmit;
@@ -62,6 +64,7 @@ export const CqlExpressionEditor = forwardRef<CqlExpressionEditorHandle, CqlExpr
     const handleMount: OnMount = useCallback((editor, monaco) => {
       editorRef.current = editor;
       ensureOctofhirThemes();
+      ensureCqlLanguageRegistered();
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
         onSubmitRef.current?.();
       });
@@ -74,7 +77,7 @@ export const CqlExpressionEditor = forwardRef<CqlExpressionEditorHandle, CqlExpr
     return (
       <Editor
         height={height}
-        language="plaintext"
+        language={CQL_LANGUAGE_ID}
         theme={editorTheme}
         value={value}
         onChange={handleChange}
@@ -90,6 +93,7 @@ export const CqlExpressionEditor = forwardRef<CqlExpressionEditorHandle, CqlExpr
           renderLineHighlight: "line",
           wordWrap: "on",
           tabCompletion: "on",
+          bracketPairColorization: { enabled: true },
         }}
       />
     );

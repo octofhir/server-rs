@@ -211,6 +211,101 @@
   overflow: hidden;
 }
 
+/* ── Live diagnostics bar (parse-only validation) ── */
+
+.diagBar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+  padding: 7px 12px;
+  border-top: 1px solid var(--octo-border-subtle);
+  font-size: 12px;
+  font-family: var(--mono, ui-monospace, monospace);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.diagBarOk {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--cql-violet-deep);
+  background: var(--cql-violet-soft);
+  font-weight: 600;
+}
+
+.diagBarError {
+  color: #b91c1c;
+  background: rgb(220 38 38 / 8%);
+}
+
+.diagItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.4;
+}
+
+.diagItem svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* ── Mode badge (expression / library) ── */
+
+.modeBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--cql-violet-strong);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+/* ── Tabs (context / parameters) ── */
+
+.tabBar {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--octo-surface-3);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--octo-text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.tab:hover {
+  color: var(--octo-text-primary);
+}
+
+.tabActive {
+  background: var(--octo-surface-1);
+  color: var(--cql-violet-deep);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
 /* ── Context badge ── */
 
 .ctxBadge {
@@ -421,6 +516,14 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.defineName {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--cql-violet-deep);
+  flex: none;
 }
 
 .typeTag {

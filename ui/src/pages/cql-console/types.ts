@@ -1,14 +1,12 @@
 /**
  * Parsing for the `$cql` operation response.
  *
- * The backend returns a FHIR Parameters resource shaped as:
- *   { resourceType: "Parameters", parameter: [
- *       { name: "expression", valueString: "<expr>" },
- *       { name: "return",     valueString: "<json-serialized result>" }
- *   ]}
+ * Two shapes:
+ *   • Single expression — { parameter: [{name:"expression",…},{name:"return",valueString}] }
+ *   • Library (multi-define) — { parameter: [{name:"result", part:[{name,valueString}, …]}] }
  *
- * Unlike FHIRPath (which returns a typed collection), CQL returns a single
- * result value serialized as a JSON string.
+ * Both collapse to an ordered list of named defines so the UI renders them
+ * uniformly.
  */
 
 export type CqlDatatype =
@@ -23,19 +21,49 @@ export type CqlDatatype =
   | "tuple"
   | "null";
 
-export interface CqlEvaluationResult {
-  expression: string;
-  /** Parsed result value (string, number, boolean, array, object, …). */
+export interface CqlDefine {
+  name: string;
+  /** Parsed result value. */
   value: unknown;
-  /** Inferred CQL datatype for display tagging. */
   datatype: CqlDatatype;
-  /** Raw JSON-serialized string the server returned. */
+  /** Raw JSON-serialized string from the server. */
   raw: string;
+}
+
+export interface CqlEvaluationResult {
+  mode: "expression" | "library";
+  defines: CqlDefine[];
 }
 
 interface FhirParameterPart {
   name: string;
   valueString?: string;
+  valueInteger?: number;
+  part?: FhirParameterPart[];
+}
+
+export interface CqlDiagnostic {
+  severity: string;
+  message: string;
+  line?: number;
+  column?: number;
+}
+
+/** Parse the parse-only `validate` response into a flat diagnostics list. */
+export function parseValidateResponse(params: {
+  parameter?: FhirParameterPart[];
+}): CqlDiagnostic[] {
+  return (params.parameter ?? [])
+    .filter((p) => p.name === "issue")
+    .map((p) => {
+      const find = (n: string) => p.part?.find((x) => x.name === n);
+      return {
+        severity: find("severity")?.valueString ?? "error",
+        message: find("message")?.valueString ?? "Unknown error",
+        line: find("line")?.valueInteger,
+        column: find("column")?.valueInteger,
+      };
+    });
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -57,18 +85,29 @@ export function inferDatatype(value: unknown): CqlDatatype {
   return "string";
 }
 
-export function parseCqlResponse(params: { parameter?: FhirParameterPart[] }): CqlEvaluationResult {
-  const parts = params.parameter ?? [];
-  const expression = parts.find((p) => p.name === "expression")?.valueString ?? "";
-  const raw = parts.find((p) => p.name === "return")?.valueString ?? "null";
-
+function toDefine(name: string, raw: string): CqlDefine {
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch {
-    // Server returned a bare (non-JSON) string — keep it verbatim.
     value = raw;
   }
+  return { name, value, datatype: inferDatatype(value), raw };
+}
 
-  return { expression, value, datatype: inferDatatype(value), raw };
+export function parseCqlResponse(params: { parameter?: FhirParameterPart[] }): CqlEvaluationResult {
+  const parts = params.parameter ?? [];
+
+  // Library mode: a single `result` parameter carrying one part per define.
+  const resultParam = parts.find((p) => p.name === "result");
+  if (resultParam?.part) {
+    const defines = resultParam.part
+      .filter((p) => p.valueString !== undefined)
+      .map((p) => toDefine(p.name, p.valueString ?? "null"));
+    return { mode: "library", defines };
+  }
+
+  // Expression mode: a single `return` value.
+  const raw = parts.find((p) => p.name === "return")?.valueString ?? "null";
+  return { mode: "expression", defines: [toDefine("Result", raw)] };
 }

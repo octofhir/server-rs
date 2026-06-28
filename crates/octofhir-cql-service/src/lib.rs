@@ -16,4 +16,4 @@ pub mod terminology_provider;
 
 pub use config::CqlConfig;
 pub use error::{CqlError, CqlResult};
-pub use service::CqlService;
+pub use service::{CqlService, ValidationIssue};

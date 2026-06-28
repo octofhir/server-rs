@@ -257,6 +257,44 @@ async fn test_clear_cache() {
 }
 
 #[tokio::test]
+async fn test_evaluate_library_source_multiple_defines() {
+    let service = create_test_service().await;
+
+    let source = r#"library Playground version '1.0.0'
+
+define Sum: 1 + 2 + 3
+define Product: 6 * 7
+define Comparison: 5 > 3"#;
+
+    let result = service
+        .evaluate_library_source(source, None, None, HashMap::new())
+        .await;
+
+    assert!(result.is_ok(), "Failed to evaluate: {:?}", result.err());
+    let defines = result.unwrap();
+
+    // Every define is returned, in source order.
+    assert_eq!(
+        defines.keys().collect::<Vec<_>>(),
+        vec!["Sum", "Product", "Comparison"]
+    );
+    assert_eq!(defines.get("Sum"), Some(&json!(6)));
+    assert_eq!(defines.get("Product"), Some(&json!(42)));
+    assert_eq!(defines.get("Comparison"), Some(&json!(true)));
+}
+
+#[tokio::test]
+async fn test_evaluate_library_source_empty_fails() {
+    let service = create_test_service().await;
+
+    let result = service
+        .evaluate_library_source("   ", None, None, HashMap::new())
+        .await;
+
+    assert!(matches!(result, Err(CqlError::InvalidParameter(_))));
+}
+
+#[tokio::test]
 async fn test_invalid_cql_syntax() {
     let service = create_test_service().await;
 

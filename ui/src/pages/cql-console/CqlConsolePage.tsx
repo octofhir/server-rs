@@ -2,57 +2,125 @@ import { Resizable } from "@octofhir/ui-kit";
 import { useMutation } from "@tanstack/react-query";
 import {
   Braces,
+  Check,
   CircleAlert,
+  Library,
   Play,
   Sigma,
+  Sliders,
   Sparkles,
   SquareFunction,
   Wand2,
   X as Xmark,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { assertFhirResource } from "@/shared/api/guards";
+import { fhirClient, HttpError } from "@/shared/api/fhirClient";
+import { isRecord } from "@/shared/api/guards";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import classes from "./CqlConsolePage.module.css";
-import {
-  CqlExpressionEditor,
-  type CqlExpressionEditorHandle,
-} from "./components/CqlExpressionEditor";
+import { CqlSourceEditor, type CqlSourceEditorHandle } from "./components/CqlSourceEditor";
 import { FunctionPalette } from "./components/FunctionPalette";
 import { ResultItem } from "./components/ResultItem";
-import { EXPRESSION_EXAMPLES, SAMPLE_RESOURCES, type SampleKey, sampleJsonString } from "./presets";
-import { type CqlEvaluationResult, parseCqlResponse } from "./types";
+import {
+  CQL_EXAMPLES,
+  DEFAULT_SOURCE,
+  SAMPLE_RESOURCES,
+  type SampleKey,
+  sampleJsonString,
+} from "./presets";
+import {
+  type CqlDiagnostic,
+  type CqlEvaluationResult,
+  parseCqlResponse,
+  parseValidateResponse,
+} from "./types";
 
-const STORAGE_EXPR = "octofhir.cql.expression";
-const STORAGE_RESOURCE = "octofhir.cql.resource";
-
-const DEFAULT_EXPRESSION = "1 + 1";
-const DEFAULT_RESOURCE = "";
+const STORAGE_SRC = "octofhir.cql.source";
+const STORAGE_CTX = "octofhir.cql.context";
+const STORAGE_PARAMS = "octofhir.cql.params";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const RUN_KEY = isMac ? "⌘↵" : "Ctrl+↵";
 
+/** Pull the real diagnostic out of an error — OperationOutcome body, else message. */
+function errorMessage(err: unknown): string {
+  if (err instanceof HttpError) {
+    const body = err.response.data;
+    if (isRecord(body) && Array.isArray(body.issue)) {
+      const diagnostics = body.issue
+        .map((issue) => {
+          if (!isRecord(issue)) return undefined;
+          const details = isRecord(issue.details) ? (issue.details.text as unknown) : undefined;
+          return (issue.diagnostics ?? details) as string | undefined;
+        })
+        .filter((m): m is string => typeof m === "string" && m.length > 0);
+      if (diagnostics.length) return diagnostics.join("; ");
+    }
+    if (typeof body === "string" && body.trim()) return body;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** A source is a library when it declares `library` or any `define`. */
+function isLibrarySource(source: string): boolean {
+  return /\blibrary\b/.test(source) || /\bdefine\b/.test(source);
+}
+
+type InputParam = {
+  name: string;
+  valueString?: string;
+  valueInteger?: number;
+  valueDecimal?: number;
+  valueBoolean?: boolean;
+  resource?: unknown;
+};
+
+function buildParamEntries(paramsJson: string): InputParam[] {
+  if (!paramsJson.trim() || paramsJson.trim() === "{}") return [];
+  let obj: unknown;
+  try {
+    obj = JSON.parse(paramsJson);
+  } catch {
+    throw new Error("Invalid JSON in parameters");
+  }
+  if (!isRecord(obj)) throw new Error("Parameters must be a JSON object");
+  return Object.entries(obj).map(([name, value]) => {
+    if (typeof value === "boolean") return { name, valueBoolean: value };
+    if (typeof value === "number")
+      return Number.isInteger(value)
+        ? { name, valueInteger: value }
+        : { name, valueDecimal: value };
+    if (typeof value === "string") return { name, valueString: value };
+    return { name, resource: value };
+  });
+}
+
 export function CqlConsolePage() {
-  const [expression, setExpression] = useState(
-    () => localStorage.getItem(STORAGE_EXPR) ?? DEFAULT_EXPRESSION
-  );
+  const [source, setSource] = useState(() => localStorage.getItem(STORAGE_SRC) ?? DEFAULT_SOURCE);
   const [contextResource, setContextResource] = useState(
-    () => localStorage.getItem(STORAGE_RESOURCE) ?? DEFAULT_RESOURCE
+    () => localStorage.getItem(STORAGE_CTX) ?? ""
   );
+  const [paramsJson, setParamsJson] = useState(() => localStorage.getItem(STORAGE_PARAMS) ?? "{}");
 
   const [showFunctions, setShowFunctions] = useState(false);
-  const editorRef = useRef<CqlExpressionEditorHandle>(null);
+  const [inputTab, setInputTab] = useState<"context" | "params">("context");
+  const [diagnostics, setDiagnostics] = useState<CqlDiagnostic[]>([]);
+  const [validated, setValidated] = useState(false);
+  const editorRef = useRef<CqlSourceEditorHandle>(null);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_EXPR, expression);
-  }, [expression]);
+    localStorage.setItem(STORAGE_SRC, source);
+  }, [source]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_RESOURCE, contextResource);
+    localStorage.setItem(STORAGE_CTX, contextResource);
   }, [contextResource]);
+  useEffect(() => {
+    localStorage.setItem(STORAGE_PARAMS, paramsJson);
+  }, [paramsJson]);
 
-  // Derive the context resource type so we can pass it to the server as the CQL
-  // evaluation context (e.g. `context Patient`).
+  const mode = isLibrarySource(source) ? "library" : "expression";
+
   const contextType = useMemo(() => {
     if (!contextResource.trim()) return undefined;
     try {
@@ -63,58 +131,102 @@ export function CqlConsolePage() {
     }
   }, [contextResource]);
 
+  // Live parse-only validation: debounced, no evaluation/DB — surfaces syntax
+  // errors as you type instead of only at Run.
+  useEffect(() => {
+    if (!source.trim()) {
+      setDiagnostics([]);
+      setValidated(false);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const parameter: InputParam[] = [
+          { name: "validate", valueBoolean: true },
+          mode === "library"
+            ? { name: "library", valueString: source }
+            : { name: "expression", valueString: source },
+        ];
+        const res = await fhirClient.customRequest({
+          method: "POST",
+          url: "/fhir/$cql",
+          data: { resourceType: "Parameters", parameter },
+          headers: { "Content-Type": "application/fhir+json" },
+        });
+        if (cancelled) return;
+        if (isRecord(res.data)) {
+          setDiagnostics(parseValidateResponse(res.data as { parameter: never[] }));
+          setValidated(true);
+        }
+      } catch {
+        // Validation is best-effort; ignore transport errors silently.
+        if (!cancelled) setValidated(false);
+      }
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [source, mode]);
+
   const evaluateMutation = useMutation<CqlEvaluationResult, Error>({
     mutationFn: async () => {
-      const body: {
-        resourceType: string;
-        parameter: Array<{
-          name: string;
-          valueString?: string;
-          valueCode?: string;
-          resource?: unknown;
-        }>;
-      } = {
-        resourceType: "Parameters",
-        parameter: [{ name: "expression", valueString: expression }],
-      };
+      const parameter: InputParam[] = [
+        mode === "library"
+          ? { name: "library", valueString: source }
+          : { name: "expression", valueString: source },
+      ];
 
       if (contextResource.trim()) {
         let resource: unknown;
         try {
-          resource = assertFhirResource(JSON.parse(contextResource), "CQL context resource");
+          resource = JSON.parse(contextResource);
         } catch {
           throw new Error("Invalid JSON in context resource");
         }
-        if (contextType) {
-          body.parameter.push({ name: "context", valueCode: contextType });
-        }
-        body.parameter.push({ name: "contextValue", resource });
+        if (contextType) parameter.push({ name: "context", valueString: contextType });
+        parameter.push({ name: "contextValue", resource });
       }
 
-      const response = await fetch("/fhir/$cql", {
-        method: "POST",
-        headers: { "Content-Type": "application/fhir+json" },
-        body: JSON.stringify(body),
-      });
+      parameter.push(...buildParamEntries(paramsJson));
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`HTTP ${response.status}: ${error}`);
+      let response: Awaited<ReturnType<typeof fhirClient.customRequest>>;
+      try {
+        response = await fhirClient.customRequest({
+          method: "POST",
+          url: "/fhir/$cql",
+          data: { resourceType: "Parameters", parameter },
+          headers: { "Content-Type": "application/fhir+json" },
+        });
+      } catch (err) {
+        throw new Error(errorMessage(err));
       }
 
-      const params = await response.json();
-      return parseCqlResponse(params);
+      const data = response.data;
+      if (!isRecord(data) || !Array.isArray((data as { parameter?: unknown }).parameter)) {
+        throw new Error("Invalid CQL response");
+      }
+      return parseCqlResponse(data as { parameter: never[] });
     },
   });
 
   const handleExecute = () => evaluateMutation.mutate();
 
   const handleClear = () => {
-    setExpression("");
+    setSource("");
     evaluateMutation.reset();
   };
 
-  const loadSample = (key: SampleKey) => setContextResource(sampleJsonString(key));
+  const loadExample = (ex: (typeof CQL_EXAMPLES)[number]) => {
+    setSource(ex.source);
+    if (ex.sample) setContextResource(sampleJsonString(ex.sample));
+  };
+
+  const loadSample = (key: SampleKey) => {
+    setContextResource(sampleJsonString(key));
+    setInputTab("context");
+  };
 
   const formatResource = () => {
     try {
@@ -133,7 +245,7 @@ export function CqlConsolePage() {
     if (handle) {
       handle.insertSnippet(snippet);
     } else {
-      setExpression((prev) => prev + snippet.replace(/\$\{\d+:?([^}]*)\}/g, "$1"));
+      setSource((prev) => prev + snippet.replace(/\$\{\d+:?([^}]*)\}/g, "$1"));
     }
   };
 
@@ -142,7 +254,7 @@ export function CqlConsolePage() {
   return (
     <ToolWorkspaceLayout
       title="CQL Console"
-      description="Evaluate Clinical Quality Language (CQL) expressions against an optional resource context"
+      description="Evaluate CQL expressions and libraries — every define, against an optional resource context"
       className="page-enter"
       actions={
         <div className={classes.actions}>
@@ -150,7 +262,7 @@ export function CqlConsolePage() {
             type="button"
             className={classes.runBtn}
             onClick={handleExecute}
-            disabled={evaluateMutation.isPending || !expression.trim()}
+            disabled={evaluateMutation.isPending || !source.trim()}
           >
             <Play size={15} />
             {evaluateMutation.isPending ? "Running…" : "Run"}
@@ -165,15 +277,23 @@ export function CqlConsolePage() {
     >
       <div className={classes.workspaceResizable}>
         <Resizable.Group orientation="vertical">
-          {/* ── Expression ── */}
-          <Resizable.Pane defaultSize={30} minSize={16}>
+          {/* ── CQL source ── */}
+          <Resizable.Pane defaultSize={38} minSize={18}>
             <div className={classes.editorPanel}>
               <div className={classes.panelHead}>
                 <span className={classes.panelTitle}>
                   <span className={classes.panelTitleIcon}>
-                    <SquareFunction size={14} />
+                    {mode === "library" ? <Library size={14} /> : <SquareFunction size={14} />}
                   </span>
-                  Expression
+                  CQL Source
+                </span>
+                <span
+                  className={classes.modeBadge}
+                  title={
+                    mode === "library" ? "Library — every define is evaluated" : "Single expression"
+                  }
+                >
+                  {mode}
                 </span>
                 {contextType && (
                   <span className={classes.ctxBadge} title="CQL evaluation context">
@@ -186,16 +306,12 @@ export function CqlConsolePage() {
                     <Sparkles size={12} style={{ verticalAlign: "-2px", marginRight: 4 }} />
                     Examples
                   </span>
-                  {EXPRESSION_EXAMPLES.map((ex) => (
+                  {CQL_EXAMPLES.map((ex) => (
                     <button
                       key={ex.label}
                       type="button"
                       className={classes.chip}
-                      title={ex.expression}
-                      onClick={() => {
-                        setExpression(ex.expression);
-                        if (ex.sample) loadSample(ex.sample);
-                      }}
+                      onClick={() => loadExample(ex)}
                     >
                       {ex.label}
                     </button>
@@ -213,78 +329,116 @@ export function CqlConsolePage() {
               </div>
               {showFunctions && <FunctionPalette onInsert={(fn) => insertFunction(fn.snippet)} />}
               <div className={classes.editorHost}>
-                <CqlExpressionEditor
+                <CqlSourceEditor
                   ref={editorRef}
-                  value={expression}
-                  onChange={setExpression}
+                  value={source}
+                  onChange={setSource}
                   onSubmit={handleExecute}
                   height="100%"
                 />
               </div>
+              {source.trim() &&
+                (diagnostics.length > 0 ? (
+                  <div className={`${classes.diagBar} ${classes.diagBarError}`}>
+                    {diagnostics.map((d) => (
+                      <div key={d.message} className={classes.diagItem}>
+                        <CircleAlert size={13} />
+                        <span>{d.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  validated && (
+                    <div className={`${classes.diagBar} ${classes.diagBarOk}`}>
+                      <Check size={13} />
+                      Valid CQL
+                    </div>
+                  )
+                ))}
             </div>
           </Resizable.Pane>
 
           <Resizable.Handle />
 
-          {/* ── Context resource (optional) ── */}
-          <Resizable.Pane defaultSize={33} minSize={14}>
+          {/* ── Input: Context / Parameters ── */}
+          <Resizable.Pane defaultSize={28} minSize={12}>
             <div className={classes.editorPanel}>
               <div className={classes.panelHead}>
-                <span className={classes.panelTitle}>
-                  <span className={classes.panelTitleIcon}>
-                    <Braces size={14} />
-                  </span>
-                  Context Resource
-                  <span className={classes.chipRowLabel} style={{ textTransform: "none" }}>
-                    optional
-                  </span>
-                </span>
-                <span className={classes.panelHeadSpacer} />
-                <div className={classes.chipRow}>
-                  {SAMPLE_RESOURCES.map((s) => (
-                    <button
-                      key={s.key}
-                      type="button"
-                      className={`${classes.chip} ${activeSampleKey === s.key ? classes.chipActive : ""}`}
-                      onClick={() => loadSample(s.key)}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
+                <div className={classes.tabBar}>
                   <button
                     type="button"
-                    className={classes.chip}
-                    onClick={() => setContextResource("")}
-                    title="Clear context"
+                    className={`${classes.tab} ${inputTab === "context" ? classes.tabActive : ""}`}
+                    onClick={() => setInputTab("context")}
                   >
-                    None
+                    <Braces size={13} />
+                    Context
                   </button>
                   <button
                     type="button"
-                    className={classes.chip}
-                    onClick={formatResource}
-                    title="Format JSON"
+                    className={`${classes.tab} ${inputTab === "params" ? classes.tabActive : ""}`}
+                    onClick={() => setInputTab("params")}
                   >
-                    <Wand2 size={12} />
-                    Format
+                    <Sliders size={13} />
+                    Parameters
                   </button>
                 </div>
+                <span className={classes.panelHeadSpacer} />
+                {inputTab === "context" && (
+                  <div className={classes.chipRow}>
+                    {SAMPLE_RESOURCES.map((s) => (
+                      <button
+                        key={s.key}
+                        type="button"
+                        className={`${classes.chip} ${activeSampleKey === s.key ? classes.chipActive : ""}`}
+                        onClick={() => loadSample(s.key)}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className={classes.chip}
+                      onClick={() => setContextResource("")}
+                      title="Clear context"
+                    >
+                      None
+                    </button>
+                    <button
+                      type="button"
+                      className={classes.chip}
+                      onClick={formatResource}
+                      title="Format JSON"
+                    >
+                      <Wand2 size={12} />
+                      Format
+                    </button>
+                  </div>
+                )}
               </div>
               <div className={classes.editorHost}>
-                <JsonEditor
-                  value={contextResource}
-                  onChange={setContextResource}
-                  onExecute={handleExecute}
-                  height="100%"
-                />
+                {inputTab === "context" ? (
+                  <JsonEditor
+                    value={contextResource}
+                    onChange={setContextResource}
+                    onExecute={handleExecute}
+                    height="100%"
+                  />
+                ) : (
+                  <JsonEditor
+                    value={paramsJson}
+                    onChange={setParamsJson}
+                    onExecute={handleExecute}
+                    height="100%"
+                  />
+                )}
               </div>
             </div>
           </Resizable.Pane>
 
           <Resizable.Handle />
 
-          {/* ── Result ── */}
-          <Resizable.Pane defaultSize={37} minSize={16}>
+          {/* ── Results ── */}
+          <Resizable.Pane defaultSize={34} minSize={14}>
             <div className={classes.resultsPanel}>
               {evaluateMutation.error && (
                 <div className={classes.errorBox}>
@@ -299,21 +453,38 @@ export function CqlConsolePage() {
               {data ? (
                 <div className={classes.resultSection}>
                   <div className={classes.resultSectionHead}>
-                    <span className={classes.sectionTitle}>Result</span>
-                    <span className={classes.sectionCount}>{data.datatype}</span>
+                    <span className={classes.sectionTitle}>
+                      {data.mode === "library" ? "Defines" : "Result"}
+                    </span>
+                    <span className={classes.sectionCount}>{data.defines.length}</span>
                   </div>
-                  <ResultItem result={data} />
+                  {data.defines.length === 0 ? (
+                    <div className={classes.emptyHint}>
+                      No public defines were returned. Mark defines as <code>public</code> or check
+                      the source.
+                    </div>
+                  ) : (
+                    <div className={classes.resultList}>
+                      {data.defines.map((def) => (
+                        <ResultItem
+                          key={def.name}
+                          define={def}
+                          hideName={data.mode === "expression"}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
                 !evaluateMutation.error && (
                   <div className={classes.emptyState}>
                     <span className={classes.emptyIcon}>
-                      <SquareFunction size={24} />
+                      <Library size={24} />
                     </span>
                     <span className={classes.emptyTitle}>Ready to evaluate</span>
                     <span className={classes.emptyHint}>
-                      Pick an example or type a CQL expression, then press <code>{RUN_KEY}</code> to
-                      see the result.
+                      Write a CQL expression or a full library with multiple <code>define</code>s,
+                      then press <code>{RUN_KEY}</code>. Every public define is evaluated.
                     </span>
                   </div>
                 )
