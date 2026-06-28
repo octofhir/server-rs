@@ -1,27 +1,27 @@
-import { Button, IconChevronDown, IconPlus, IconRepeat, Menu, Text } from "@octofhir/ui-kit";
-import { useCallback } from "react";
 import {
   closestCenter,
   DndContext,
+  type DragEndEvent,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
-  type DragEndEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { ColumnRow } from "./ColumnRow";
-import { ForEachEditor } from "./ForEachEditor";
+import { Button, IconChevronDown, IconPlus, IconRepeat, Menu, Text } from "@octofhir/ui-kit";
+import { useCallback } from "react";
 import type {
   ViewDefinitionColumn,
   ViewDefinitionConstant,
   ViewDefinitionSelect,
 } from "../../lib/useViewDefinition";
 import classes from "./ColumnBuilder.module.css";
+import { ColumnRow } from "./ColumnRow";
+import { ForEachEditor } from "./ForEachEditor";
 
 interface ColumnBuilderProps {
   columns: ViewDefinitionColumn[];
@@ -91,12 +91,7 @@ export function ColumnBuilder({
           Columns & Collections
         </Text>
         <div className={classes.actions}>
-          <Button
-            variant="subtle"
-            size="xs"
-            leftSection={<IconPlus size={12} />}
-            onClick={onAdd}
-          >
+          <Button variant="subtle" size="xs" leftSection={<IconPlus size={12} />} onClick={onAdd}>
             Add Column
           </Button>
           <Menu shadow="md" width={180}>
@@ -111,16 +106,10 @@ export function ColumnBuilder({
               </Button>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item
-                leftSection={<IconRepeat size={14} />}
-                onClick={() => onAddForEach(false)}
-              >
+              <Menu.Item leftSection={<IconRepeat size={14} />} onClick={() => onAddForEach(false)}>
                 forEach
               </Menu.Item>
-              <Menu.Item
-                leftSection={<IconRepeat size={14} />}
-                onClick={() => onAddForEach(true)}
-              >
+              <Menu.Item leftSection={<IconRepeat size={14} />} onClick={() => onAddForEach(true)}>
                 forEachOrNull
               </Menu.Item>
             </Menu.Dropdown>
@@ -137,10 +126,7 @@ export function ColumnBuilder({
               collisionDetection={closestCenter}
               onDragEnd={handleDragEnd}
             >
-              <SortableContext
-                items={sortableIds}
-                strategy={verticalListSortingStrategy}
-              >
+              <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
                 <div className={classes.columnList}>
                   {columns.map((col, i) => (
                     <ColumnRow
@@ -160,22 +146,20 @@ export function ColumnBuilder({
 
           {/* Nested selects (forEach) */}
           {nestedSelects.map((select, i) => (
-              <ForEachEditor
-                key={select._id || i}
-                selectNode={select}
-                resourceType={resourceType}
-                constants={constants}
-                onChange={(s) => onNestedSelectChange(i, s)}
-                onRemove={() => onNestedSelectRemove(i)}
-              />
-            )
-          )}
+            <ForEachEditor
+              key={select._id || i}
+              selectNode={select}
+              resourceType={resourceType}
+              constants={constants}
+              onChange={(s) => onNestedSelectChange(i, s)}
+              onRemove={() => onNestedSelectRemove(i)}
+            />
+          ))}
 
           {/* Empty state */}
           {columns.length === 0 && nestedSelects.length === 0 && (
             <Text size="sm" c="dimmed" ta="center" py="md">
-              No columns defined. Click "Add Column" or "Add Collection" to
-              start.
+              No columns defined. Click "Add Column" or "Add Collection" to start.
             </Text>
           )}
         </div>

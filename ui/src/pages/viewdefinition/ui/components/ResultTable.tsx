@@ -34,9 +34,7 @@ export function ResultTable({ result }: ResultTableProps) {
           <Table.Tr key={`row-${i}-${JSON.stringify(row).slice(0, 20)}`}>
             {result.columns.map((col) => (
               <Table.Td key={col.name}>
-                <Code>
-                  {JSON.stringify(isRecord(row) ? row[col.name] : undefined)}
-                </Code>
+                <Code>{JSON.stringify(isRecord(row) ? row[col.name] : undefined)}</Code>
               </Table.Td>
             ))}
           </Table.Tr>

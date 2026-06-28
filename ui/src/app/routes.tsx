@@ -1,35 +1,34 @@
-import { Routes, Route } from "react-router-dom";
-import { RouteGuard } from "@/shared/ui-react/RouteGuard";
-import { AppShell } from "@/widgets/app-shell";
-
+import { Route, Routes } from "react-router-dom";
+import { AppDetailPage, AppsPage } from "@/pages/apps";
+import { AuditTrailPage } from "@/pages/audit";
+import {
+  AccessPoliciesPage,
+  ClientsPage,
+  IdentityProvidersPage,
+  RolesPage,
+  UserDetailPage,
+  UsersPage,
+} from "@/pages/auth";
+import { AutomationEditorPage, AutomationsPage } from "@/pages/automations";
+import { RestConsolePage } from "@/pages/console";
+import { CqlConsolePage } from "@/pages/cql-console";
+import { DashboardPage } from "@/pages/dashboard";
+import { DatabasePage } from "@/pages/database";
+import { DbConsolePage } from "@/pages/db-console";
+import { FhirPathConsolePage } from "@/pages/fhirpath-console";
+import { GraphQLConsolePage } from "@/pages/graphql-console";
 // Migrated pages
 import { LoginPage } from "@/pages/login";
-import { DashboardPage } from "@/pages/dashboard";
-import { SettingsPage } from "@/pages/settings";
-import { DbConsolePage } from "@/pages/db-console";
-import { DatabasePage } from "@/pages/database";
-import { GraphQLConsolePage } from "@/pages/graphql-console";
-import { FhirPathConsolePage } from "@/pages/fhirpath-console";
-import { CqlConsole } from "@/pages/CqlConsole";
-import { ResourceBrowserPage } from "@/pages/resource-browser";
-import { RestConsolePage } from "@/pages/console";
-import { OperationsPage, OperationDetailPage } from "@/pages/operations";
-import { AppsPage, AppDetailPage } from "@/pages/apps";
-import {
-  ClientsPage,
-  UsersPage,
-  UserDetailPage,
-  RolesPage,
-  AccessPoliciesPage,
-  IdentityProvidersPage,
-} from "@/pages/auth";
-import { SessionsPage } from "@/pages/sessions";
-import { PackagesPage, PackageDetailPage } from "@/pages/packages";
 import { LogsViewerPage } from "@/pages/logs";
-import { AuditTrailPage } from "@/pages/audit";
-import { ViewDefinitionPage } from "@/pages/viewdefinition";
-import { AutomationsPage, AutomationEditorPage } from "@/pages/automations";
 import { CapabilityStatementPage } from "@/pages/metadata";
+import { OperationDetailPage, OperationsPage } from "@/pages/operations";
+import { PackageDetailPage, PackagesPage } from "@/pages/packages";
+import { ResourceBrowserPage } from "@/pages/resource-browser";
+import { SessionsPage } from "@/pages/sessions";
+import { SettingsPage } from "@/pages/settings";
+import { ViewDefinitionPage } from "@/pages/viewdefinition";
+import { RouteGuard } from "@/shared/ui-react/RouteGuard";
+import { AppShell } from "@/widgets/app-shell";
 
 // Protected layout with RouteGuard and AppShell
 function ProtectedLayout() {
@@ -82,7 +81,7 @@ export function AppRoutes() {
         <Route path="/db-console" element={<DbConsolePage />} />
         <Route path="/graphql" element={<GraphQLConsolePage />} />
         <Route path="/fhirpath" element={<FhirPathConsolePage />} />
-        <Route path="/cql" element={<CqlConsole />} />
+        <Route path="/cql" element={<CqlConsolePage />} />
         <Route path="/settings" element={<SettingsPage />} />
 
         {/* Other */}

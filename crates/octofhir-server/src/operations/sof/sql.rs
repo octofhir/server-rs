@@ -202,7 +202,7 @@ mod tests {
         });
 
         let view_def = op.extract_view_definition(&params).unwrap();
-        assert_eq!(view_def.name, "test_view");
+        assert_eq!(view_def.name.as_deref(), Some("test_view"));
         assert_eq!(view_def.resource, "Patient");
     }
 

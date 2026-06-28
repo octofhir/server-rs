@@ -36,7 +36,7 @@ octofhir-cql-service = { path = "../octofhir-cql-service" }
 octofhir-canonical-manager = { workspace = true }
 octofhir-graphql = { path = "../octofhir-graphql" }
 # otter-runtime = "0.1"
-octofhir-sof = { path = "../octofhir-sof" }
+octofhir-sof = { workspace = true }
 async-trait = { workspace = true }
 num_cpus = "1.17"
 

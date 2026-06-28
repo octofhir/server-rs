@@ -1,39 +1,75 @@
 .panel {
-	display: flex;
-	flex-direction: column;
-	gap: var(--g-spacing-4);
-	flex: 1;
-	min-height: 0;
-	padding: var(--g-spacing-4);
-}
-
-.headerFields {
-	display: flex;
-	align-items: flex-end;
-	gap: var(--g-spacing-4);
-	flex-wrap: wrap;
-}
-
-.textField {
-	flex: 1 1 200px;
-	min-width: 200px;
-}
-
-.statusField {
-	width: 120px;
-	flex: 0 0 120px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .tabs {
-	flex: 1;
-	min-height: 0;
-	display: flex;
-	flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .tabPanel {
-	flex: 1;
-	min-height: 0;
-	padding-top: var(--g-spacing-4);
-	overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--octo-spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-lg);
+}
+
+/* Meta bar */
+.meta {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--octo-spacing-sm);
+  flex-wrap: wrap;
+}
+
+.metaName {
+  flex: 2 1 200px;
+  min-width: 160px;
+}
+.metaResource {
+  flex: 1 1 160px;
+  min-width: 140px;
+}
+.metaStatus {
+  width: 130px;
+  flex: 0 0 130px;
+}
+
+/* Sections */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-xs);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--octo-spacing-sm);
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.08));
+}
+
+.sectionTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--octo-text-primary, #111);
 }

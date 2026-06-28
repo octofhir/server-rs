@@ -51,15 +51,16 @@
 }
 
 .wrapper:focus-within {
-    border-color: var(--octo-accent-primary, #4263eb);
-    box-shadow: 0 0 0 1px var(--octo-accent-primary, #4263eb);
+    border-color: var(--octo-accent-primary, #10b981);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--octo-accent-primary, #10b981) 18%, transparent);
 }
 
 .wrapper[data-error="true"] {
     border-color: var(--octo-accent-fire, #fa5252);
 }
 .wrapper[data-error="true"]:focus-within {
-    box-shadow: 0 0 0 2px var(--octo-accent-fire, #fa5252);
+    border-color: var(--octo-accent-fire, #fa5252);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--octo-accent-fire, #fa5252) 20%, transparent);
 }
 
 .wrapper[data-disabled="true"] {

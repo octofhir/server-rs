@@ -1,36 +1,67 @@
 .row {
-	display: grid;
-	grid-template-columns: 28px minmax(120px, 1fr) minmax(180px, 2fr) 120px 28px;
-	gap: var(--octo-spacing-xs);
-	align-items: center;
-	min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(110px, 1fr) minmax(200px, 2.2fr) 34px 116px 28px;
+  gap: var(--octo-spacing-xs);
+  align-items: center;
+  min-width: 0;
 }
 
 .nameInput,
 .pathInput {
-	min-width: 0;
+  min-width: 0;
+}
+
+.pathInput {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sampleValue {
+  flex: 0 0 auto;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--octo-font-mono, monospace);
+  font-size: 11px;
+  color: var(--octo-accent-primary, #10b981);
+  opacity: 0.85;
+}
+
+.collectionToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.collectionLabel {
+  font-family: var(--octo-font-mono, monospace);
+  font-size: 10px;
+  color: var(--octo-text-secondary, #888);
 }
 
 .typeSelect {
-	width: 120px;
+  width: 120px;
 }
 
 .dragHandle {
-	cursor: grab;
+  cursor: grab;
 }
 
 .dragHandle[data-dragging="true"] {
-	cursor: grabbing;
+  cursor: grabbing;
 }
 
 @media (max-width: 860px) {
-	.row {
-		grid-template-columns: 28px 1fr 28px;
-	}
+  .row {
+    grid-template-columns: 28px 1fr 28px;
+  }
 
-	.pathInput,
-	.typeSelect {
-		grid-column: 2 / 3;
-		width: 100%;
-	}
+  .pathInput,
+  .typeSelect {
+    grid-column: 2 / 3;
+    width: 100%;
+  }
 }

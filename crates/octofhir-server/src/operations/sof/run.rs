@@ -8,7 +8,14 @@ use serde_json::{Value, json};
 
 use crate::operations::{OperationError, OperationHandler};
 use crate::server::AppState;
-use octofhir_sof::{ViewDefinition, ViewRunner};
+use octofhir_sof::ViewDefinition;
+use octofhir_storage::SearchParams;
+
+/// Safety cap on how many source resources are loaded into memory for an
+/// in-memory `$run`. Large datasets should use `$export` (streamed) instead.
+const MAX_SOURCE_RESOURCES: usize = 10_000;
+/// Page size used when streaming source resources out of storage.
+const FETCH_PAGE_SIZE: u32 = 500;
 
 /// The $run operation handler for ViewDefinition.
 ///
@@ -91,7 +98,7 @@ impl ViewDefinitionRunOperation {
             .and_then(|parameters| {
                 parameters.iter().find_map(|param| {
                     let name = param.get("name").and_then(|n| n.as_str());
-                    if name == Some("limit") {
+                    if name == Some("limit") || name == Some("_limit") {
                         param
                             .get("valueInteger")
                             .and_then(|v| v.as_i64())
@@ -103,22 +110,133 @@ impl ViewDefinitionRunOperation {
             })
     }
 
+    /// Extract inline `resource` parameters (run against caller-supplied
+    /// resources instead of the database — the SQL-on-FHIR spec `resource[]`).
+    fn extract_inline_resources(&self, params: &Value) -> Vec<Value> {
+        params
+            .get("parameter")
+            .and_then(|p| p.as_array())
+            .map(|parameters| {
+                parameters
+                    .iter()
+                    .filter(|param| param.get("name").and_then(|n| n.as_str()) == Some("resource"))
+                    .filter_map(|param| param.get("resource").cloned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Resolve the ViewDefinition from `viewReference` (a saved VD id/reference),
+    /// if present.
+    async fn resolve_view_reference(
+        &self,
+        state: &AppState,
+        params: &Value,
+    ) -> Result<Option<ViewDefinition>, OperationError> {
+        let reference = params
+            .get("parameter")
+            .and_then(|p| p.as_array())
+            .and_then(|parameters| {
+                parameters.iter().find_map(|param| {
+                    if param.get("name").and_then(|n| n.as_str()) == Some("viewReference") {
+                        param
+                            .get("valueReference")
+                            .and_then(|r| r.get("reference"))
+                            .or_else(|| param.get("valueString"))
+                            .and_then(|v| v.as_str())
+                    } else {
+                        None
+                    }
+                })
+            });
+
+        let Some(reference) = reference else {
+            return Ok(None);
+        };
+
+        // Accept either a bare id or a "ViewDefinition/{id}" reference.
+        let id = reference
+            .rsplit('/')
+            .next()
+            .unwrap_or(reference)
+            .to_string();
+
+        let stored = state
+            .storage
+            .read("ViewDefinition", &id)
+            .await
+            .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
+            .ok_or_else(|| OperationError::NotFound(format!("ViewDefinition/{} not found", id)))?;
+
+        let view = ViewDefinition::from_json(&stored.resource).map_err(|e| {
+            OperationError::Internal(format!("Invalid stored ViewDefinition: {}", e))
+        })?;
+        Ok(Some(view))
+    }
+
+    /// Load source resources of the view's resource type from storage, paging
+    /// through results up to [`MAX_SOURCE_RESOURCES`].
+    async fn load_source_resources(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+    ) -> Result<Vec<Value>, OperationError> {
+        let mut resources = Vec::new();
+        let mut offset: u32 = 0;
+
+        loop {
+            let mut params = SearchParams::new();
+            params.count = Some(FETCH_PAGE_SIZE);
+            params.offset = Some(offset);
+
+            let page = state
+                .storage
+                .search(resource_type, &params)
+                .await
+                .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?;
+
+            let fetched = page.entries.len();
+            resources.extend(page.entries.into_iter().map(|entry| entry.resource));
+
+            if fetched < FETCH_PAGE_SIZE as usize
+                || !page.has_more
+                || resources.len() >= MAX_SOURCE_RESOURCES
+            {
+                break;
+            }
+            offset += FETCH_PAGE_SIZE;
+        }
+
+        resources.truncate(MAX_SOURCE_RESOURCES);
+        Ok(resources)
+    }
+
     /// Execute the ViewDefinition and return results.
+    ///
+    /// When `inline` resources are supplied they are used as the data source
+    /// (database-free run); otherwise resources of the view's type are loaded
+    /// from storage. Evaluation uses the conformant in-memory engine from
+    /// `octofhir-sof`.
     async fn execute_view(
         &self,
         state: &AppState,
         view_def: &ViewDefinition,
+        inline: Vec<Value>,
         limit: Option<usize>,
     ) -> Result<Value, OperationError> {
-        let pool = state.db_pool.as_ref().clone();
-        let runner = ViewRunner::new(pool);
+        let resources = if inline.is_empty() {
+            self.load_source_resources(state, &view_def.resource).await?
+        } else {
+            inline
+        };
 
-        // Execute the view
-        let result = runner.run(view_def).await.map_err(|e| {
-            OperationError::Internal(format!("Failed to execute ViewDefinition: {}", e))
-        })?;
+        let result = octofhir_sof::execute(view_def, &resources)
+            .await
+            .map_err(|e| {
+                OperationError::Internal(format!("Failed to execute ViewDefinition: {}", e))
+            })?;
 
-        // Apply limit if specified
+        // Apply row limit if specified
         let rows: Vec<Value> = if let Some(limit) = limit {
             result.to_json_array().into_iter().take(limit).collect()
         } else {
@@ -188,11 +306,15 @@ impl OperationHandler for ViewDefinitionRunOperation {
             )));
         }
 
-        // Extract and execute ViewDefinition
-        let view_def = self.extract_view_definition(params)?;
+        // Resolve the ViewDefinition: inline `viewDefinition` or `viewReference`.
+        let view_def = match self.resolve_view_reference(state, params).await? {
+            Some(view) => view,
+            None => self.extract_view_definition(params)?,
+        };
+        let inline = self.extract_inline_resources(params);
         let limit = self.extract_limit(params);
 
-        self.execute_view(state, &view_def, limit).await
+        self.execute_view(state, &view_def, inline, limit).await
     }
 
     async fn handle_instance(
@@ -224,8 +346,9 @@ impl OperationHandler for ViewDefinitionRunOperation {
             OperationError::Internal(format!("Invalid stored ViewDefinition: {}", e))
         })?;
 
+        let inline = self.extract_inline_resources(params);
         let limit = self.extract_limit(params);
-        self.execute_view(state, &view_def, limit).await
+        self.execute_view(state, &view_def, inline, limit).await
     }
 }
 
@@ -260,7 +383,7 @@ mod tests {
         });
 
         let view_def = op.extract_view_definition(&params).unwrap();
-        assert_eq!(view_def.name, "test_view");
+        assert_eq!(view_def.name.as_deref(), Some("test_view"));
         assert_eq!(view_def.resource, "Patient");
     }
 

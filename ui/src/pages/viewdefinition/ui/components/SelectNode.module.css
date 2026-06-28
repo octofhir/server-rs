@@ -1,0 +1,106 @@
+.node {
+  border: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.08));
+  border-radius: 12px;
+  background: var(--app-surface-1, #fff);
+  min-width: 0;
+}
+
+.node[data-variant="root"] {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+}
+
+.node[data-variant="select"],
+.node[data-variant="union"] {
+  margin-top: var(--octo-spacing-sm);
+  background: var(--app-surface-2, rgba(0, 0, 0, 0.015));
+}
+
+/* Emerald accent rail for nested groups */
+.node[data-variant="select"] {
+  border-left: 2px solid color-mix(in oklch, var(--octo-accent-primary, #10b981) 55%, transparent);
+}
+.node[data-variant="union"] {
+  border-left: 2px solid color-mix(in oklch, var(--octo-accent-secondary, #8b5cf6) 55%, transparent);
+}
+
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-xs);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.06));
+  flex-wrap: wrap;
+}
+
+.nodeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--octo-text-secondary, #555);
+}
+
+.iterationSelect {
+  width: 140px;
+}
+
+.iterationPath {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.iterationLabel {
+  white-space: nowrap;
+}
+
+.iterationField {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nodeBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-xs);
+  padding: 10px;
+}
+
+/* Column grid header — column template mirrors ColumnRow.module.css .row */
+.columnHead {
+  display: grid;
+  grid-template-columns: 24px minmax(110px, 1fr) minmax(200px, 2.2fr) 34px 116px 28px;
+  gap: var(--octo-spacing-xs, 0.5rem);
+  align-items: center;
+  padding: 0 2px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--octo-text-muted, #9aa1ad);
+}
+.colHeadCenter {
+  text-align: center;
+}
+
+.columnList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.affordances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--app-border-subtle, rgba(0, 0, 0, 0.08));
+}
+
+.emptyHint {
+  padding: 8px 4px;
+}

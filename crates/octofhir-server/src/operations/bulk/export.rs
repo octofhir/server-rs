@@ -235,7 +235,7 @@ impl ExportOperation {
 
         tracing::info!(
             job_id = %job_id,
-            view_name = %view_def.name,
+            view_name = view_def.name.as_deref().unwrap_or_default(),
             "ViewDefinition export job submitted"
         );
 

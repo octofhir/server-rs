@@ -1,5 +1,5 @@
 import { ActionIcon, Button, IconPlus, IconTrash, Text, Tooltip } from "@octofhir/ui-kit";
-import type { ViewDefinitionWhere, ViewDefinitionConstant } from "../../lib/useViewDefinition";
+import type { ViewDefinitionConstant, ViewDefinitionWhere } from "../../lib/useViewDefinition";
 import { FHIRPathInput } from "./FHIRPathInput";
 import classes from "./WhereClauseEditor.module.css";
 
@@ -21,9 +21,7 @@ export function WhereClauseEditor({
   };
 
   const handleChange = (index: number, path: string) => {
-    const updated = whereClauses.map((clause, i) =>
-      i === index ? { ...clause, path } : clause
-    );
+    const updated = whereClauses.map((clause, i) => (i === index ? { ...clause, path } : clause));
     onChange(updated);
   };
 
@@ -37,12 +35,7 @@ export function WhereClauseEditor({
         <Text size="sm" fw={500}>
           Where Clauses
         </Text>
-        <Button
-          variant="subtle"
-          size="xs"
-          leftSection={<IconPlus size={12} />}
-          onClick={handleAdd}
-        >
+        <Button variant="subtle" size="xs" leftSection={<IconPlus size={12} />} onClick={handleAdd}>
           Add Where Clause
         </Button>
       </div>
@@ -61,12 +54,7 @@ export function WhereClauseEditor({
                 />
               </div>
               <Tooltip label="Remove clause">
-                <ActionIcon
-                  variant="subtle"
-                  color="red"
-                  size="sm"
-                  onClick={() => handleRemove(i)}
-                >
+                <ActionIcon variant="subtle" color="red" size="sm" onClick={() => handleRemove(i)}>
                   <IconTrash size={14} />
                 </ActionIcon>
               </Tooltip>

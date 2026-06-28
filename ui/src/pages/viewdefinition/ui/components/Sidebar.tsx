@@ -1,4 +1,6 @@
-import { Button, Divider, IconCheck, Text } from "@octofhir/ui-kit";
+import { Badge, Text, TextInput } from "@octofhir/ui-kit";
+import { PanelLeftClose, PanelLeftOpen, Search, Table2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { ViewDefinition } from "../../lib/useViewDefinition";
 import classes from "./Sidebar.module.css";
 
@@ -8,42 +10,97 @@ interface SidebarProps {
   onSelect: (id: string) => void;
 }
 
+const STATUS_COLOR: Record<string, string> = {
+  active: "var(--octo-accent-primary, #10b981)",
+  draft: "var(--octo-accent-warm, #f59e0b)",
+  retired: "var(--octo-text-muted, #9aa1ad)",
+  unknown: "var(--octo-text-muted, #9aa1ad)",
+};
+
 export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((vd) => (vd.name || "").toLowerCase().includes(q));
+  }, [items, query]);
+
+  if (collapsed) {
+    return (
+      <aside className={classes.rail}>
+        <button
+          type="button"
+          className={classes.railBtn}
+          onClick={() => setCollapsed(false)}
+          aria-label="Expand saved views"
+          title="Saved views"
+        >
+          <PanelLeftOpen size={16} />
+        </button>
+        <span className={classes.railCount}>{items.length}</span>
+      </aside>
+    );
+  }
+
   return (
     <aside className={classes.sidebar}>
       <div className={classes.header}>
-        <Text variant="body-1" color="secondary" className={classes.title}>
-          Saved Views
-        </Text>
+        <span className={classes.headTitle}>
+          <Table2 size={14} />
+          <Text size="sm" fw={600}>
+            Saved views
+          </Text>
+          <Badge size="xs" variant="light">
+            {items.length}
+          </Badge>
+        </span>
+        <button
+          type="button"
+          className={classes.collapseBtn}
+          onClick={() => setCollapsed(true)}
+          aria-label="Collapse saved views"
+        >
+          <PanelLeftClose size={15} />
+        </button>
       </div>
-      <Divider />
+
+      <div className={classes.searchRow}>
+        <TextInput
+          size="xs"
+          value={query}
+          onChange={setQuery}
+          placeholder="Filter views…"
+          leftSection={<Search size={13} />}
+          aria-label="Filter saved views"
+        />
+      </div>
+
       <div className={classes.list}>
-        {items.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className={classes.emptyState}>
-            <Text variant="body-1" color="secondary" className={classes.empty}>
-              No saved views
+            <Text size="xs" c="dimmed">
+              {items.length === 0 ? "No saved views yet" : "No matches"}
             </Text>
           </div>
         ) : (
-          <div className={classes.items}>
-            {items.map((vd) => (
-              <Button
-                key={vd.id}
-                variant={selectedId === vd.id ? "light" : "subtle"}
-                size="md"
-                className={classes.item}
-                data-selected={selectedId === vd.id ? "true" : undefined}
-                onClick={() => vd.id && onSelect(vd.id)}
-              >
-                {vd.status === "active" && (
-                   <Button.Icon><IconCheck size={14} className={classes.activeIcon} /></Button.Icon>
-                )}
-                <span className={classes.itemLabel}>
-                  {vd.name || "Untitled"}
-                </span>
-              </Button>
-            ))}
-          </div>
+          filtered.map((vd) => (
+            <button
+              key={vd.id}
+              type="button"
+              className={classes.item}
+              data-selected={selectedId === vd.id ? "true" : undefined}
+              onClick={() => vd.id && onSelect(vd.id)}
+            >
+              <span
+                className={classes.statusDot}
+                style={{ background: STATUS_COLOR[vd.status] ?? STATUS_COLOR.unknown }}
+              />
+              <span className={classes.itemLabel}>{vd.name || "Untitled"}</span>
+              <span className={classes.itemResource}>{vd.resource}</span>
+            </button>
+          ))
         )}
       </div>
     </aside>

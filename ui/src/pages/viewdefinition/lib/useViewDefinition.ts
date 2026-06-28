@@ -1,5 +1,10 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isRecord } from "@/shared/api/guards";
+
+export interface ViewDefinitionColumnTag {
+  name: string;
+  value?: string;
+}
 
 export interface ViewDefinitionColumn {
   name: string;
@@ -7,19 +12,27 @@ export interface ViewDefinitionColumn {
   type?: string;
   collection?: boolean;
   description?: string;
+  tag?: ViewDefinitionColumnTag[];
   _id?: string; // Internal ID for React key and drag-and-drop
 }
 
+/**
+ * A `select` node in the SQL-on-FHIR ViewDefinition tree. Fully recursive:
+ * a node may carry its own `column[]`, nested `select[]`, an iteration
+ * (`forEach` / `forEachOrNull`), and `unionAll[]` branches.
+ */
 export interface ViewDefinitionSelect {
   forEach?: string;
   forEachOrNull?: string;
   column?: ViewDefinitionColumn[];
   select?: ViewDefinitionSelect[];
+  unionAll?: ViewDefinitionSelect[];
   _id?: string; // Internal ID for React key
 }
 
 export interface ViewDefinitionWhere {
   path: string;
+  description?: string;
   _id?: string; // Internal ID for React key
 }
 
@@ -37,8 +50,11 @@ export interface ViewDefinition {
   id?: string;
   url?: string;
   name: string;
+  title?: string;
   status: "draft" | "active" | "retired" | "unknown";
   resource: string;
+  fhirVersion?: string[];
+  profile?: string[];
   description?: string;
   select: ViewDefinitionSelect[];
   where?: ViewDefinitionWhere[];
@@ -115,6 +131,25 @@ function readRows(parameter: Record<string, unknown> | undefined): unknown[] {
   }
 }
 
+/**
+ * Strip editor-internal `_id` keys (used only for stable React keys / drag
+ * reordering) before sending a ViewDefinition to the server.
+ */
+function stripInternal<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(stripInternal) as unknown as T;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (key === "_id") continue;
+      out[key] = stripInternal(val);
+    }
+    return out as T;
+  }
+  return value;
+}
+
 // Fetch all ViewDefinitions
 async function fetchViewDefinitions(): Promise<ViewDefinition[]> {
   const res = await fetch("/fhir/ViewDefinition?_count=100");
@@ -145,12 +180,12 @@ async function fetchViewDefinition(id: string): Promise<ViewDefinition> {
 }
 
 // Run a ViewDefinition
-async function runViewDefinition(viewDefinition: ViewDefinition): Promise<RunResult> {
+async function runViewDefinition(viewDefinition: ViewDefinition, limit = 1000): Promise<RunResult> {
   const params = {
     resourceType: "Parameters",
     parameter: [
-      { name: "viewDefinition", resource: viewDefinition },
-      { name: "limit", valueInteger: 100 },
+      { name: "viewDefinition", resource: stripInternal(viewDefinition) },
+      { name: "_limit", valueInteger: limit },
     ],
   };
 
@@ -186,7 +221,7 @@ async function saveViewDefinition(viewDefinition: ViewDefinition): Promise<ViewD
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/fhir+json" },
-    body: JSON.stringify(viewDefinition),
+    body: JSON.stringify(stripInternal(viewDefinition)),
   });
 
   if (!res.ok) {
@@ -213,7 +248,7 @@ async function deleteViewDefinition(id: string): Promise<void> {
 async function generateSql(viewDefinition: ViewDefinition): Promise<SqlResult> {
   const params = {
     resourceType: "Parameters",
-    parameter: [{ name: "viewDefinition", resource: viewDefinition }],
+    parameter: [{ name: "viewDefinition", resource: stripInternal(viewDefinition) }],
   };
 
   const res = await fetch("/fhir/ViewDefinition/$sql", {
@@ -260,7 +295,7 @@ export function useViewDefinition(id: string | undefined) {
 
 export function useRunViewDefinition() {
   return useMutation({
-    mutationFn: runViewDefinition,
+    mutationFn: (viewDefinition: ViewDefinition) => runViewDefinition(viewDefinition),
   });
 }
 

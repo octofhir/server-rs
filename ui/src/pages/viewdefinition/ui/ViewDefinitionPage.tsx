@@ -1,43 +1,38 @@
-import { Alert, Button, Spin } from "@octofhir/ui-kit";
-import { useState, useCallback } from "react";
-import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import {
-  IconPlus,
-  IconPlayerPlay,
-  IconDeviceFloppy,
-  IconTrash,
+  Alert,
+  Button,
   IconAlertCircle,
+  IconDeviceFloppy,
+  IconPlayerPlay,
+  IconPlus,
+  IconTrash,
+  Spin,
 } from "@octofhir/ui-kit";
+import { useCallback, useMemo, useState } from "react";
+import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
+import { useResourceTypes } from "../lib/useResourceTypes";
 import { useSettings } from "../lib/useSettings";
 import {
-  useViewDefinitions,
-  useRunViewDefinition,
-  useSaveViewDefinition,
-  useDeleteViewDefinition,
-  useGenerateSql,
-  type ViewDefinition,
   type RunResult,
   type SqlResult,
+  useDeleteViewDefinition,
+  useGenerateSql,
+  useRunViewDefinition,
+  useSaveViewDefinition,
+  useViewDefinitions,
+  type ViewDefinition,
 } from "../lib/useViewDefinition";
-import { useResourceTypes } from "../lib/useResourceTypes";
-import { Sidebar } from "./components/Sidebar";
 import { EditorPanel } from "./components/EditorPanel";
 import { PreviewPanel } from "./components/PreviewPanel";
+import { Sidebar } from "./components/Sidebar";
 import classes from "./ViewDefinitionPage.module.css";
 
 // Feature disabled banner
 function FeatureDisabledBanner() {
   return (
-    <Alert
-      icon={<IconAlertCircle size={16} />}
-      title="SQL on FHIR Disabled"
-      color="warning"
-    >
+    <Alert icon={<IconAlertCircle size={16} />} title="SQL on FHIR Disabled" color="warning">
       SQL on FHIR must be enabled in server configuration:
-      <pre className={classes.configSnippet}>
-        [sql_on_fhir]
-        enabled = true
-      </pre>
+      <pre className={classes.configSnippet}>[sql_on_fhir] enabled = true</pre>
     </Alert>
   );
 }
@@ -150,6 +145,18 @@ export function ViewDefinitionPage() {
     setCurrent(val);
   }, []);
 
+  // Sampled values from the first preview row, keyed by column name — surfaced
+  // inline next to each column's FHIRPath for instant feedback.
+  const sampleRow = useMemo<Record<string, string> | undefined>(() => {
+    const first = runResult?.rows?.[0];
+    if (!first || typeof first !== "object") return undefined;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(first as Record<string, unknown>)) {
+      out[k] = v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+    }
+    return out;
+  }, [runResult]);
+
   if (settingsLoading) {
     return (
       <div className={classes.loadingState}>
@@ -167,88 +174,71 @@ export function ViewDefinitionPage() {
       className="page-enter"
       actions={
         <div className={classes.actions}>
-            {listLoading && <Spin size="sm" />}
-            <Button
-              variant="filled"
-              size="md"
-              loading={runMutation.isPending}
-              onClick={handleRun}
-            >
-              <Button.Icon>
-                <IconPlayerPlay size={14} />
-              </Button.Icon>
-              Run
-            </Button>
-            <Button
-              variant="default"
-              size="md"
-              loading={saveMutation.isPending}
-              onClick={handleSave}
-            >
-              <Button.Icon>
-                <IconDeviceFloppy size={14} />
-              </Button.Icon>
-              Save
-            </Button>
-            {selectedId && (
-              <Button
-                variant="subtle" color="red"
-                size="md"
-                loading={deleteMutation.isPending}
-                onClick={() => handleDelete(selectedId)}
-              >
-                <Button.Icon>
-                  <IconTrash size={14} />
-                </Button.Icon>
-              </Button>
-            )}
+          {listLoading && <Spin size="sm" />}
+          <Button variant="filled" size="md" loading={runMutation.isPending} onClick={handleRun}>
+            <Button.Icon>
+              <IconPlayerPlay size={14} />
+            </Button.Icon>
+            Run
+          </Button>
+          <Button variant="default" size="md" loading={saveMutation.isPending} onClick={handleSave}>
+            <Button.Icon>
+              <IconDeviceFloppy size={14} />
+            </Button.Icon>
+            Save
+          </Button>
+          {selectedId && (
             <Button
               variant="subtle"
+              color="red"
               size="md"
-              onClick={() => handleSelect(null)}
+              loading={deleteMutation.isPending}
+              onClick={() => handleDelete(selectedId)}
             >
               <Button.Icon>
-                <IconPlus size={14} />
+                <IconTrash size={14} />
               </Button.Icon>
-              New
             </Button>
-          </div>
+          )}
+          <Button variant="subtle" size="md" onClick={() => handleSelect(null)}>
+            <Button.Icon>
+              <IconPlus size={14} />
+            </Button.Icon>
+            New
+          </Button>
+        </div>
       }
     >
+      {isDisabled && (
+        <div className={classes.disabledBanner}>
+          <FeatureDisabledBanner />
+        </div>
+      )}
 
-        {isDisabled && (
-          <div className={classes.disabledBanner}>
-            <FeatureDisabledBanner />
+      <div className={classes.content}>
+        {/* Sidebar */}
+        <Sidebar items={viewDefinitions || []} selectedId={selectedId} onSelect={handleSelect} />
+
+        {/* Main Editor / Preview Split */}
+        <div className={classes.workspace}>
+          <div className={classes.editorSection}>
+            <EditorPanel
+              value={current}
+              onChange={handleUpdate}
+              resourceTypes={resourceTypes}
+              sampleRow={sampleRow}
+            />
           </div>
-        )}
-
-        <div className={classes.content}>
-          {/* Sidebar */}
-          <Sidebar
-            items={viewDefinitions || []}
-            selectedId={selectedId}
-            onSelect={handleSelect}
-          />
-
-          {/* Main Editor / Preview Split */}
-          <div className={classes.workspace}>
-            <div className={classes.editorSection}>
-              <EditorPanel
-                value={current}
-                onChange={handleUpdate}
-                resourceTypes={resourceTypes}
-              />
-            </div>
-            <div className={classes.previewSection}>
-              <PreviewPanel
-                runResult={runResult}
-                sqlResult={sqlResult}
-                onRefreshSql={handleGenerateSql}
-                isLoading={runMutation.isPending || sqlMutation.isPending}
-              />
-            </div>
+          <div className={classes.previewSection}>
+            <PreviewPanel
+              runResult={runResult}
+              sqlResult={sqlResult}
+              onRefreshSql={handleGenerateSql}
+              isLoading={runMutation.isPending || sqlMutation.isPending}
+            />
           </div>
         </div>
+      </div>
     </ToolWorkspaceLayout>
   );
 }

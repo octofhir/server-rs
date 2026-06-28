@@ -137,7 +137,7 @@ impl ViewDefinitionExportOperation {
 
         tracing::info!(
             job_id = %job_id,
-            view_name = %view_def.name,
+            view_name = view_def.name.as_deref().unwrap_or_default(),
             "ViewDefinition export job submitted"
         );
 
@@ -253,7 +253,7 @@ pub async fn execute_viewdefinition_export(
 
     tracing::info!(
         job_id = %job_id,
-        view_name = %view_def.name,
+        view_name = view_def.name.as_deref().unwrap_or_default(),
         resource = %view_def.resource,
         "Executing ViewDefinition export"
     );
@@ -283,7 +283,7 @@ pub async fn execute_viewdefinition_export(
         .await
         .map_err(|e| format!("Failed to create NDJSON writer: {}", e))?;
 
-    let view_name = &view_def.name;
+    let view_name = view_def.name.as_deref().unwrap_or("view");
     let rows = result.to_json_array();
     let total_rows = rows.len();
 
@@ -356,7 +356,7 @@ pub async fn execute_viewdefinition_export(
         "error": [],
         "extension": [{
             "url": "http://octofhir.org/export/viewDefinition",
-            "valueString": view_def.name
+            "valueString": view_def.name.clone().unwrap_or_default()
         }, {
             "url": "http://octofhir.org/export/rowCount",
             "valueInteger": written
@@ -396,7 +396,7 @@ mod tests {
         });
 
         let view_def = op.extract_view_definition(&params).unwrap();
-        assert_eq!(view_def.name, "test_view");
+        assert_eq!(view_def.name.as_deref(), Some("test_view"));
         assert_eq!(view_def.resource, "Patient");
     }
 

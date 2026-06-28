@@ -1,19 +1,21 @@
-import { IconArrowsExchange, IconPlus, IconTrash } from "@octofhir/ui-kit";
-import { useCallback } from "react";
 import {
   ActionIcon,
   Badge,
   Card,
+  IconArrowsExchange,
+  IconPlus,
+  IconTrash,
   Text,
   Tooltip,
 } from "@octofhir/ui-kit";
-import { FHIRPathInput } from "./FHIRPathInput";
-import { ColumnRow } from "./ColumnRow";
+import { useCallback } from "react";
 import type {
   ViewDefinitionColumn,
   ViewDefinitionConstant,
   ViewDefinitionSelect,
 } from "../../lib/useViewDefinition";
+import { ColumnRow } from "./ColumnRow";
+import { FHIRPathInput } from "./FHIRPathInput";
 import classes from "./ForEachEditor.module.css";
 
 interface ForEachEditorProps {
@@ -86,10 +88,7 @@ export function ForEachEditor({
   );
 
   const handleColumnAdd = useCallback(() => {
-    const newColumns = [
-      ...columns,
-      { name: "", path: "", _id: crypto.randomUUID() },
-    ];
+    const newColumns = [...columns, { name: "", path: "", _id: crypto.randomUUID() }];
     onChange({ ...selectNode, column: newColumns });
   }, [selectNode, columns, onChange]);
 
@@ -111,10 +110,7 @@ export function ForEachEditor({
   );
 
   const handleAddNestedForEach = useCallback(() => {
-    const newSelects = [
-      ...nestedSelects,
-      { forEach: "", column: [], _id: crypto.randomUUID() },
-    ];
+    const newSelects = [...nestedSelects, { forEach: "", column: [], _id: crypto.randomUUID() }];
     onChange({ ...selectNode, select: newSelects });
   }, [selectNode, nestedSelects, onChange]);
 
@@ -124,32 +120,17 @@ export function ForEachEditor({
         {/* Header */}
         <div className={classes.header}>
           <div className={classes.typeControls}>
-            <Badge
-              color={isForEachOrNull ? "orange" : "yellow"}
-              variant="light"
-              size="sm"
-            >
+            <Badge color={isForEachOrNull ? "orange" : "yellow"} variant="light" size="sm">
               {isForEachOrNull ? "forEachOrNull" : "forEach"}
             </Badge>
-            <Tooltip
-              label={`Switch to ${isForEachOrNull ? "forEach" : "forEachOrNull"}`}
-            >
-              <ActionIcon
-                variant="subtle"
-                size="xs"
-                onClick={handleToggleType}
-              >
+            <Tooltip label={`Switch to ${isForEachOrNull ? "forEach" : "forEachOrNull"}`}>
+              <ActionIcon variant="subtle" size="xs" onClick={handleToggleType}>
                 <IconArrowsExchange size={12} />
               </ActionIcon>
             </Tooltip>
           </div>
           <Tooltip label="Remove">
-            <ActionIcon
-              variant="subtle"
-              color="red"
-              size="sm"
-              onClick={onRemove}
-            >
+            <ActionIcon variant="subtle" color="red" size="sm" onClick={onRemove}>
               <IconTrash size={14} />
             </ActionIcon>
           </Tooltip>
@@ -221,12 +202,7 @@ export function ForEachEditor({
             |
           </Text>
           <Tooltip label="Add nested forEach">
-            <ActionIcon
-              variant="light"
-              color="yellow"
-              size="sm"
-              onClick={handleAddNestedForEach}
-            >
+            <ActionIcon variant="light" color="yellow" size="sm" onClick={handleAddNestedForEach}>
               <IconPlus size={12} />
             </ActionIcon>
           </Tooltip>

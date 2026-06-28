@@ -1,4 +1,13 @@
-import { ActionIcon, Button, IconPlus, IconTrash, Select, Text, TextInput, Tooltip } from "@octofhir/ui-kit";
+import {
+  ActionIcon,
+  Button,
+  IconPlus,
+  IconTrash,
+  Select,
+  Text,
+  TextInput,
+  Tooltip,
+} from "@octofhir/ui-kit";
 import type { ViewDefinitionConstant } from "../../lib/useViewDefinition";
 import classes from "./ConstantsEditor.module.css";
 
@@ -56,7 +65,7 @@ function withConstantName(constant: ViewDefinitionConstant, name: string): ViewD
 function withConstantValue(
   constant: ViewDefinitionConstant,
   valueType: ConstantValueType,
-  value: string | number | boolean,
+  value: string | number | boolean
 ): ViewDefinitionConstant {
   const next: ViewDefinitionConstant = {
     name: constant.name,
@@ -101,10 +110,10 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
   const handleValueChange = (
     index: number,
     valueType: ConstantValueType,
-    value: string | number | boolean,
+    value: string | number | boolean
   ) => {
     const updated = constants.map((constant, i) =>
-      i === index ? withConstantValue(constant, valueType, value) : constant,
+      i === index ? withConstantValue(constant, valueType, value) : constant
     );
     onChange(updated);
   };
@@ -119,12 +128,7 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
         <Text size="sm" fw={500}>
           Constants
         </Text>
-        <Button
-          variant="subtle"
-          size="xs"
-          leftSection={<IconPlus size={12} />}
-          onClick={handleAdd}
-        >
+        <Button variant="subtle" size="xs" leftSection={<IconPlus size={12} />} onClick={handleAdd}>
           Add Constant
         </Button>
       </div>
@@ -147,7 +151,15 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
                   value={valueType}
                   onChange={(type) => {
                     if (isConstantValueType(type)) {
-                      handleValueChange(i, type, type === "boolean" ? false : type === "integer" || type === "decimal" ? 0 : "");
+                      handleValueChange(
+                        i,
+                        type,
+                        type === "boolean"
+                          ? false
+                          : type === "integer" || type === "decimal"
+                            ? 0
+                            : ""
+                      );
                     }
                   }}
                   data={VALUE_TYPE_OPTIONS}

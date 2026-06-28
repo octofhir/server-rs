@@ -1,6 +1,10 @@
-import { useColorScheme } from "@octofhir/ui-kit";
-import { useMemo } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import {
+  Shell,
+  Sidebar,
+  type SidebarNavGroup,
+  type SidebarStatus,
+  useColorScheme,
+} from "@octofhir/ui-kit";
 import {
   Boxes,
   Code2,
@@ -17,15 +21,17 @@ import {
   Settings,
   Shield,
   ShieldCheck,
+  Sigma,
   SquareFunction,
   Table,
   Terminal,
   TerminalSquare,
   Users,
 } from "lucide-react";
-import { ErrorBoundary } from "@/shared/ui";
-import { Shell, Sidebar, type SidebarNavGroup, type SidebarStatus } from "@octofhir/ui-kit";
+import { useMemo } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, useHealth, useSettings } from "@/shared/api/hooks";
+import { ErrorBoundary } from "@/shared/ui";
 
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
 
@@ -194,6 +200,13 @@ export function AppShell() {
             icon: Terminal,
             active: path.startsWith("/fhirpath"),
             onClick: () => navigate("/fhirpath"),
+          },
+          {
+            id: "cql",
+            label: "CQL",
+            icon: Sigma,
+            active: path.startsWith("/cql"),
+            onClick: () => navigate("/cql"),
           },
           {
             id: "viewdefinition",

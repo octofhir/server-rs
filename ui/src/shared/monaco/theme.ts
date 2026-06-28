@@ -89,6 +89,9 @@ const DARK_COLORS: monaco.editor.IColors = {
   "scrollbarSlider.background": "#1d334488",
   "scrollbarSlider.hoverBackground": "#2b5068aa",
   "scrollbarSlider.activeBackground": "#2b5068cc",
+  // Kill Monaco's default drop shadows (widgets + scroll edge) for a flat look.
+  "widget.shadow": "#00000000",
+  "scrollbar.shadow": "#00000000",
 };
 
 // Chrome colours — mirror tokens.ts scheme.light (oklch surfaces resolved to hex).
@@ -121,6 +124,9 @@ const LIGHT_COLORS: monaco.editor.IColors = {
   "scrollbarSlider.background": "#c4cad388",
   "scrollbarSlider.hoverBackground": "#aab1bcaa",
   "scrollbarSlider.activeBackground": "#9aa1adcc",
+  // Kill Monaco's default drop shadows (widgets + scroll edge) for a flat look.
+  "widget.shadow": "#00000000",
+  "scrollbar.shadow": "#00000000",
 };
 
 let themesDefined = false;

@@ -1,74 +1,74 @@
 .loadingState {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	height: 100%;
-	min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 360px;
 }
 
 .configSnippet {
-	margin: var(--g-spacing-2) 0 0;
-	white-space: pre-wrap;
-	font-family: var(--octo-typography-mono);
-	font-size: 12px;
+  margin: var(--g-spacing-2) 0 0;
+  white-space: pre-wrap;
+  font-family: var(--octo-typography-mono);
+  font-size: 12px;
 }
 
 .actions {
-	display: flex;
-	align-items: center;
-	gap: var(--g-spacing-2);
-	flex-wrap: wrap;
+  display: flex;
+  align-items: center;
+  gap: var(--g-spacing-2);
+  flex-wrap: wrap;
 }
 
 .disabledBanner {
-	padding-bottom: var(--g-spacing-4);
+  padding-bottom: var(--g-spacing-4);
 }
 
 .content {
-	display: flex;
-	flex: 1;
-	min-height: 0;
-	overflow: hidden;
-	border: 1px solid var(--octo-border-subtle);
-	border-radius: 8px;
-	background: var(--octo-surface-1);
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 8px;
+  background: var(--octo-surface-1);
 }
 
 .workspace {
-	display: flex;
-	flex: 1;
-	min-width: 0;
-	min-height: 0;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 .editorSection,
 .previewSection {
-	flex: 1 1 0;
-	min-width: 0;
-	min-height: 0;
-	overflow: auto;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .editorSection {
-	border-right: 1px solid var(--octo-border-subtle);
+  border-right: 1px solid var(--octo-border-subtle);
 }
 
 .previewSection {
-	background: var(--octo-surface-2);
+  background: var(--octo-surface-2);
 }
 
 @media (max-width: 1180px) {
-	.content {
-		flex-direction: column;
-		overflow: auto;
-	}
+  .content {
+    flex-direction: column;
+    overflow: auto;
+  }
 
-	.workspace {
-		flex-direction: column;
-	}
+  .workspace {
+    flex-direction: column;
+  }
 
-	.editorSection {
-		border-right: 0;
-		border-bottom: 1px solid var(--octo-border-subtle);
-	}
+  .editorSection {
+    border-right: 0;
+    border-bottom: 1px solid var(--octo-border-subtle);
+  }
 }
