@@ -117,7 +117,7 @@ impl ConfigStorage {
         let result: Option<StoredConfigRow> = query_as(
             r#"
                 SELECT id, key, category, value, description, is_secret, txid, ts, updated_by
-                FROM octofhir.configuration
+                FROM _configuration
                 WHERE category = $1 AND key = $2
                 "#,
         )
@@ -194,7 +194,7 @@ impl ConfigStorage {
         // Upsert configuration
         let result: (Uuid, DateTime<Utc>) = query_as(
             r#"
-            INSERT INTO octofhir.configuration (id, key, category, value, description, is_secret, txid, updated_by)
+            INSERT INTO _configuration (id, key, category, value, description, is_secret, txid, updated_by)
             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (key) DO UPDATE SET
                 value = EXCLUDED.value,
@@ -234,7 +234,7 @@ impl ConfigStorage {
     pub async fn delete(&self, category: &str, key: &str) -> Result<bool, ConfigError> {
         let result = query(
             r#"
-            DELETE FROM octofhir.configuration
+            DELETE FROM _configuration
             WHERE category = $1 AND key = $2
             "#,
         )
@@ -252,7 +252,7 @@ impl ConfigStorage {
         let rows: Vec<StoredConfigRow> = query_as(
             r#"
                 SELECT id, key, category, value, description, is_secret, txid, ts, updated_by
-                FROM octofhir.configuration
+                FROM _configuration
                 WHERE category = $1
                 ORDER BY key
                 "#,
@@ -270,7 +270,7 @@ impl ConfigStorage {
         let rows: Vec<StoredConfigRow> = query_as(
             r#"
                 SELECT id, key, category, value, description, is_secret, txid, ts, updated_by
-                FROM octofhir.configuration
+                FROM _configuration
                 ORDER BY category, key
                 "#,
         )
@@ -291,7 +291,7 @@ impl ConfigStorage {
         let rows: Vec<StoredConfigHistoryRow> = query_as(
             r#"
                 SELECT id, key, category, value, description, is_secret, txid, ts
-                FROM octofhir.configuration_history
+                FROM _configuration_history
                 WHERE category = $1 AND key = $2
                 ORDER BY txid DESC
                 LIMIT $3

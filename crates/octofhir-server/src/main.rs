@@ -6,9 +6,12 @@ use std::{env, path::PathBuf, sync::Arc};
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use octofhir_db_postgres::{PostgresConfig, PostgresStorage};
+use octofhir_server::config::AppConfig;
 use octofhir_server::config::loader::load_config;
 use octofhir_server::config_manager::ServerConfigManager;
 use octofhir_server::{ServerBuilder, shutdown_tracing};
+use sqlx_postgres::PgPool;
 use tokio::sync::RwLock;
 
 const STARTUP_BANNER: &str = r#"
@@ -116,8 +119,18 @@ async fn main() {
     // Create shared config for hot-reload
     let shared_config = Arc::new(RwLock::new(cfg.clone()));
 
+    // Database pool for configuration persistence (set_config/delete persist to
+    // _configuration and survive reload/restart). Small dedicated pool.
+    let config_db_pool = match create_config_db_pool(&cfg).await {
+        Ok(pool) => Some(pool),
+        Err(e) => {
+            tracing::warn!(error = %e, "Config DB pool unavailable — runtime config edits will not persist");
+            None
+        }
+    };
+
     // Initialize unified configuration manager (required)
-    let config_manager = match init_config_manager(&config_path).await {
+    let config_manager = match init_config_manager(&config_path, config_db_pool).await {
         Ok(m) => m,
         Err(e) => {
             eprintln!("Configuration manager initialization failed: {e}");
@@ -192,9 +205,33 @@ fn resolve_config_path() -> (String, ConfigSource) {
     ("octofhir.toml".to_string(), ConfigSource::Default)
 }
 
+/// Create a small dedicated PostgreSQL pool for configuration persistence.
+/// Runs migrations so the `_configuration` table exists before the config
+/// manager loads from it.
+async fn create_config_db_pool(cfg: &AppConfig) -> Result<PgPool, anyhow::Error> {
+    let pg_cfg = cfg
+        .storage
+        .postgres
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("PostgreSQL config is required"))?;
+
+    let postgres_config = PostgresConfig::new(pg_cfg.connection_url())
+        .with_pool_size(5)
+        .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
+        .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
+        .with_run_migrations(true);
+
+    let pg_storage = PostgresStorage::new(postgres_config)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create config DB pool: {e}"))?;
+
+    Ok(pg_storage.pool().clone())
+}
+
 /// Initialize the unified configuration manager.
 async fn init_config_manager(
     config_path: &str,
+    db_pool: Option<PgPool>,
 ) -> Result<ServerConfigManager, octofhir_config::ConfigError> {
     let path_buf = PathBuf::from(config_path);
 
@@ -204,8 +241,10 @@ async fn init_config_manager(
         builder = builder.with_file(path_buf);
     }
 
-    // Note: Database source can be added here when pool is available
-    // builder = builder.with_database(pool);
+    // Attach the database source so runtime edits persist and survive reload.
+    if let Some(pool) = db_pool {
+        builder = builder.with_database(pool);
+    }
 
     builder.build().await
 }

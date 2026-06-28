@@ -1,5 +1,18 @@
 // System queries (health, build info, resource types, SQL, GraphQL, operations)
 
+// Admin runtime configuration (config categories + feature flags)
+export {
+  adminConfigKeys,
+  type CategoryConfig,
+  type ConfigCategory,
+  type FeatureFlag,
+  LIVE_CATEGORIES,
+  useConfigCategory,
+  useFeatureFlags,
+  useReloadConfig,
+  useSetConfigValue,
+  useToggleFeature,
+} from "./useAdminConfig";
 // Auth queries (login, logout, user info)
 export {
   authKeys,

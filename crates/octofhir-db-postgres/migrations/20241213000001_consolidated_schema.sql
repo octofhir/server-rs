@@ -240,8 +240,11 @@ CREATE OR REPLACE FUNCTION archive_config_to_history()
 RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO _configuration_history (id, key, category, value, description, is_secret, txid, ts, updated_by)
-    VALUES (OLD.id, OLD.key, OLD.category, OLD.value, OLD.description, OLD.is_secret, OLD.txid, OLD.ts, OLD.updated_by);
-    RETURN NEW;
+    VALUES (OLD.id, OLD.key, OLD.category, OLD.value, OLD.description, OLD.is_secret, OLD.txid, OLD.ts, OLD.updated_by)
+    ON CONFLICT (id, txid) DO NOTHING;
+    -- BEFORE UPDATE OR DELETE: return NEW for UPDATE, OLD for DELETE.
+    -- Returning NEW (NULL) on DELETE would silently cancel the deletion.
+    RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
 

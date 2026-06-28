@@ -83,8 +83,7 @@ impl DatabaseSource {
         let entries: Vec<(String, String, serde_json::Value, Option<String>, bool)> = query_as(
             r#"
             SELECT key, category, value, description, is_secret
-            FROM octofhir.configuration
-            WHERE status = 'created' OR status = 'updated'
+            FROM _configuration
             ORDER BY category, key
             "#,
         )
@@ -137,7 +136,7 @@ impl DatabaseSource {
         let result: Option<(String, String, serde_json::Value, Option<String>, bool)> = query_as(
             r#"
             SELECT key, category, value, description, is_secret
-            FROM octofhir.configuration
+            FROM _configuration
             WHERE category = $1 AND key = $2
             "#,
         )
@@ -177,7 +176,7 @@ impl DatabaseSource {
         // Upsert the configuration
         query(
             r#"
-            INSERT INTO octofhir.configuration (id, key, category, value, description, is_secret, txid)
+            INSERT INTO _configuration (id, key, category, value, description, is_secret, txid)
             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
             ON CONFLICT (key) DO UPDATE SET
                 value = EXCLUDED.value,
@@ -205,7 +204,7 @@ impl DatabaseSource {
     pub async fn delete(&self, category: &str, key: &str) -> Result<bool, ConfigError> {
         let result = query(
             r#"
-            DELETE FROM octofhir.configuration
+            DELETE FROM _configuration
             WHERE category = $1 AND key = $2
             "#,
         )
@@ -223,7 +222,7 @@ impl DatabaseSource {
         let entries: Vec<(String, String, serde_json::Value, Option<String>, bool)> = query_as(
             r#"
             SELECT key, category, value, description, is_secret
-            FROM octofhir.configuration
+            FROM _configuration
             WHERE category = $1
             ORDER BY key
             "#,
