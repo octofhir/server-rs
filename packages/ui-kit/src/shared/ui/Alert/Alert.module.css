@@ -8,12 +8,12 @@
     background: var(--_bg, var(--octo-surface-2));
     font-family: var(--octo-typography-family, inherit);
 
-    --_accent: var(--octo-brand-info, #1971c2);
-    --_bg: var(--octo-brand-info-soft, #e7f5ff);
+    --_accent: var(--octo-accent-info, #1971c2);
+    --_bg: var(--octo-accent-info-bg, #e7f5ff);
 }
 
-.alert[data-theme="success"] { --_accent: var(--octo-brand-success, #2f9e44); --_bg: var(--octo-brand-success-soft, #ebfbee); }
-.alert[data-theme="warning"] { --_accent: var(--octo-brand-warm, #f08c00); --_bg: var(--octo-brand-warm-soft, #fff9db); }
+.alert[data-theme="success"] { --_accent: var(--octo-accent-positive, #2f9e44); --_bg: var(--octo-accent-success-bg, #ebfbee); }
+.alert[data-theme="warning"] { --_accent: var(--octo-accent-warm, #f08c00); --_bg: var(--octo-accent-warm-bg, #fff9db); }
 .alert[data-theme="danger"]  { --_accent: var(--octo-accent-fire, #fa5252); --_bg: var(--octo-accent-fire-bg, #fff5f5); }
 .alert[data-theme="neutral"] { --_accent: var(--octo-border-strong, #ced4da); --_bg: var(--octo-surface-2, #f1f3f5); }
 

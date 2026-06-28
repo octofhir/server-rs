@@ -51,8 +51,49 @@ const sales: TabularData = {
     ],
 };
 
+// JSON cells — mirrors `SELECT id, resource FROM patient` from the SQL console.
+function patient(
+    id: string,
+    gender: string,
+    birthDate: string,
+    family: string,
+    systems: string[],
+): unknown[] {
+    return [
+        id,
+        {
+            resourceType: "Patient",
+            gender,
+            birthDate,
+            name: [{ use: "official", family, given: ["A"] }],
+            telecom: systems.map((system) => ({ system, value: `${system}-${id}` })),
+        },
+    ];
+}
+
+const fhirResources: TabularData = {
+    columns: ["id", "resource"],
+    rows: [
+        patient("1", "male", "1985-04-12", "Smith", ["phone", "email"]),
+        patient("2", "female", "1990-09-30", "Jones", ["phone"]),
+        patient("3", "female", "1978-01-22", "Brown", ["email", "fax", "phone"]),
+        patient("4", "male", "2001-07-19", "Davis", ["phone"]),
+        patient("5", "other", "1995-12-03", "Wilson", ["email"]),
+        patient("6", "female", "1982-06-15", "Moore", ["phone", "email"]),
+    ],
+};
+
 export const Timeseries: Story = {
     args: { data: timeseries },
+};
+
+/**
+ * FHIR resources with nested JSON cells. The builder auto-discovers fields like
+ * `resource.gender`, `resource.name[0].family`, and the flatten field
+ * `resource.telecom[].system` (explodes rows — one per contact method).
+ */
+export const FhirResources: Story = {
+    args: { data: fhirResources },
 };
 
 export const Categorical: Story = {

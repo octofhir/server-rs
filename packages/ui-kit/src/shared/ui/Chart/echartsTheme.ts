@@ -12,6 +12,11 @@ import { echarts } from "./echarts";
 export const OCTO_THEME_LIGHT = "octo-light";
 export const OCTO_THEME_DARK = "octo-dark";
 
+/** Add an alpha channel to an oklch/rgb color string. */
+function withAlpha(color: string, a: number): string {
+    return color.replace(/\)\s*$/, ` / ${a})`);
+}
+
 /** Emerald-led categorical series color order. */
 function categoricalColors(): string[] {
     return [
@@ -36,6 +41,10 @@ export function buildOctoTheme(scheme: ColorScheme): object {
     const borderSubtle = s.border.subtle;
     const surface1 = s.surface[1];
     const pointer = palette.primary[5];
+    const pointerShadow = withAlpha(palette.primary[5], 0.12);
+    // Keep the original series color on hover (ECharts' default brightening
+    // washes mid-tones to near-white on the light scheme).
+    const keepColor = { emphasis: { itemStyle: { color: "inherit" } } };
 
     const axisCommon = {
         axisLine: { lineStyle: { color: borderSubtle } },
@@ -60,7 +69,14 @@ export function buildOctoTheme(scheme: ColorScheme): object {
         valueAxis: axisCommon,
         logAxis: axisCommon,
         timeAxis: axisCommon,
-        line: { symbol: "circle", smooth: false },
+        line: { symbol: "circle", smooth: false, emphasis: { lineStyle: { width: 3 } } },
+        bar: keepColor,
+        scatter: keepColor,
+        pie: {
+            // Separator stroke that reads on both schemes; keep hue on hover.
+            itemStyle: { borderColor: surface1, borderWidth: 1 },
+            emphasis: { itemStyle: { color: "inherit", borderColor: surface1, borderWidth: 1 } },
+        },
         tooltip: {
             backgroundColor: surface1,
             borderColor: borderSubtle,
@@ -69,11 +85,13 @@ export function buildOctoTheme(scheme: ColorScheme): object {
             axisPointer: {
                 lineStyle: { color: pointer },
                 crossStyle: { color: pointer },
+                shadowStyle: { color: pointerShadow },
             },
         },
         axisPointer: {
             lineStyle: { color: pointer },
             crossStyle: { color: pointer },
+            shadowStyle: { color: pointerShadow },
         },
     };
 }

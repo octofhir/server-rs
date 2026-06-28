@@ -8,12 +8,18 @@ export {
 } from "./echartsTheme";
 export { useChartTheme } from "./useChartTheme";
 export { buildChartOption } from "./buildChartOption";
-export { inferColumnType, isNumericType, suggestChartSpec } from "./inferColumn";
+export { inferColumnType, isNumericType } from "./inferColumn";
+export { suggestChartSpec } from "./suggest";
+export { getByPath, isFlattenPath, parsePath, type PathOp } from "./fieldPath";
+export { discoverFields, type DiscoverOptions } from "./discoverFields";
+export { deriveColumns } from "./deriveColumns";
 export type {
     Aggregation,
     ChartSeriesSpec,
     ChartSpec,
     ChartType,
     ColumnType,
+    DerivedField,
+    FieldDef,
     TabularData,
 } from "./types";

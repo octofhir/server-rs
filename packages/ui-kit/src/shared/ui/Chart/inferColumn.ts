@@ -1,4 +1,4 @@
-import type { ChartSpec, ColumnType, TabularData } from "./types";
+import type { ColumnType } from "./types";
 
 /**
  * Infer a lightweight column type hint from the first non-null sample value.
@@ -24,53 +24,4 @@ const NUMERIC: ReadonlySet<ColumnType> = new Set(["int", "num"]);
 /** True when a column hint is numeric (a candidate measure). */
 export function isNumericType(type: ColumnType): boolean {
     return NUMERIC.has(type);
-}
-
-/**
- * Suggest a reasonable starting chart spec for arbitrary tabular data.
- * Picks a dimension (first date/text/categorical column) and the numeric
- * columns as measures; falls back to bar/line/scatter based on shapes found.
- */
-export function suggestChartSpec(data: TabularData): ChartSpec {
-    const { columns, rows } = data;
-    const types = columns.map((_, i) => inferColumnType(rows, i));
-
-    const numericCols = columns.filter((_, i) => isNumericType(types[i]));
-    const dateIdx = types.findIndex((t) => t === "date");
-    const textIdx = types.findIndex((t) => t === "text" || t === "bool");
-
-    // No numeric columns at all → nothing meaningful; default to a bar on the
-    // first column counted.
-    if (numericCols.length === 0) {
-        return {
-            type: "bar",
-            x: columns[0],
-            series: columns[1] ? [{ column: columns[1], agg: "count" }] : [],
-            legend: false,
-        };
-    }
-
-    // Two-or-more numeric columns and no obvious dimension → scatter.
-    if (numericCols.length >= 2 && dateIdx === -1 && textIdx === -1) {
-        return {
-            type: "scatter",
-            x: numericCols[0],
-            series: [{ column: numericCols[1] }],
-            legend: false,
-        };
-    }
-
-    // Time series → line; otherwise categorical bar.
-    const xCol = dateIdx !== -1 ? columns[dateIdx] : textIdx !== -1 ? columns[textIdx] : columns[0];
-    const measures = numericCols.filter((c) => c !== xCol).slice(0, 4);
-
-    return {
-        type: dateIdx !== -1 ? "line" : "bar",
-        x: xCol,
-        series: (measures.length ? measures : numericCols.slice(0, 1)).map((column) => ({
-            column,
-            agg: "none",
-        })),
-        legend: measures.length > 1,
-    };
 }

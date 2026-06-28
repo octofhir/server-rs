@@ -86,10 +86,9 @@ export const Chart = forwardRef<EChartsType | null, ChartProps>(function Chart(
         const dom = containerRef.current;
         if (!dom) return;
 
-        const instance = echarts.init(dom, activeTheme, {
-            renderer,
-            useDirtyRect: true,
-        });
+        // useDirtyRect is intentionally off: it leaves trails / flicker on pie
+        // charts and label lines (known ECharts artifact).
+        const instance = echarts.init(dom, activeTheme, { renderer });
         instanceRef.current = instance;
         if (group) instance.group = group;
         onInitRef.current?.(instance);

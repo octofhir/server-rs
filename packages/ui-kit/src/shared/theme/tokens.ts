@@ -67,6 +67,7 @@ export const tokens = {
                 fireBgHover: palette.error[1],
                 warmBg: palette.warning[0],
                 infoBg: palette.info[0],
+                successBg: palette.success[0],
             },
             focus: {
                 ring: palette.primary[2],
@@ -127,6 +128,7 @@ export const tokens = {
                 fireBgHover: "#4e3126",
                 warmBg: "#2b341d",
                 infoBg: "#102a3b",
+                successBg: "#11301f",
             },
             focus: {
                 ring: palette.primary[4],

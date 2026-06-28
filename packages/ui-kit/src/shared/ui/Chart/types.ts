@@ -4,6 +4,9 @@ export type ChartType = "bar" | "line" | "area" | "pie" | "scatter";
 
 export type Aggregation = "none" | "sum" | "avg" | "count" | "min" | "max";
 
+/** Calendar bucket for truncating a date X-axis. */
+export type DateBucket = "year" | "quarter" | "month" | "week" | "day";
+
 export interface ChartSeriesSpec {
     /** Source column name for this measure. */
     column: string;
@@ -15,11 +18,11 @@ export interface ChartSeriesSpec {
 
 export interface ChartSpec {
     type: ChartType;
-    /** Dimension column (category axis / pie label / scatter x). */
+    /** Dimension field (category axis / pie label / scatter x). */
     x?: string;
-    /** Measure columns. */
+    /** Measure fields. */
     series: ChartSeriesSpec[];
-    /** Pivot column — produces one series per distinct value (uses series[0]). */
+    /** Pivot field — produces one series per distinct value (uses series[0]). */
     groupBy?: string;
     /** Stack bar/area series. */
     stack?: boolean;
@@ -32,6 +35,44 @@ export interface ChartSpec {
     title?: string;
     xLabel?: string;
     yLabel?: string;
+    /** Truncate a date X-axis into calendar buckets (e.g. births per year). */
+    xBucket?: DateBucket;
+    /** Force the value axis to include zero. Defaults: bar=true, others=false. */
+    yZero?: boolean;
+    /** Fixed value-axis minimum (auto when undefined). */
+    yMin?: number;
+    /** Fixed value-axis maximum (auto when undefined). */
+    yMax?: number;
+    /**
+     * Derived fields extracted from JSON cells (micro-DBT). When present, the
+     * builder flattens the source data through these before charting. Field
+     * `name`s are referenced by `x` / `series[].column` / `groupBy`.
+     */
+    derive?: DerivedField[];
+}
+
+/** A flattened/extracted field definition discovered from tabular data. */
+export interface FieldDef {
+    /** Stable identifier — equals the path; referenced by ChartSpec fields. */
+    name: string;
+    /** Extraction path, e.g. `resource.name[0].family` or `telecom[].value`. */
+    path: string;
+    /** Short display label, e.g. `name[0].family`. */
+    label: string;
+    /** Inferred value type. */
+    type: ColumnType;
+    /** Top-level source column the path roots in. */
+    sourceColumn: string;
+    /** True when the path flattens an array (`[]`) — explodes rows. */
+    array: boolean;
+}
+
+/** Minimal serializable form of a derived field (persisted in ChartSpec). */
+export interface DerivedField {
+    name: string;
+    path: string;
+    array?: boolean;
+    type?: ColumnType;
 }
 
 /** Generic tabular input — column names + positional rows. */

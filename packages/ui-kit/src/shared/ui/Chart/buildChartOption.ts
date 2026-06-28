@@ -1,5 +1,5 @@
 import type { EChartsCoreOption } from "./echarts";
-import type { Aggregation, ChartSpec, ChartSeriesSpec, TabularData } from "./types";
+import type { Aggregation, ChartSpec, ChartSeriesSpec, DateBucket, TabularData } from "./types";
 
 /** Coerce an unknown cell to a finite number, or null. */
 function toNumber(value: unknown): number | null {
@@ -16,6 +16,48 @@ function toLabel(value: unknown): string {
     if (value === null || value === undefined) return "∅";
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
+}
+
+const pad = (n: number): string => String(n).padStart(2, "0");
+
+/**
+ * Truncate a date-ish cell to a calendar bucket label (sortable: year,
+ * quarter, month, week, day). Falls back to the raw label on unparseable
+ * values. Uses UTC to avoid timezone drift.
+ */
+function bucketDate(value: unknown, granularity: DateBucket): string {
+    if (value === null || value === undefined) return "∅";
+    const date = new Date(typeof value === "number" ? value : String(value));
+    if (Number.isNaN(date.getTime())) return toLabel(value);
+    const y = date.getUTCFullYear();
+    const m = date.getUTCMonth() + 1;
+    const d = date.getUTCDate();
+    switch (granularity) {
+        case "year":
+            return String(y);
+        case "quarter":
+            return `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
+        case "month":
+            return `${y}-${pad(m)}`;
+        case "week": {
+            // ISO-8601 week number.
+            const t = new Date(Date.UTC(y, date.getUTCMonth(), d));
+            const dayNum = (t.getUTCDay() + 6) % 7;
+            t.setUTCDate(t.getUTCDate() - dayNum + 3);
+            const firstThursday = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
+            const week =
+                1 +
+                Math.round(
+                    ((t.getTime() - firstThursday.getTime()) / 86_400_000 -
+                        3 +
+                        ((firstThursday.getUTCDay() + 6) % 7)) /
+                        7,
+                );
+            return `${t.getUTCFullYear()}-W${pad(week)}`;
+        }
+        default:
+            return `${y}-${pad(m)}-${pad(d)}`;
+    }
 }
 
 function aggregate(values: number[], agg: Aggregation, rawCount: number): number {
@@ -58,6 +100,23 @@ export function buildChartOption(spec: ChartSpec, data: TabularData): EChartsCor
     const { columns, rows } = data;
     const idx = (name?: string) => (name ? columns.indexOf(name) : -1);
 
+    // X label — bucketed when `xBucket` is set (date truncation), else raw.
+    const xLabel = (cell: unknown): string =>
+        spec.xBucket ? bucketDate(cell, spec.xBucket) : toLabel(cell);
+    const distinctX = (xi: number): string[] => {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const row of rows) {
+            const label = xLabel(row[xi]);
+            if (!seen.has(label)) {
+                seen.add(label);
+                out.push(label);
+            }
+        }
+        if (spec.xBucket) out.sort();
+        return out;
+    };
+
     const title = spec.title ? { title: { text: spec.title } } : {};
     const legendShown = spec.legend ?? false;
     const legend = legendShown ? { legend: {} } : {};
@@ -80,8 +139,14 @@ export function buildChartOption(spec: ChartSpec, data: TabularData): EChartsCor
             ...title,
             ...legend,
             tooltip: { trigger: "item" },
-            xAxis: { type: "value", name: spec.xLabel ?? spec.x },
-            yAxis: { type: "value", name: spec.yLabel },
+            xAxis: { type: "value", name: spec.xLabel ?? spec.x, scale: true },
+            yAxis: {
+                type: "value",
+                name: spec.yLabel,
+                scale: !(spec.yZero ?? false),
+                ...(spec.yMin != null ? { min: spec.yMin } : {}),
+                ...(spec.yMax != null ? { max: spec.yMax } : {}),
+            },
             series,
         };
     }
@@ -91,11 +156,11 @@ export function buildChartOption(spec: ChartSpec, data: TabularData): EChartsCor
         const xi = idx(spec.x);
         const measure = spec.series[0];
         const mi = idx(measure?.column);
-        const cats = xi === -1 ? [] : distinct(rows, xi);
+        const cats = xi === -1 ? [] : distinctX(xi);
         const agg: Aggregation = measure?.agg ?? "sum";
 
         const pieData = cats.map((cat) => {
-            const matching = xi === -1 ? [] : rows.filter((r) => toLabel(r[xi]) === cat);
+            const matching = xi === -1 ? [] : rows.filter((r) => xLabel(r[xi]) === cat);
             const nums =
                 mi === -1
                     ? []
@@ -133,13 +198,13 @@ export function buildChartOption(spec: ChartSpec, data: TabularData): EChartsCor
         const measure = spec.series[0];
         const mi = idx(measure?.column);
         const agg: Aggregation = measure?.agg ?? "sum";
-        categories = xi === -1 ? [] : distinct(rows, xi);
+        categories = xi === -1 ? [] : distinctX(xi);
         const groups = gi === -1 ? [] : distinct(rows, gi);
 
         seriesList = groups.map((group) => {
             const dataPoints = categories.map((cat) => {
                 const matching = rows.filter(
-                    (r) => toLabel(r[xi]) === cat && toLabel(r[gi]) === group,
+                    (r) => xLabel(r[xi]) === cat && toLabel(r[gi]) === group,
                 );
                 const nums =
                     mi === -1
@@ -150,12 +215,12 @@ export function buildChartOption(spec: ChartSpec, data: TabularData): EChartsCor
             return decorate({ type: baseType, name: group, data: dataPoints });
         });
     } else if (anyAgg) {
-        categories = xi === -1 ? [] : distinct(rows, xi);
+        categories = xi === -1 ? [] : distinctX(xi);
         seriesList = spec.series.map((s: ChartSeriesSpec) => {
             const mi = idx(s.column);
             const agg: Aggregation = s.agg ?? "none";
             const dataPoints = categories.map((cat) => {
-                const matching = xi === -1 ? [] : rows.filter((r) => toLabel(r[xi]) === cat);
+                const matching = xi === -1 ? [] : rows.filter((r) => xLabel(r[xi]) === cat);
                 const nums =
                     mi === -1
                         ? []
@@ -166,7 +231,7 @@ export function buildChartOption(spec: ChartSpec, data: TabularData): EChartsCor
         });
     } else {
         // Raw rows, no aggregation.
-        categories = xi === -1 ? rows.map((_, i) => String(i)) : rows.map((r) => toLabel(r[xi]));
+        categories = xi === -1 ? rows.map((_, i) => String(i)) : rows.map((r) => xLabel(r[xi]));
         seriesList = spec.series.map((s: ChartSeriesSpec) => {
             const mi = idx(s.column);
             const dataPoints = mi === -1 ? [] : rows.map((r) => toNumber(r[mi]) ?? 0);
@@ -180,9 +245,15 @@ export function buildChartOption(spec: ChartSpec, data: TabularData): EChartsCor
         name: spec.horizontal ? spec.yLabel : spec.xLabel ?? spec.x,
         boundaryGap: baseType === "bar",
     };
+    // Bars read best anchored at zero; lines/areas zoom to the data range
+    // unless the user pins it. `scale: true` lets the axis skip zero.
+    const includeZero = spec.yZero ?? baseType === "bar";
     const valueAxis = {
         type: "value" as const,
         name: spec.horizontal ? spec.xLabel ?? spec.x : spec.yLabel,
+        scale: !includeZero,
+        ...(spec.yMin != null ? { min: spec.yMin } : {}),
+        ...(spec.yMax != null ? { max: spec.yMax } : {}),
     };
 
     return {
