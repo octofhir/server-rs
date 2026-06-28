@@ -1,5 +1,5 @@
-// Base Gravity UI stylesheet + OctoFHIR overrides — must load before any
-// component import so Gravity's `.g-root` tokens are present in the DOM.
+// OctoFHIR ui-kit base styles + design tokens — must load before any
+// component import so the `--octo-*` tokens are present in the DOM.
 import "./styles";
 
 // App layer

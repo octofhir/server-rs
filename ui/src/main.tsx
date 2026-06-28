@@ -1,4 +1,4 @@
-// Load Gravity UI base stylesheet + OctoFHIR overrides FIRST so the cascade
+// Load OctoFHIR ui-kit base styles + design tokens FIRST so the cascade
 // is set up before any component-local CSS modules run.
 import "@octofhir/ui-kit/styles";
 

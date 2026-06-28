@@ -1,7 +1,7 @@
-import { useRef, useEffect, useCallback } from "react";
-import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
+import Editor, { type OnChange, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useColorScheme } from "@octofhir/ui-kit";
+import { useCallback, useEffect, useRef } from "react";
+import { useOctoMonacoTheme } from "./theme";
 
 export interface AutomationScriptEditorProps {
   /** Script content */
@@ -474,8 +474,7 @@ export function AutomationScriptEditor({
 }: AutomationScriptEditorProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
-  const { colorScheme } = useColorScheme();
-  const editorTheme = colorScheme === "dark" ? "vs-dark" : "vs";
+  const editorTheme = useOctoMonacoTheme();
 
   // Setup Monaco when editor mounts
   const handleEditorDidMount: OnMount = useCallback(
@@ -487,7 +486,7 @@ export function AutomationScriptEditor({
       if (!typesRegistered) {
         monaco.languages.typescript.typescriptDefaults.addExtraLib(
           AUTOMATION_SCRIPT_TYPES,
-          "automation-globals.d.ts",
+          "automation-globals.d.ts"
         );
 
         // Configure TypeScript/JavaScript compiler options
@@ -521,7 +520,7 @@ export function AutomationScriptEditor({
       // Focus the editor
       editor.focus();
     },
-    [onExecute, onSave],
+    [onExecute, onSave]
   );
 
   // Handle value changes from React
@@ -529,7 +528,7 @@ export function AutomationScriptEditor({
     (newValue) => {
       onChange?.(newValue ?? "");
     },
-    [onChange],
+    [onChange]
   );
 
   // Cleanup on unmount

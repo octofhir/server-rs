@@ -22,9 +22,9 @@
 
 .tablePanel {
 	overflow: hidden;
-	border: 1px solid var(--g-color-line-generic);
+	border: 1px solid var(--octo-border-subtle);
 	border-radius: 8px;
-	background: var(--g-color-base-background);
+	background: var(--octo-surface-1);
 }
 
 .statePanel {
@@ -38,9 +38,9 @@
 
 .emptyPanel {
 	padding: 24px;
-	border: 1px solid var(--g-color-line-generic);
+	border: 1px solid var(--octo-border-subtle);
 	border-radius: 8px;
-	background: var(--g-color-base-generic);
+	background: var(--octo-surface-3);
 }
 
 .emptyContent {
@@ -51,7 +51,7 @@
 }
 
 .emptyIcon {
-	color: var(--g-color-text-hint);
+	color: var(--octo-text-muted);
 }
 
 .packageCell {

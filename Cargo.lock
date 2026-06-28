@@ -4560,9 +4560,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirpath"
-version = "0.4.47"
+version = "0.4.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6030a1bd3f935b0df4c5051ce51759725e04f0b36169ecb43ca73367bdccb15"
+checksum = "8ad86b0068d056b772bd7b80d0dea6179c032ba964cf6de1f1ee0d508d5dddc7"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -4593,12 +4593,12 @@ dependencies = [
  "serde_json",
  "smallvec",
  "stacker",
- "tabled 0.20.0",
+ "tabled 0.21.0",
  "thiserror",
  "tokio",
  "tokio-util",
  "tower",
- "tower-http",
+ "tower-http 0.7.0",
  "tracing",
  "url",
  "urlencoding",
@@ -4796,7 +4796,7 @@ dependencies = [
  "tokio-util",
  "toml 1.1.2+spec-1.1.0",
  "tower",
- "tower-http",
+ "tower-http 0.6.11",
  "tracing",
  "tracing-appender",
  "tracing-opentelemetry",
@@ -5100,6 +5100,17 @@ name = "papergrid"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6978128c8b51d8f4080631ceb2302ab51e32cc6e8615f735ee2f83fd269ae3f1"
+dependencies = [
+ "bytecount",
+ "fnv",
+ "unicode-width 0.2.2",
+]
+
+[[package]]
+name = "papergrid"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0984e668274d34691bc2b262ef0d115de5fa9973bcdee7ae32213f93099153e"
 dependencies = [
  "bytecount",
  "fnv",
@@ -6062,7 +6073,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tower",
- "tower-http",
+ "tower-http 0.6.11",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -6108,7 +6119,7 @@ dependencies = [
  "tokio-native-tls",
  "tokio-rustls",
  "tower",
- "tower-http",
+ "tower-http 0.6.11",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -7133,6 +7144,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabled"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5dc662e6da844ad6e428ad16b57967c9d33c82e16bb1c258326c0c078605dff"
+dependencies = [
+ "papergrid 0.18.0",
+ "tabled_derive 0.11.0",
+ "testing_table",
+]
+
+[[package]]
 name = "tabled_derive"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7616,6 +7638,21 @@ dependencies = [
  "tower-service",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b11f75e912b0c2be01b63d8cf8057b8c3f97cf34abb3d431a3a4c8675498e233"
+dependencies = [
+ "bitflags 2.13.0",
+ "bytes",
+ "http",
+ "percent-encoding",
+ "pin-project-lite",
+ "tower-layer",
+ "tower-service",
 ]
 
 [[package]]

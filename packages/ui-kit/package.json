@@ -37,6 +37,7 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.13.12",
+    "echarts": "^6.1.0",
     "final-form": "^5.0.1",
     "final-form-arrays": "^4.0.1",
     "final-form-calculate": "^2.0.0",

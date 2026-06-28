@@ -26,7 +26,7 @@ const weights = [
 
 export const Families: Story = {
     render: () => (
-        <div style={{ display: "flex", flexDirection: "column", gap: 24, color: "var(--g-color-text-primary)" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 24, color: "var(--octo-text-primary)" }}>
             <Sample title="Body — Manrope" font={tokens.typography.family} />
             <Sample title="Heading — Rubik" font={tokens.typography.heading} />
             <Sample title="Code — JetBrains Mono" font={tokens.typography.mono} mono />
@@ -39,12 +39,12 @@ export const Sizes: Story = {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {sizes.map((s) => (
                 <div key={s.key} style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
-                    <code style={{ width: 140, color: "var(--g-color-text-secondary)" }}>{s.value}</code>
+                    <code style={{ width: 140, color: "var(--octo-text-secondary)" }}>{s.value}</code>
                     <span
                         style={{
                             fontFamily: tokens.typography.family,
                             fontSize: s.value,
-                            color: "var(--g-color-text-primary)",
+                            color: "var(--octo-text-primary)",
                         }}
                     >
                         {s.label} — The quick brown fox jumps over the lazy dog
@@ -65,7 +65,7 @@ export const Weights: Story = {
                         fontFamily: tokens.typography.family,
                         fontWeight: w.value,
                         fontSize: 18,
-                        color: "var(--g-color-text-primary)",
+                        color: "var(--octo-text-primary)",
                     }}
                 >
                     {w.label} — Healthcare interoperability without compromise.
@@ -78,7 +78,7 @@ export const Weights: Story = {
 function Sample({ title, font, mono }: { title: string; font: string; mono?: boolean }) {
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ fontSize: 13, color: "var(--g-color-text-secondary)", fontWeight: 600 }}>{title}</div>
+            <div style={{ fontSize: 13, color: "var(--octo-text-secondary)", fontWeight: 600 }}>{title}</div>
             <div style={{ fontFamily: font, fontSize: mono ? 16 : 22, lineHeight: 1.3 }}>
                 {mono ? "const Patient = await fhir.read('Patient/123');" : "ABC abc 0123 — Build durable healthcare data infrastructure."}
             </div>

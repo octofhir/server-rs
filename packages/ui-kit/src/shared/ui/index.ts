@@ -52,6 +52,10 @@ export * from "./Spin";
 export * from "./Progress";
 export * from "./RingProgress";
 
+// === Charts ===
+export * from "./Chart";
+export * from "./ChartBuilder";
+
 // === Overlays ===
 export * from "./Modal";
 export * from "./Tooltip";
@@ -64,10 +68,10 @@ export * from "./ScrollArea";
 // === Navigation ===
 export * from "./Link";
 
-// === Forms (Gravity components helpers) ===
+// === Forms (field row helpers) ===
 export * from "./FormRow";
 
-// === Forms (Gravity dialog-fields + react-final-form) ===
+// === Forms (dialog-fields + react-final-form) ===
 export * from "./Form";
 
 // === Empty / NotFound / Error states ===

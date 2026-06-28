@@ -1,0 +1,75 @@
+.root {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 16px;
+    align-items: stretch;
+    width: 100%;
+    min-height: 0;
+}
+
+.controls {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px;
+    border: 1px solid var(--octo-border-subtle);
+    border-radius: 12px;
+    background: var(--octo-surface-2);
+    overflow-y: auto;
+}
+
+.preview {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--octo-border-subtle);
+    border-radius: 12px;
+    background: var(--octo-surface-1);
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--octo-text-secondary);
+}
+
+.measures {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.measureRow {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.switches {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 4px;
+    border-top: 1px solid var(--octo-border-subtle);
+}
+
+.empty {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    color: var(--octo-text-muted);
+    font-size: 0.875rem;
+    text-align: center;
+}

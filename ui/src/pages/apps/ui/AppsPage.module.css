@@ -12,9 +12,9 @@
 
 .tablePanel {
 	overflow: hidden;
-	border: 1px solid var(--g-color-line-generic);
+	border: 1px solid var(--octo-border-subtle);
 	border-radius: var(--octo-radius-md);
-	background: var(--g-color-base-background);
+	background: var(--octo-surface-1);
 }
 
 .skeletonList {

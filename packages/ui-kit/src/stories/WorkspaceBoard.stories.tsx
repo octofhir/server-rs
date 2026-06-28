@@ -147,7 +147,7 @@ export const ControlPlane: Story = {
         ),
     },
     render: (args) => (
-        <div style={{ minHeight: "100vh", padding: 24, background: "var(--g-color-base-background)" }}>
+        <div style={{ minHeight: "100vh", padding: 24, background: "var(--octo-surface-1)" }}>
             <WorkspaceBoard {...args} />
         </div>
     ),

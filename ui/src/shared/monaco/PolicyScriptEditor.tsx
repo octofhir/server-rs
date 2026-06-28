@@ -1,21 +1,21 @@
-import { useRef, useEffect, useCallback } from "react";
-import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
+import Editor, { type OnChange, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useColorScheme } from "@octofhir/ui-kit";
+import { useCallback, useEffect, useRef } from "react";
+import { useOctoMonacoTheme } from "./theme";
 
 export interface PolicyScriptEditorProps {
-	/** Script content */
-	value?: string;
-	/** Callback when content changes */
-	onChange?: (value: string) => void;
-	/** Editor height (default: 200px) */
-	height?: string | number;
-	/** Whether the editor is read-only */
-	readOnly?: boolean;
-	/** Custom CSS class for the container */
-	className?: string;
-	/** Placeholder text when empty */
-	placeholder?: string;
+  /** Script content */
+  value?: string;
+  /** Callback when content changes */
+  onChange?: (value: string) => void;
+  /** Editor height (default: 200px) */
+  height?: string | number;
+  /** Whether the editor is read-only */
+  readOnly?: boolean;
+  /** Custom CSS class for the container */
+  className?: string;
+  /** Placeholder text when empty */
+  placeholder?: string;
 }
 
 /**
@@ -294,97 +294,96 @@ let typesRegistered = false;
  * and context variable documentation.
  */
 export function PolicyScriptEditor({
-	value = "",
-	onChange,
-	height = 200,
-	readOnly = false,
-	className,
-	placeholder,
+  value = "",
+  onChange,
+  height = 200,
+  readOnly = false,
+  className,
+  placeholder,
 }: PolicyScriptEditorProps) {
-	const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-	const monacoRef = useRef<typeof Monaco | null>(null);
-	const { colorScheme } = useColorScheme();
-	const editorTheme = colorScheme === "dark" ? "vs-dark" : "vs";
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
+  const editorTheme = useOctoMonacoTheme();
 
-	// Setup Monaco when editor mounts
-	const handleEditorDidMount: OnMount = useCallback((editor, monaco) => {
-		editorRef.current = editor;
-		monacoRef.current = monaco;
+  // Setup Monaco when editor mounts
+  const handleEditorDidMount: OnMount = useCallback((editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
 
-		// Register type definitions for autocomplete (only once)
-		if (!typesRegistered) {
-			monaco.languages.typescript.javascriptDefaults.addExtraLib(
-				POLICY_SCRIPT_TYPES,
-				"policy-script-globals.d.ts",
-			);
-			typesRegistered = true;
-		}
+    // Register type definitions for autocomplete (only once)
+    if (!typesRegistered) {
+      monaco.languages.typescript.javascriptDefaults.addExtraLib(
+        POLICY_SCRIPT_TYPES,
+        "policy-script-globals.d.ts"
+      );
+      typesRegistered = true;
+    }
 
-		// Focus the editor
-		editor.focus();
-	}, []);
+    // Focus the editor
+    editor.focus();
+  }, []);
 
-	// Handle value changes from React
-	const handleChange: OnChange = useCallback(
-		(newValue) => {
-			onChange?.(newValue ?? "");
-		},
-		[onChange],
-	);
+  // Handle value changes from React
+  const handleChange: OnChange = useCallback(
+    (newValue) => {
+      onChange?.(newValue ?? "");
+    },
+    [onChange]
+  );
 
-	// Cleanup on unmount
-	useEffect(() => {
-		return () => {
-			editorRef.current?.dispose();
-		};
-	}, []);
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      editorRef.current?.dispose();
+    };
+  }, []);
 
-	return (
-		<div className={className} style={{ height, width: "100%" }}>
-			<Editor
-				height="100%"
-				language="javascript"
-				theme={editorTheme}
-				value={value}
-				onChange={handleChange}
-				onMount={handleEditorDidMount}
-				options={{
-					automaticLayout: true,
-					minimap: { enabled: false },
-					lineNumbers: "on",
-					renderLineHighlight: "line",
-					scrollBeyondLastLine: false,
-					fontSize: 13,
-					fontFamily: "var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
-					tabSize: 2,
-					insertSpaces: true,
-					wordWrap: "on",
-					readOnly,
-					padding: { top: 8, bottom: 8 },
-					suggestOnTriggerCharacters: true,
-					quickSuggestions: {
-						other: true,
-						comments: true,
-						strings: true,
-					},
-					acceptSuggestionOnEnter: "on",
-					parameterHints: { enabled: true },
-					suggest: {
-						showKeywords: true,
-						showSnippets: true,
-						showFunctions: true,
-						showVariables: true,
-						showConstants: true,
-						showMethods: true,
-						showProperties: true,
-					},
-					...(placeholder && !value
-						? {
-								// Show placeholder via CSS when empty
-							}
-						: {}),
-				}}
-			/>
-		</div>
-	);
+  return (
+    <div className={className} style={{ height, width: "100%" }}>
+      <Editor
+        height="100%"
+        language="javascript"
+        theme={editorTheme}
+        value={value}
+        onChange={handleChange}
+        onMount={handleEditorDidMount}
+        options={{
+          automaticLayout: true,
+          minimap: { enabled: false },
+          lineNumbers: "on",
+          renderLineHighlight: "line",
+          scrollBeyondLastLine: false,
+          fontSize: 13,
+          fontFamily: "var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
+          tabSize: 2,
+          insertSpaces: true,
+          wordWrap: "on",
+          readOnly,
+          padding: { top: 8, bottom: 8 },
+          suggestOnTriggerCharacters: true,
+          quickSuggestions: {
+            other: true,
+            comments: true,
+            strings: true,
+          },
+          acceptSuggestionOnEnter: "on",
+          parameterHints: { enabled: true },
+          suggest: {
+            showKeywords: true,
+            showSnippets: true,
+            showFunctions: true,
+            showVariables: true,
+            showConstants: true,
+            showMethods: true,
+            showProperties: true,
+          },
+          ...(placeholder && !value
+            ? {
+                // Show placeholder via CSS when empty
+              }
+            : {}),
+        }}
+      />
+    </div>
+  );
 }

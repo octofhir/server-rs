@@ -75,7 +75,7 @@ function CategorySection({
 					<Icon
 						width={20}
 						height={20}
-						color="var(--g-color-text-secondary)"
+						color="var(--octo-text-secondary)"
 						aria-hidden="true"
 					/>
 					<Text>

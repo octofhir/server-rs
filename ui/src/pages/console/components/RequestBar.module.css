@@ -13,7 +13,7 @@
 .divider {
   width: 1px;
   height: 24px;
-  background: var(--g-color-line-generic);
+  background: var(--octo-border-subtle);
 }
 
 .query {

@@ -5,8 +5,8 @@
 }
 
 .input:focus {
-    border-color: var(--g-color-base-brand);
-    box-shadow: 0 0 0 2px var(--g-color-base-brand-light-hover);
+    border-color: var(--octo-accent-primary);
+    box-shadow: 0 0 0 2px var(--octo-accent-primary-bg-hover);
 }
 
 .label {

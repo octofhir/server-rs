@@ -12,6 +12,6 @@ type Story = StoryObj<typeof Box>;
 
 export const Default: Story = {
   args: {
-    children: <div style={{ padding: 16, backgroundColor: "var(--g-color-base-selection)" }}>Box content</div>,
+    children: <div style={{ padding: 16, backgroundColor: "var(--octo-accent-primary-bg)" }}>Box content</div>,
   },
 };

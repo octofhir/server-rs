@@ -162,7 +162,7 @@ export function AppDetailPage() {
 									id: "endpoint",
 									label: (
 										<div className={classes.labelInline}>
-											<IconWorld width={14} height={14} color="var(--g-color-text-secondary)" aria-hidden="true" />
+											<IconWorld width={14} height={14} color="var(--octo-text-secondary)" aria-hidden="true" />
 											Endpoint URL
 										</div>
 									),
@@ -185,7 +185,7 @@ export function AppDetailPage() {
 									id: "timeout",
 									label: (
 										<div className={classes.labelInline}>
-											<IconClock width={14} height={14} color="var(--g-color-text-secondary)" aria-hidden="true" />
+											<IconClock width={14} height={14} color="var(--octo-text-secondary)" aria-hidden="true" />
 											Timeout
 										</div>
 									),
@@ -195,7 +195,7 @@ export function AppDetailPage() {
 									id: "api-version",
 									label: (
 										<div className={classes.labelInline}>
-											<IconApi width={14} height={14} color="var(--g-color-text-secondary)" aria-hidden="true" />
+											<IconApi width={14} height={14} color="var(--octo-text-secondary)" aria-hidden="true" />
 											API Version
 										</div>
 									),
@@ -205,7 +205,7 @@ export function AppDetailPage() {
 									id: "base-path",
 									label: (
 										<div className={classes.labelInline}>
-											<IconWorld width={14} height={14} color="var(--g-color-text-secondary)" aria-hidden="true" />
+											<IconWorld width={14} height={14} color="var(--octo-text-secondary)" aria-hidden="true" />
 											Base Path
 										</div>
 									),
@@ -294,7 +294,7 @@ export function AppDetailPage() {
 								<IconWebhook
 									width={20}
 									height={20}
-									color="var(--g-color-base-warning-medium-hover)"
+									color="var(--octo-brand-warm-hover)"
 									aria-hidden="true"
 								/>
 								Subscriptions
@@ -353,7 +353,7 @@ export function AppDetailPage() {
 											<IconBell
 												width={12}
 												height={12}
-												color="var(--g-color-base-warning-medium-hover)"
+												color="var(--octo-brand-warm-hover)"
 												aria-hidden="true"
 											/>
 											<Badge size="xs" color="warm">

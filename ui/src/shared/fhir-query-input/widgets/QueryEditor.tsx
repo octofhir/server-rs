@@ -1,13 +1,13 @@
-import { useRef, useEffect, useCallback, useState } from "react";
-import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
+import Editor, { type OnChange, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useColorScheme } from "@octofhir/ui-kit";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useOctoMonacoTheme } from "@/shared/monaco/theme";
 import {
-	registerFhirQueryLanguage,
-	LANGUAGE_ID,
-	registerCompletionProvider,
-	registerHoverProvider,
-	updateDiagnosticsFromContent,
+  LANGUAGE_ID,
+  registerCompletionProvider,
+  registerFhirQueryLanguage,
+  registerHoverProvider,
+  updateDiagnosticsFromContent,
 } from "../adapters/monaco";
 import type { QueryInputMetadata } from "../core/types";
 
@@ -15,190 +15,177 @@ const MIN_HEIGHT = 36;
 const MAX_HEIGHT = 200;
 
 export interface QueryEditorProps {
-	value: string;
-	onChange: (value: string) => void;
-	onExecute?: () => void;
-	metadata: QueryInputMetadata;
-	basePath?: string;
-	disabled?: boolean;
-	/** When true, removes border/radius — for embedding inside a parent container */
-	borderless?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  onExecute?: () => void;
+  metadata: QueryInputMetadata;
+  basePath?: string;
+  disabled?: boolean;
+  /** When true, removes border/radius — for embedding inside a parent container */
+  borderless?: boolean;
 }
 
 export function QueryEditor({
-	value,
-	onChange,
-	onExecute,
-	metadata,
-	basePath = "/fhir",
-	disabled = false,
-	borderless = false,
+  value,
+  onChange,
+  onExecute,
+  metadata,
+  basePath = "/fhir",
+  disabled = false,
+  borderless = false,
 }: QueryEditorProps) {
-	const [editorHeight, setEditorHeight] = useState(MIN_HEIGHT);
-	const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-	const monacoRef = useRef<typeof Monaco | null>(null);
-	const disposablesRef = useRef<Monaco.IDisposable[]>([]);
-	const metadataRef = useRef(metadata);
-	metadataRef.current = metadata;
-	const onExecuteRef = useRef(onExecute);
-	onExecuteRef.current = onExecute;
+  const [editorHeight, setEditorHeight] = useState(MIN_HEIGHT);
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
+  const disposablesRef = useRef<Monaco.IDisposable[]>([]);
+  const metadataRef = useRef(metadata);
+  metadataRef.current = metadata;
+  const onExecuteRef = useRef(onExecute);
+  onExecuteRef.current = onExecute;
 
-	const { colorScheme } = useColorScheme();
-	const editorTheme = colorScheme === "dark" ? "vs-dark" : "vs";
+  const editorTheme = useOctoMonacoTheme();
 
-	const handleMount: OnMount = useCallback(
-		(editor, monaco) => {
-			editorRef.current = editor;
-			monacoRef.current = monaco;
+  const handleMount: OnMount = useCallback(
+    (editor, monaco) => {
+      editorRef.current = editor;
+      monacoRef.current = monaco;
 
-			// Register language and providers
-			registerFhirQueryLanguage(monaco);
+      // Register language and providers
+      registerFhirQueryLanguage(monaco);
 
-			const getMetadata = () => metadataRef.current;
+      const getMetadata = () => metadataRef.current;
 
-			disposablesRef.current.push(
-				registerCompletionProvider(monaco, getMetadata, basePath),
-				registerHoverProvider(monaco, getMetadata, basePath),
-			);
+      disposablesRef.current.push(
+        registerCompletionProvider(monaco, getMetadata, basePath),
+        registerHoverProvider(monaco, getMetadata, basePath)
+      );
 
-			// Prevent Enter from inserting newline — single-line mode
-			// Only block when suggest widget is NOT visible so Enter can still accept completions
-			editor.addCommand(
-				monaco.KeyCode.Enter,
-				() => {
-					// Do nothing — keep single line
-				},
-				"!suggestWidgetVisible",
-			);
+      // Prevent Enter from inserting newline — single-line mode
+      // Only block when suggest widget is NOT visible so Enter can still accept completions
+      editor.addCommand(
+        monaco.KeyCode.Enter,
+        () => {
+          // Do nothing — keep single line
+        },
+        "!suggestWidgetVisible"
+      );
 
-			// Ctrl+Enter to execute (use ref to avoid stale closure)
-			editor.addCommand(
-				monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
-				() => onExecuteRef.current?.(),
-			);
+      // Ctrl+Enter to execute (use ref to avoid stale closure)
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () =>
+        onExecuteRef.current?.()
+      );
 
-			// Initial diagnostics
-			const model = editor.getModel();
-			if (model) {
-				updateDiagnosticsFromContent(monaco, model, metadataRef.current, basePath);
-			}
+      // Initial diagnostics
+      const model = editor.getModel();
+      if (model) {
+        updateDiagnosticsFromContent(monaco, model, metadataRef.current, basePath);
+      }
 
-			// Auto-expand height based on content
-			const updateHeight = () => {
-				const h = editor.getContentHeight();
-				setEditorHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, h)));
-			};
-			updateHeight();
-			disposablesRef.current.push(
-				editor.onDidContentSizeChange((e) => {
-					if (e.contentHeightChanged) updateHeight();
-				}),
-			);
+      // Auto-expand height based on content
+      const updateHeight = () => {
+        const h = editor.getContentHeight();
+        setEditorHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, h)));
+      };
+      updateHeight();
+      disposablesRef.current.push(
+        editor.onDidContentSizeChange((e) => {
+          if (e.contentHeightChanged) updateHeight();
+        })
+      );
 
-			editor.focus();
-		},
-		[basePath],
-	);
+      editor.focus();
+    },
+    [basePath]
+  );
 
-	const handleChange: OnChange = useCallback(
-		(newValue) => {
-			const val = (newValue ?? "").replace(/\n/g, ""); // Strip any newlines
-			onChange(val);
+  const handleChange: OnChange = useCallback(
+    (newValue) => {
+      const val = (newValue ?? "").replace(/\n/g, ""); // Strip any newlines
+      onChange(val);
 
-			// Update diagnostics
-			if (monacoRef.current && editorRef.current) {
-				const model = editorRef.current.getModel();
-				if (model) {
-					updateDiagnosticsFromContent(
-						monacoRef.current,
-						model,
-						metadataRef.current,
-						basePath,
-					);
-				}
-			}
-		},
-		[onChange, basePath],
-	);
+      // Update diagnostics
+      if (monacoRef.current && editorRef.current) {
+        const model = editorRef.current.getModel();
+        if (model) {
+          updateDiagnosticsFromContent(monacoRef.current, model, metadataRef.current, basePath);
+        }
+      }
+    },
+    [onChange, basePath]
+  );
 
-	// Update diagnostics when metadata changes
-	useEffect(() => {
-		if (monacoRef.current && editorRef.current) {
-			const model = editorRef.current.getModel();
-			if (model) {
-				updateDiagnosticsFromContent(
-					monacoRef.current,
-					model,
-					metadataRef.current,
-					basePath,
-				);
-			}
-		}
-	}, [metadata, basePath]);
+  // Update diagnostics when metadata changes
+  useEffect(() => {
+    if (monacoRef.current && editorRef.current) {
+      const model = editorRef.current.getModel();
+      if (model) {
+        updateDiagnosticsFromContent(monacoRef.current, model, metadataRef.current, basePath);
+      }
+    }
+  }, [metadata, basePath]);
 
-	// Cleanup
-	useEffect(() => {
-		return () => {
-			for (const d of disposablesRef.current) d.dispose();
-			disposablesRef.current = [];
-		};
-	}, []);
+  // Cleanup
+  useEffect(() => {
+    return () => {
+      for (const d of disposablesRef.current) d.dispose();
+      disposablesRef.current = [];
+    };
+  }, []);
 
-	return (
-		<div
-			style={{
-				height: editorHeight,
-				transition: "height 120ms ease-out",
-				width: "100%",
-				...(borderless
-					? {}
-					: {
-							borderRadius: "var(--octo-radius-md)",
-							border: "1px solid var(--octo-border-subtle)",
-						}),
-				position: "relative",
-			}}
-		>
-			<Editor
-				height="100%"
-				language={LANGUAGE_ID}
-				theme={editorTheme}
-				value={value}
-				onChange={handleChange}
-				onMount={handleMount}
-				options={{
-					automaticLayout: true,
-					minimap: { enabled: false },
-					lineNumbers: "off",
-					glyphMargin: false,
-					folding: false,
-					lineDecorationsWidth: 8,
-					lineNumbersMinChars: 0,
-					renderLineHighlight: "none",
-					scrollBeyondLastLine: false,
-					scrollbar: {
-						horizontal: "hidden",
-						vertical: "auto",
-						verticalScrollbarSize: 6,
-					},
-					overviewRulerLanes: 0,
-					overviewRulerBorder: false,
-					hideCursorInOverviewRuler: true,
-					fixedOverflowWidgets: true,
-					fontSize: 13,
-					fontFamily:
-						"var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
-					wordWrap: "on",
-					readOnly: disabled,
-					padding: { top: 6, bottom: 6 },
-					suggestOnTriggerCharacters: true,
-					quickSuggestions: true,
-					acceptSuggestionOnEnter: "on",
-					tabCompletion: "on",
-					contextmenu: false,
-					find: { addExtraSpaceOnTop: false, autoFindInSelection: "never" },
-				}}
-			/>
-		</div>
-	);
+  return (
+    <div
+      style={{
+        height: editorHeight,
+        transition: "height 120ms ease-out",
+        width: "100%",
+        ...(borderless
+          ? {}
+          : {
+              borderRadius: "var(--octo-radius-md)",
+              border: "1px solid var(--octo-border-subtle)",
+            }),
+        position: "relative",
+      }}
+    >
+      <Editor
+        height="100%"
+        language={LANGUAGE_ID}
+        theme={editorTheme}
+        value={value}
+        onChange={handleChange}
+        onMount={handleMount}
+        options={{
+          automaticLayout: true,
+          minimap: { enabled: false },
+          lineNumbers: "off",
+          glyphMargin: false,
+          folding: false,
+          lineDecorationsWidth: 8,
+          lineNumbersMinChars: 0,
+          renderLineHighlight: "none",
+          scrollBeyondLastLine: false,
+          scrollbar: {
+            horizontal: "hidden",
+            vertical: "auto",
+            verticalScrollbarSize: 6,
+          },
+          overviewRulerLanes: 0,
+          overviewRulerBorder: false,
+          hideCursorInOverviewRuler: true,
+          fixedOverflowWidgets: true,
+          fontSize: 13,
+          fontFamily: "var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
+          wordWrap: "on",
+          readOnly: disabled,
+          padding: { top: 6, bottom: 6 },
+          suggestOnTriggerCharacters: true,
+          quickSuggestions: true,
+          acceptSuggestionOnEnter: "on",
+          tabCompletion: "on",
+          contextmenu: false,
+          find: { addExtraSpaceOnTop: false, autoFindInSelection: "never" },
+        }}
+      />
+    </div>
+  );
 }

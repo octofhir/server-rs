@@ -6,17 +6,17 @@
 	position: relative;
 	overflow: hidden;
 	background:
-		radial-gradient(120% 80% at 0% 0%, color-mix(in oklab, var(--g-color-base-brand-light), transparent 20%), transparent 60%),
-		radial-gradient(100% 70% at 100% 100%, color-mix(in oklab, var(--g-color-base-warning-light), transparent 35%), transparent 65%),
-		var(--g-color-base-background);
+		radial-gradient(120% 80% at 0% 0%, color-mix(in oklab, var(--octo-accent-primary-bg), transparent 20%), transparent 60%),
+		radial-gradient(100% 70% at 100% 100%, color-mix(in oklab, var(--octo-accent-warm-bg), transparent 35%), transparent 65%),
+		var(--octo-surface-1);
 }
 
 .glow {
 	position: absolute;
 	inset: -10%;
 	background:
-		radial-gradient(40% 30% at 30% 30%, color-mix(in oklab, var(--g-color-base-brand), transparent 70%), transparent 70%),
-		radial-gradient(35% 30% at 70% 70%, color-mix(in oklab, var(--g-color-base-misc-medium), transparent 70%), transparent 70%);
+		radial-gradient(40% 30% at 30% 30%, color-mix(in oklab, var(--octo-accent-primary), transparent 70%), transparent 70%),
+		radial-gradient(35% 30% at 70% 70%, color-mix(in oklab, var(--octo-accent-primary), transparent 70%), transparent 70%);
 	filter: blur(80px);
 	z-index: 0;
 	pointer-events: none;
@@ -50,9 +50,9 @@
 	padding: 32px;
 	border-radius: 16px;
 	box-shadow:
-		0 1px 0 var(--g-color-line-generic) inset,
-		0 24px 48px -16px color-mix(in oklab, var(--g-color-base-background-soft), transparent 30%),
-		0 8px 16px -8px color-mix(in oklab, var(--g-color-base-brand), transparent 75%);
+		0 1px 0 var(--octo-border-subtle) inset,
+		0 24px 48px -16px color-mix(in oklab, var(--octo-surface-2), transparent 30%),
+		0 8px 16px -8px color-mix(in oklab, var(--octo-accent-primary), transparent 75%);
 	backdrop-filter: blur(8px);
 }
 

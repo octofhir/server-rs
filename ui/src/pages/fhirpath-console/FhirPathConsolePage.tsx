@@ -5,15 +5,17 @@ import {
   CircleAlert,
   FunctionSquare,
   Play,
+  Sigma,
   Sparkles,
   Wand2,
   X as Xmark,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { assertFhirResource } from "@/shared/api/guards";
-import { FhirPathEditor } from "@/shared/monaco/FhirPathEditor";
+import { FhirPathEditor, type FhirPathEditorHandle } from "@/shared/monaco/FhirPathEditor";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
+import { FunctionPalette } from "./components/FunctionPalette";
 import { ResultItem } from "./components/ResultItem";
 import classes from "./FhirPathConsolePage.module.css";
 import { EXPRESSION_EXAMPLES, SAMPLE_RESOURCES, type SampleKey, sampleJsonString } from "./presets";
@@ -36,11 +38,25 @@ export function FhirPathConsolePage() {
     () => localStorage.getItem(STORAGE_RESOURCE) ?? DEFAULT_RESOURCE
   );
 
+  const [showFunctions, setShowFunctions] = useState(false);
+  const editorRef = useRef<FhirPathEditorHandle>(null);
+
   useEffect(() => {
     localStorage.setItem(STORAGE_EXPR, expression);
   }, [expression]);
   useEffect(() => {
     localStorage.setItem(STORAGE_RESOURCE, inputResource);
+  }, [inputResource]);
+
+  // Parse the resourceType from the input JSON so LSP completion is
+  // schema-aware (Patient.* suggestions, type-checked diagnostics, etc.).
+  const resourceType = useMemo(() => {
+    try {
+      const parsed = JSON.parse(inputResource);
+      return typeof parsed?.resourceType === "string" ? parsed.resourceType : undefined;
+    } catch {
+      return undefined;
+    }
   }, [inputResource]);
 
   const evaluateMutation = useMutation<FhirPathEvaluationResponse, Error>({
@@ -103,6 +119,15 @@ export function FhirPathConsolePage() {
     (s) => sampleJsonString(s.key) === inputResource
   )?.key;
 
+  const insertFunction = (snippet: string) => {
+    const handle = editorRef.current;
+    if (handle) {
+      handle.insertSnippet(snippet);
+    } else {
+      setExpression((prev) => prev + snippet.replace(/\$\{\d+:?([^}]*)\}/g, "$1"));
+    }
+  };
+
   const data = evaluateMutation.data;
 
   return (
@@ -141,6 +166,11 @@ export function FhirPathConsolePage() {
                   </span>
                   Expression
                 </span>
+                {resourceType && (
+                  <span className={classes.ctxBadge} title="LSP context resource type">
+                    {resourceType}
+                  </span>
+                )}
                 <span className={classes.panelHeadSpacer} />
                 <div className={classes.chipRow}>
                   <span className={classes.chipRowLabel}>
@@ -161,13 +191,25 @@ export function FhirPathConsolePage() {
                       {ex.label}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className={`${classes.chip} ${showFunctions ? classes.chipActive : ""}`}
+                    onClick={() => setShowFunctions((v) => !v)}
+                    title="Browse FHIRPath functions"
+                  >
+                    <Sigma size={12} />
+                    Functions
+                  </button>
                 </div>
               </div>
+              {showFunctions && <FunctionPalette onInsert={(fn) => insertFunction(fn.snippet)} />}
               <div className={classes.editorHost}>
                 <FhirPathEditor
+                  ref={editorRef}
                   value={expression}
                   onChange={setExpression}
                   onSubmit={handleExecute}
+                  resourceType={resourceType}
                   height="100%"
                   placeholder="Enter FHIRPath expression (e.g., Patient.name.given)"
                 />

@@ -1,9 +1,9 @@
 import { Badge, Button, Drawer, SegmentedControl, Switch, Tabs, Text } from "@octofhir/ui-kit";
 import { Copy, Database, RefreshCw, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
+import { PlanFlow } from "@/widgets/plan-viewer";
 import { parseExplainTarget, useExplainQuery } from "../hooks/useExplainQuery";
 import styles from "./ExplainPanel.module.css";
-import { PlanFlow } from "./PlanFlow";
 
 interface ExplainPanelProps {
   opened: boolean;

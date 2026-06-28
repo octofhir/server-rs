@@ -23,7 +23,7 @@
   padding: 16px;
   border: 1px solid var(--octo-border-subtle);
   border-radius: 8px;
-  background: var(--g-color-base-background);
+  background: var(--octo-surface-1);
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
 
@@ -36,7 +36,7 @@
   padding: 16px;
   border: 1px solid var(--octo-border-subtle);
   border-radius: 8px;
-  background: var(--g-color-base-background);
+  background: var(--octo-surface-1);
 }
 
 .statHeader,
@@ -123,7 +123,7 @@
 
 .timelineBar {
   flex: 1;
-  background: var(--g-color-base-brand);
+  background: var(--octo-accent-primary);
   border-radius: var(--octo-radius-xs) var(--octo-radius-xs) 0 0;
   min-width: 4px;
   transition: opacity 150ms ease;

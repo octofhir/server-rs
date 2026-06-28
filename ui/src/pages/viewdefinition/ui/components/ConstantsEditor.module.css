@@ -16,7 +16,7 @@
 	padding: var(--octo-spacing-sm);
 	border: 1px solid var(--octo-border-subtle);
 	border-radius: var(--octo-radius-md);
-	background: var(--g-color-base-background);
+	background: var(--octo-surface-1);
 }
 
 .list {

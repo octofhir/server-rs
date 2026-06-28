@@ -18,7 +18,7 @@
 
 .icon {
   flex-shrink: 0;
-  color: var(--g-color-text-secondary);
+  color: var(--octo-text-secondary);
 }
 
 .content {

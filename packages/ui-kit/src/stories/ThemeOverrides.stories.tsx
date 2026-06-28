@@ -81,7 +81,7 @@ export const ProviderThemeOverride: Story = {
                     <MetricTile
                         title="Resource catalog"
                         value="148"
-                        caption="Gravity variables are still mapped through Octo tokens"
+                        caption="Semantic values resolve through --octo design tokens"
                         icon={<Database width={18} height={18} />}
                     />
                 </div>

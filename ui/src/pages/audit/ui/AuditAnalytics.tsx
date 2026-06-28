@@ -56,7 +56,7 @@ function StatCard({
 								width={12}
 								height={12}
 								aria-hidden="true"
-								color={trend.value >= 0 ? "var(--g-color-base-positive-medium-hover)" : "var(--g-color-base-danger-medium)"}
+								color={trend.value >= 0 ? "var(--octo-brand-success-hover)" : "var(--octo-accent-fire)"}
 							/>
 							<Text variant="caption-2" color={trend.value >= 0 ? "positive" : "danger"}>
 								{trend.value > 0 ? "+" : ""}{trend.value}% {trend.label}
@@ -83,17 +83,17 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 	const sections = [
 		{
 			value: (success / total) * 100,
-			color: "var(--g-color-base-positive-medium)",
+			color: "var(--octo-accent-positive)",
 			tooltip: `Success: ${success.toLocaleString()}`,
 		},
 		{
 			value: (failure / total) * 100,
-			color: "var(--g-color-base-danger-medium)",
+			color: "var(--octo-accent-fire)",
 			tooltip: `Failure: ${failure.toLocaleString()}`,
 		},
 		{
 			value: (partial / total) * 100,
-			color: "var(--g-color-base-warning-medium)",
+			color: "var(--octo-accent-warm)",
 			tooltip: `Partial: ${partial.toLocaleString()}`,
 		},
 	].filter((s) => s.value > 0);

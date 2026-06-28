@@ -20,7 +20,7 @@ function Swatch({ hue }: { hue: PaletteHue }) {
                     fontWeight: 600,
                     fontSize: 14,
                     textTransform: "capitalize",
-                    color: "var(--g-color-text-primary)",
+                    color: "var(--octo-text-primary)",
                 }}
             >
                 {hue}
@@ -31,7 +31,7 @@ function Swatch({ hue }: { hue: PaletteHue }) {
                     gridTemplateColumns: "repeat(10, 1fr)",
                     borderRadius: 8,
                     overflow: "hidden",
-                    border: "1px solid var(--g-color-line-generic)",
+                    border: "1px solid var(--octo-border-subtle)",
                 }}
             >
                 {palette[hue].map((value, idx) => {
@@ -43,7 +43,7 @@ function Swatch({ hue }: { hue: PaletteHue }) {
                             title={value}
                             style={{
                                 background: value,
-                                color: isLight ? "var(--g-color-text-dark-primary)" : "var(--g-color-text-light-primary)",
+                                color: isLight ? "var(--octo-text-primary)" : "var(--octo-text-inverse)",
                                 padding: "12px 8px",
                                 fontFamily: "var(--g-text-code-font-family)",
                                 fontSize: 11,
@@ -64,8 +64,8 @@ function Swatch({ hue }: { hue: PaletteHue }) {
 export const Palette: Story = {
     render: () => (
         <div style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 980 }}>
-            <h2 style={{ margin: 0, color: "var(--g-color-text-primary)" }}>Brand palette</h2>
-            <p style={{ margin: 0, color: "var(--g-color-text-secondary)", maxWidth: 640 }}>
+            <h2 style={{ margin: 0, color: "var(--octo-text-primary)" }}>Brand palette</h2>
+            <p style={{ margin: 0, color: "var(--octo-text-secondary)", maxWidth: 640 }}>
                 Each hue runs from 0 (lightest) → 9 (darkest). Stop 5 is the canonical "base"
                 used in light mode; stop 4 is preferred in dark mode for stronger legibility.
                 All colors are defined in OKLCH for perceptual uniformity.
@@ -78,23 +78,23 @@ export const Palette: Story = {
 };
 
 const semanticVars = [
-    { label: "Brand", varName: "--g-color-base-brand" },
-    { label: "Brand hover", varName: "--g-color-base-brand-hover" },
-    { label: "Info", varName: "--g-color-base-info-medium" },
-    { label: "Success", varName: "--g-color-base-positive-medium" },
-    { label: "Warning", varName: "--g-color-base-warning-medium" },
-    { label: "Danger", varName: "--g-color-base-danger-medium" },
-    { label: "Misc / accent", varName: "--g-color-base-misc-medium" },
-    { label: "Selection", varName: "--g-color-base-selection" },
+    { label: "Brand", varName: "--octo-accent-primary" },
+    { label: "Brand hover", varName: "--octo-accent-primary-hover" },
+    { label: "Info", varName: "--octo-brand-info" },
+    { label: "Success", varName: "--octo-accent-positive" },
+    { label: "Warning", varName: "--octo-accent-warm" },
+    { label: "Danger", varName: "--octo-accent-fire" },
+    { label: "Misc / accent", varName: "--octo-accent-primary" },
+    { label: "Selection", varName: "--octo-accent-primary-bg" },
 ];
 
 export const SemanticTokens: Story = {
     render: () => (
         <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 720 }}>
-            <h2 style={{ margin: 0, color: "var(--g-color-text-primary)" }}>Semantic tokens</h2>
-            <p style={{ margin: 0, color: "var(--g-color-text-secondary)" }}>
-                These are the Gravity UI CSS variables the kit maps to the OctoFHIR brand.
-                Components from <code>@gravity-ui/uikit</code> read them directly.
+            <h2 style={{ margin: 0, color: "var(--octo-text-primary)" }}>Semantic tokens</h2>
+            <p style={{ margin: 0, color: "var(--octo-text-secondary)" }}>
+                These are the semantic <code>--octo-*</code> CSS variables that map the
+                OctoFHIR brand palette. Components read them directly.
             </p>
             {semanticVars.map((t) => (
                 <div
@@ -106,20 +106,20 @@ export const SemanticTokens: Story = {
                         gap: 16,
                         padding: 12,
                         borderRadius: 8,
-                        background: "var(--g-color-base-generic)",
+                        background: "var(--octo-surface-3)",
                     }}
                 >
-                    <div style={{ fontWeight: 600, color: "var(--g-color-text-primary)" }}>{t.label}</div>
+                    <div style={{ fontWeight: 600, color: "var(--octo-text-primary)" }}>{t.label}</div>
                     <div
                         style={{
                             width: 60,
                             height: 28,
                             borderRadius: 6,
                             background: `var(${t.varName})`,
-                            border: "1px solid var(--g-color-line-generic)",
+                            border: "1px solid var(--octo-border-subtle)",
                         }}
                     />
-                    <code style={{ color: "var(--g-color-text-secondary)" }}>{t.varName}</code>
+                    <code style={{ color: "var(--octo-text-secondary)" }}>{t.varName}</code>
                 </div>
             ))}
         </div>

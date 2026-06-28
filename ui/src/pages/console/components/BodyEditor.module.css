@@ -18,7 +18,7 @@
 }
 
 .footer {
-  color: var(--g-color-text-secondary);
+  color: var(--octo-text-secondary);
 }
 
 @media (max-width: 720px) {

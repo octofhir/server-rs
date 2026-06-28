@@ -28,11 +28,11 @@
 	width: 28px;
 	height: 28px;
 	border-radius: var(--octo-radius-md);
-	background: var(--g-color-base-brand-light);
+	background: var(--octo-accent-primary-bg);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--g-color-base-brand);
+	color: var(--octo-accent-primary);
 }
 
 .roleInfo {
@@ -116,7 +116,7 @@
 	gap: var(--octo-spacing-xs);
 	padding: var(--octo-spacing-xs);
 	border-radius: var(--octo-radius-sm);
-	background: var(--g-color-text-light-primary);
+	background: var(--octo-text-inverse);
 	border: 1px solid var(--octo-border-subtle);
 }
 

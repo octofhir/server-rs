@@ -33,7 +33,7 @@
 
 .providerIcon {
 	flex: 0 0 auto;
-	color: var(--g-color-text-info);
+	color: var(--octo-brand-info);
 }
 
 .providerText {

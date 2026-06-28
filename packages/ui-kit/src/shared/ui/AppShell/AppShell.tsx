@@ -112,8 +112,8 @@ const AppShellRoot = forwardRef<HTMLDivElement, AppShellProps>(
             gridTemplateRows: `${headerHeight} 1fr`,
             gridTemplateAreas: `"header header" "navbar main"`,
             minHeight: "100vh",
-            background: "var(--g-color-base-background)",
-            color: "var(--g-color-text-primary)",
+            background: "var(--octo-surface-1)",
+            color: "var(--octo-text-primary)",
             transition: "grid-template-columns 200ms cubic-bezier(0.4, 0, 0.2, 1)",
             ...getSpacingStyles(props),
             ...style,
@@ -141,8 +141,8 @@ const AppShellHeader = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(
             height: ctx.headerHeight,
             display: "flex",
             alignItems: "center",
-            background: "var(--g-color-base-background)",
-            borderBottom: "1px solid var(--g-color-line-generic)",
+            background: "var(--octo-surface-1)",
+            borderBottom: "1px solid var(--octo-border-subtle)",
             ...style,
         };
         return <header ref={ref} style={merged} {...props} />;
@@ -161,8 +161,8 @@ const AppShellNavbar = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(
             height: `calc(100vh - ${ctx.headerHeight})`,
             width: ctx.navbarWidth,
             overflowY: "auto",
-            background: "var(--g-color-base-background)",
-            borderRight: "1px solid var(--g-color-line-generic)",
+            background: "var(--octo-surface-1)",
+            borderRight: "1px solid var(--octo-border-subtle)",
             transition: "width 200ms cubic-bezier(0.4, 0, 0.2, 1)",
             ...style,
         };
@@ -195,8 +195,8 @@ const AppShellAside = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(
             alignSelf: "start",
             height: "100vh",
             overflowY: "auto",
-            borderLeft: "1px solid var(--g-color-line-generic)",
-            background: "var(--g-color-base-background)",
+            borderLeft: "1px solid var(--octo-border-subtle)",
+            background: "var(--octo-surface-1)",
             ...style,
         };
         return <aside ref={ref} style={merged} {...props} />;

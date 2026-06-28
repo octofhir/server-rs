@@ -17,7 +17,7 @@ const Cell = ({ children }: { children: React.ReactNode }) => (
     <div
         style={{
             padding: 16,
-            backgroundColor: "var(--g-color-base-selection)",
+            backgroundColor: "var(--octo-accent-primary-bg)",
             borderRadius: 8,
             textAlign: "center",
         }}

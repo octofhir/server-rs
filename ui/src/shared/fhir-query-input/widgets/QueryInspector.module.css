@@ -51,7 +51,7 @@
 .inlineCode {
 	padding: 2px 4px;
 	border-radius: 4px;
-	background-color: var(--g-color-base-generic-subtle);
+	background-color: var(--octo-surface-2);
 }
 
 .boldCode {
@@ -89,13 +89,13 @@
 }
 
 .diffAdded {
-	color: var(--g-color-text-success);
+	color: var(--octo-accent-positive);
 }
 
 .diffRemoved {
-	color: var(--g-color-text-danger);
+	color: var(--octo-accent-fire);
 }
 
 .diffModified {
-	color: var(--g-color-text-warning);
+	color: var(--octo-accent-warm);
 }

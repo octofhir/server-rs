@@ -34,9 +34,9 @@
 .tablePanel,
 .panel,
 .panelMuted {
-	border: 1px solid var(--g-color-line-generic);
+	border: 1px solid var(--octo-border-subtle);
 	border-radius: 8px;
-	background: var(--g-color-base-background);
+	background: var(--octo-surface-1);
 }
 
 .tablePanel {
@@ -49,7 +49,7 @@
 }
 
 .panelMuted {
-	background: var(--g-color-base-generic);
+	background: var(--octo-surface-3);
 }
 
 .statePanel,
@@ -97,23 +97,23 @@
 	align-items: center;
 	justify-content: center;
 	border-radius: 6px;
-	background: var(--g-color-base-selection);
-	color: var(--g-color-text-link);
+	background: var(--octo-accent-primary-bg);
+	color: var(--octo-accent-primary);
 }
 
 .resourceTypeIcon[data-resource-type="ValueSet"],
 .resourceTypeIcon[data-resource-type="CapabilityStatement"] {
-	color: var(--g-color-text-info);
+	color: var(--octo-brand-info);
 }
 
 .resourceTypeIcon[data-resource-type="CodeSystem"],
 .resourceTypeIcon[data-resource-type="CompartmentDefinition"] {
-	color: var(--g-color-text-warning);
+	color: var(--octo-accent-warm);
 }
 
 .resourceTypeIcon[data-resource-type="OperationDefinition"],
 .resourceTypeIcon[data-resource-type="NamingSystem"] {
-	color: var(--g-color-text-danger);
+	color: var(--octo-accent-fire);
 }
 
 @media (max-width: 720px) {

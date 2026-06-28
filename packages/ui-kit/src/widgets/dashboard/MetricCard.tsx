@@ -16,21 +16,21 @@ export interface MetricCardProps {
 }
 
 const gradientColors: Record<string, string> = {
-    primary: "var(--g-color-base-brand)",
-    warning: "var(--g-color-base-warning-medium)",
-    danger: "var(--g-color-base-danger-medium)",
-    success: "var(--g-color-base-positive-medium)",
-    info: "var(--g-color-base-info-medium)",
-    "octo-brand": "var(--octo-brand-gradient, var(--g-color-base-brand))",
+    primary: "var(--octo-accent-primary)",
+    warning: "var(--octo-accent-warm)",
+    danger: "var(--octo-accent-fire)",
+    success: "var(--octo-accent-positive)",
+    info: "var(--octo-brand-info)",
+    "octo-brand": "var(--octo-brand-gradient, var(--octo-accent-primary))",
 };
 
 const textColors: Record<string, string> = {
-    primary: "var(--g-color-text-brand)",
-    warning: "var(--g-color-text-warning)",
-    danger: "var(--g-color-text-danger)",
-    success: "var(--g-color-text-positive)",
-    info: "var(--g-color-text-info)",
-    "octo-brand": "var(--g-color-text-primary)",
+    primary: "var(--octo-accent-primary)",
+    warning: "var(--octo-accent-warm)",
+    danger: "var(--octo-accent-fire)",
+    success: "var(--octo-accent-positive)",
+    info: "var(--octo-brand-info)",
+    "octo-brand": "var(--octo-text-primary)",
 };
 
 export function MetricCard({
@@ -43,7 +43,7 @@ export function MetricCard({
     gradientColor = "primary",
 }: MetricCardProps) {
     const topBarColor = gradientColors[gradientColor] || gradientColor;
-    const valueTextColor = textColors[gradientColor] || "var(--g-color-text-primary)";
+    const valueTextColor = textColors[gradientColor] || "var(--octo-text-primary)";
 
     return (
         <Card

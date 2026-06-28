@@ -66,7 +66,7 @@ export const RingProgress = forwardRef<HTMLDivElement, RingProgressProps>(functi
                     cy={center}
                     r={radius}
                     fill="none"
-                    stroke="var(--g-color-line-generic)"
+                    stroke="var(--octo-border-subtle)"
                     strokeWidth={thickness}
                 />
                 {arcs}

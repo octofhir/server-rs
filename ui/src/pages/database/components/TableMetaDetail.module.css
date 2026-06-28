@@ -1,11 +1,11 @@
 /* Flat modern 2026 detail view — emerald-branded. */
 
 :root {
-  --db-emerald: #10b981;
-  --db-emerald-strong: #059669;
-  --db-emerald-deep: #047857;
-  --db-emerald-soft: rgb(16 185 129 / 12%);
-  --db-emerald-line: rgb(16 185 129 / 28%);
+  --db-emerald: var(--octo-accent-primary);
+  --db-emerald-strong: var(--octo-accent-primary);
+  --db-emerald-deep: var(--octo-accent-primary);
+  --db-emerald-soft: var(--octo-accent-primary-subtle);
+  --db-emerald-line: var(--octo-border-strong);
 }
 
 .root {
@@ -13,7 +13,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--app-surface-2);
+  background: var(--octo-surface-2);
 }
 
 /* ── Header ── */
@@ -23,7 +23,7 @@
   flex-direction: column;
   gap: 12px;
   padding: 16px 18px;
-  border-bottom: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--octo-border-subtle);
   background: linear-gradient(180deg, var(--db-emerald-soft) 0%, transparent 100%);
 }
 
@@ -51,7 +51,7 @@
   font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.2px;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary, #0b0f0d);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -70,13 +70,13 @@
 }
 
 .chipNeutral {
-  background: var(--app-surface-3, rgb(0 0 0 / 5%));
-  color: var(--app-text-muted, #687076);
+  background: var(--octo-surface-3, rgb(0 0 0 / 5%));
+  color: var(--octo-text-muted, #687076);
 }
 
 .chipWarn {
-  background: rgb(245 158 11 / 14%);
-  color: #b45309;
+  background: var(--octo-accent-warm-bg);
+  color: var(--octo-accent-warm);
 }
 
 .maintenanceBar {
@@ -104,7 +104,7 @@
 }
 
 .actionBtn:hover {
-  background: rgb(16 185 129 / 20%);
+  background: var(--octo-accent-primary-bg-hover);
 }
 
 .actionBtn:active {
@@ -117,13 +117,13 @@
 }
 
 .actionBtnHeavy {
-  border-color: rgb(220 38 38 / 28%);
-  background: rgb(220 38 38 / 9%);
-  color: #b91c1c;
+  border-color: var(--octo-accent-fire);
+  background: var(--octo-accent-fire-bg);
+  color: var(--octo-accent-fire);
 }
 
 .actionBtnHeavy:hover {
-  background: rgb(220 38 38 / 16%);
+  background: var(--octo-accent-fire-bg-hover);
 }
 
 /* ── Stats ── */
@@ -133,7 +133,7 @@
   grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
   gap: 10px;
   padding: 16px 18px;
-  border-bottom: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--octo-border-subtle);
 }
 
 .statCard {
@@ -142,8 +142,8 @@
   gap: 3px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: var(--app-surface-1);
-  border: 1px solid var(--app-border-subtle);
+  background: var(--octo-surface-1);
+  border: 1px solid var(--octo-border-subtle);
 }
 
 .statCardAccent {
@@ -154,7 +154,7 @@
 .statLabel {
   font-size: 11px;
   font-weight: 500;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-muted, #687076);
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
@@ -162,7 +162,7 @@
 .statValue {
   font-size: 15px;
   font-weight: 700;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary, #0b0f0d);
   font-variant-numeric: tabular-nums;
 }
 
@@ -197,7 +197,7 @@
   font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary, #0b0f0d);
 }
 
 .sectionCount {
@@ -225,24 +225,24 @@
   padding: 6px 8px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--app-text-muted, #687076);
-  border-bottom: 1px solid var(--app-border-subtle);
+  color: var(--octo-text-muted, #687076);
+  border-bottom: 1px solid var(--octo-border-subtle);
 }
 
 .colTable td {
   padding: 6px 8px;
-  border-bottom: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--octo-border-subtle);
   vertical-align: middle;
 }
 
 .colName {
   font-family: var(--mono, ui-monospace, monospace);
   font-weight: 500;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary, #0b0f0d);
 }
 
 .colType {
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-muted, #687076);
 }
 
 .nnTag {
@@ -271,8 +271,8 @@
   gap: 8px;
   padding: 12px;
   border-radius: 12px;
-  background: var(--app-surface-1);
-  border: 1px solid var(--app-border-subtle);
+  background: var(--octo-surface-1);
+  border: 1px solid var(--octo-border-subtle);
   transition: border-color 0.15s ease;
 }
 
@@ -297,7 +297,7 @@
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary, #0b0f0d);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -325,8 +325,8 @@
 }
 
 .tagType {
-  background: var(--app-surface-3, rgb(0 0 0 / 5%));
-  color: var(--app-text-muted, #687076);
+  background: var(--octo-surface-3, rgb(0 0 0 / 5%));
+  color: var(--octo-text-muted, #687076);
 }
 
 .tagPk {
@@ -335,13 +335,13 @@
 }
 
 .tagUnique {
-  background: rgb(59 130 246 / 12%);
-  color: #1d4ed8;
+  background: var(--octo-accent-info-bg);
+  color: var(--octo-accent-info);
 }
 
 .tagSize {
-  background: var(--app-surface-3, rgb(0 0 0 / 5%));
-  color: var(--app-text, #0b0f0d);
+  background: var(--octo-surface-3, rgb(0 0 0 / 5%));
+  color: var(--octo-text-primary, #0b0f0d);
   text-transform: none;
   font-variant-numeric: tabular-nums;
 }
@@ -355,7 +355,7 @@
   border-radius: 7px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-muted, #687076);
   cursor: pointer;
   flex: none;
   transition:
@@ -364,8 +364,8 @@
 }
 
 .dropBtn:hover {
-  background: rgb(220 38 38 / 12%);
-  color: #dc2626;
+  background: var(--octo-accent-fire-bg);
+  color: var(--octo-accent-fire);
 }
 
 .dropBtn:disabled {
@@ -377,8 +377,8 @@
   margin: 0;
   padding: 9px 11px;
   border-radius: 8px;
-  background: #0b1f17;
-  color: #d1fae5;
+  background: var(--octo-accent-primary-subtle);
+  color: var(--octo-text-primary);
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11.5px;
   line-height: 1.5;
@@ -391,7 +391,7 @@
   padding: 14px;
   text-align: center;
   font-size: 12px;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-muted, #687076);
 }
 
 .centeredLoader {

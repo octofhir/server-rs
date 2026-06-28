@@ -4,8 +4,8 @@
 	display: flex;
 	flex-direction: column;
 	flex: 0 0 240px;
-	border-right: 1px solid var(--g-color-line-base);
-	background: var(--g-color-base-generic-ultralight);
+	border-right: 1px solid var(--octo-border-subtle);
+	background: var(--octo-surface-2);
 }
 
 .header {
@@ -44,11 +44,11 @@
 }
 
 .item[data-selected="true"] {
-	background: var(--g-color-base-brand-light);
+	background: var(--octo-accent-primary-bg);
 }
 
 .activeIcon {
-	color: var(--g-color-text-success);
+	color: var(--octo-accent-positive);
 }
 
 .itemLabel {
@@ -64,6 +64,6 @@
 		max-height: 180px;
 		flex-basis: auto;
 		border-right: 0;
-		border-bottom: 1px solid var(--g-color-line-base);
+		border-bottom: 1px solid var(--octo-border-subtle);
 	}
 }

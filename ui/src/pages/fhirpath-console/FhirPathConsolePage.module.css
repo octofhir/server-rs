@@ -8,6 +8,14 @@
   --fp-emerald-line: rgb(16 185 129 / 28%);
 }
 
+/* Dark theme: lighter emerald so accent text stays legible on dark surfaces.
+   `--fp-emerald-strong` stays fixed — solid fill behind white button text. */
+[data-theme="dark"] {
+  --fp-emerald-deep: #6ee7b7;
+  --fp-emerald-soft: rgb(52 211 153 / 14%);
+  --fp-emerald-line: rgb(52 211 153 / 32%);
+}
+
 /* ── Root layout ── */
 
 .workspaceResizable {
@@ -79,9 +87,9 @@
   height: 32px;
   padding: 0 12px;
   border-radius: 8px;
-  border: 1px solid var(--app-border-subtle);
+  border: 1px solid var(--octo-border-subtle);
   background: transparent;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -92,8 +100,8 @@
 }
 
 .ghostBtn:hover {
-  background: var(--app-surface-3, rgb(0 0 0 / 4%));
-  color: var(--app-text, #0b0f0d);
+  background: var(--octo-surface-3);
+  color: var(--octo-text-primary);
 }
 
 /* ── Panels ── */
@@ -105,13 +113,13 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--app-border-subtle);
+  border: 1px solid var(--octo-border-subtle);
   border-radius: 12px;
-  background: var(--app-surface-1);
+  background: var(--octo-surface-1);
 }
 
 .resultsPanel {
-  background: var(--app-surface-2);
+  background: var(--octo-surface-2);
   overflow-y: auto;
 }
 
@@ -122,7 +130,7 @@
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--octo-border-subtle);
   background: linear-gradient(180deg, var(--fp-emerald-soft) 0%, transparent 140%);
   flex: none;
 }
@@ -135,7 +143,7 @@
   font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary);
 }
 
 .panelTitleIcon {
@@ -160,7 +168,7 @@
 .chipRowLabel {
   font-size: 11px;
   font-weight: 600;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
   margin-right: 2px;
 }
 
@@ -171,9 +179,9 @@
   height: 24px;
   padding: 0 10px;
   border-radius: 999px;
-  border: 1px solid var(--app-border-subtle);
-  background: var(--app-surface-1);
-  color: var(--app-text, #0b0f0d);
+  border: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-1);
+  color: var(--octo-text-primary);
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
@@ -203,6 +211,110 @@
   overflow: hidden;
 }
 
+/* ── LSP context badge ── */
+
+.ctxBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--fp-emerald-soft);
+  border: 1px solid var(--fp-emerald-line);
+  color: var(--fp-emerald-deep);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── Function palette ── */
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-2);
+  flex: none;
+}
+
+.paletteSearch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  color: var(--octo-text-secondary);
+}
+
+.paletteInput {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 12.5px;
+  color: var(--octo-text-primary);
+}
+
+.paletteScroll {
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.paletteGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.paletteGroupLabel {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--octo-text-secondary);
+}
+
+.paletteChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.paletteFn {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-1);
+  color: var(--octo-text-primary);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.paletteFn:hover {
+  background: var(--fp-emerald-soft);
+  border-color: var(--fp-emerald-line);
+  color: var(--fp-emerald-deep);
+}
+
+.paletteEmpty {
+  font-size: 12px;
+  color: var(--octo-text-secondary);
+  padding: 6px 2px;
+}
+
 /* ── Results: stat strip ── */
 
 .statStrip {
@@ -210,7 +322,7 @@
   flex-wrap: wrap;
   gap: 10px;
   padding: 14px 16px;
-  border-bottom: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--octo-border-subtle);
   flex: none;
 }
 
@@ -221,8 +333,8 @@
   min-width: 92px;
   padding: 8px 12px;
   border-radius: 10px;
-  background: var(--app-surface-1);
-  border: 1px solid var(--app-border-subtle);
+  background: var(--octo-surface-1);
+  border: 1px solid var(--octo-border-subtle);
 }
 
 .statCardAccent {
@@ -233,7 +345,7 @@
 .statLabel {
   font-size: 10.5px;
   font-weight: 500;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
@@ -241,7 +353,7 @@
 .statValue {
   font-size: 16px;
   font-weight: 700;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -255,7 +367,7 @@
   gap: 6px;
   margin-left: auto;
   font-size: 11px;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
 }
 
 .statMetaMono {
@@ -282,7 +394,7 @@
   font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary);
 }
 
 .sectionCount {
@@ -306,9 +418,9 @@
 /* ── Result item ── */
 
 .resultItem {
-  border: 1px solid var(--app-border-subtle);
+  border: 1px solid var(--octo-border-subtle);
   border-radius: 10px;
-  background: var(--app-surface-1);
+  background: var(--octo-surface-1);
   padding: 10px 12px;
   transition: border-color 0.15s ease;
 }
@@ -334,7 +446,7 @@
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11px;
   font-weight: 600;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
   flex: none;
 }
 
@@ -381,7 +493,7 @@
   min-width: 0;
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 12.5px;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -394,7 +506,7 @@
   cursor: pointer;
   border: none;
   background: transparent;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
   font: inherit;
   font-size: 12.5px;
   padding: 0;
@@ -415,7 +527,7 @@
   border-radius: 6px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
   cursor: pointer;
   flex: none;
   margin-left: auto;
@@ -461,17 +573,17 @@
   height: 22px;
   padding: 0 9px;
   border-radius: 7px;
-  background: var(--app-surface-1);
-  border: 1px solid var(--app-border-subtle);
+  background: var(--octo-surface-1);
+  border: 1px solid var(--octo-border-subtle);
   font-size: 11px;
   font-weight: 500;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .timingTagVal {
   font-weight: 700;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary);
 }
 
 /* ── Error + empty ── */
@@ -501,7 +613,7 @@
 
 .errorMsg {
   font-size: 12.5px;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary);
   font-family: var(--mono, ui-monospace, monospace);
   word-break: break-word;
 }
@@ -532,12 +644,12 @@
 .emptyTitle {
   font-size: 14px;
   font-weight: 600;
-  color: var(--app-text, #0b0f0d);
+  color: var(--octo-text-primary);
 }
 
 .emptyHint {
   font-size: 12.5px;
-  color: var(--app-text-muted, #687076);
+  color: var(--octo-text-secondary);
   max-width: 320px;
   line-height: 1.5;
 }
@@ -547,6 +659,6 @@
   font-size: 12px;
   padding: 1px 5px;
   border-radius: 5px;
-  background: var(--app-surface-3, rgb(0 0 0 / 5%));
+  background: var(--octo-surface-3);
   color: var(--fp-emerald-deep);
 }

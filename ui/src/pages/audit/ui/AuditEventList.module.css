@@ -35,7 +35,7 @@
   font-size: var(--octo-typography-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--g-color-text-secondary);
+  color: var(--octo-text-secondary);
   border-bottom: 1px solid var(--octo-border-subtle);
 }
 
@@ -49,7 +49,7 @@
 }
 
 .row[data-selected="true"] {
-  background-color: var(--g-color-base-brand-light);
+  background-color: var(--octo-accent-primary-bg);
 }
 
 .row td {

@@ -192,7 +192,7 @@ export function OperationDetailPage() {
 										<CategoryIcon
 											width={20}
 											height={20}
-											color="var(--g-color-text-secondary)"
+											color="var(--octo-text-secondary)"
 											aria-hidden="true"
 										/>
 										<Text as="h2" variant="subheader-3" className={classes.operationTitle}>

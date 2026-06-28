@@ -35,11 +35,11 @@
 	width: 36px;
 	height: 36px;
 	border-radius: 50%;
-	background: var(--g-color-base-brand-light);
+	background: var(--octo-accent-primary-bg);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--g-color-base-brand);
+	color: var(--octo-accent-primary);
 	font-weight: 600;
 	font-size: 13px;
 }
@@ -86,15 +86,15 @@
 .emptyCell {
 	height: 160px;
 	text-align: center;
-	color: var(--g-color-text-secondary);
+	color: var(--octo-text-secondary);
 }
 
 .bulkActions {
 	display: flex;
 	gap: 8px;
 	padding: 10px 12px;
-	background: var(--g-color-base-brand-light);
-	border: 1px solid var(--g-color-line-brand);
+	background: var(--octo-accent-primary-bg);
+	border: 1px solid var(--octo-accent-primary);
 	border-radius: var(--g-border-radius-l);
 	margin-bottom: 10px;
 	align-items: center;
@@ -103,7 +103,7 @@
 
 .selectedCount {
 	font-weight: 500;
-	color: var(--g-color-base-brand);
+	color: var(--octo-accent-primary);
 	margin-right: 4px;
 }
 
@@ -126,9 +126,9 @@
 	flex-direction: column;
 	gap: 6px;
 	padding: 12px;
-	border: 1px solid var(--g-color-line-generic);
+	border: 1px solid var(--octo-border-subtle);
 	border-radius: var(--g-border-radius-l);
-	background: var(--g-color-base-generic-ultralight);
+	background: var(--octo-surface-2);
 	cursor: pointer;
 }
 
@@ -149,24 +149,24 @@
 	height: 4px;
 	flex: 1;
 	border-radius: 2px;
-	background: var(--g-color-line-generic);
+	background: var(--octo-border-subtle);
 	transition: background-color 0.2s ease;
 }
 
 .strengthBar[data-active="true"][data-strength="weak"] {
-	background: var(--g-color-base-danger-medium);
+	background: var(--octo-accent-fire);
 }
 
 .strengthBar[data-active="true"][data-strength="fair"] {
-	background: var(--g-color-base-warning-medium-hover);
+	background: var(--octo-brand-warm-hover);
 }
 
 .strengthBar[data-active="true"][data-strength="good"] {
-	background: var(--g-color-base-warning-medium);
+	background: var(--octo-accent-warm);
 }
 
 .strengthBar[data-active="true"][data-strength="strong"] {
-	background: var(--g-color-base-positive-medium-hover);
+	background: var(--octo-brand-success-hover);
 }
 
 .strengthLabel {

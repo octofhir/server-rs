@@ -39,7 +39,7 @@
 .resultCard,
 .emptyState,
 .logItem {
-	border: 1px solid var(--g-color-line-generic);
+	border: 1px solid var(--octo-border-subtle);
 	border-radius: 8px;
 	background: var(--octo-surface-1);
 }
@@ -57,9 +57,9 @@
 
 .errorCard {
 	padding: var(--g-spacing-3);
-	border: 1px solid var(--g-color-line-danger);
+	border: 1px solid var(--octo-accent-fire);
 	border-radius: 8px;
-	background: var(--g-color-base-danger-light);
+	background: var(--octo-accent-fire-bg);
 }
 
 .collapseHeader {
@@ -74,13 +74,13 @@
 	cursor: pointer;
 }
 .collapseHeader:focus-visible {
-	outline: 2px solid var(--g-color-line-brand);
+	outline: 2px solid var(--octo-accent-primary);
 	outline-offset: -2px;
 }
 .collapseChevron {
 	display: inline-flex;
 	align-items: center;
-	color: var(--g-color-text-secondary);
+	color: var(--octo-text-secondary);
 }
 
 .outputScroll {

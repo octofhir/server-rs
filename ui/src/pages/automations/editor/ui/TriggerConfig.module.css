@@ -33,7 +33,7 @@
 
 .triggerCard,
 .formCard {
-	border: 1px solid var(--g-color-line-generic);
+	border: 1px solid var(--octo-border-subtle);
 	border-radius: 8px;
 }
 

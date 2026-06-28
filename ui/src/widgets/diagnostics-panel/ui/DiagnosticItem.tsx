@@ -16,15 +16,15 @@ function SeverityIcon({ severity }: { severity: monaco.MarkerSeverity }) {
 
 	switch (severity) {
 		case 8: // monaco.MarkerSeverity.Error
-			return <CircleExclamation size={size} color="var(--g-color-text-danger)" />;
+			return <CircleExclamation size={size} color="var(--octo-accent-fire)" />;
 		case 4: // monaco.MarkerSeverity.Warning
-			return <TriangleExclamation size={size} color="var(--g-color-text-warning)" />;
+			return <TriangleExclamation size={size} color="var(--octo-accent-warm)" />;
 		case 2: // monaco.MarkerSeverity.Info
-			return <CircleInfo size={size} color="var(--g-color-text-info)" />;
+			return <CircleInfo size={size} color="var(--octo-brand-info)" />;
 		case 1: // monaco.MarkerSeverity.Hint
-			return <Bulb size={size} color="var(--g-color-text-secondary)" />;
+			return <Bulb size={size} color="var(--octo-text-secondary)" />;
 		default:
-			return <CircleInfo size={size} color="var(--g-color-text-secondary)" />;
+			return <CircleInfo size={size} color="var(--octo-text-secondary)" />;
 	}
 }
 

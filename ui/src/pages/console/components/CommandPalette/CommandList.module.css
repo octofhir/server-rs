@@ -17,5 +17,5 @@
 }
 
 .itemSelected {
-  background: var(--g-color-base-selection);
+  background: var(--octo-accent-primary-bg);
 }

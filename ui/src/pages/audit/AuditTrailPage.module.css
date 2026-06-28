@@ -67,7 +67,7 @@
 .analyticsContainer {
   flex: 1;
   overflow: auto;
-  background: var(--g-color-base-background);
+  background: var(--octo-surface-1);
 }
 
 @media (min-width: 1120px) {

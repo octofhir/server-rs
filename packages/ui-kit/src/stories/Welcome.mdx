@@ -4,21 +4,20 @@ import { Meta } from "@storybook/addon-docs/blocks";
 
 # OctoFHIR UI Kit
 
-A thin, opinionated layer on top of [Gravity UI](https://gravity-ui.com),
+A self-contained React component layer driven by `--octo-*` design tokens,
 tuned for the OctoFHIR admin surface.
 
 ## What's in the box
 
-- **Brand-mapped Gravity UI** — every `@gravity-ui/uikit` component inherits the
-  OctoFHIR palette via `gravity-overrides.css`. No CSS-in-JS, no runtime cost.
+- **Token-driven components** — every component reads the OctoFHIR palette via
+  `--octo-*` CSS variables emitted by `UIProvider`. No CSS-in-JS, no runtime cost.
 - **Composition primitives** — `Box`, `Flex`, `Stack`, `Group`, `Center`,
   `Container`, `Grid`, `SimpleGrid` with familiar `w/h/p/m` spacing props.
-- **Form layout** — `FormRow` from `@gravity-ui/components` for vertical /
-  horizontal field layouts with required markers and field descriptions.
-- **Data table** — `DataTable` (re-export of `@gravity-ui/table`) for grids
-  with sorting, selection, virtualization, drag-and-drop, settings.
-- **Empty / not-found / error states** — `EmptyState` (re-export of
-  Gravity `PlaceholderContainer`).
+- **Form layout** — `FormRow` for vertical / horizontal field layouts with
+  required markers and field descriptions.
+- **Data table** — `DataTable` (built on `@tanstack/react-table` +
+  `@tanstack/react-virtual`) for grids with sorting, selection, virtualization.
+- **Empty / not-found / error states** — `EmptyState`.
 - **Color scheme** — `UIProvider` + `useColorScheme()` hook, persisted to
   `localStorage`, supports `light` / `dark` / `auto` (system).
 

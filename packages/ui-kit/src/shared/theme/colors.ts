@@ -4,9 +4,9 @@
  * 0..9. Index 5 is the "Base" stop used as the canonical brand stop and is
  * what the dark/light schemes pull from.
  *
- * The palette is tuned for parity with Gravity UI's internal hue ramp so that
- * brand-mapped CSS variables (`--g-color-base-brand`, `--g-color-text-brand`,
- * etc.) read coherently when overridden via `gravity-overrides.css`.
+ * Scale stops feed the `--octo-*` design tokens (see tokens.ts) so that
+ * brand-mapped CSS variables (`--octo-accent-primary`, `--octo-text-primary`,
+ * etc.) read coherently across the light and dark schemes.
  */
 
 export const palette = {
@@ -62,7 +62,7 @@ export const palette = {
         "oklch(37% 0.115 25)",
         "oklch(28% 0.085 25)",
     ],
-    /** Iris — informational accent (Gravity "info" mapping). */
+    /** Iris — informational accent. */
     info: [
         "oklch(98% 0.012 230)",
         "oklch(95% 0.030 230)",

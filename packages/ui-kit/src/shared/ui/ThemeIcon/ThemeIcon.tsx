@@ -83,27 +83,27 @@ export const ThemeIcon = forwardRef<HTMLDivElement, ThemeIconProps>(
         const v = VIEW_ALIAS[(view ?? variant ?? "light") as string] ?? "light";
 
         let bg = "transparent";
-        let text = "var(--g-color-text-primary)";
+        let text = "var(--octo-text-primary)";
         let border = "1px solid transparent";
 
         if (v === "light") {
-            if (c === "primary") { bg = "var(--g-color-base-selection)"; text = "var(--g-color-text-brand)"; }
-            else if (c === "positive") { bg = "var(--g-color-base-positive-hover)"; text = "var(--g-color-text-positive)"; }
-            else if (c === "warning") { bg = "var(--g-color-base-warning-hover)"; text = "var(--g-color-text-warning)"; }
-            else if (c === "danger") { bg = "var(--g-color-base-danger-hover)"; text = "var(--g-color-text-danger)"; }
-            else { bg = "var(--g-color-base-generic)"; }
+            if (c === "primary") { bg = "var(--octo-accent-primary-bg)"; text = "var(--octo-accent-primary)"; }
+            else if (c === "positive") { bg = "var(--octo-brand-success-hover)"; text = "var(--octo-accent-positive)"; }
+            else if (c === "warning") { bg = "var(--octo-brand-warm-hover)"; text = "var(--octo-accent-warm)"; }
+            else if (c === "danger") { bg = "var(--octo-accent-fire-hover)"; text = "var(--octo-accent-fire)"; }
+            else { bg = "var(--octo-surface-3)"; }
         } else if (v === "normal") {
-            if (c === "primary") { bg = "var(--g-color-base-brand)"; text = "var(--g-color-text-light-primary)"; }
-            else if (c === "positive") { bg = "var(--g-color-base-positive)"; text = "var(--g-color-text-light-primary)"; }
-            else if (c === "warning") { bg = "var(--g-color-base-warning)"; text = "var(--g-color-text-light-primary)"; }
-            else if (c === "danger") { bg = "var(--g-color-base-danger)"; text = "var(--g-color-text-light-primary)"; }
-            else { bg = "var(--g-color-base-generic-hover)"; }
+            if (c === "primary") { bg = "var(--octo-accent-primary)"; text = "var(--octo-text-inverse)"; }
+            else if (c === "positive") { bg = "var(--octo-accent-positive)"; text = "var(--octo-text-inverse)"; }
+            else if (c === "warning") { bg = "var(--octo-accent-warm)"; text = "var(--octo-text-inverse)"; }
+            else if (c === "danger") { bg = "var(--octo-accent-fire)"; text = "var(--octo-text-inverse)"; }
+            else { bg = "var(--octo-surface-3)"; }
         } else {
-            if (c === "primary") { border = "1px solid var(--g-color-line-brand)"; text = "var(--g-color-text-brand)"; }
-            else if (c === "positive") { border = "1px solid var(--g-color-line-positive)"; text = "var(--g-color-text-positive)"; }
-            else if (c === "warning") { border = "1px solid var(--g-color-line-warning)"; text = "var(--g-color-text-warning)"; }
-            else if (c === "danger") { border = "1px solid var(--g-color-line-danger)"; text = "var(--g-color-text-danger)"; }
-            else { border = "1px solid var(--g-color-line-generic)"; }
+            if (c === "primary") { border = "1px solid var(--octo-accent-primary)"; text = "var(--octo-accent-primary)"; }
+            else if (c === "positive") { border = "1px solid var(--octo-accent-positive)"; text = "var(--octo-accent-positive)"; }
+            else if (c === "warning") { border = "1px solid var(--octo-accent-warm)"; text = "var(--octo-accent-warm)"; }
+            else if (c === "danger") { border = "1px solid var(--octo-accent-fire)"; text = "var(--octo-accent-fire)"; }
+            else { border = "1px solid var(--octo-border-subtle)"; }
         }
 
         return (

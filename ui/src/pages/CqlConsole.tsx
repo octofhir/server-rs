@@ -1,23 +1,24 @@
-import { useState } from 'react';
+import { Editor } from "@monaco-editor/react";
 import {
-  Button,
-  Text,
   Alert,
+  Button,
   Code,
   JsonInput,
-  Select,
   Loader,
-  Resizable,
   PageContainer,
-  ScrollableContent,
   PageHeader,
-} from '@octofhir/ui-kit';
+  Resizable,
+  ScrollableContent,
+  Select,
+  Text,
+} from "@octofhir/ui-kit";
+import { useMutation } from "@tanstack/react-query";
 import { Play } from "lucide-react";
-import { Editor } from '@monaco-editor/react';
-import { useMutation } from '@tanstack/react-query';
-import { fhirClient } from '@/shared/api/fhirClient';
-import { isRecord } from '@/shared/api/guards';
-import classes from './CqlConsole.module.css';
+import { useState } from "react";
+import { fhirClient } from "@/shared/api/fhirClient";
+import { isRecord } from "@/shared/api/guards";
+import { useOctoMonacoTheme } from "@/shared/monaco/theme";
+import classes from "./CqlConsole.module.css";
 
 interface CqlEvaluationResult {
   resourceType: string;
@@ -31,28 +32,34 @@ interface CqlEvaluationResult {
 function isCqlEvaluationResult(value: unknown): value is CqlEvaluationResult {
   return (
     isRecord(value) &&
-    typeof value.resourceType === 'string' &&
+    typeof value.resourceType === "string" &&
     Array.isArray(value.parameter) &&
-    value.parameter.every((parameter) => isRecord(parameter) && typeof parameter.name === 'string')
+    value.parameter.every((parameter) => isRecord(parameter) && typeof parameter.name === "string")
   );
 }
 
 export function CqlConsole() {
-  const [expression, setExpression] = useState('1 + 1');
+  const editorTheme = useOctoMonacoTheme();
+  const [expression, setExpression] = useState("1 + 1");
   const [contextType, setContextType] = useState<string | null>(null);
-  const [contextValue, setContextValue] = useState('');
-  const [parameters, setParameters] = useState('{}');
+  const [contextValue, setContextValue] = useState("");
+  const [parameters, setParameters] = useState("{}");
 
   const evaluateMutation = useMutation({
     mutationFn: async () => {
       const requestBody: {
         resourceType: string;
-        parameter: Array<{ name: string; valueString?: string; valueCode?: string; resource?: unknown }>;
+        parameter: Array<{
+          name: string;
+          valueString?: string;
+          valueCode?: string;
+          resource?: unknown;
+        }>;
       } = {
-        resourceType: 'Parameters',
+        resourceType: "Parameters",
         parameter: [
           {
-            name: 'expression',
+            name: "expression",
             valueString: expression,
           },
         ],
@@ -60,7 +67,7 @@ export function CqlConsole() {
 
       if (contextType) {
         requestBody.parameter.push({
-          name: 'context',
+          name: "context",
           valueCode: contextType,
         });
       }
@@ -69,20 +76,22 @@ export function CqlConsole() {
         try {
           const contextJson = JSON.parse(contextValue);
           requestBody.parameter.push({
-            name: 'contextValue',
+            name: "contextValue",
             resource: contextJson,
           });
         } catch (error) {
-          throw new Error(`Invalid context JSON: ${error instanceof Error ? error.message : 'Parse failed'}`);
+          throw new Error(
+            `Invalid context JSON: ${error instanceof Error ? error.message : "Parse failed"}`
+          );
         }
       }
 
-      if (parameters.trim() && parameters !== '{}') {
+      if (parameters.trim() && parameters !== "{}") {
         try {
           const paramsJson = JSON.parse(parameters);
           for (const [name, value] of Object.entries(paramsJson)) {
             requestBody.parameter.push({
-              name: 'parameter',
+              name: "parameter",
               resource: {
                 name,
                 value,
@@ -90,17 +99,19 @@ export function CqlConsole() {
             });
           }
         } catch (error) {
-          throw new Error(`Invalid parameters JSON: ${error instanceof Error ? error.message : 'Parse failed'}`);
+          throw new Error(
+            `Invalid parameters JSON: ${error instanceof Error ? error.message : "Parse failed"}`
+          );
         }
       }
 
       const response = await fhirClient.customRequest({
-        method: 'POST',
-        url: '/fhir/$cql',
+        method: "POST",
+        url: "/fhir/$cql",
         data: requestBody,
       });
       if (!isCqlEvaluationResult(response.data)) {
-        throw new Error('Invalid CQL response');
+        throw new Error("Invalid CQL response");
       }
       return response.data;
     },
@@ -112,7 +123,7 @@ export function CqlConsole() {
 
   const extractResult = (data: CqlEvaluationResult | undefined) => {
     if (!data) return null;
-    const returnParam = data.parameter?.find((p) => p.name === 'return');
+    const returnParam = data.parameter?.find((p) => p.name === "return");
     if (returnParam?.valueString) {
       try {
         return JSON.parse(returnParam.valueString);
@@ -127,14 +138,14 @@ export function CqlConsole() {
 
   return (
     <PageContainer className="page-enter">
-      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--g-color-line-generic)' }}>
+      <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--octo-border-subtle)" }}>
         <PageHeader
           title="CQL Console"
           description="Evaluate Clinical Quality Language (CQL) expressions"
         />
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, width: '100%' }}>
+      <div style={{ flex: 1, minHeight: 0, width: "100%" }}>
         <Resizable.Group orientation="horizontal">
           <Resizable.Pane defaultSize={45} minSize={30}>
             <ScrollableContent>
@@ -148,12 +159,12 @@ export function CqlConsole() {
                       height="200px"
                       defaultLanguage="plaintext"
                       value={expression}
-                      onChange={(value) => setExpression(value || '')}
-                      theme="vs-dark"
+                      onChange={(value) => setExpression(value || "")}
+                      theme={editorTheme}
                       options={{
                         minimap: { enabled: false },
                         fontSize: 14,
-                        lineNumbers: 'on',
+                        lineNumbers: "on",
                         scrollBeyondLastLine: false,
                         automaticLayout: true,
                       }}
@@ -168,10 +179,10 @@ export function CqlConsole() {
                     value={contextType}
                     onChange={setContextType}
                     data={[
-                      { value: 'Patient', label: 'Patient' },
-                      { value: 'Encounter', label: 'Encounter' },
-                      { value: 'Observation', label: 'Observation' },
-                      { value: 'Condition', label: 'Condition' },
+                      { value: "Patient", label: "Patient" },
+                      { value: "Encounter", label: "Encounter" },
+                      { value: "Observation", label: "Observation" },
+                      { value: "Condition", label: "Condition" },
                     ]}
                     clearable
                   />
@@ -198,7 +209,7 @@ export function CqlConsole() {
                   size="lg"
                   onClick={handleEvaluate}
                   disabled={!expression.trim() || evaluateMutation.isPending}
-                  style={{ width: '100%', marginTop: 8 }}
+                  style={{ width: "100%", marginTop: 8 }}
                 >
                   {evaluateMutation.isPending ? (
                     <>
@@ -214,12 +225,21 @@ export function CqlConsole() {
                 </Button>
 
                 <div className={classes.examples}>
-                  <Text variant="caption-2" style={{ fontWeight: 600, textTransform: 'uppercase', color: 'var(--g-color-text-secondary)' }}>
+                  <Text
+                    variant="caption-2"
+                    style={{
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      color: "var(--octo-text-secondary)",
+                    }}
+                  >
                     Example expressions
                   </Text>
                   <Code className={classes.exampleCode}>1 + 1</Code>
                   <Code className={classes.exampleCode}>true and false</Code>
-                  <Code className={classes.exampleCode}>&apos;Hello&apos; + &apos; &apos; + &apos;World&apos;</Code>
+                  <Code className={classes.exampleCode}>
+                    &apos;Hello&apos; + &apos; &apos; + &apos;World&apos;
+                  </Code>
                   <Code className={classes.exampleCode}>5 &gt; 3</Code>
                   <Code className={classes.exampleCode}>&#123;1, 2, 3, 4, 5&#125;</Code>
                 </div>
@@ -230,7 +250,7 @@ export function CqlConsole() {
           <Resizable.Handle />
 
           <Resizable.Pane defaultSize={55} minSize={30}>
-            <ScrollableContent style={{ borderLeft: '1px solid var(--g-color-line-generic)' }}>
+            <ScrollableContent style={{ borderLeft: "1px solid var(--octo-border-subtle)" }}>
               <div className={classes.resultHeader}>
                 <Text variant="subheader-2">Result</Text>
               </div>
@@ -251,25 +271,29 @@ export function CqlConsole() {
                 >
                   {evaluateMutation.error instanceof Error
                     ? evaluateMutation.error.message
-                    : 'An unknown error occurred'}
+                    : "An unknown error occurred"}
                 </Alert>
               )}
 
               {evaluateMutation.isSuccess && (
                 <div className={classes.resultCode}>
-                  <Code style={{ display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  <Code
+                    style={{ display: "block", whiteSpace: "pre-wrap", wordBreak: "break-all" }}
+                  >
                     {JSON.stringify(result, null, 2)}
                   </Code>
                 </div>
               )}
 
-              {!evaluateMutation.isPending && !evaluateMutation.isError && !evaluateMutation.isSuccess && (
-                <div className={classes.emptyState}>
-                  <Text color="secondary">
-                    Enter a CQL expression and click "Evaluate" to see results
-                  </Text>
-                </div>
-              )}
+              {!evaluateMutation.isPending &&
+                !evaluateMutation.isError &&
+                !evaluateMutation.isSuccess && (
+                  <div className={classes.emptyState}>
+                    <Text color="secondary">
+                      Enter a CQL expression and click "Evaluate" to see results
+                    </Text>
+                  </div>
+                )}
             </ScrollableContent>
           </Resizable.Pane>
         </Resizable.Group>

@@ -849,45 +849,45 @@ let botTypesRegistered = false;
  * @param monaco - Monaco editor instance
  */
 export function configureBotEditor(monaco: typeof Monaco): void {
-	// Only register types once
-	if (botTypesRegistered) {
-		return;
-	}
+  // Only register types once
+  if (botTypesRegistered) {
+    return;
+  }
 
-	// Add bot runtime types for autocomplete
-	monaco.languages.typescript.javascriptDefaults.addExtraLib(
-		BOT_RUNTIME_TYPES,
-		"bot-runtime-globals.d.ts",
-	);
+  // Add bot runtime types for autocomplete
+  monaco.languages.typescript.javascriptDefaults.addExtraLib(
+    BOT_RUNTIME_TYPES,
+    "bot-runtime-globals.d.ts"
+  );
 
-	// Configure compiler options for bot scripts
-	monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
-		target: monaco.languages.typescript.ScriptTarget.ES2020,
-		allowNonTsExtensions: true,
-		moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
-		module: monaco.languages.typescript.ModuleKind.CommonJS,
-		noEmit: true,
-		esModuleInterop: true,
-		allowJs: true,
-		checkJs: true,
-		strict: false,
-	});
+  // Configure compiler options for bot scripts
+  monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+    target: monaco.languages.typescript.ScriptTarget.ES2020,
+    allowNonTsExtensions: true,
+    moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+    module: monaco.languages.typescript.ModuleKind.CommonJS,
+    noEmit: true,
+    esModuleInterop: true,
+    allowJs: true,
+    checkJs: true,
+    strict: false,
+  });
 
-	// Enable semantic validation
-	monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-		noSemanticValidation: false,
-		noSyntaxValidation: false,
-	});
+  // Enable semantic validation
+  monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: false,
+    noSyntaxValidation: false,
+  });
 
-	botTypesRegistered = true;
-	console.log("[Monaco] Bot editor types configured");
+  botTypesRegistered = true;
+  console.log("[Monaco] Bot editor types configured");
 }
 
 /**
  * Get default bot script template.
  */
 export function getDefaultBotScript(): string {
-	return `// Bot script - runs when triggered by resource events
+  return `// Bot script - runs when triggered by resource events
 // Available globals: event, fhir, http, console
 
 if (event.type === 'created' && event.resource.resourceType === 'Patient') {
@@ -915,7 +915,7 @@ return undefined;
  * Get bot script templates for different use cases.
  */
 export const BOT_TEMPLATES = {
-	"Welcome Patient": `// Create a welcome task when a new patient is created
+  "Welcome Patient": `// Create a welcome task when a new patient is created
 if (event.type === 'created' && event.resource.resourceType === 'Patient') {
   const patient = event.resource;
 
@@ -932,7 +932,7 @@ if (event.type === 'created' && event.resource.resourceType === 'Patient') {
 }
 `,
 
-	"Observation Alert": `// Send alert when critical observation is created
+  "Observation Alert": `// Send alert when critical observation is created
 if (event.type === 'created' && event.resource.resourceType === 'Observation') {
   const obs = event.resource;
 
@@ -957,7 +957,7 @@ if (event.type === 'created' && event.resource.resourceType === 'Observation') {
 }
 `,
 
-	"Webhook Notification": `// Send webhook when resource is updated
+  "Webhook Notification": `// Send webhook when resource is updated
 if (event.type === 'updated') {
   const response = http.fetch('https://webhook.example.com/fhir-event', {
     method: 'POST',
@@ -983,7 +983,7 @@ if (event.type === 'updated') {
 }
 `,
 
-	"Data Sync": `// Sync patient data to external system
+  "Data Sync": `// Sync patient data to external system
 if (event.type === 'created' || event.type === 'updated') {
   const resource = event.resource;
 
@@ -1008,7 +1008,7 @@ if (event.type === 'created' || event.type === 'updated') {
 }
 `,
 
-	Empty: `// Bot script
+  Empty: `// Bot script
 // Available globals: event, fhir, http, console
 
 `,

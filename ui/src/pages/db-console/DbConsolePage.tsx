@@ -1,22 +1,24 @@
 import {
-  useHotkeys,
-  useLocalStorage,
-  Resizable,
   Badge,
   Kbd,
+  Resizable,
   Text,
   Tooltip,
+  useHotkeys,
+  useLocalStorage,
 } from "@octofhir/ui-kit";
+import { History as HistoryIcon } from "lucide-react";
 import type * as monaco from "monaco-editor";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { useSaveHistory, useSqlMutation, useQueryHistory } from "@/shared/api/hooks";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { applyResultLimit, formatSqlError, parseTimeoutMs } from "@/entities/db-query";
+import { useQueryHistory, useSaveHistory, useSqlMutation } from "@/shared/api/hooks";
 import type { SqlResponse } from "@/shared/api/types";
-import { ExecutionStream } from "./components/ExecutionStream";
-import { PromptEditor } from "./components/PromptEditor";
 import { ActiveQueriesDropdown } from "./components/ActiveQueriesDropdown";
-import type { StreamEntry } from "./components/StreamEntryCard";
+import { HistoryDrawer } from "./components/HistoryDrawer";
+import { QueryEditor } from "./components/QueryEditor";
+import { ResultPanel } from "./components/ResultPanel";
 import classes from "./DbConsolePage.module.css";
+import type { StreamEntry } from "./types";
 
 const INITIAL_QUERY = "SELECT * FROM patient LIMIT 10;";
 const DEFAULT_RESULT_LIMIT = "200";
@@ -36,7 +38,6 @@ type StreamAction =
       status: "success" | "error";
     }
   | { type: "update_explain"; id: string; explainData: SqlResponse }
-  | { type: "toggle_expand"; id: string }
   | { type: "remove"; id: string }
   | { type: "clear" }
   | { type: "seed"; entries: StreamEntry[] };
@@ -60,14 +61,11 @@ function streamReducer(state: StreamEntry[], action: StreamAction): StreamEntry[
       );
     case "update_explain":
       return state.map((e) => (e.id === action.id ? { ...e, explainData: action.explainData } : e));
-    case "toggle_expand":
-      return state.map((e) => (e.id === action.id ? { ...e, isExpanded: !e.isExpanded } : e));
     case "remove":
       return state.filter((e) => e.id !== action.id);
     case "clear":
       return [];
     case "seed":
-      // Prepend history but keep any live entries already in stream
       return state.length > 0 ? [...action.entries, ...state] : action.entries;
     default:
       return state;
@@ -79,6 +77,10 @@ function streamReducer(state: StreamEntry[], action: StreamAction): StreamEntry[
 export function DbConsolePage() {
   const queryRef = useRef(INITIAL_QUERY);
   const [stream, dispatch] = useReducer(streamReducer, []);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySeeded, setHistorySeeded] = useState(false);
+
   const [resultLimit, setResultLimit] = useLocalStorage({
     key: "db-console-result-limit",
     defaultValue: DEFAULT_RESULT_LIMIT,
@@ -89,7 +91,6 @@ export function DbConsolePage() {
     defaultValue: DEFAULT_SQL_TIMEOUT,
     validate: (value): value is string => typeof value === "string",
   });
-  const [historySeeded, setHistorySeeded] = useState(false);
 
   const [editorInstance, setEditorInstance] = useState<monaco.editor.IStandaloneCodeEditor | null>(
     null
@@ -101,14 +102,14 @@ export function DbConsolePage() {
   const saveHistory = useSaveHistory();
   const { data: historyData } = useQueryHistory();
 
-  // Seed stream with persisted history on first load
+  // Seed history (for the drawer) on first load.
   useEffect(() => {
     if (historySeeded || !historyData?.entries) return;
     setHistorySeeded(true);
 
     const entries: StreamEntry[] = historyData.entries
       .slice()
-      .reverse() // oldest first
+      .reverse()
       .map((h) => ({
         id: h.id,
         query: h.query,
@@ -127,25 +128,23 @@ export function DbConsolePage() {
     }
   }, [historyData, historySeeded]);
 
+  // Active entry shown in the result panel: explicit selection, else newest live entry.
+  const activeEntry = useMemo(() => {
+    if (activeId) {
+      const found = stream.find((e) => e.id === activeId);
+      if (found) return found;
+    }
+    for (let i = stream.length - 1; i >= 0; i--) {
+      if (!stream[i].fromHistory) return stream[i];
+    }
+    return undefined;
+  }, [stream, activeId]);
+
   // ─── Handlers ───
 
   const handleQueryChange = useCallback((value: string) => {
     queryRef.current = value;
   }, []);
-
-  const handleResultLimitChange = useCallback(
-    (value: string) => {
-      setResultLimit(value);
-    },
-    [setResultLimit]
-  );
-
-  const handleSqlTimeoutChange = useCallback(
-    (value: string) => {
-      setSqlTimeout(value);
-    },
-    [setSqlTimeout]
-  );
 
   const handleEditorMount = useCallback(
     (editor: monaco.editor.IStandaloneCodeEditor, model: monaco.editor.ITextModel) => {
@@ -155,28 +154,28 @@ export function DbConsolePage() {
     []
   );
 
-  const handleReplayQuery = useCallback(
+  const loadIntoEditor = useCallback(
     (query: string) => {
       if (editorInstance) {
         editorInstance.setValue(query);
-        queryRef.current = query;
         editorInstance.focus();
       }
+      queryRef.current = query;
     },
     [editorInstance]
   );
 
-  const handleToggleExpand = useCallback((id: string) => {
-    dispatch({ type: "toggle_expand", id });
-  }, []);
-
-  const handleRemoveEntry = useCallback((id: string) => {
-    dispatch({ type: "remove", id });
-  }, []);
+  const handleSelectHistory = useCallback(
+    (entry: StreamEntry) => {
+      loadIntoEditor(entry.query);
+      setActiveId(entry.id);
+    },
+    [loadIntoEditor]
+  );
 
   const handleExecute = useCallback(
     (value?: string) => {
-      if (sqlMutation.isPending) return; // prevent double-execution
+      if (sqlMutation.isPending) return;
       const sourceQuery = value ?? queryRef.current;
       if (!sourceQuery.trim()) return;
       const queryToRun = applyResultLimit(sourceQuery, resultLimit);
@@ -184,8 +183,8 @@ export function DbConsolePage() {
       queryRef.current = sourceQuery;
 
       const entryId = crypto.randomUUID();
+      setActiveId(entryId);
 
-      // Add pending entry to stream
       dispatch({
         type: "add",
         entry: {
@@ -197,7 +196,6 @@ export function DbConsolePage() {
         },
       });
 
-      // Execute SQL
       sqlMutation.mutate(
         { query: queryToRun, timeoutMs },
         {
@@ -218,33 +216,20 @@ export function DbConsolePage() {
           },
           onError: (error) => {
             const errorMessage = formatSqlError(error);
-            dispatch({
-              type: "update",
-              id: entryId,
-              error: errorMessage,
-              status: "error",
-            });
-            saveHistory.mutate({
-              query: queryToRun,
-              isError: true,
-              errorMessage,
-            });
+            dispatch({ type: "update", id: entryId, error: errorMessage, status: "error" });
+            saveHistory.mutate({ query: queryToRun, isError: true, errorMessage });
           },
         }
       );
 
-      // Auto EXPLAIN ANALYZE for SELECT queries only (WITH CTEs can contain DML)
+      // Auto EXPLAIN ANALYZE for plain SELECT statements.
       const trimmed = queryToRun.trim().toUpperCase();
       if (trimmed.startsWith("SELECT")) {
         explainMutation.mutate(
-          { query: `EXPLAIN ANALYZE ${queryToRun}`, timeoutMs },
+          { query: `EXPLAIN (ANALYZE, FORMAT JSON) ${queryToRun}`, timeoutMs },
           {
             onSuccess: (data) => {
-              dispatch({
-                type: "update_explain",
-                id: entryId,
-                explainData: data,
-              });
+              dispatch({ type: "update_explain", id: entryId, explainData: data });
             },
           }
         );
@@ -255,26 +240,40 @@ export function DbConsolePage() {
 
   const handleClearStream = useCallback(() => {
     dispatch({ type: "clear" });
+    setActiveId(null);
   }, []);
 
-  // ─── Hotkeys ───
-
-  useHotkeys([["mod+l", handleClearStream]]);
+  useHotkeys([
+    ["mod+l", handleClearStream],
+    ["mod+h", () => setHistoryOpen((v) => !v)],
+  ]);
 
   return (
     <div className={`${classes.container} page-enter`}>
       {/* Toolbar */}
       <div className={classes.toolbar}>
         <div className={classes.toolbarTitle}>
+          <span className={classes.toolbarMark} />
           <Text size="sm" fw={700}>
             SQL Console
           </Text>
-          <Badge size="xs" variant="light" color="deep">
+          <Badge size="xs" variant="light" color="primary">
             readonly
           </Badge>
         </div>
         <div className={classes.toolbarActions}>
-          <Tooltip label="Clear stream (Ctrl+L)">
+          <Tooltip label="Query history (⌘H)">
+            <button
+              type="button"
+              className={classes.toolbarButton}
+              onClick={() => setHistoryOpen(true)}
+            >
+              <HistoryIcon size={14} />
+              <span>History</span>
+              {stream.length > 0 && <span className={classes.toolbarCount}>{stream.length}</span>}
+            </button>
+          </Tooltip>
+          <Tooltip label="Clear session (⌘L)">
             <button type="button" className={classes.shortcutButton} onClick={handleClearStream}>
               <Kbd size="xs">⌘L</Kbd>
             </button>
@@ -283,40 +282,44 @@ export function DbConsolePage() {
         </div>
       </div>
 
-      <div className={classes.workspaceResizable}>
-        <Resizable.Group orientation="horizontal">
-          <Resizable.Pane defaultSize={40} minSize={25}>
-            <div className={classes.streamPanel} style={{ height: "100%" }}>
-              <ExecutionStream
-                entries={stream}
-                onReplayQuery={handleReplayQuery}
-                onToggleExpand={handleToggleExpand}
-                onRemoveEntry={handleRemoveEntry}
+      {/* Workspace: editor over results */}
+      <div className={classes.workspace}>
+        <Resizable.Group orientation="vertical">
+          <Resizable.Pane defaultSize={45} minSize={20}>
+            <div className={classes.editorPane}>
+              <QueryEditor
+                initialQuery={INITIAL_QUERY}
+                onQueryChange={handleQueryChange}
+                resultLimit={resultLimit}
+                onResultLimitChange={setResultLimit}
+                sqlTimeout={sqlTimeout}
+                onSqlTimeoutChange={setSqlTimeout}
+                onExecute={handleExecute}
+                onEditorMount={handleEditorMount}
+                editorInstance={editorInstance}
+                model={modelInstance}
+                isPending={sqlMutation.isPending}
               />
             </div>
           </Resizable.Pane>
 
           <Resizable.Handle />
 
-          <Resizable.Pane defaultSize={60} minSize={35}>
-            <div className={classes.studioPanel} style={{ height: "100%" }}>
-              <PromptEditor
-                initialQuery={INITIAL_QUERY}
-                onQueryChange={handleQueryChange}
-                resultLimit={resultLimit}
-                onResultLimitChange={handleResultLimitChange}
-                sqlTimeout={sqlTimeout}
-                onSqlTimeoutChange={handleSqlTimeoutChange}
-                onExecute={handleExecute}
-                onEditorMount={handleEditorMount}
-                editorInstance={editorInstance}
-                modelInstance={modelInstance}
-                isPending={sqlMutation.isPending}
-              />
+          <Resizable.Pane defaultSize={55} minSize={20}>
+            <div className={classes.resultsHost}>
+              <ResultPanel entry={activeEntry} />
             </div>
           </Resizable.Pane>
         </Resizable.Group>
       </div>
+
+      <HistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        entries={stream}
+        activeId={activeId}
+        onSelect={handleSelectHistory}
+      />
     </div>
   );
 }

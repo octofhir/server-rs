@@ -26,7 +26,7 @@ export const Default: Story = {
             <div
                 style={{
                     padding: 16,
-                    backgroundColor: "var(--g-color-base-selection)",
+                    backgroundColor: "var(--octo-accent-primary-bg)",
                     borderRadius: 8,
                 }}
             >
@@ -44,8 +44,8 @@ export const Sizes: Story = {
                     <div
                         style={{
                             padding: 12,
-                            background: "var(--g-color-base-generic)",
-                            border: "1px dashed var(--g-color-line-generic)",
+                            background: "var(--octo-surface-3)",
+                            border: "1px dashed var(--octo-border-subtle)",
                             borderRadius: 8,
                         }}
                     >

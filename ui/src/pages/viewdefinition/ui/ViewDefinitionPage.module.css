@@ -29,7 +29,7 @@
 	flex: 1;
 	min-height: 0;
 	overflow: hidden;
-	border: 1px solid var(--g-color-line-generic);
+	border: 1px solid var(--octo-border-subtle);
 	border-radius: 8px;
 	background: var(--octo-surface-1);
 }

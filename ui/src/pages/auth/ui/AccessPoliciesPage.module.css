@@ -33,7 +33,7 @@
 
 .policyIcon {
 	flex: 0 0 auto;
-	color: var(--octo-accent-positive, var(--g-color-text-positive));
+	color: var(--octo-accent-positive, var(--octo-accent-positive));
 }
 
 .policyText {
@@ -103,7 +103,7 @@
 }
 
 .requiredMark {
-	color: var(--g-color-base-danger-medium);
+	color: var(--octo-accent-fire);
 }
 
 .matcherToggle {

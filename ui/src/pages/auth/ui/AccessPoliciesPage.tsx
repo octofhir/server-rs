@@ -64,7 +64,7 @@ import {
 import { useClients } from "../lib/useClients";
 import classes from "./AccessPoliciesPage.module.css";
 
-/** Wraps a field with an adjacent helper line (Gravity inputs have no `description`). */
+/** Wraps a field with an adjacent helper line (ui-kit inputs have no `description`). */
 function FieldWithHint({ hint, children }: { hint: ReactNode; children: ReactNode }) {
   return (
     <div className={classes.fieldWithHint}>

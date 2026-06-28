@@ -34,9 +34,9 @@ export const Default: Story = {
     gap: 4,
     children: (
       <>
-        <div style={{ padding: 16, backgroundColor: "var(--g-color-base-selection)" }}>Item 1</div>
-        <div style={{ padding: 16, backgroundColor: "var(--g-color-base-selection)" }}>Item 2</div>
-        <div style={{ padding: 16, backgroundColor: "var(--g-color-base-selection)" }}>Item 3</div>
+        <div style={{ padding: 16, backgroundColor: "var(--octo-accent-primary-bg)" }}>Item 1</div>
+        <div style={{ padding: 16, backgroundColor: "var(--octo-accent-primary-bg)" }}>Item 2</div>
+        <div style={{ padding: 16, backgroundColor: "var(--octo-accent-primary-bg)" }}>Item 3</div>
       </>
     ),
   },
