@@ -1,19 +1,11 @@
-/* Flat modern 2026 CQL console — violet-branded (distinct from FHIRPath emerald). */
+/* Flat modern 2026 CQL console — violet-branded (secondary accent, distinct from FHIRPath mint). */
 
 :root {
-  --cql-violet: #8b5cf6;
-  --cql-violet-strong: #7c3aed;
-  --cql-violet-deep: #6d28d9;
-  --cql-violet-soft: rgb(139 92 246 / 12%);
-  --cql-violet-line: rgb(139 92 246 / 28%);
-}
-
-/* Dark theme: lighter violet so accent text stays legible on dark surfaces.
-   `--cql-violet-strong` stays fixed — solid fill behind white button text. */
-[data-theme="dark"] {
-  --cql-violet-deep: #c4b5fd;
-  --cql-violet-soft: rgb(167 139 250 / 14%);
-  --cql-violet-line: rgb(167 139 250 / 32%);
+  --octo-cql-accent: var(--octo-accent-secondary);
+  --octo-cql-accent-strong: var(--octo-accent-secondary);
+  --octo-cql-accent-deep: var(--octo-accent-secondary);
+  --octo-cql-accent-soft: color-mix(in oklab, var(--octo-accent-secondary) 12%, transparent);
+  --octo-cql-accent-line: color-mix(in oklab, var(--octo-accent-secondary) 28%, transparent);
 }
 
 /* ── Root layout ── */
@@ -42,8 +34,8 @@
   height: 32px;
   padding: 0 14px;
   border-radius: 8px;
-  border: 1px solid var(--cql-violet-strong);
-  background: var(--cql-violet-strong);
+  border: 1px solid var(--octo-cql-accent-strong);
+  background: var(--octo-cql-accent-strong);
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -55,7 +47,7 @@
 }
 
 .runBtn:hover {
-  background: var(--cql-violet-deep);
+  background: var(--octo-cql-accent-deep);
 }
 
 .runBtn:active {
@@ -131,7 +123,7 @@
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--octo-border-subtle);
-  background: linear-gradient(180deg, var(--cql-violet-soft) 0%, transparent 140%);
+  background: linear-gradient(180deg, var(--octo-cql-accent-soft) 0%, transparent 140%);
   flex: none;
 }
 
@@ -147,7 +139,7 @@
 }
 
 .panelTitleIcon {
-  color: var(--cql-violet-strong);
+  color: var(--octo-cql-accent-strong);
   display: inline-flex;
 }
 
@@ -193,15 +185,15 @@
 }
 
 .chip:hover {
-  background: var(--cql-violet-soft);
-  border-color: var(--cql-violet-line);
-  color: var(--cql-violet-deep);
+  background: var(--octo-cql-accent-soft);
+  border-color: var(--octo-cql-accent-line);
+  color: var(--octo-cql-accent-deep);
 }
 
 .chipActive {
-  background: var(--cql-violet-soft);
-  border-color: var(--cql-violet-line);
-  color: var(--cql-violet-deep);
+  background: var(--octo-cql-accent-soft);
+  border-color: var(--octo-cql-accent-line);
+  color: var(--octo-cql-accent-deep);
   font-weight: 600;
 }
 
@@ -230,8 +222,8 @@
   flex-direction: row;
   align-items: center;
   gap: 6px;
-  color: var(--cql-violet-deep);
-  background: var(--cql-violet-soft);
+  color: var(--octo-cql-accent-deep);
+  background: var(--octo-cql-accent-soft);
   font-weight: 600;
 }
 
@@ -260,7 +252,7 @@
   height: 20px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--cql-violet-strong);
+  background: var(--octo-cql-accent-strong);
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -302,7 +294,7 @@
 
 .tabActive {
   background: var(--octo-surface-1);
-  color: var(--cql-violet-deep);
+  color: var(--octo-cql-accent-deep);
   box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
 }
 
@@ -314,9 +306,9 @@
   height: 20px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--cql-violet-soft);
-  border: 1px solid var(--cql-violet-line);
-  color: var(--cql-violet-deep);
+  background: var(--octo-cql-accent-soft);
+  border: 1px solid var(--octo-cql-accent-line);
+  color: var(--octo-cql-accent-deep);
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11px;
   font-weight: 600;
@@ -399,9 +391,9 @@
 }
 
 .paletteFn:hover {
-  background: var(--cql-violet-soft);
-  border-color: var(--cql-violet-line);
-  color: var(--cql-violet-deep);
+  background: var(--octo-cql-accent-soft);
+  border-color: var(--octo-cql-accent-line);
+  color: var(--octo-cql-accent-deep);
 }
 
 .paletteEmpty {
@@ -433,8 +425,8 @@
 }
 
 .statCardAccent {
-  background: var(--cql-violet-soft);
-  border-color: var(--cql-violet-line);
+  background: var(--octo-cql-accent-soft);
+  border-color: var(--octo-cql-accent-line);
 }
 
 .statLabel {
@@ -453,7 +445,7 @@
 }
 
 .statValueAccent {
-  color: var(--cql-violet-deep);
+  color: var(--octo-cql-accent-deep);
 }
 
 /* ── Results: list ── */
@@ -485,8 +477,8 @@
   height: 18px;
   padding: 0 7px;
   border-radius: 999px;
-  background: var(--cql-violet-soft);
-  color: var(--cql-violet-deep);
+  background: var(--octo-cql-accent-soft);
+  color: var(--octo-cql-accent-deep);
   font-size: 11px;
   font-weight: 700;
 }
@@ -502,7 +494,7 @@
 }
 
 .resultItem:hover {
-  border-color: var(--cql-violet-line);
+  border-color: var(--octo-cql-accent-line);
 }
 
 .resultItemContent {
@@ -522,7 +514,7 @@
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--cql-violet-deep);
+  color: var(--octo-cql-accent-deep);
   flex: none;
 }
 
@@ -540,8 +532,8 @@
 }
 
 .typeString {
-  background: var(--cql-violet-soft);
-  color: var(--cql-violet-deep);
+  background: var(--octo-cql-accent-soft);
+  color: var(--octo-cql-accent-deep);
 }
 
 .typeNumber {
@@ -589,7 +581,7 @@
 }
 
 .resultToggle:focus-visible {
-  outline: 2px solid var(--cql-violet-line);
+  outline: 2px solid var(--octo-cql-accent-line);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -613,8 +605,8 @@
 }
 
 .copyBtn:hover {
-  background: var(--cql-violet-soft);
-  color: var(--cql-violet-deep);
+  background: var(--octo-cql-accent-soft);
+  color: var(--octo-cql-accent-deep);
 }
 
 .resultJson {
@@ -683,8 +675,8 @@
   width: 48px;
   height: 48px;
   border-radius: 14px;
-  background: var(--cql-violet-soft);
-  color: var(--cql-violet-strong);
+  background: var(--octo-cql-accent-soft);
+  color: var(--octo-cql-accent-strong);
 }
 
 .emptyTitle {
@@ -706,5 +698,5 @@
   padding: 1px 5px;
   border-radius: 5px;
   background: var(--octo-surface-3);
-  color: var(--cql-violet-deep);
+  color: var(--octo-cql-accent-deep);
 }

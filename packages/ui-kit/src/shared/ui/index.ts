@@ -33,6 +33,7 @@ export * from "./Tabs";
 export * from "./Accordion";
 export * from "./Text";
 export * from "./Code";
+export * from "./MarkdownView";
 export * from "./DataPreview";
 export * from "./Hotkey";
 export * from "./Breadcrumbs";

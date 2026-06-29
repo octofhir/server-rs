@@ -324,7 +324,7 @@ impl QueryAnalyzer {
         let explain_sql = format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {}", sql);
 
         // Execute EXPLAIN
-        let row: (serde_json::Value,) = query_as(AssertSqlSafe((&explain_sql).to_string()))
+        let row: (serde_json::Value,) = query_as(AssertSqlSafe(explain_sql.to_string()))
             .fetch_one(pool)
             .await
             .map_err(|e| AnalyzerError::ExplainFailed(e.to_string()))?;
@@ -371,7 +371,7 @@ impl QueryAnalyzer {
     ) -> Result<QueryAnalysis, AnalyzerError> {
         let explain_sql = format!("EXPLAIN (FORMAT JSON) {}", sql);
 
-        let row: (serde_json::Value,) = query_as(AssertSqlSafe((&explain_sql).to_string()))
+        let row: (serde_json::Value,) = query_as(AssertSqlSafe(explain_sql.to_string()))
             .fetch_one(pool)
             .await
             .map_err(|e| AnalyzerError::ExplainFailed(e.to_string()))?;

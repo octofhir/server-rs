@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Notebook-title",
+  "url": "http://octofhir.org/fhir/SearchParameter/Notebook-title",
+  "name": "NotebookTitle",
+  "status": "active",
+  "description": "Search notebooks by title",
+  "code": "title",
+  "base": ["Notebook"],
+  "type": "string",
+  "expression": "Notebook.title"
+}

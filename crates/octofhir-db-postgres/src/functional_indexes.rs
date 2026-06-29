@@ -180,7 +180,7 @@ pub async fn create_default_search_indexes(
             if let Some((fn_name, fn_ddl, _)) =
                 build_typed_extract_fn(resource_type, code, &annotated)
             {
-                match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&fn_ddl).to_string()))
+                match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(fn_ddl.to_string()))
                     .execute(pool)
                     .await
                 {
@@ -189,7 +189,7 @@ pub async fn create_default_search_indexes(
                             "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_str\" ON \"{table}\" \
                              USING gin (fhir_text_blob({fn_name}(resource)) gin_trgm_ops)"
                         );
-                        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&index_ddl).to_string()))
+                        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(index_ddl.to_string()))
                             .execute(pool)
                             .await
                         {
@@ -360,7 +360,7 @@ pub async fn create_default_search_indexes(
             debug!(resource_type, code, "skipped duplicate functional index");
             continue;
         }
-        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&ddl).to_string()))
+        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl.to_string()))
             .execute(pool)
             .await
         {

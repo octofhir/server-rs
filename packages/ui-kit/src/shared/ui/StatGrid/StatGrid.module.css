@@ -9,16 +9,29 @@
 .item {
     --stat-accent-color: var(--octo-border-subtle);
 
+    position: relative;
     box-sizing: border-box;
     display: grid;
     gap: 3px;
     min-width: 0;
     min-height: 74px;
     padding: 10px 12px;
+    overflow: hidden;
     border: 1px solid var(--octo-border-subtle);
-    border-left: 3px solid var(--stat-accent-color);
     border-radius: 8px;
-    background: var(--octo-surface-1);
+    background:
+        radial-gradient(
+            135% 110% at 0% 0%,
+            color-mix(in srgb, var(--stat-accent-color) 16%, transparent) 0%,
+            color-mix(in srgb, var(--stat-accent-color) 5%, transparent) 28%,
+            transparent 58%
+        ),
+        var(--octo-surface-1);
+}
+
+.item > * {
+    position: relative;
+    z-index: 1;
 }
 
 .label {

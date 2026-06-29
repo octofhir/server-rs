@@ -1,0 +1,13 @@
+{
+  "name": "octofhir.notebooks",
+  "version": "0.1.0",
+  "fhirVersion": "4.0.1",
+  "type": "fhir.ig",
+  "description": "OctoFHIR Notebooks: multi-engine interactive notebook documents (markdown, FHIRPath, SQL-on-FHIR, SQL, CQL, GraphQL, REST, charts, pipelines).",
+  "author": "OctoFHIR Team",
+  "url": "http://octofhir.io/ig/octofhir.notebooks",
+  "license": "MIT OR Apache-2.0",
+  "dependencies": {
+    "hl7.fhir.r4.core": "4.0.1"
+  }
+}

@@ -49,8 +49,15 @@
 
 .directoryItemSelected,
 .bundleItemSelected {
-    border-color: var(--octo-accent-primary);
-    box-shadow: inset 3px 0 0 var(--octo-accent-primary);
+    border-color: color-mix(in oklab, var(--octo-accent-primary) 45%, var(--octo-border-subtle));
+    background:
+        linear-gradient(
+            90deg,
+            color-mix(in oklab, var(--octo-accent-primary) 12%, transparent) 0%,
+            color-mix(in oklab, var(--octo-accent-primary) 3%, transparent) 35%,
+            transparent 70%
+        ),
+        var(--octo-surface-1);
 }
 
 .directoryMain {

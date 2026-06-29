@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Notebook-owner",
+  "url": "http://octofhir.org/fhir/SearchParameter/Notebook-owner",
+  "name": "NotebookOwner",
+  "status": "active",
+  "description": "Search notebooks by owner user id",
+  "code": "owner",
+  "base": ["Notebook"],
+  "type": "token",
+  "expression": "Notebook.owner"
+}

@@ -288,7 +288,7 @@ mod tests {
         let invalid_time_str = "25:61:61";
         match time::Time::parse(
             invalid_time_str,
-            &time::format_description::parse("[hour]:[minute]:[second]").unwrap(),
+            &time::format_description::parse_borrowed::<2>("[hour]:[minute]:[second]").unwrap(),
         ) {
             Err(time_err) => {
                 let core_err: CoreError = time_err.into();

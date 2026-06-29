@@ -165,14 +165,13 @@ impl CqlOperation {
             }
         }
 
-        if context_type.is_none() {
-            if let Some(cv) = &context_value {
+        if context_type.is_none()
+            && let Some(cv) = &context_value {
                 context_type = cv
                     .get("resourceType")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
             }
-        }
 
         (context_type, context_value)
     }

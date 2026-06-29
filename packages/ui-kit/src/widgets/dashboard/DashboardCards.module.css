@@ -26,11 +26,21 @@
 
 .topBar {
     position: absolute;
-    top: 0;
-    right: 0;
-    left: 0;
-    height: 4px;
-    background: var(--metric-accent-color, var(--octo-accent-primary));
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: radial-gradient(
+        130% 95% at 0% 0%,
+        color-mix(in srgb, var(--metric-accent-color, var(--octo-accent-primary)) 18%, transparent) 0%,
+        color-mix(in srgb, var(--metric-accent-color, var(--octo-accent-primary)) 6%, transparent) 30%,
+        transparent 60%
+    );
+}
+
+.metricHeader,
+.card > :not(.topBar) {
+    position: relative;
+    z-index: 1;
 }
 
 .actionCard {

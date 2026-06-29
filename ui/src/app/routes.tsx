@@ -21,6 +21,7 @@ import { GraphQLConsolePage } from "@/pages/graphql-console";
 import { LoginPage } from "@/pages/login";
 import { LogsViewerPage } from "@/pages/logs";
 import { CapabilityStatementPage } from "@/pages/metadata";
+import { NotebookEditorPage, NotebookListPage } from "@/pages/notebooks";
 import { OperationDetailPage, OperationsPage } from "@/pages/operations";
 import { PackageDetailPage, PackagesPage } from "@/pages/packages";
 import { ResourceBrowserPage } from "@/pages/resource-browser";
@@ -82,6 +83,8 @@ export function AppRoutes() {
         <Route path="/graphql" element={<GraphQLConsolePage />} />
         <Route path="/fhirpath" element={<FhirPathConsolePage />} />
         <Route path="/cql" element={<CqlConsolePage />} />
+        <Route path="/notebooks" element={<NotebookListPage />} />
+        <Route path="/notebooks/:id" element={<NotebookEditorPage />} />
         <Route path="/settings" element={<SettingsPage />} />
 
         {/* Other */}

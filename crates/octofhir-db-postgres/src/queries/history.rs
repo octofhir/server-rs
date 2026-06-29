@@ -243,26 +243,26 @@ pub async fn get_system_history(
     // Execute with appropriate bindings
     let rows: Vec<SystemHistoryRow> = match (since_chrono, at_chrono) {
         (Some(since), Some(at)) => {
-            query_as(AssertSqlSafe((&sql).to_string()))
+            query_as(AssertSqlSafe(sql.to_string()))
                 .bind(since)
                 .bind(at)
                 .fetch_all(pool)
                 .await
         }
         (Some(since), None) => {
-            query_as(AssertSqlSafe((&sql).to_string()))
+            query_as(AssertSqlSafe(sql.to_string()))
                 .bind(since)
                 .fetch_all(pool)
                 .await
         }
         (None, Some(at)) => {
-            query_as(AssertSqlSafe((&sql).to_string()))
+            query_as(AssertSqlSafe(sql.to_string()))
                 .bind(at)
                 .fetch_all(pool)
                 .await
         }
         (None, None) => {
-            query_as(AssertSqlSafe((&sql).to_string()))
+            query_as(AssertSqlSafe(sql.to_string()))
                 .fetch_all(pool)
                 .await
         }
@@ -479,26 +479,26 @@ pub async fn get_system_history_raw(
 
     let rows: Vec<RawSystemHistoryRow> = match (since_chrono, at_chrono) {
         (Some(since), Some(at)) => {
-            query_as(AssertSqlSafe((&sql).to_string()))
+            query_as(AssertSqlSafe(sql.to_string()))
                 .bind(since)
                 .bind(at)
                 .fetch_all(pool)
                 .await
         }
         (Some(since), None) => {
-            query_as(AssertSqlSafe((&sql).to_string()))
+            query_as(AssertSqlSafe(sql.to_string()))
                 .bind(since)
                 .fetch_all(pool)
                 .await
         }
         (None, Some(at)) => {
-            query_as(AssertSqlSafe((&sql).to_string()))
+            query_as(AssertSqlSafe(sql.to_string()))
                 .bind(at)
                 .fetch_all(pool)
                 .await
         }
         (None, None) => {
-            query_as(AssertSqlSafe((&sql).to_string()))
+            query_as(AssertSqlSafe(sql.to_string()))
                 .fetch_all(pool)
                 .await
         }

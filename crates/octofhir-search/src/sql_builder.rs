@@ -1167,6 +1167,7 @@ impl SqlBuilder {
 /// Handles FHIRPath union expressions like:
 /// - `Patient.birthDate | Person.birthDate | RelatedPerson.birthDate`
 /// - `(ActivityDefinition.useContext.value as CodeableConcept)`
+///
 /// Derive the JSONB property path for a SearchParameter FHIRPath expression.
 ///
 /// Parses the expression with the real FHIRPath parser (octofhir-fhirpath) and

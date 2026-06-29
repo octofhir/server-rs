@@ -179,12 +179,12 @@ pub async fn sql_operation(
     // Build query with bind parameters
     let rows = if req.params.is_empty() {
         // No parameters - simple query
-        sqlx_core::query::query(AssertSqlSafe((&req.query).to_string()))
+        sqlx_core::query::query(AssertSqlSafe(req.query.to_string()))
             .fetch_all(state.db_pool.as_ref())
             .await
     } else {
         // Parameterized query - bind each parameter
-        let mut query = sqlx_core::query::query(AssertSqlSafe((&req.query).to_string()));
+        let mut query = sqlx_core::query::query(AssertSqlSafe(req.query.to_string()));
         for param in &req.params {
             query = bind_json_value(query, param);
         }

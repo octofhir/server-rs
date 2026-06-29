@@ -290,9 +290,7 @@ impl HybridTerminologyProvider {
         }
 
         let includes = compose.get("include").and_then(|i| i.as_array());
-        if includes.is_none() {
-            return None;
-        }
+        includes?;
 
         for include in includes.unwrap() {
             let system = include

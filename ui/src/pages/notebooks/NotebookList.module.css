@@ -1,0 +1,97 @@
+.scrollArea {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 40px;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 40vh;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--octo-spacing-md);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-xs);
+  text-align: left;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-lg);
+  background: var(--octo-surface-1);
+  padding: var(--octo-spacing-lg);
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    transform var(--octo-motion-fast, 0.15s) var(--octo-motion-ease, ease),
+    border-color var(--octo-motion-fast, 0.15s) var(--octo-motion-ease, ease);
+}
+.card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--octo-accent-primary);
+  opacity: 0;
+  transition: opacity var(--octo-motion-fast, 0.15s) var(--octo-motion-ease, ease);
+}
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--octo-border);
+}
+.card:hover::before {
+  opacity: 1;
+}
+
+.cardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-accent-primary-bg, var(--octo-surface-2));
+  color: var(--octo-accent-primary);
+  margin-bottom: var(--octo-spacing-xs);
+}
+.cardTitle {
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.01em;
+  color: var(--octo-text-primary);
+}
+.cardDesc {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--octo-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cardMeta {
+  display: flex;
+  gap: var(--octo-spacing-xs);
+  font-size: 11px;
+  color: var(--octo-text-muted);
+  font-family: var(--octo-typography-mono);
+  margin-top: var(--octo-spacing-xs);
+}
+.cardTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: var(--octo-spacing-xs);
+}

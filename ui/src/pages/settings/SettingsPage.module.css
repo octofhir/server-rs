@@ -1,10 +1,10 @@
 /* Settings — flat modern 2026, emerald-branded. Mirrors the Database detail view. */
 
 :root {
-  --set-emerald: var(--octo-accent-primary);
-  --set-emerald-deep: var(--octo-accent-primary);
-  --set-emerald-soft: var(--octo-accent-primary-subtle);
-  --set-emerald-line: var(--octo-border-strong);
+  --octo-settings-accent: var(--octo-accent-primary);
+  --octo-settings-accent-deep: var(--octo-accent-primary);
+  --octo-settings-accent-soft: var(--octo-accent-primary-subtle);
+  --octo-settings-accent-line: var(--octo-border-strong);
 }
 
 .root {
@@ -24,8 +24,8 @@
   padding: 22px 24px 18px;
   border-bottom: 1px solid var(--octo-border-subtle);
   background:
-    radial-gradient(120% 120% at 100% 0%, var(--set-emerald-soft) 0%, transparent 50%),
-    linear-gradient(180deg, var(--set-emerald-soft) 0%, transparent 100%);
+    radial-gradient(120% 120% at 100% 0%, var(--octo-settings-accent-soft) 0%, transparent 50%),
+    linear-gradient(180deg, var(--octo-settings-accent-soft) 0%, transparent 100%);
 }
 
 .heroInner {
@@ -59,9 +59,9 @@
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  background: var(--set-emerald-soft);
-  color: var(--set-emerald-deep);
-  border: 1px solid var(--set-emerald-line);
+  background: var(--octo-settings-accent-soft);
+  color: var(--octo-settings-accent-deep);
+  border: 1px solid var(--octo-settings-accent-line);
   flex: none;
 }
 
@@ -70,7 +70,7 @@
   font-weight: 700;
   letter-spacing: 0.6px;
   text-transform: uppercase;
-  color: var(--set-emerald-deep);
+  color: var(--octo-settings-accent-deep);
 }
 
 .title {
@@ -114,8 +114,8 @@
 }
 
 .statCardAccent {
-  background: var(--set-emerald-soft);
-  border-color: var(--set-emerald-line);
+  background: var(--octo-settings-accent-soft);
+  border-color: var(--octo-settings-accent-line);
 }
 
 .statLabel {
@@ -137,7 +137,7 @@
 }
 
 .statValueAccent {
-  color: var(--set-emerald-deep);
+  color: var(--octo-settings-accent-deep);
 }
 
 .statDot {
@@ -202,9 +202,9 @@
 }
 
 .railItemActive {
-  background: var(--set-emerald-soft);
-  border-color: var(--set-emerald-line);
-  color: var(--set-emerald-deep);
+  background: var(--octo-settings-accent-soft);
+  border-color: var(--octo-settings-accent-line);
+  color: var(--octo-settings-accent-deep);
   font-weight: 600;
 }
 
@@ -326,7 +326,7 @@
   gap: 12px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--octo-border-subtle);
-  background: linear-gradient(180deg, var(--set-emerald-soft) 0%, transparent 100%);
+  background: linear-gradient(180deg, var(--octo-settings-accent-soft) 0%, transparent 100%);
 }
 
 .sectionTitleWrap {
@@ -344,7 +344,7 @@
 
 .sectionIcon {
   display: inline-flex;
-  color: var(--set-emerald-deep);
+  color: var(--octo-settings-accent-deep);
   flex: none;
 }
 
@@ -447,7 +447,7 @@
 }
 
 .featureRow:hover {
-  border-color: var(--set-emerald-line);
+  border-color: var(--octo-settings-accent-line);
 }
 
 .featureMeta {

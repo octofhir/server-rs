@@ -1,6 +1,6 @@
 import { forwardRef } from "react";
 
-type ThemeColor = "primary" | "positive" | "warning" | "danger" | "neutral";
+type ThemeColor = "primary" | "secondary" | "positive" | "warning" | "danger" | "neutral";
 type ThemeView = "normal" | "light" | "outlined";
 
 const COLOR_ALIAS: Record<string, ThemeColor> = {
@@ -8,6 +8,10 @@ const COLOR_ALIAS: Record<string, ThemeColor> = {
     brand: "primary",
     blue: "primary",
     indigo: "primary",
+    secondary: "secondary",
+    violet: "secondary",
+    purple: "secondary",
+    accent: "secondary",
     positive: "positive",
     green: "positive",
     teal: "positive",
@@ -71,7 +75,11 @@ export interface ThemeIconProps extends React.HTMLAttributes<HTMLDivElement> {
         | "orange"
         | "blue"
         | "indigo"
-        | "brand";
+        | "brand"
+        | "secondary"
+        | "violet"
+        | "purple"
+        | "accent";
     /** Corner radius in px (default 4). */
     radius?: number;
 }
@@ -88,18 +96,21 @@ export const ThemeIcon = forwardRef<HTMLDivElement, ThemeIconProps>(
 
         if (v === "light") {
             if (c === "primary") { bg = "var(--octo-accent-primary-bg)"; text = "var(--octo-accent-primary)"; }
+            else if (c === "secondary") { bg = "var(--octo-accent-secondary-bg)"; text = "var(--octo-accent-secondary)"; }
             else if (c === "positive") { bg = "var(--octo-brand-success-hover)"; text = "var(--octo-accent-positive)"; }
             else if (c === "warning") { bg = "var(--octo-brand-warm-hover)"; text = "var(--octo-accent-warm)"; }
             else if (c === "danger") { bg = "var(--octo-accent-fire-hover)"; text = "var(--octo-accent-fire)"; }
             else { bg = "var(--octo-surface-3)"; }
         } else if (v === "normal") {
             if (c === "primary") { bg = "var(--octo-accent-primary)"; text = "var(--octo-text-inverse)"; }
+            else if (c === "secondary") { bg = "var(--octo-accent-secondary)"; text = "var(--octo-text-inverse)"; }
             else if (c === "positive") { bg = "var(--octo-accent-positive)"; text = "var(--octo-text-inverse)"; }
             else if (c === "warning") { bg = "var(--octo-accent-warm)"; text = "var(--octo-text-inverse)"; }
             else if (c === "danger") { bg = "var(--octo-accent-fire)"; text = "var(--octo-text-inverse)"; }
             else { bg = "var(--octo-surface-3)"; }
         } else {
             if (c === "primary") { border = "1px solid var(--octo-accent-primary)"; text = "var(--octo-accent-primary)"; }
+            else if (c === "secondary") { border = "1px solid var(--octo-accent-secondary)"; text = "var(--octo-accent-secondary)"; }
             else if (c === "positive") { border = "1px solid var(--octo-accent-positive)"; text = "var(--octo-accent-positive)"; }
             else if (c === "warning") { border = "1px solid var(--octo-accent-warm)"; text = "var(--octo-accent-warm)"; }
             else if (c === "danger") { border = "1px solid var(--octo-accent-fire)"; text = "var(--octo-accent-fire)"; }

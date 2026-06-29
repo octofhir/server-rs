@@ -94,7 +94,7 @@ impl SchemaManager {
     #[instrument(skip(self), fields(resource_type = %resource_type))]
     pub async fn create_resource_schema(&self, resource_type: &str) -> Result<()> {
         let sql = Self::build_resource_schema_sql(resource_type);
-        sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&sql).to_string()))
+        sqlx_core::raw_sql::raw_sql(AssertSqlSafe(sql.to_string()))
             .execute(&self.pool)
             .await
             .map_err(PostgresError::from)?;

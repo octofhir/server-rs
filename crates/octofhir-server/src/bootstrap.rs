@@ -314,6 +314,26 @@ pub const EMBEDDED_CONSOLE_RESOURCES: &[(&str, &str)] = &[
     ),
 ];
 
+/// Embedded octofhir-notebooks IG resources (interactive multi-engine notebook documents)
+pub const EMBEDDED_NOTEBOOKS_RESOURCES: &[(&str, &str)] = &[
+    (
+        "StructureDefinition-Notebook.json",
+        include_str!("../../../igs/octofhir-notebooks/StructureDefinition-Notebook.json"),
+    ),
+    (
+        "SearchParameter-Notebook-owner.json",
+        include_str!("../../../igs/octofhir-notebooks/SearchParameter-Notebook-owner.json"),
+    ),
+    (
+        "SearchParameter-Notebook-tag.json",
+        include_str!("../../../igs/octofhir-notebooks/SearchParameter-Notebook-tag.json"),
+    ),
+    (
+        "SearchParameter-Notebook-title.json",
+        include_str!("../../../igs/octofhir-notebooks/SearchParameter-Notebook-title.json"),
+    ),
+];
+
 /// Bootstraps admin user from configuration.
 ///
 /// Creates an admin user with the "admin" role if:

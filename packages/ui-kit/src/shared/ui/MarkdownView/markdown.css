@@ -1,0 +1,109 @@
+.octo-markdown {
+  color: var(--octo-text-primary, #1a1b1e);
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+.octo-markdown > *:first-child {
+  margin-top: 0;
+}
+.octo-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.octo-markdown h1,
+.octo-markdown h2,
+.octo-markdown h3,
+.octo-markdown h4 {
+  font-weight: 650;
+  line-height: 1.25;
+  margin: 1.2em 0 0.5em;
+}
+.octo-markdown h1 {
+  font-size: 1.6em;
+}
+.octo-markdown h2 {
+  font-size: 1.35em;
+}
+.octo-markdown h3 {
+  font-size: 1.15em;
+}
+.octo-markdown h4 {
+  font-size: 1em;
+}
+
+.octo-markdown p {
+  margin: 0.5em 0;
+}
+.octo-markdown ul,
+.octo-markdown ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+.octo-markdown li {
+  margin: 0.2em 0;
+}
+
+.octo-markdown a {
+  color: var(--octo-accent, #4263eb);
+  text-decoration: none;
+}
+.octo-markdown a:hover {
+  text-decoration: underline;
+}
+
+.octo-markdown code {
+  font-family: var(--octo-typography-mono, ui-monospace, monospace);
+  font-size: 0.875em;
+  background: var(--octo-surface-2, #f1f3f5);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.octo-markdown pre {
+  background: var(--octo-surface-2, #f1f3f5);
+  padding: 12px 14px;
+  border-radius: 8px;
+  overflow: auto;
+}
+.octo-markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.octo-markdown blockquote {
+  margin: 0.6em 0;
+  padding: 0.2em 1em;
+  border-left: 3px solid var(--octo-border-subtle, #dee2e6);
+  color: var(--octo-text-secondary, #5c5f66);
+}
+
+.octo-markdown table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  width: 100%;
+  font-size: 0.92em;
+}
+.octo-markdown th,
+.octo-markdown td {
+  border: 1px solid var(--octo-border-subtle, #dee2e6);
+  padding: 6px 10px;
+  text-align: left;
+}
+.octo-markdown th {
+  background: var(--octo-surface-2, #f1f3f5);
+  font-weight: 600;
+}
+
+.octo-markdown hr {
+  border: none;
+  border-top: 1px solid var(--octo-border-subtle, #dee2e6);
+  margin: 1em 0;
+}
+.octo-markdown img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.octo-markdown input[type="checkbox"] {
+  margin-right: 0.5em;
+}

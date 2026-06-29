@@ -1,11 +1,11 @@
-/* SQL Console — flat modern 2026, emerald-branded workbench. */
+/* SQL Console — flat modern 2026, iris/blue-branded workbench (data section). */
 
 :root {
-  --sql-emerald: #10b981;
-  --sql-emerald-strong: #059669;
-  --sql-emerald-deep: #047857;
-  --sql-emerald-soft: rgb(16 185 129 / 12%);
-  --sql-emerald-line: rgb(16 185 129 / 28%);
+  --octo-data-accent: var(--octo-accent-info);
+  --octo-data-accent-strong: var(--octo-accent-info);
+  --octo-data-accent-deep: color-mix(in oklab, var(--octo-accent-info) 82%, black);
+  --octo-data-accent-soft: color-mix(in oklab, var(--octo-accent-info) 12%, transparent);
+  --octo-data-accent-line: color-mix(in oklab, var(--octo-accent-info) 28%, transparent);
 }
 
 /* ─── Shell ─── */
@@ -28,7 +28,7 @@
   padding: 0 var(--octo-spacing-md);
   border-bottom: 1px solid var(--octo-border-subtle);
   background:
-    linear-gradient(180deg, var(--sql-emerald-soft) 0%, transparent 140%), var(--octo-surface-1);
+    linear-gradient(180deg, var(--octo-data-accent-soft) 0%, transparent 140%), var(--octo-surface-1);
   flex-shrink: 0;
 }
 
@@ -43,8 +43,8 @@
   width: 9px;
   height: 9px;
   border-radius: 3px;
-  background: var(--sql-emerald);
-  box-shadow: 0 0 0 3px var(--sql-emerald-soft);
+  background: var(--octo-data-accent);
+  box-shadow: 0 0 0 3px var(--octo-data-accent-soft);
   flex: none;
 }
 
@@ -54,10 +54,10 @@
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid var(--sql-emerald-line);
+  border: 1px solid var(--octo-data-accent-line);
   border-radius: 8px;
-  background: var(--sql-emerald-soft);
-  color: var(--sql-emerald-deep);
+  background: var(--octo-data-accent-soft);
+  color: var(--octo-data-accent-deep);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -65,7 +65,7 @@
 }
 
 .toolbarButton:hover {
-  background: rgb(16 185 129 / 20%);
+  background: color-mix(in oklab, var(--octo-data-accent) 22%, transparent);
 }
 
 .toolbarCount {
@@ -76,7 +76,7 @@
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: var(--sql-emerald-strong);
+  background: var(--octo-data-accent-strong);
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -108,7 +108,7 @@
   min-height: 0;
   padding: var(--octo-spacing-sm);
   background:
-    radial-gradient(120% 90% at 100% 0%, var(--sql-emerald-soft) 0%, transparent 45%),
+    radial-gradient(120% 90% at 100% 0%, var(--octo-data-accent-soft) 0%, transparent 45%),
     var(--octo-surface-1);
 }
 
@@ -125,7 +125,7 @@
 }
 
 .editorPane {
-  border-color: var(--sql-emerald-line);
+  border-color: var(--octo-data-accent-line);
 }
 
 /* ─── Query editor ─── */
@@ -183,8 +183,8 @@
 }
 
 .problemsCounterClean {
-  border-color: var(--sql-emerald-line);
-  background: var(--sql-emerald-soft);
+  border-color: var(--octo-data-accent-line);
+  background: var(--octo-data-accent-soft);
 }
 
 .problemsCounterActive {
@@ -192,7 +192,7 @@
 }
 
 .problemsClean {
-  color: var(--sql-emerald-deep);
+  color: var(--octo-data-accent-deep);
 }
 
 .problemsErr,
@@ -292,7 +292,7 @@
 
 .diagRow:hover {
   background: var(--octo-surface-2);
-  border-left-color: var(--sql-emerald);
+  border-left-color: var(--octo-data-accent);
 }
 
 .diagIcon {
@@ -352,7 +352,7 @@
   font-family: var(--font-mono, "JetBrains Mono", "Fira Code", monospace);
   font-weight: 700;
   font-size: 13px;
-  color: var(--sql-emerald-strong);
+  color: var(--octo-data-accent-strong);
   user-select: none;
 }
 
@@ -432,8 +432,8 @@
 }
 
 .resultTabActive {
-  background: var(--sql-emerald-soft);
-  color: var(--sql-emerald-deep);
+  background: var(--octo-data-accent-soft);
+  color: var(--octo-data-accent-deep);
 }
 
 .resultMeta {
@@ -495,7 +495,7 @@
   font-weight: 600;
   letter-spacing: 0.3px;
   text-transform: uppercase;
-  color: var(--sql-emerald-strong);
+  color: var(--octo-data-accent-strong);
   opacity: 0.8;
 }
 
@@ -523,8 +523,8 @@
 }
 
 .cellBoolTrue {
-  background: var(--sql-emerald-soft);
-  color: var(--sql-emerald-deep);
+  background: var(--octo-data-accent-soft);
+  color: var(--octo-data-accent-deep);
 }
 
 .cellBoolFalse {
@@ -614,8 +614,8 @@
 }
 
 .historyRowActive {
-  border-left-color: var(--sql-emerald);
-  background: var(--sql-emerald-soft);
+  border-left-color: var(--octo-data-accent);
+  background: var(--octo-data-accent-soft);
 }
 
 .historyDot {
@@ -627,7 +627,7 @@
 }
 
 .historyDotOk {
-  background: var(--sql-emerald);
+  background: var(--octo-data-accent);
 }
 
 .historyDotError {

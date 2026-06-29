@@ -1,0 +1,85 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "Notebook",
+  "url": "http://octofhir.io/StructureDefinition/Notebook",
+  "version": "0.1.0",
+  "name": "Notebook",
+  "title": "Notebook Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "Notebook",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A multi-engine interactive notebook document (.fhirnb). Ordered cells mixing markdown prose and executable queries (FHIRPath, SQL-on-FHIR, SQL, CQL, GraphQL, REST), charts and data pipelines, with a shared reactive variable scope. The full cell/output payload is held as JSON; this definition models only the search-relevant header fields.",
+  "differential": {
+    "element": [
+      {
+        "id": "Notebook",
+        "path": "Notebook",
+        "short": "Interactive notebook document",
+        "definition": "Top-level OctoFHIR Notebook resource."
+      },
+      {
+        "id": "Notebook.title",
+        "path": "Notebook.title",
+        "short": "Notebook title",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Notebook.nbformat",
+        "path": "Notebook.nbformat",
+        "short": "Notebook schema version",
+        "definition": "Major version of the .fhirnb schema. Currently 1.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "Notebook.description",
+        "path": "Notebook.description",
+        "short": "Notebook description",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Notebook.fhirVersion",
+        "path": "Notebook.fhirVersion",
+        "short": "Target FHIR version for cell execution",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "Notebook.owner",
+        "path": "Notebook.owner",
+        "short": "Owner user id",
+        "definition": "Id of the user who owns this notebook.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Notebook.tags",
+        "path": "Notebook.tags",
+        "short": "Free-text tags",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Notebook.cells",
+        "path": "Notebook.cells",
+        "short": "Ordered notebook cells",
+        "definition": "Ordered list of cells. Each cell carries type, source, optional name binding and cached outputs. Full structure is validated by the octofhir-notebook crate, not this definition.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      }
+    ]
+  }
+}

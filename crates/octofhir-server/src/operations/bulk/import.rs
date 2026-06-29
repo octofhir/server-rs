@@ -299,7 +299,7 @@ async fn upsert_resource_with_indexes(
            RETURNING id"#
     );
 
-    let row: (String,) = query_as::<_, (String,)>(AssertSqlSafe((&sql).to_string()))
+    let row: (String,) = query_as::<_, (String,)>(AssertSqlSafe(sql.to_string()))
         .bind(id)
         .bind(now)
         .bind(resource)
@@ -445,7 +445,7 @@ async fn batch_upsert_resources(
                updated_at = EXCLUDED.updated_at"#
     );
 
-    let result = query(AssertSqlSafe((&sql).to_string()))
+    let result = query(AssertSqlSafe(sql.to_string()))
         .bind(&ids)
         .bind(&resources)
         .bind(now)

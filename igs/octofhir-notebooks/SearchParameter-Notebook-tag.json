@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Notebook-tag",
+  "url": "http://octofhir.org/fhir/SearchParameter/Notebook-tag",
+  "name": "NotebookTag",
+  "status": "active",
+  "description": "Search notebooks by free-text tag",
+  "code": "tag",
+  "base": ["Notebook"],
+  "type": "string",
+  "expression": "Notebook.tags"
+}

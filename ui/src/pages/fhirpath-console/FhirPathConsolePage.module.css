@@ -1,19 +1,11 @@
-/* Flat modern 2026 FHIRPath console — emerald-branded. */
+/* Flat modern 2026 FHIRPath console — mint-branded (FHIR core section). */
 
 :root {
-  --fp-emerald: #10b981;
-  --fp-emerald-strong: #059669;
-  --fp-emerald-deep: #047857;
-  --fp-emerald-soft: rgb(16 185 129 / 12%);
-  --fp-emerald-line: rgb(16 185 129 / 28%);
-}
-
-/* Dark theme: lighter emerald so accent text stays legible on dark surfaces.
-   `--fp-emerald-strong` stays fixed — solid fill behind white button text. */
-[data-theme="dark"] {
-  --fp-emerald-deep: #6ee7b7;
-  --fp-emerald-soft: rgb(52 211 153 / 14%);
-  --fp-emerald-line: rgb(52 211 153 / 32%);
+  --octo-fhirpath-accent: var(--octo-accent-primary);
+  --octo-fhirpath-accent-strong: var(--octo-accent-primary);
+  --octo-fhirpath-accent-deep: var(--octo-accent-primary);
+  --octo-fhirpath-accent-soft: color-mix(in oklab, var(--octo-accent-primary) 12%, transparent);
+  --octo-fhirpath-accent-line: color-mix(in oklab, var(--octo-accent-primary) 28%, transparent);
 }
 
 /* ── Root layout ── */
@@ -42,8 +34,8 @@
   height: 32px;
   padding: 0 14px;
   border-radius: 8px;
-  border: 1px solid var(--fp-emerald-strong);
-  background: var(--fp-emerald-strong);
+  border: 1px solid var(--octo-fhirpath-accent-strong);
+  background: var(--octo-fhirpath-accent-strong);
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -55,7 +47,7 @@
 }
 
 .runBtn:hover {
-  background: var(--fp-emerald-deep);
+  background: var(--octo-fhirpath-accent-deep);
 }
 
 .runBtn:active {
@@ -131,7 +123,7 @@
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--octo-border-subtle);
-  background: linear-gradient(180deg, var(--fp-emerald-soft) 0%, transparent 140%);
+  background: linear-gradient(180deg, var(--octo-fhirpath-accent-soft) 0%, transparent 140%);
   flex: none;
 }
 
@@ -147,7 +139,7 @@
 }
 
 .panelTitleIcon {
-  color: var(--fp-emerald-strong);
+  color: var(--octo-fhirpath-accent-strong);
   display: inline-flex;
 }
 
@@ -193,15 +185,15 @@
 }
 
 .chip:hover {
-  background: var(--fp-emerald-soft);
-  border-color: var(--fp-emerald-line);
-  color: var(--fp-emerald-deep);
+  background: var(--octo-fhirpath-accent-soft);
+  border-color: var(--octo-fhirpath-accent-line);
+  color: var(--octo-fhirpath-accent-deep);
 }
 
 .chipActive {
-  background: var(--fp-emerald-soft);
-  border-color: var(--fp-emerald-line);
-  color: var(--fp-emerald-deep);
+  background: var(--octo-fhirpath-accent-soft);
+  border-color: var(--octo-fhirpath-accent-line);
+  color: var(--octo-fhirpath-accent-deep);
   font-weight: 600;
 }
 
@@ -219,9 +211,9 @@
   height: 20px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--fp-emerald-soft);
-  border: 1px solid var(--fp-emerald-line);
-  color: var(--fp-emerald-deep);
+  background: var(--octo-fhirpath-accent-soft);
+  border: 1px solid var(--octo-fhirpath-accent-line);
+  color: var(--octo-fhirpath-accent-deep);
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11px;
   font-weight: 600;
@@ -304,9 +296,9 @@
 }
 
 .paletteFn:hover {
-  background: var(--fp-emerald-soft);
-  border-color: var(--fp-emerald-line);
-  color: var(--fp-emerald-deep);
+  background: var(--octo-fhirpath-accent-soft);
+  border-color: var(--octo-fhirpath-accent-line);
+  color: var(--octo-fhirpath-accent-deep);
 }
 
 .paletteEmpty {
@@ -338,8 +330,8 @@
 }
 
 .statCardAccent {
-  background: var(--fp-emerald-soft);
-  border-color: var(--fp-emerald-line);
+  background: var(--octo-fhirpath-accent-soft);
+  border-color: var(--octo-fhirpath-accent-line);
 }
 
 .statLabel {
@@ -358,7 +350,7 @@
 }
 
 .statValueAccent {
-  color: var(--fp-emerald-deep);
+  color: var(--octo-fhirpath-accent-deep);
 }
 
 .statMeta {
@@ -403,8 +395,8 @@
   height: 18px;
   padding: 0 7px;
   border-radius: 999px;
-  background: var(--fp-emerald-soft);
-  color: var(--fp-emerald-deep);
+  background: var(--octo-fhirpath-accent-soft);
+  color: var(--octo-fhirpath-accent-deep);
   font-size: 11px;
   font-weight: 700;
 }
@@ -426,7 +418,7 @@
 }
 
 .resultItem:hover {
-  border-color: var(--fp-emerald-line);
+  border-color: var(--octo-fhirpath-accent-line);
 }
 
 .resultItemContent {
@@ -464,8 +456,8 @@
 }
 
 .typeString {
-  background: var(--fp-emerald-soft);
-  color: var(--fp-emerald-deep);
+  background: var(--octo-fhirpath-accent-soft);
+  color: var(--octo-fhirpath-accent-deep);
 }
 
 .typeNumber {
@@ -513,7 +505,7 @@
 }
 
 .resultToggle:focus-visible {
-  outline: 2px solid var(--fp-emerald-line);
+  outline: 2px solid var(--octo-fhirpath-accent-line);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -537,8 +529,8 @@
 }
 
 .copyBtn:hover {
-  background: var(--fp-emerald-soft);
-  color: var(--fp-emerald-deep);
+  background: var(--octo-fhirpath-accent-soft);
+  color: var(--octo-fhirpath-accent-deep);
 }
 
 .resultJson {
@@ -637,8 +629,8 @@
   width: 48px;
   height: 48px;
   border-radius: 14px;
-  background: var(--fp-emerald-soft);
-  color: var(--fp-emerald-strong);
+  background: var(--octo-fhirpath-accent-soft);
+  color: var(--octo-fhirpath-accent-strong);
 }
 
 .emptyTitle {
@@ -660,5 +652,5 @@
   padding: 1px 5px;
   border-radius: 5px;
   background: var(--octo-surface-3);
-  color: var(--fp-emerald-deep);
+  color: var(--octo-fhirpath-accent-deep);
 }

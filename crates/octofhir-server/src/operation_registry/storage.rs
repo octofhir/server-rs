@@ -290,7 +290,7 @@ impl OperationStorage for PostgresOperationStorage {
             set_clauses.join(", ")
         );
 
-        let mut query_builder = query(AssertSqlSafe((&sql).to_string())).bind(id);
+        let mut query_builder = query(AssertSqlSafe(sql.to_string())).bind(id);
 
         // Bind parameters in order
         if let Some(public) = update.public {

@@ -1654,7 +1654,7 @@ impl PackageStore for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let row = query(AssertSqlSafe((&sql).to_string()))
+        let row = query(AssertSqlSafe(sql.to_string()))
             .bind(canonical_url)
             .fetch_optional(&self.pool)
             .await
@@ -1720,7 +1720,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let row = query(AssertSqlSafe((&sql).to_string()))
+        let row = query(AssertSqlSafe(sql.to_string()))
             .bind(canonical_url)
             .bind(fhir_version)
             .fetch_optional(&self.pool)
@@ -1743,7 +1743,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let rows = query(AssertSqlSafe((&sql).to_string()))
+        let rows = query(AssertSqlSafe(sql.to_string()))
             .bind(&pattern)
             .fetch_all(&self.pool)
             .await
@@ -1771,7 +1771,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let row = query(AssertSqlSafe((&sql).to_string()))
+        let row = query(AssertSqlSafe(sql.to_string()))
             .bind(name)
             .fetch_optional(&self.pool)
             .await
@@ -1792,7 +1792,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let rows = query(AssertSqlSafe((&sql).to_string()))
+        let rows = query(AssertSqlSafe(sql.to_string()))
             .bind(&resource_type)
             .bind(&id)
             .fetch_all(&self.pool)
@@ -1817,7 +1817,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let rows = query(AssertSqlSafe((&sql).to_string()))
+        let rows = query(AssertSqlSafe(sql.to_string()))
             .bind(&resource_type)
             .bind(&name)
             .fetch_all(&self.pool)
@@ -1868,7 +1868,7 @@ impl SearchStorage for PostgresPackageStore {
             sql.push_str(&format!(" LIMIT {}", lim));
         }
 
-        let rows = query(AssertSqlSafe((&sql).to_string()))
+        let rows = query(AssertSqlSafe(sql.to_string()))
             .bind(key)
             .fetch_all(&self.pool)
             .await
@@ -1949,7 +1949,7 @@ impl SearchStorage for PostgresPackageStore {
 
         let sql = format!("{} WHERE url IS NOT NULL", Self::RESOURCE_SELECT);
 
-        let rows = match query(AssertSqlSafe((&sql).to_string()))
+        let rows = match query(AssertSqlSafe(sql.to_string()))
             .fetch_all(&self.pool)
             .await
         {
@@ -1987,7 +1987,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let rows = query(AssertSqlSafe((&sql).to_string()))
+        let rows = query(AssertSqlSafe(sql.to_string()))
             .bind(resource_type)
             .bind(package_name)
             .fetch_all(&self.pool)

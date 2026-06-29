@@ -15,28 +15,36 @@
 }
 
 .node {
+  --node-accent: var(--octo-border-subtle);
+
   width: 248px;
   padding: 8px 12px;
   border-radius: var(--octo-radius-md);
   border: 1px solid var(--octo-border-subtle);
-  border-left-width: 3px;
-  background: var(--octo-surface-2);
+  background:
+    radial-gradient(
+      130% 100% at 0% 0%,
+      color-mix(in oklab, var(--node-accent) 18%, transparent) 0%,
+      color-mix(in oklab, var(--node-accent) 6%, transparent) 30%,
+      transparent 60%
+    ),
+    var(--octo-surface-2);
   box-shadow: var(--octo-shadow-xs);
   font-size: var(--octo-typography-size-xs);
 }
 
 .node[data-kind="scan"] {
-  border-left-color: var(--octo-accent-fire);
+  --node-accent: var(--octo-accent-fire);
 }
 .node[data-kind="index"] {
-  border-left-color: var(--octo-accent-positive);
+  --node-accent: var(--octo-accent-positive);
 }
 .node[data-kind="join"] {
-  border-left-color: var(--octo-accent-primary);
+  --node-accent: var(--octo-accent-primary);
 }
 .node[data-kind="sort"],
 .node[data-kind="agg"] {
-  border-left-color: var(--octo-accent-warm);
+  --node-accent: var(--octo-accent-warm);
 }
 .node[data-warn="1"] {
   box-shadow: 0 0 0 1px var(--octo-accent-fire);

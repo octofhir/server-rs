@@ -13,11 +13,17 @@
 }
 
 .eyebrow {
-    color: var(--octo-text-secondary);
+    width: fit-content;
+    color: var(--octo-accent-primary); /* fallback when background-clip unsupported */
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
     line-height: 16px;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
+    background: var(--octo-brand-gradient-spectrum);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
 .title {

@@ -21,6 +21,7 @@
 		"@graphiql/react": "^0.37.7",
 		"@graphiql/toolkit": "^0.12.1",
 		"@hookform/resolvers": "^5.4.0",
+		"@mdxeditor/editor": "^4.0.4",
 		"@monaco-editor/react": "^4.7.0",
 		"@octofhir/ui-kit": "workspace:*",
 		"@tanstack/react-query": "^5.101.0",

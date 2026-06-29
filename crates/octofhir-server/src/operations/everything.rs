@@ -670,7 +670,7 @@ impl EverythingParams {
                 // Try parsing as date only (without time)
                 time::Date::parse(
                     since,
-                    &time::format_description::parse("[year]-[month]-[day]").unwrap(),
+                    &time::format_description::parse_borrowed::<2>("[year]-[month]-[day]").unwrap(),
                 )
                 .ok()
                 .map(|d| d.midnight().assume_utc())
@@ -691,7 +691,7 @@ impl EverythingParams {
             result.start = OffsetDateTime::parse(start, &Rfc3339).ok().or_else(|| {
                 time::Date::parse(
                     start,
-                    &time::format_description::parse("[year]-[month]-[day]").unwrap(),
+                    &time::format_description::parse_borrowed::<2>("[year]-[month]-[day]").unwrap(),
                 )
                 .ok()
                 .map(|d| d.midnight().assume_utc())
@@ -703,7 +703,7 @@ impl EverythingParams {
             result.end = OffsetDateTime::parse(end, &Rfc3339).ok().or_else(|| {
                 time::Date::parse(
                     end,
-                    &time::format_description::parse("[year]-[month]-[day]").unwrap(),
+                    &time::format_description::parse_borrowed::<2>("[year]-[month]-[day]").unwrap(),
                 )
                 .ok()
                 .map(|d| d.midnight().assume_utc())

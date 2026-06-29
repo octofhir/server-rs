@@ -17,6 +17,7 @@ import {
   KeyRound,
   LayoutDashboard,
   Monitor,
+  NotebookPen,
   Receipt,
   Settings,
   Shield,
@@ -214,6 +215,13 @@ export function AppShell() {
             icon: Table,
             active: path.startsWith("/viewdefinition"),
             onClick: () => navigate("/viewdefinition"),
+          },
+          {
+            id: "notebooks",
+            label: "Notebooks",
+            icon: NotebookPen,
+            active: path.startsWith("/notebooks"),
+            onClick: () => navigate("/notebooks"),
           },
           {
             id: "logs",

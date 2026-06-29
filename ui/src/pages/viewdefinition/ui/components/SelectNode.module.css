@@ -17,12 +17,24 @@
   background: var(--app-surface-2, rgba(0, 0, 0, 0.015));
 }
 
-/* Emerald accent rail for nested groups */
+/* Soft accent wash for nested groups (replaces the left rail) */
 .node[data-variant="select"] {
-  border-left: 2px solid color-mix(in oklch, var(--octo-accent-primary, #10b981) 55%, transparent);
+  background:
+    radial-gradient(
+      130% 100% at 0% 0%,
+      color-mix(in oklch, var(--octo-accent-primary, #10b981) 16%, transparent) 0%,
+      transparent 58%
+    ),
+    var(--app-surface-2, rgba(0, 0, 0, 0.015));
 }
 .node[data-variant="union"] {
-  border-left: 2px solid color-mix(in oklch, var(--octo-accent-secondary, #8b5cf6) 55%, transparent);
+  background:
+    radial-gradient(
+      130% 100% at 0% 0%,
+      color-mix(in oklch, var(--octo-accent-secondary, var(--octo-brand-accent, #7c5cff)) 16%, transparent) 0%,
+      transparent 58%
+    ),
+    var(--app-surface-2, rgba(0, 0, 0, 0.015));
 }
 
 .nodeHeader {

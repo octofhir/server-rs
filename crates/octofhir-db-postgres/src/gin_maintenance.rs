@@ -63,7 +63,7 @@ async fn clean_all_gin_indexes(pool: &PgPool) -> Result<(), sqlx_core::Error> {
         // and let PostgreSQL resolve it. Wrapped in its own statement so a
         // dropped/locked index doesn't abort the whole sweep.
         let sql = format!("SELECT gin_clean_pending_list('{qualified_name}'::regclass)");
-        match sqlx_core::query::query(AssertSqlSafe((&sql).to_string()))
+        match sqlx_core::query::query(AssertSqlSafe(sql.to_string()))
             .execute(pool)
             .await
         {

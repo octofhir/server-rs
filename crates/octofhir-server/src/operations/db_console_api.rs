@@ -1154,7 +1154,7 @@ pub async fn drop_index(
     // Use quoted identifiers for safety
     let sql = format!("DROP INDEX IF EXISTS \"{}\".\"{}\"", schema, index_name);
 
-    sqlx_core::query::query(AssertSqlSafe((&sql).to_string()))
+    sqlx_core::query::query(AssertSqlSafe(sql.to_string()))
         .execute(state.db_pool.as_ref())
         .await
         .map_err(|e| ApiError::internal(format!("Failed to drop index: {}", e)))?;

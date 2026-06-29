@@ -1,11 +1,11 @@
-/* Flat modern 2026 detail view — emerald-branded. */
+/* Flat modern 2026 detail view — iris/blue-branded (data section). */
 
 :root {
-  --db-emerald: var(--octo-accent-primary);
-  --db-emerald-strong: var(--octo-accent-primary);
-  --db-emerald-deep: var(--octo-accent-primary);
-  --db-emerald-soft: var(--octo-accent-primary-subtle);
-  --db-emerald-line: var(--octo-border-strong);
+  --octo-data-accent: var(--octo-accent-info);
+  --octo-data-accent-strong: var(--octo-accent-info);
+  --octo-data-accent-deep: var(--octo-accent-info);
+  --octo-data-accent-soft: color-mix(in oklab, var(--octo-accent-info) 14%, transparent);
+  --octo-data-accent-line: color-mix(in oklab, var(--octo-accent-info) 30%, transparent);
 }
 
 .root {
@@ -24,7 +24,7 @@
   gap: 12px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--octo-border-subtle);
-  background: linear-gradient(180deg, var(--db-emerald-soft) 0%, transparent 100%);
+  background: linear-gradient(180deg, var(--octo-data-accent-soft) 0%, transparent 100%);
 }
 
 .titleRow {
@@ -41,8 +41,8 @@
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: var(--db-emerald-soft);
-  color: var(--db-emerald-strong);
+  background: var(--octo-data-accent-soft);
+  color: var(--octo-data-accent-strong);
   flex: none;
 }
 
@@ -92,9 +92,9 @@
   height: 30px;
   padding: 0 12px;
   border-radius: 8px;
-  border: 1px solid var(--db-emerald-line);
-  background: var(--db-emerald-soft);
-  color: var(--db-emerald-deep);
+  border: 1px solid var(--octo-data-accent-line);
+  background: var(--octo-data-accent-soft);
+  color: var(--octo-data-accent-deep);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -147,8 +147,8 @@
 }
 
 .statCardAccent {
-  background: var(--db-emerald-soft);
-  border-color: var(--db-emerald-line);
+  background: var(--octo-data-accent-soft);
+  border-color: var(--octo-data-accent-line);
 }
 
 .statLabel {
@@ -167,7 +167,7 @@
 }
 
 .statValueAccent {
-  color: var(--db-emerald-deep);
+  color: var(--octo-data-accent-deep);
 }
 
 /* ── Scroll body ── */
@@ -206,8 +206,8 @@
   height: 18px;
   padding: 0 7px;
   border-radius: 999px;
-  background: var(--db-emerald-soft);
-  color: var(--db-emerald-deep);
+  background: var(--octo-data-accent-soft);
+  color: var(--octo-data-accent-deep);
   font-size: 11px;
   font-weight: 700;
 }
@@ -251,8 +251,8 @@
   height: 16px;
   padding: 0 5px;
   border-radius: 5px;
-  background: var(--db-emerald-soft);
-  color: var(--db-emerald-deep);
+  background: var(--octo-data-accent-soft);
+  color: var(--octo-data-accent-deep);
   font-size: 10px;
   font-weight: 700;
 }
@@ -277,7 +277,7 @@
 }
 
 .indexCard:hover {
-  border-color: var(--db-emerald-line);
+  border-color: var(--octo-data-accent-line);
 }
 
 .indexTop {
@@ -289,7 +289,7 @@
 
 .indexIcon {
   display: inline-flex;
-  color: var(--db-emerald-strong);
+  color: var(--octo-data-accent-strong);
   flex: none;
 }
 
@@ -330,8 +330,8 @@
 }
 
 .tagPk {
-  background: var(--db-emerald-soft);
-  color: var(--db-emerald-deep);
+  background: var(--octo-data-accent-soft);
+  color: var(--octo-data-accent-deep);
 }
 
 .tagUnique {

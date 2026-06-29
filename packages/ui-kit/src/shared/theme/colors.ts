@@ -12,16 +12,16 @@
 export const palette = {
     /** Mint / Emerald — primary brand accent. Soft, modern, distinctive. */
     primary: [
-        "oklch(98% 0.014 168)",
-        "oklch(95% 0.032 168)",
-        "oklch(90% 0.058 168)",
-        "oklch(82% 0.098 168)",
-        "oklch(73% 0.128 168)",
-        "oklch(64% 0.138 168)", // Base
-        "oklch(56% 0.128 168)", // Hover
-        "oklch(48% 0.112 168)", // Active
-        "oklch(38% 0.088 168)",
-        "oklch(28% 0.062 168)",
+        "oklch(98% 0.018 168)",
+        "oklch(95% 0.040 168)",
+        "oklch(90% 0.072 168)",
+        "oklch(82% 0.120 168)",
+        "oklch(73% 0.155 168)",
+        "oklch(64% 0.168 168)", // Base
+        "oklch(56% 0.152 168)", // Hover
+        "oklch(48% 0.130 168)", // Active
+        "oklch(38% 0.100 168)",
+        "oklch(28% 0.070 168)",
     ],
     /** Emerald — success. */
     success: [
@@ -64,29 +64,29 @@ export const palette = {
     ],
     /** Iris — informational accent. */
     info: [
-        "oklch(98% 0.012 230)",
-        "oklch(95% 0.030 230)",
-        "oklch(90% 0.060 230)",
-        "oklch(82% 0.110 230)",
-        "oklch(73% 0.150 230)",
-        "oklch(64% 0.170 230)", // Base
-        "oklch(56% 0.155 230)", // Hover
-        "oklch(48% 0.130 230)", // Active
-        "oklch(38% 0.100 230)",
-        "oklch(28% 0.075 230)",
+        "oklch(98% 0.014 230)",
+        "oklch(95% 0.036 230)",
+        "oklch(90% 0.072 230)",
+        "oklch(82% 0.125 230)",
+        "oklch(73% 0.165 230)",
+        "oklch(62% 0.188 230)", // Base
+        "oklch(54% 0.170 230)", // Hover
+        "oklch(46% 0.142 230)", // Active
+        "oklch(37% 0.108 230)",
+        "oklch(28% 0.080 230)",
     ],
     /** Violet — secondary brand accent for highlights / decorations. */
     accent: [
-        "oklch(98% 0.012 295)",
-        "oklch(95% 0.035 295)",
-        "oklch(90% 0.075 295)",
-        "oklch(82% 0.130 295)",
-        "oklch(73% 0.175 295)",
-        "oklch(63% 0.195 295)", // Base
-        "oklch(55% 0.180 295)", // Hover
-        "oklch(47% 0.155 295)", // Active
-        "oklch(37% 0.120 295)",
-        "oklch(27% 0.090 295)",
+        "oklch(98% 0.014 295)",
+        "oklch(95% 0.040 295)",
+        "oklch(90% 0.085 295)",
+        "oklch(82% 0.145 295)",
+        "oklch(72% 0.190 295)",
+        "oklch(62% 0.210 295)", // Base
+        "oklch(54% 0.192 295)", // Hover
+        "oklch(46% 0.162 295)", // Active
+        "oklch(37% 0.125 295)",
+        "oklch(27% 0.092 295)",
     ],
     /** Slate / Navy — surface depth, dark-mode backgrounds. */
     deep: [

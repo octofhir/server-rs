@@ -17,6 +17,7 @@ export interface MetricCardProps {
 
 const gradientColors: Record<string, string> = {
     primary: "var(--octo-accent-primary)",
+    secondary: "var(--octo-accent-secondary)",
     warning: "var(--octo-accent-warm)",
     danger: "var(--octo-accent-fire)",
     success: "var(--octo-accent-positive)",
@@ -26,6 +27,7 @@ const gradientColors: Record<string, string> = {
 
 const textColors: Record<string, string> = {
     primary: "var(--octo-accent-primary)",
+    secondary: "var(--octo-accent-secondary)",
     warning: "var(--octo-accent-warm)",
     danger: "var(--octo-accent-fire)",
     success: "var(--octo-accent-positive)",
