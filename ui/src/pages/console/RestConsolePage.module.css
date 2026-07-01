@@ -3,8 +3,10 @@
 .container {
   display: grid;
   grid-template-rows: auto 1fr;
+  grid-template-columns: minmax(0, 1fr);
   height: 100vh;
   min-height: 0;
+  min-width: 0;
   background: var(--octo-surface-1);
   overflow: hidden;
 }
@@ -16,8 +18,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--octo-spacing-md);
-  height: 52px;
-  padding: 0 var(--octo-spacing-lg);
+  height: 44px;
+  padding: 0 var(--octo-spacing-md);
   border-bottom: 1px solid var(--octo-border-subtle);
   background: var(--octo-surface-1);
   flex-shrink: 0;
@@ -26,7 +28,7 @@
 .toolbarLeft {
   display: flex;
   align-items: center;
-  gap: var(--octo-spacing-md);
+  gap: var(--octo-spacing-sm);
   min-width: 0;
 }
 
@@ -34,74 +36,76 @@
   font-weight: 650;
   letter-spacing: -0.01em;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .toolbarActions {
   display: flex;
   align-items: center;
-  gap: var(--octo-spacing-xs);
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.envWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.envDot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--octo-accent-primary);
 }
 
 /* ─── Workspace ─── */
 
 .workspace {
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--octo-spacing-sm);
-  padding: var(--octo-spacing-md);
+  padding: var(--octo-spacing-sm) var(--octo-spacing-md) var(--octo-spacing-md);
   background: var(--octo-surface-1);
 }
 
-/* The request bar / builder card sits at the top, always visible */
+/* The request bar sits at the top, always visible */
 .requestRegion {
   flex-shrink: 0;
-  border: 1px solid var(--octo-border-subtle);
-  border-radius: var(--octo-radius-lg);
-  background: var(--octo-surface-2);
-}
-
-.builderContent {
-  padding: var(--octo-spacing-md);
-}
-
-.builderActions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: var(--octo-spacing-md);
-}
-
-/* The split fills the rest of the workspace */
-.split {
-  flex: 1;
-  min-height: 0;
-}
-
-.panel {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+  min-width: 0;
   border: 1px solid var(--octo-border-subtle);
   border-radius: var(--octo-radius-lg);
   background: var(--octo-surface-2);
   overflow: hidden;
 }
 
-.panelBody {
+/* Response fills the remaining space — the primary surface */
+.responsePanel {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-lg);
+  background: var(--octo-surface-2);
+  overflow: hidden;
 }
 
 .responseBody {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
 .inspectorPanel {
-  padding: var(--octo-spacing-md);
+  padding: var(--octo-spacing-sm) var(--octo-spacing-md);
   margin: var(--octo-spacing-sm) var(--octo-spacing-md) 0;
   border-radius: var(--octo-radius-md);
   background: color-mix(in srgb, var(--octo-accent-primary) 7%, var(--octo-surface-3));

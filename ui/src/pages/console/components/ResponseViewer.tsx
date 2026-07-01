@@ -28,6 +28,23 @@ import { JsonViewer } from "@/shared/ui-react/JsonViewer";
 import { deriveBundleColumns, formatFhirValue, isComplexValue } from "./fhirBundleTable";
 import styles from "./ResponseViewer.module.css";
 
+function byteLength(body: unknown): number {
+  if (body == null) return 0;
+  try {
+    const text = typeof body === "string" ? body : JSON.stringify(body);
+    return new Blob([text]).size;
+  } catch {
+    return 0;
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function ValueCell({ value }: { value: unknown }) {
   const [open, setOpen] = useState(false);
   const text = formatFhirValue(value);
@@ -152,26 +169,43 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
   };
 
   const statusTheme = getConsoleResponseStatusTone(response.status);
+  const responseSize = formatBytes(byteLength(response.body));
 
   return (
     <div className={styles.viewer}>
-      {/* Status header */}
-      <div className={styles.header}>
+      {/* One dense row: status + meta on the left, view controls on the right */}
+      <div className={styles.statusRow}>
         <div className={styles.status}>
-          <Badge theme={statusTheme} size="lg">
+          <Badge theme={statusTheme} size="md">
             <span className={styles.statusBadge}>
-              {isSuccess ? <IconCheck size={14} /> : isError ? <IconX size={14} /> : null}
+              {isSuccess ? <IconCheck size={13} /> : isError ? <IconX size={13} /> : null}
               {response.status} {response.statusText}
             </span>
           </Badge>
-          <Text color="secondary" variant="caption-1">
+          <Text color="secondary" variant="caption-1" className={styles.meta}>
             {response.durationMs}ms
+            {responseSize ? ` · ${responseSize}` : ""}
           </Text>
         </div>
 
-        <Text color="secondary" variant="caption-1">
-          {new Date(response.requestedAt).toLocaleString()}
-        </Text>
+        <div className={styles.viewControls}>
+          <SegmentedControl
+            size="sm"
+            options={dataOptions}
+            value={activeData}
+            onChange={(value) => {
+              setShowHeaders(false);
+              setDataView(value === "table" || value === "raw" ? value : "raw");
+            }}
+          />
+          <Button
+            size="sm"
+            variant={showHeaders ? "light" : "subtle"}
+            onClick={() => setShowHeaders((s) => !s)}
+          >
+            Headers
+          </Button>
+        </div>
       </div>
 
       {/* OperationOutcome extraction */}
@@ -180,26 +214,6 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
           <OperationOutcomePanel outcome={operationOutcome} title="FHIR error" maxIssues={4} />
         </div>
       )}
-
-      {/* View controls: Table/Raw segment, with Headers as a separate toggle */}
-      <div className={styles.viewBar}>
-        <SegmentedControl
-          size="sm"
-          options={dataOptions}
-          value={activeData}
-          onChange={(value) => {
-            setShowHeaders(false);
-            setDataView(value === "table" || value === "raw" ? value : "raw");
-          }}
-        />
-        <Button
-          size="sm"
-          variant={showHeaders ? "light" : "subtle"}
-          onClick={() => setShowHeaders((s) => !s)}
-        >
-          Headers
-        </Button>
-      </div>
 
       <div className={styles.viewBody}>
         {showHeaders ? (

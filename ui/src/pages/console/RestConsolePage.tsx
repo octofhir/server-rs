@@ -1,28 +1,18 @@
-import { Button, Collapse, Resizable, Text, useDisclosure, useHotkeys } from "@octofhir/ui-kit";
+import { ActionIcon, Collapse, Text, Tooltip, useDisclosure, useHotkeys } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
-import {
-  Bookmark,
-  History as ClockArrowRotateLeft,
-  Eye,
-  Gauge,
-  Inbox,
-  Layers,
-  Play,
-} from "lucide-react";
+import { Bookmark, History as ClockArrowRotateLeft, Eye, Gauge, Inbox, Layers } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
 import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector";
-import { BuilderModeEditor } from "./components/BuilderModeEditor";
 import { CollectionsPanel } from "./components/CollectionsPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { EnvironmentPanel } from "./components/EnvironmentPanel";
 import { ExplainPanel } from "./components/ExplainPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
-import { ModeControl } from "./components/ModeControl";
 import { RequestBar } from "./components/RequestBar";
-import { RequestOptionTabs } from "./components/RequestBuilderAccordion";
+import { RequestOptionsStrip } from "./components/RequestOptionsStrip";
 import { ResponseViewer } from "./components/ResponseViewer";
 import { useEnvironments } from "./hooks/useEnvironments";
 import { useRestConsoleMeta } from "./hooks/useRestConsoleMeta";
@@ -32,8 +22,8 @@ import {
   $body,
   $customHeaders,
   $method,
-  $mode,
   $rawPath,
+  $resourceType,
   setCommandPaletteOpen,
 } from "./state/consoleStore";
 
@@ -46,14 +36,14 @@ export function RestConsolePage() {
     rawPath,
     body,
     customHeaders,
-    mode,
+    resourceType,
     setCommandPaletteOpen: openPalette,
   } = useUnit({
     method: $method,
     rawPath: $rawPath,
     body: $body,
     customHeaders: $customHeaders,
-    mode: $mode,
+    resourceType: $resourceType,
     setCommandPaletteOpen,
   });
 
@@ -118,135 +108,96 @@ export function RestConsolePage() {
           <Text variant="header-2" className={styles.title}>
             REST Console
           </Text>
-          <ModeControl />
         </div>
         <div className={styles.toolbarActions}>
-          <Button variant="subtle" size="md" onClick={envHandlers.open}>
-            <Button.Icon>
-              <Layers size={16} />
-            </Button.Icon>
-            {activeEnv ? activeEnv.name : "Env"}
-          </Button>
-          <Button variant="subtle" size="md" onClick={savedHandlers.open}>
-            <Button.Icon>
+          <Tooltip label={activeEnv ? `Environment: ${activeEnv.name}` : "Environment"}>
+            <span className={styles.envWrap}>
+              <ActionIcon variant="subtle" size="md" onClick={envHandlers.open}>
+                <Layers size={16} />
+              </ActionIcon>
+              {activeEnv && <span className={styles.envDot} />}
+            </span>
+          </Tooltip>
+          <Tooltip label="Saved requests">
+            <ActionIcon variant="subtle" size="md" onClick={savedHandlers.open}>
               <Bookmark size={16} />
-            </Button.Icon>
-            Saved
-          </Button>
-          <Button variant="subtle" size="md" onClick={explainHandlers.open}>
-            <Button.Icon>
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Explain query">
+            <ActionIcon variant="subtle" size="md" onClick={explainHandlers.open}>
               <Gauge size={16} />
-            </Button.Icon>
-            Explain
-          </Button>
-          <Button variant="subtle" size="md" onClick={toggleInspector}>
-            <Button.Icon>
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Inspector">
+            <ActionIcon
+              variant={inspectorOpened ? "light" : "subtle"}
+              size="md"
+              onClick={toggleInspector}
+            >
               <Eye size={16} />
-            </Button.Icon>
-            Inspector
-          </Button>
-          <Button variant="subtle" size="md" onClick={historyHandlers.open}>
-            <Button.Icon>
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="History">
+            <ActionIcon variant="subtle" size="md" onClick={historyHandlers.open}>
               <ClockArrowRotateLeft size={16} />
-            </Button.Icon>
-            History
-          </Button>
+            </ActionIcon>
+          </Tooltip>
         </div>
       </header>
 
       <div className={styles.workspace}>
-        {/* Request bar / builder — always visible at the top */}
+        {/* Request bar — always the smart query editor, always visible */}
         <section className={styles.requestRegion}>
-          {mode === "pro" ? (
-            <RequestBar
-              allSuggestions={allSuggestions}
-              searchParamsByResource={searchParamsByResource}
-              capabilities={data}
-              isLoading={isPending}
-              isSending={sendMutation.isPending}
-              onSend={handleSend}
-            />
-          ) : (
-            <div className={styles.builderContent}>
-              <BuilderModeEditor
-                allSuggestions={allSuggestions}
-                searchParamsByResource={searchParamsByResource}
-                capabilities={data}
-                isLoading={isPending}
-              />
-              <div className={styles.builderActions}>
-                <Button
-                  size="lg"
-                  variant="filled"
-                  onClick={handleSend}
-                  loading={sendMutation.isPending}
-                >
-                  <Button.Icon>
-                    <Play size={18} />
-                  </Button.Icon>
-                  Execute Request
-                </Button>
-              </div>
-            </div>
-          )}
+          <RequestBar
+            allSuggestions={allSuggestions}
+            searchParamsByResource={searchParamsByResource}
+            capabilities={data}
+            isLoading={isPending}
+            isSending={sendMutation.isPending}
+            onSend={handleSend}
+          />
         </section>
 
-        {/* Split: request options (top) ⇄ response (bottom) */}
-        <div className={styles.split}>
-          <Resizable.Group orientation="vertical">
-            <Resizable.Pane defaultSize={42} minSize={20}>
-              <div className={styles.panel}>
-                <div className={styles.panelBody}>
-                  <RequestOptionTabs />
-                </div>
-              </div>
-            </Resizable.Pane>
+        {/* Collapsible headers/body — collapsed by default to keep it compact */}
+        <RequestOptionsStrip resourceType={resourceType} />
 
-            <Resizable.Handle />
-
-            <Resizable.Pane defaultSize={58} minSize={20}>
-              <div className={styles.panel}>
-                <Collapse in={inspectorOpened}>
-                  <section className={styles.inspectorPanel}>
-                    <QueryInspector
-                      ast={inspectorAst}
-                      diagnostics={inspectorDiagnostics}
-                      metadata={inspectorMetadata}
-                      response={
-                        sendMutation.data
-                          ? {
-                              status: sendMutation.data.status,
-                              statusText: sendMutation.data.statusText,
-                              durationMs: sendMutation.data.durationMs,
-                              body: sendMutation.data.body,
-                              requestPath: sendMutation.data.requestPath,
-                            }
-                          : undefined
+        {/* Response — the primary surface, fills all remaining space */}
+        <div className={styles.responsePanel}>
+          <Collapse in={inspectorOpened}>
+            <section className={styles.inspectorPanel}>
+              <QueryInspector
+                ast={inspectorAst}
+                diagnostics={inspectorDiagnostics}
+                metadata={inspectorMetadata}
+                response={
+                  sendMutation.data
+                    ? {
+                        status: sendMutation.data.status,
+                        statusText: sendMutation.data.statusText,
+                        durationMs: sendMutation.data.durationMs,
+                        body: sendMutation.data.body,
+                        requestPath: sendMutation.data.requestPath,
                       }
-                    />
-                  </section>
-                </Collapse>
+                    : undefined
+                }
+              />
+            </section>
+          </Collapse>
 
-                {hasResponse ? (
-                  <div className={styles.responseBody}>
-                    <ResponseViewer
-                      response={sendMutation.data}
-                      isLoading={sendMutation.isPending}
-                    />
-                  </div>
-                ) : (
-                  <div className={styles.emptyResponse}>
-                    <Inbox size={32} className={styles.emptyIcon} />
-                    <Text variant="body-1">No response yet</Text>
-                    <Text variant="body-2" color="secondary">
-                      Build a request and press <span style={{ fontWeight: 600 }}>⌘ Enter</span> to
-                      run it.
-                    </Text>
-                  </div>
-                )}
-              </div>
-            </Resizable.Pane>
-          </Resizable.Group>
+          {hasResponse ? (
+            <div className={styles.responseBody}>
+              <ResponseViewer response={sendMutation.data} isLoading={sendMutation.isPending} />
+            </div>
+          ) : (
+            <div className={styles.emptyResponse}>
+              <Inbox size={30} className={styles.emptyIcon} />
+              <Text variant="body-1">No response yet</Text>
+              <Text variant="body-2" color="secondary">
+                Build a request and press <span style={{ fontWeight: 600 }}>⌘ Enter</span> to run
+                it.
+              </Text>
+            </div>
+          )}
         </div>
       </div>
 
