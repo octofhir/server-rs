@@ -9,6 +9,7 @@ members = [
     "crates/octofhir-cql-service",
     "crates/octofhir-db-postgres",
     "crates/octofhir-graphql",
+    "crates/octofhir-notebook",
     "crates/octofhir-notifications",
     "crates/octofhir-search",
     "crates/octofhir-server",

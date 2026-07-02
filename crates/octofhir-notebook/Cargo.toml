@@ -1,0 +1,10 @@
+[package]
+name = "octofhir-notebook"
+version = "0.0.1"
+edition = "2021"
+description = "OctoFHIR Notebook (.fhirnb) model + import/export converters"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

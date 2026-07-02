@@ -3,6 +3,7 @@
 // See docs/ui-notebooks-plan.md §5, §8d.
 
 import type { Cell, Output, Scope } from "./notebook";
+import { runPipeline } from "./pipeline";
 
 const TOKEN = /\$\{([a-zA-Z_][\w.[\]]*)\}/g;
 
@@ -117,6 +118,32 @@ function parseSofParams(params: unknown): Output {
   };
 }
 
+/** Decode a $cql Parameters response into a json (library) or value (expression) Output. */
+function parseCqlParams(params: unknown): Output {
+  const p = params as { parameter?: Array<Record<string, unknown>> };
+  const parts = p.parameter ?? [];
+  const tryJson = (s: string): unknown => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return s;
+    }
+  };
+  const result = parts.find((x) => x.name === "result");
+  if (Array.isArray(result?.part)) {
+    const defines: Record<string, unknown> = {};
+    for (const part of result.part as Array<Record<string, unknown>>) {
+      if (part.valueString !== undefined)
+        defines[String(part.name)] = tryJson(String(part.valueString));
+    }
+    return { kind: "json", data: defines };
+  }
+  const ret = parts.find((x) => x.name === "return")?.valueString;
+  return { kind: "value", data: [ret !== undefined ? tryJson(String(ret)) : null] };
+}
+
+const CQL_LIBRARY = /(^|\n)\s*(library|using|define)\b/;
+
 /** Run a single cell against the live scope. Returns one Output. */
 export async function runCell(cell: Cell, scope: Scope): Promise<Output> {
   try {
@@ -167,6 +194,91 @@ export async function runCell(cell: Cell, scope: Scope): Promise<Output> {
           ],
         };
         return parseSofParams(await postJson("/fhir/ViewDefinition/$run", body));
+      }
+
+      case "cql": {
+        const src = interpolate(cell.source, scope);
+        const isLib = CQL_LIBRARY.test(src);
+        const parameter: Array<Record<string, unknown>> = [
+          isLib ? { name: "library", valueString: src } : { name: "expression", valueString: src },
+        ];
+        if (cell.config?.context) {
+          parameter.push({ name: "context", valueString: cell.config.context });
+        }
+        const body = { resourceType: "Parameters", parameter };
+        return parseCqlParams(await postJson("/fhir/$cql", body));
+      }
+
+      case "graphql": {
+        const res = await fetch("/$graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            query: interpolate(cell.source, scope),
+            variables: deepInterpolate(cell.config?.variables ?? {}, scope),
+          }),
+        });
+        const json = (await res.json()) as { data?: unknown; errors?: Array<{ message: string }> };
+        if (json.errors?.length) {
+          return {
+            kind: "error",
+            severity: "error",
+            message: json.errors.map((e) => e.message).join("; "),
+          };
+        }
+        return { kind: "json", data: json.data };
+      }
+
+      case "rest": {
+        const method = cell.source.method;
+        const rawUrl = interpolate(cell.source.url, scope);
+        const url = rawUrl.startsWith("http")
+          ? rawUrl
+          : `/fhir${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`;
+        const init: RequestInit = {
+          method,
+          credentials: "include",
+          headers: { Accept: "application/fhir+json", ...(cell.source.headers ?? {}) },
+        };
+        if (method !== "GET" && cell.source.body != null) {
+          (init.headers as Record<string, string>)["Content-Type"] = "application/fhir+json";
+          init.body =
+            typeof cell.source.body === "string"
+              ? interpolate(cell.source.body, scope)
+              : JSON.stringify(deepInterpolate(cell.source.body, scope));
+        }
+        const res = await fetch(url, init);
+        const data = await res.json();
+        if (!res.ok) {
+          return { kind: "error", severity: "error", message: `HTTP ${res.status}`, outcome: data };
+        }
+        const isBundleOrResource =
+          data && typeof data === "object" && "resourceType" in (data as Record<string, unknown>);
+        return isBundleOrResource ? { kind: "bundle", data } : { kind: "json", data };
+      }
+
+      case "pipeline": {
+        const t0 = performance.now();
+        const input = scope[cell.source.input];
+        if (!input || typeof input !== "object" || !("rows" in input)) {
+          return errOut(`Pipeline input "${cell.source.input || "?"}" has no table data.`);
+        }
+        const result = runPipeline(
+          input as { columns: string[]; rows: unknown[][] },
+          cell.source.steps,
+          scope
+        );
+        return {
+          kind: "table",
+          columns: result.columns,
+          rows: result.rows,
+          meta: {
+            rowCount: result.rows.length,
+            executionTimeMs: Math.round(performance.now() - t0),
+            truncated: false,
+          },
+        };
       }
 
       case "chart": {

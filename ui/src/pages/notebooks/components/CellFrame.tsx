@@ -1,6 +1,16 @@
-import { ActionIcon, Select, TextInput, Tooltip } from "@octofhir/ui-kit";
-import { ChevronDown, ChevronRight, Copy, MoveDown, MoveUp, Play, Trash2 } from "lucide-react";
-import type { Cell, CellStatus, CellType, Output, Scope } from "../model/notebook";
+import { ActionIcon, Menu, Select, TextInput, Tooltip } from "@octofhir/ui-kit";
+import {
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  MoreVertical,
+  MoveDown,
+  MoveUp,
+  Play,
+  SkipForward,
+  Trash2,
+} from "lucide-react";
+import type { Cell, CellStatus, CellType, Output, Scope, Variable } from "../model/notebook";
 import classes from "../NotebookEditor.module.css";
 import { CellEditor } from "./CellEditor";
 import { CellOutput } from "./CellOutput";
@@ -18,9 +28,20 @@ const TYPE_LABELS: Record<CellType, string> = {
   input: "Input",
 };
 
-const TYPE_OPTIONS = (["markdown", "fhirpath", "sql", "sql-on-fhir", "chart"] as CellType[]).map(
-  (t) => ({ value: t, label: TYPE_LABELS[t] })
-);
+const TYPE_OPTIONS = (
+  [
+    "markdown",
+    "fhirpath",
+    "sql",
+    "sql-on-fhir",
+    "cql",
+    "graphql",
+    "rest",
+    "pipeline",
+    "chart",
+    "input",
+  ] as CellType[]
+).map((t) => ({ value: t, label: TYPE_LABELS[t] }));
 
 const STATUS_CLASS: Record<CellStatus, string> = {
   idle: classes.dotIdle,
@@ -34,12 +55,14 @@ interface Props {
   cell: Cell;
   status: CellStatus;
   scope: Scope;
-  namedCells: { id: string; label: string }[];
+  namedCells: { id: string; name: string; label: string }[];
+  variables: Variable[];
   isFirst: boolean;
   isLast: boolean;
   onChange: (next: Cell) => void;
   onChangeType: (type: CellType) => void;
   onRun: () => void;
+  onRunBelow: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
   onMove: (dir: -1 | 1) => void;
@@ -51,11 +74,13 @@ export function CellFrame({
   status,
   scope,
   namedCells,
+  variables,
   isFirst,
   isLast,
   onChange,
   onChangeType,
   onRun,
+  onRunBelow,
   onDelete,
   onDuplicate,
   onMove,
@@ -63,7 +88,7 @@ export function CellFrame({
 }: Props) {
   const collapsed = cell.collapsed ?? false;
   const outputs: Output[] = cell.outputs ?? [];
-  const isMarkdown = cell.type === "markdown";
+  const noRun = cell.type === "markdown" || cell.type === "input" || cell.type === "chart";
 
   return (
     <div className={`${classes.cell} ${status === "error" ? classes.cellError : ""}`}>
@@ -87,22 +112,44 @@ export function CellFrame({
             value={cell.type}
             onChange={(v) => v && onChangeType(v as CellType)}
             size="sm"
+            className={classes.typeSelect}
           />
           <TextInput
             value={cell.name ?? ""}
             onChange={(v) => onChange({ ...cell, name: (v as string) || undefined } as Cell)}
-            placeholder="name (bind output)"
+            placeholder="name → variable"
             size="sm"
             className={classes.nameInput}
           />
           <span className={classes.toolbarSpacer} />
-          {!isMarkdown && (
+          {!noRun && (
             <Tooltip label="Run (Ctrl/⌘+Enter)">
               <ActionIcon variant="subtle" onClick={onRun} aria-label="Run">
                 <Play size={15} />
               </ActionIcon>
             </Tooltip>
           )}
+          <Menu position="bottom-end">
+            <Menu.Target>
+              <ActionIcon variant="subtle" aria-label="More">
+                <MoreVertical size={15} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item leftSection={<Play size={14} />} disabled={noRun} onClick={onRun}>
+                Run this cell
+              </Menu.Item>
+              <Menu.Item leftSection={<SkipForward size={14} />} onClick={onRunBelow}>
+                Run all below
+              </Menu.Item>
+              <Menu.Item leftSection={<Copy size={14} />} onClick={onDuplicate}>
+                Duplicate
+              </Menu.Item>
+              <Menu.Item leftSection={<Trash2 size={14} />} onClick={onDelete}>
+                Delete
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
           <Tooltip label="Move up">
             <ActionIcon
               variant="subtle"
@@ -137,10 +184,17 @@ export function CellFrame({
 
         {!collapsed && (
           <>
-            <div className={isMarkdown ? undefined : classes.cellEditor}>
-              <CellEditor cell={cell} onChange={onChange} onRun={onRun} namedCells={namedCells} />
+            <div className={noRun ? undefined : classes.cellEditor}>
+              <CellEditor
+                cell={cell}
+                onChange={onChange}
+                onRun={onRun}
+                namedCells={namedCells}
+                variables={variables}
+                scope={scope}
+              />
             </div>
-            {!isMarkdown && outputs.length > 0 && (
+            {!noRun && outputs.length > 0 && (
               <div className={classes.cellOutput}>
                 {outputs.map((o, i) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: outputs are positional

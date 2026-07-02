@@ -110,8 +110,11 @@
 .input::-ms-reveal { display: none; }
 
 /* Block-level wrapper for textarea — grows with content, top-aligned affixes. */
-.block {
+/* Multiline (textarea) wrapper must grow with content — override the fixed
+   height from .wrapper[data-size] by matching its specificity here. */
+.wrapper.block {
     height: auto;
+    min-height: 32px;
     align-items: stretch;
 }
 .textarea {

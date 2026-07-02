@@ -1,129 +1,129 @@
 .root {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    gap: 16px;
-    align-items: stretch;
-    width: 100%;
-    min-height: 0;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  align-items: stretch;
+  width: 100%;
+  min-height: 0;
 }
 
 .controls {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    border: 1px solid var(--octo-border-subtle);
-    border-radius: 12px;
-    background: var(--octo-surface-2);
-    overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 12px;
+  background: var(--octo-surface-2);
+  overflow: hidden;
 }
 
 .tabBody {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 14px;
-    overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  overflow-y: auto;
 }
 
 .preview {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    padding: 12px;
-    border: 1px solid var(--octo-border-subtle);
-    border-radius: 12px;
-    background: var(--octo-surface-1);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 12px;
+  background: var(--octo-surface-1);
 }
 
 .field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--octo-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--octo-text-secondary);
 }
 
 .fieldList {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-height: 220px;
-    overflow-y: auto;
-    padding: 6px;
-    border: 1px solid var(--octo-border-subtle);
-    border-radius: 8px;
-    background: var(--octo-surface-1);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 8px;
+  background: var(--octo-surface-1);
 }
 
 .fieldRow {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 8px;
-    align-items: center;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .fieldMeta {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .typeChip {
-    flex: none;
-    padding: 0 5px;
-    font-size: 0.625rem;
-    font-weight: 600;
-    line-height: 1.5;
-    border-radius: 4px;
-    color: var(--octo-text-muted);
-    background: var(--octo-surface-3);
-    text-transform: uppercase;
+  flex: none;
+  padding: 0 5px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1.5;
+  border-radius: 4px;
+  color: var(--octo-text-muted);
+  background: var(--octo-surface-3);
+  text-transform: uppercase;
 }
 
 .typeChipArray {
-    color: var(--octo-accent-primary);
-    background: var(--octo-accent-primary-bg);
+  color: var(--octo-accent-primary);
+  background: var(--octo-accent-primary-bg);
 }
 
 .source {
-    font-size: 0.6875rem;
-    color: var(--octo-text-muted);
+  font-size: 0.6875rem;
+  color: var(--octo-text-muted);
 }
 
 .switches {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .advanced {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 6px;
-    align-items: end;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: end;
 }
 
 .twoCol {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-    margin-top: 6px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .empty {
-    display: flex;
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    min-height: 200px;
-    color: var(--octo-text-muted);
-    font-size: 0.875rem;
-    text-align: center;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--octo-text-muted);
+  font-size: 0.875rem;
+  text-align: center;
 }

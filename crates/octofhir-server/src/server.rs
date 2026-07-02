@@ -1869,6 +1869,19 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             "/api/$sql",
             axum::routing::post(crate::operations::sql::sql_operation),
         )
+        // Notebook import/export (CRUD via generic /fhir/Notebook routes)
+        .route(
+            "/api/notebooks/import",
+            axum::routing::post(crate::notebook_api::notebook_import),
+        )
+        .route(
+            "/api/notebooks/{id}/export",
+            get(crate::notebook_api::notebook_export),
+        )
+        .route(
+            "/api/notebooks/{id}/run",
+            axum::routing::post(crate::notebook_run::notebook_run),
+        )
         // DB Console API endpoints
         .route(
             "/api/db-console/history",

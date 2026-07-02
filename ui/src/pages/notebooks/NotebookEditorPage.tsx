@@ -1,31 +1,49 @@
-import { Button, Spin } from "@octofhir/ui-kit";
-import { ArrowLeft, Plus, Save } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button, Menu, SegmentedRadioGroup, Spin, Switch, Tooltip } from "@octofhir/ui-kit";
+import { useUnit } from "effector-react";
+import { ArrowLeft, Download, Plus, Save, Sliders, Zap } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
-import { readNotebook, saveNotebook } from "./api/notebookApi";
+import { type ExportFormat, exportNotebook, readNotebook, saveNotebook } from "./api/notebookApi";
 import { CellFrame } from "./components/CellFrame";
-import { runCell } from "./model/execution";
+import { DataflowGraph } from "./components/DataflowGraph";
+import { VariablesPanel } from "./components/VariablesPanel";
+import { type CellType, emptyNotebook, stripOutputs } from "./model/notebook";
 import {
-  type Cell,
-  type CellStatus,
-  type CellType,
-  defaultCell,
-  emptyNotebook,
-  type Notebook,
-  newCellId,
-  type Scope,
-} from "./model/notebook";
+  $namedCells,
+  $notebook,
+  $scope,
+  $statuses,
+  cellAdded,
+  cellChanged,
+  cellCollapseToggled,
+  cellDeleted,
+  cellDuplicated,
+  cellMoved,
+  cellTypeChanged,
+  notebookLoaded,
+  runAll,
+  runBelow,
+  runOne,
+  runStale,
+  titleChanged,
+} from "./model/store";
 import classes from "./NotebookEditor.module.css";
 
 export function NotebookEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const [notebook, setNotebook] = useState<Notebook | null>(null);
-  const [statuses, setStatuses] = useState<Record<string, CellStatus>>({});
+  const notebook = useUnit($notebook);
+  const statuses = useUnit($statuses);
+  const scope = useUnit($scope);
+  const namedCells = useUnit($namedCells);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [varsOpen, setVarsOpen] = useState(false);
+  const [clearOnSave, setClearOnSave] = useState(false);
+  const [view, setView] = useState<"cells" | "graph">("cells");
 
   useEffect(() => {
     let alive = true;
@@ -34,9 +52,9 @@ export function NotebookEditorPage() {
       try {
         if (id && id !== "new") {
           const nb = await readNotebook(id);
-          if (alive) setNotebook(nb);
+          if (alive) notebookLoaded(nb);
         } else if (alive) {
-          setNotebook(emptyNotebook());
+          notebookLoaded(emptyNotebook());
         }
       } finally {
         if (alive) setLoading(false);
@@ -47,131 +65,18 @@ export function NotebookEditorPage() {
     };
   }, [id]);
 
-  // Reactive scope: variables + named-cell outputs.
-  const scope: Scope = useMemo(() => {
-    const s: Scope = {};
-    for (const v of notebook?.variables ?? []) s[v.name] = v.value;
-    for (const c of notebook?.cells ?? []) {
-      if (!c.name || !c.outputs?.length) continue;
-      const out = c.outputs[0];
-      if (out.kind === "table") s[c.name] = { columns: out.columns, rows: out.rows };
-      else if (out.kind === "value") s[c.name] = out.data;
-    }
-    return s;
-  }, [notebook]);
-
-  const namedCells = useMemo(
-    () =>
-      (notebook?.cells ?? [])
-        .filter((c) => c.name && (c.type === "sql" || c.type === "sql-on-fhir"))
-        .map((c) => ({ id: c.id, label: `${c.name} (${c.type})` })),
-    [notebook]
-  );
-
-  const patchCell = useCallback((cellId: string, next: Cell) => {
-    setNotebook((nb) =>
-      nb ? { ...nb, cells: nb.cells.map((c) => (c.id === cellId ? next : c)) } : nb
-    );
-  }, []);
-
-  const handleRun = useCallback(
-    async (cell: Cell) => {
-      setStatuses((s) => ({ ...s, [cell.id]: "running" }));
-      const output = await runCell(cell, scope);
-      setStatuses((s) => ({ ...s, [cell.id]: output.kind === "error" ? "error" : "ok" }));
-      setNotebook((nb) =>
-        nb
-          ? {
-              ...nb,
-              cells: nb.cells.map((c) =>
-                c.id === cell.id
-                  ? { ...c, outputs: [output], execCount: (c.execCount ?? 0) + 1 }
-                  : c
-              ),
-            }
-          : nb
-      );
-    },
-    [scope]
-  );
-
-  const runAll = useCallback(async () => {
-    if (!notebook) return;
-    for (const c of notebook.cells) {
-      if (c.type !== "markdown") await handleRun(c);
-    }
-  }, [notebook, handleRun]);
-
-  const addCell = useCallback((type: CellType = "markdown") => {
-    setNotebook((nb) => (nb ? { ...nb, cells: [...nb.cells, defaultCell(type)] } : nb));
-  }, []);
-
-  const changeType = useCallback((cellId: string, type: CellType) => {
-    setNotebook((nb) => {
-      if (!nb) return nb;
-      return {
-        ...nb,
-        cells: nb.cells.map((c) => {
-          if (c.id !== cellId) return c;
-          const fresh = defaultCell(type);
-          return { ...fresh, id: c.id, name: c.name };
-        }),
-      };
-    });
-  }, []);
-
-  const moveCell = useCallback((cellId: string, dir: -1 | 1) => {
-    setNotebook((nb) => {
-      if (!nb) return nb;
-      const i = nb.cells.findIndex((c) => c.id === cellId);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= nb.cells.length) return nb;
-      const cells = [...nb.cells];
-      [cells[i], cells[j]] = [cells[j], cells[i]];
-      return { ...nb, cells };
-    });
-  }, []);
-
-  const duplicateCell = useCallback((cellId: string) => {
-    setNotebook((nb) => {
-      if (!nb) return nb;
-      const i = nb.cells.findIndex((c) => c.id === cellId);
-      if (i < 0) return nb;
-      const copy: Cell = { ...nb.cells[i], id: newCellId(), name: undefined, outputs: undefined };
-      const cells = [...nb.cells];
-      cells.splice(i + 1, 0, copy);
-      return { ...nb, cells };
-    });
-  }, []);
-
-  const deleteCell = useCallback((cellId: string) => {
-    setNotebook((nb) => (nb ? { ...nb, cells: nb.cells.filter((c) => c.id !== cellId) } : nb));
-  }, []);
-
-  const toggleCollapse = useCallback((cellId: string) => {
-    setNotebook((nb) =>
-      nb
-        ? {
-            ...nb,
-            cells: nb.cells.map((c) =>
-              c.id === cellId ? { ...c, collapsed: !(c.collapsed ?? false) } : c
-            ),
-          }
-        : nb
-    );
-  }, []);
-
   const handleSave = useCallback(async () => {
-    if (!notebook) return;
+    const nb = $notebook.getState();
+    if (!nb) return;
     setSaving(true);
     try {
-      const saved = await saveNotebook(notebook);
-      setNotebook(saved);
+      const saved = await saveNotebook(clearOnSave ? stripOutputs(nb) : nb);
+      notebookLoaded(saved);
       if (saved.id && (!id || id === "new")) navigate(`/notebooks/${saved.id}`, { replace: true });
     } finally {
       setSaving(false);
     }
-  }, [notebook, id, navigate]);
+  }, [clearOnSave, id, navigate]);
 
   if (loading || !notebook) {
     return (
@@ -180,6 +85,31 @@ export function NotebookEditorPage() {
       </div>
     );
   }
+
+  const addButtons: CellType[] = [
+    "markdown",
+    "fhirpath",
+    "sql",
+    "sql-on-fhir",
+    "cql",
+    "graphql",
+    "rest",
+    "pipeline",
+    "chart",
+    "input",
+  ];
+  const addLabels: Record<CellType, string> = {
+    markdown: "Markdown",
+    fhirpath: "FHIRPath",
+    sql: "SQL",
+    "sql-on-fhir": "SQL-on-FHIR",
+    chart: "Chart",
+    input: "Input",
+    cql: "CQL",
+    graphql: "GraphQL",
+    rest: "REST",
+    pipeline: "Pipeline",
+  };
 
   return (
     <ToolWorkspaceLayout
@@ -195,93 +125,132 @@ export function NotebookEditorPage() {
           >
             Notebooks
           </Button>
-          <Button variant="light" onClick={runAll}>
+          <Tooltip label="Variables & inputs">
+            <Button
+              variant="subtle"
+              leftSection={<Sliders size={15} />}
+              onClick={() => setVarsOpen(true)}
+            >
+              Variables
+            </Button>
+          </Tooltip>
+          <Button variant="light" onClick={() => runStale()}>
+            Run stale
+          </Button>
+          <Button variant="light" leftSection={<Zap size={15} />} onClick={() => runAll()}>
             Run all
           </Button>
           <Button
             variant="light"
             leftSection={<Plus size={15} />}
-            onClick={() => addCell("markdown")}
+            onClick={() => cellAdded("markdown")}
           >
             Add cell
           </Button>
+          {notebook.id && (
+            <Menu position="bottom-end">
+              <Menu.Target>
+                <Button variant="subtle" leftSection={<Download size={15} />}>
+                  Export
+                </Button>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {(
+                  [
+                    ["fhirnb", "Notebook (.fhirnb.json)"],
+                    ["ipynb", "Jupyter (.ipynb)"],
+                    ["bundle", "FHIR Bundle"],
+                    ["markdown", "Markdown"],
+                    ["html", "HTML report"],
+                  ] as [ExportFormat, string][]
+                ).map(([fmt, label]) => (
+                  <Menu.Item
+                    key={fmt}
+                    onClick={() => notebook.id && exportNotebook(notebook.id, fmt)}
+                  >
+                    {label}
+                  </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
+          )}
           <Button leftSection={<Save size={15} />} loading={saving} onClick={handleSave}>
             Save
           </Button>
         </div>
       }
     >
+      <VariablesPanel opened={varsOpen} onClose={() => setVarsOpen(false)} />
+
       <div className={classes.editorRoot}>
         <div className={classes.titleRow}>
           <input
             className={classes.titleInput}
             value={notebook.title}
-            onChange={(e) => setNotebook({ ...notebook, title: e.currentTarget.value })}
+            onChange={(e) => titleChanged(e.currentTarget.value)}
             placeholder="Notebook title"
+          />
+          <SegmentedRadioGroup
+            size="sm"
+            value={view}
+            onChange={(v) => setView(v as "cells" | "graph")}
+            options={[
+              { value: "cells", label: "Notebook" },
+              { value: "graph", label: "Graph" },
+            ]}
+          />
+          <Switch
+            size="sm"
+            checked={clearOnSave}
+            onChange={setClearOnSave}
+            label="Clear outputs on save"
           />
         </div>
 
-        <div className={classes.scrollArea}>
-          <div className={classes.cellStack}>
-            {notebook.cells.map((cell, i) => (
-              <CellFrame
-                key={cell.id}
-                cell={cell}
-                status={statuses[cell.id] ?? "idle"}
-                scope={scope}
-                namedCells={namedCells}
-                isFirst={i === 0}
-                isLast={i === notebook.cells.length - 1}
-                onChange={(next) => patchCell(cell.id, next)}
-                onChangeType={(t) => changeType(cell.id, t)}
-                onRun={() => handleRun(cell)}
-                onDelete={() => deleteCell(cell.id)}
-                onDuplicate={() => duplicateCell(cell.id)}
-                onMove={(d) => moveCell(cell.id, d)}
-                onToggleCollapse={() => toggleCollapse(cell.id)}
-              />
-            ))}
+        {view === "graph" ? (
+          <div className={classes.scrollArea}>
+            <DataflowGraph notebook={notebook} statuses={statuses} />
           </div>
+        ) : (
+          <div className={classes.scrollArea}>
+            <div className={classes.cellStack}>
+              {notebook.cells.map((cell, i) => (
+                <CellFrame
+                  key={cell.id}
+                  cell={cell}
+                  status={statuses[cell.id] ?? "idle"}
+                  scope={scope}
+                  namedCells={namedCells}
+                  variables={notebook.variables ?? []}
+                  isFirst={i === 0}
+                  isLast={i === notebook.cells.length - 1}
+                  onChange={(next) => cellChanged({ id: cell.id, next })}
+                  onChangeType={(t) => cellTypeChanged({ id: cell.id, type: t })}
+                  onRun={() => runOne(cell)}
+                  onRunBelow={() => runBelow(cell.id)}
+                  onDelete={() => cellDeleted(cell.id)}
+                  onDuplicate={() => cellDuplicated(cell.id)}
+                  onMove={(d) => cellMoved({ id: cell.id, dir: d })}
+                  onToggleCollapse={() => cellCollapseToggled(cell.id)}
+                />
+              ))}
+            </div>
 
-          <div className={classes.addRow}>
-            <span className={classes.addRowLabel}>Add cell</span>
-            <Button
-              variant="subtle"
-              leftSection={<Plus size={15} />}
-              onClick={() => addCell("markdown")}
-            >
-              Markdown
-            </Button>
-            <Button
-              variant="subtle"
-              leftSection={<Plus size={15} />}
-              onClick={() => addCell("fhirpath")}
-            >
-              FHIRPath
-            </Button>
-            <Button
-              variant="subtle"
-              leftSection={<Plus size={15} />}
-              onClick={() => addCell("sql")}
-            >
-              SQL
-            </Button>
-            <Button
-              variant="subtle"
-              leftSection={<Plus size={15} />}
-              onClick={() => addCell("sql-on-fhir")}
-            >
-              SQL-on-FHIR
-            </Button>
-            <Button
-              variant="subtle"
-              leftSection={<Plus size={15} />}
-              onClick={() => addCell("chart")}
-            >
-              Chart
-            </Button>
+            <div className={classes.addRow}>
+              <span className={classes.addRowLabel}>Add cell</span>
+              {addButtons.map((t) => (
+                <Button
+                  key={t}
+                  variant="subtle"
+                  leftSection={<Plus size={15} />}
+                  onClick={() => cellAdded(t)}
+                >
+                  {addLabels[t]}
+                </Button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </ToolWorkspaceLayout>
   );

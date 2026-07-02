@@ -68,3 +68,50 @@ export async function saveNotebook(nb: Notebook): Promise<Notebook> {
 export async function deleteNotebook(id: string): Promise<void> {
   await fhirClient.delete("Notebook", id);
 }
+
+export type ExportFormat = "fhirnb" | "ipynb" | "bundle" | "markdown" | "html";
+export type ImportFormat = "fhirnb" | "ipynb" | "bundle";
+
+/** Download a saved notebook in the given format via the server converter. */
+export async function exportNotebook(id: string, format: ExportFormat): Promise<void> {
+  const res = await fetch(`/api/notebooks/${id}/export?format=${format}`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Export failed: HTTP ${res.status}`);
+  const blob = await res.blob();
+  const cd = res.headers.get("content-disposition") ?? "";
+  const filename = /filename="([^"]+)"/.exec(cd)?.[1] ?? `notebook.${format}`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Execute the whole notebook server-side (headless) and return it with outputs. */
+export async function runNotebookHeadless(id: string): Promise<Notebook> {
+  const res = await fetch(`/api/notebooks/${id}/run`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Run failed: HTTP ${res.status}`);
+  return (await res.json()) as Notebook;
+}
+
+/** Convert an uploaded document (parsed JSON) into a Notebook (server-side). */
+export async function importNotebook(doc: unknown, format: ImportFormat): Promise<Notebook> {
+  const res = await fetch(`/api/notebooks/import?format=${format}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(doc),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Import failed: HTTP ${res.status} ${text}`);
+  }
+  return (await res.json()) as Notebook;
+}

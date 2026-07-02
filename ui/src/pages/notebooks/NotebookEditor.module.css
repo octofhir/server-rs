@@ -22,12 +22,16 @@
 
 .titleRow {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-md);
   padding: 0 0 var(--octo-spacing-md);
   border-bottom: 1px solid var(--octo-border-subtle);
   margin-bottom: var(--octo-spacing-lg);
 }
 .titleInput {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: none;
   background: transparent;
   font-size: 24px;
@@ -165,8 +169,13 @@
   gap: var(--octo-spacing-xs);
   margin-bottom: var(--octo-spacing-sm);
 }
+.typeSelect {
+  width: 150px;
+  flex-shrink: 0;
+}
 .nameInput {
-  width: 160px;
+  width: 200px;
+  flex-shrink: 0;
 }
 .toolbarSpacer {
   flex: 1;
@@ -270,6 +279,273 @@
   font-size: 12px;
   color: var(--octo-text-muted);
   font-style: italic;
+}
+
+/* ── FHIRPath editor + optional context ── */
+.fhirpathEditor {
+  display: flex;
+  flex-direction: column;
+}
+.fhirpathCtx {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-sm);
+  padding: var(--octo-spacing-xs) var(--octo-spacing-sm);
+  border-top: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-1);
+}
+.ctxLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: var(--octo-text-muted);
+  flex-shrink: 0;
+}
+.ctxInput {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── REST / GraphQL editors ── */
+.restEditor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-xs);
+  padding: var(--octo-spacing-sm);
+}
+.restBar {
+  display: flex;
+  gap: var(--octo-spacing-xs);
+}
+.restMethod {
+  width: 110px;
+  flex-shrink: 0;
+}
+.restUrl {
+  flex: 1;
+  min-width: 0;
+}
+.codeArea {
+  width: 100%;
+  font-family: var(--octo-typography-mono);
+  font-size: 13px;
+}
+
+/* ── Chart cell ── */
+.chartCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+  padding: var(--octo-spacing-sm);
+}
+.chartInputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-sm);
+}
+.chartInputSel {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+}
+.chartEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  padding: var(--octo-spacing-lg);
+  text-align: center;
+  font-size: 13px;
+  color: var(--octo-text-muted);
+  border: 1px dashed var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-1);
+}
+
+/* ── Dataflow graph tab ── */
+.graphTab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-lg);
+  background: var(--octo-surface-1);
+  padding: var(--octo-spacing-md);
+}
+.graphHint {
+  font-size: 13px;
+  color: var(--octo-text-muted);
+}
+
+/* ── Pipeline cell ── */
+.pipeEditor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+  padding: var(--octo-spacing-sm);
+}
+.pipeCols {
+  font-family: var(--octo-typography-mono);
+  font-size: 11px;
+  color: var(--octo-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+.pipeGuide {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--octo-text-secondary);
+  padding: var(--octo-spacing-sm) var(--octo-spacing-md);
+  border: 1px dashed var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-1);
+}
+.pipePreview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-xs);
+  padding: var(--octo-spacing-sm);
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-1);
+}
+.pipePreviewHead {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--octo-text-muted);
+  font-family: var(--octo-typography-mono);
+}
+.pipeChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pipeChip {
+  font-family: var(--octo-typography-mono);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: var(--octo-radius-sm);
+  border: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-2);
+  color: var(--octo-accent-primary);
+  cursor: pointer;
+}
+.pipeChip:hover {
+  border-color: var(--octo-accent-primary);
+}
+.pipeMiniWrap {
+  overflow-x: auto;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.pipeMini {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+.pipeMini th,
+.pipeMini td {
+  border: 1px solid var(--octo-border-subtle);
+  padding: 2px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+.pipeMini th {
+  background: var(--octo-surface-2);
+  font-weight: 600;
+  color: var(--octo-text-secondary);
+}
+
+.pipeStep {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-sm);
+  padding: var(--octo-spacing-xs) var(--octo-spacing-sm);
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-2);
+}
+.pipeOp {
+  flex-shrink: 0;
+  width: 72px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--octo-accent-primary);
+}
+.pipeFields {
+  flex: 1;
+  min-width: 0;
+}
+.pipeTwo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--octo-spacing-xs);
+}
+.pipeStepActions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+.pipeAdd {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px dashed var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  background: transparent;
+  color: var(--octo-text-secondary);
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pipeAdd:hover {
+  border-color: var(--octo-border);
+  background: var(--octo-surface-2);
+}
+
+/* ── Variables panel ── */
+.varsPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-md);
+}
+.varRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-xs);
+  padding: var(--octo-spacing-sm);
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-2);
+}
+.varRowHead {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-xs);
+}
+.varName {
+  flex: 1;
+  min-width: 0;
+}
+.varKind {
+  width: 116px;
+  flex-shrink: 0;
+}
+.varRowBody {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-xs);
+}
+.varWidgetSel {
+  width: 110px;
+  flex-shrink: 0;
 }
 
 /* ── Add-cell row ── */

@@ -4313,6 +4313,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "octofhir-notebook"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "octofhir-notifications"
 version = "0.0.1"
 dependencies = [
@@ -4417,6 +4426,7 @@ dependencies = [
  "octofhir-fhirpath",
  "octofhir-fhirschema",
  "octofhir-graphql",
+ "octofhir-notebook",
  "octofhir-notifications",
  "octofhir-search",
  "octofhir-sof",

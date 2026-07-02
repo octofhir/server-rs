@@ -29,6 +29,8 @@ pub mod mapping;
 pub mod metrics;
 pub mod middleware;
 pub mod model_provider;
+pub mod notebook_api;
+pub mod notebook_run;
 pub mod oauth;
 pub mod observability;
 pub mod operation_registry;
