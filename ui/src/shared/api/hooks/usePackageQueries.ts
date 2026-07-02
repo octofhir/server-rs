@@ -5,96 +5,97 @@ import type { PackageInstallRequest } from "../types";
 
 // Query keys for cache management
 export const packageKeys = {
-	all: ["packages"] as const,
-	list: () => [...packageKeys.all, "list"] as const,
-	detail: (name: string, version: string) => [...packageKeys.all, "detail", name, version] as const,
-	resources: (name: string, version: string) => [...packageKeys.all, "resources", name, version] as const,
-	resourcesFiltered: (
-		name: string,
-		version: string,
-		params?: { resourceType?: string; limit?: number; offset?: number },
-	) => [...packageKeys.resources(name, version), params] as const,
-	resourceContent: (name: string, version: string, url: string) =>
-		[...packageKeys.all, "resource", name, version, url] as const,
-	fhirSchema: (name: string, version: string, url: string) =>
-		[...packageKeys.all, "fhirschema", name, version, url] as const,
-	lookup: (name: string) => [...packageKeys.all, "lookup", name] as const,
+  all: ["packages"] as const,
+  list: () => [...packageKeys.all, "list"] as const,
+  detail: (name: string, version: string) => [...packageKeys.all, "detail", name, version] as const,
+  resources: (name: string, version: string) =>
+    [...packageKeys.all, "resources", name, version] as const,
+  resourcesFiltered: (
+    name: string,
+    version: string,
+    params?: { resourceType?: string; limit?: number; offset?: number }
+  ) => [...packageKeys.resources(name, version), params] as const,
+  resourceContent: (name: string, version: string, url: string) =>
+    [...packageKeys.all, "resource", name, version, url] as const,
+  fhirSchema: (name: string, version: string, url: string) =>
+    [...packageKeys.all, "fhirschema", name, version, url] as const,
+  lookup: (name: string) => [...packageKeys.all, "lookup", name] as const,
 };
 
 /**
  * Hook to fetch list of installed FHIR packages.
  */
 export function usePackages() {
-	return useQuery({
-		queryKey: packageKeys.list(),
-		queryFn: () => serverApi.getPackages(),
-		staleTime: 1000 * 60 * 5, // 5 minutes
-	});
+  return useQuery({
+    queryKey: packageKeys.list(),
+    queryFn: () => serverApi.getPackages(),
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
 }
 
 /**
  * Hook to fetch details of a specific package.
  */
 export function usePackageDetails(name: string, version: string) {
-	return useQuery({
-		queryKey: packageKeys.detail(name, version),
-		queryFn: () => serverApi.getPackageDetails(name, version),
-		enabled: !!name && !!version,
-		staleTime: 1000 * 60 * 10, // 10 minutes
-	});
+  return useQuery({
+    queryKey: packageKeys.detail(name, version),
+    queryFn: () => serverApi.getPackageDetails(name, version),
+    enabled: !!name && !!version,
+    staleTime: 1000 * 60 * 10, // 10 minutes
+  });
 }
 
 /**
  * Hook to fetch resources in a package with optional filtering.
  */
 export function usePackageResources(
-	name: string,
-	version: string,
-	params?: { resourceType?: string; limit?: number; offset?: number },
+  name: string,
+  version: string,
+  params?: { resourceType?: string; search?: string; limit?: number; offset?: number }
 ) {
-	return useQuery({
-		queryKey: packageKeys.resourcesFiltered(name, version, params),
-		queryFn: () => serverApi.getPackageResources(name, version, params),
-		enabled: !!name && !!version,
-		staleTime: 1000 * 60 * 10, // 10 minutes
-	});
+  return useQuery({
+    queryKey: packageKeys.resourcesFiltered(name, version, params),
+    queryFn: () => serverApi.getPackageResources(name, version, params),
+    enabled: !!name && !!version,
+    staleTime: 1000 * 60 * 10, // 10 minutes
+  });
 }
 
 /**
  * Hook to fetch full content of a specific resource from a package.
  */
 export function usePackageResourceContent(name: string, version: string, resourceUrl: string) {
-	return useQuery({
-		queryKey: packageKeys.resourceContent(name, version, resourceUrl),
-		queryFn: () => serverApi.getPackageResourceContent(name, version, resourceUrl),
-		enabled: !!name && !!version && !!resourceUrl,
-		staleTime: 1000 * 60 * 30, // 30 minutes - resource content rarely changes
-	});
+  return useQuery({
+    queryKey: packageKeys.resourceContent(name, version, resourceUrl),
+    queryFn: () => serverApi.getPackageResourceContent(name, version, resourceUrl),
+    enabled: !!name && !!version && !!resourceUrl,
+    staleTime: 1000 * 60 * 30, // 30 minutes - resource content rarely changes
+  });
 }
 
 /**
  * Hook to fetch FHIRSchema for a resource from a package.
  */
 export function usePackageFhirSchema(name: string, version: string, resourceUrl: string) {
-	return useQuery({
-		queryKey: packageKeys.fhirSchema(name, version, resourceUrl),
-		queryFn: () => serverApi.getPackageFhirSchema(name, version, resourceUrl),
-		enabled: !!name && !!version && !!resourceUrl,
-		staleTime: 1000 * 60 * 60, // 1 hour - schemas are stable
-	});
+  return useQuery({
+    queryKey: packageKeys.fhirSchema(name, version, resourceUrl),
+    queryFn: () => serverApi.getPackageFhirSchema(name, version, resourceUrl),
+    enabled: !!name && !!version && !!resourceUrl,
+    staleTime: 1000 * 60 * 60, // 1 hour - schemas are stable
+  });
 }
 
 /**
  * Hook to lookup available versions for a package from the FHIR registry.
  */
 export function usePackageLookup(name: string) {
-	return useQuery({
-		queryKey: packageKeys.lookup(name),
-		queryFn: () => serverApi.lookupPackage(name),
-		enabled: !!name && name.length >= 3, // Only search when name has at least 3 chars
-		staleTime: 1000 * 60 * 10, // 10 minutes
-		retry: false, // Don't retry on 404 (package not found)
-	});
+  return useQuery({
+    queryKey: packageKeys.lookup(name),
+    queryFn: () => serverApi.lookupPackage(name),
+    enabled: !!name && name.length >= 3, // Only search when name has at least 3 chars
+    staleTime: 1000 * 60 * 10, // 10 minutes
+    retry: false, // Don't retry on 404 (package not found)
+  });
 }
 
 /**
@@ -102,12 +103,12 @@ export function usePackageLookup(name: string) {
  * Supports partial matching (ILIKE) - spaces in query are treated as wildcards.
  */
 export function usePackageSearch(query: string) {
-	return useQuery({
-		queryKey: [...packageKeys.all, "search", query] as const,
-		queryFn: () => serverApi.searchPackages(query),
-		enabled: !!query && query.length >= 2, // Only search when query has at least 2 chars
-		staleTime: 1000 * 60 * 5, // 5 minutes
-	});
+  return useQuery({
+    queryKey: [...packageKeys.all, "search", query] as const,
+    queryFn: () => serverApi.searchPackages(query),
+    enabled: !!query && query.length >= 2, // Only search when query has at least 2 chars
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
 }
 
 /**
@@ -115,17 +116,17 @@ export function usePackageSearch(query: string) {
  * Invalidates package list cache on success.
  */
 export function useInstallPackage() {
-	const queryClient = useQueryClient();
+  const queryClient = useQueryClient();
 
-	return useMutation({
-		mutationFn: (request: PackageInstallRequest) => serverApi.installPackage(request),
-		onSuccess: (data) => {
-			// Invalidate package list to refresh installed packages
-			queryClient.invalidateQueries({ queryKey: packageKeys.list() });
-			// Invalidate lookup for this package to update installed versions
-			queryClient.invalidateQueries({ queryKey: packageKeys.lookup(data.name) });
-		},
-	});
+  return useMutation({
+    mutationFn: (request: PackageInstallRequest) => serverApi.installPackage(request),
+    onSuccess: (data) => {
+      // Invalidate package list to refresh installed packages
+      queryClient.invalidateQueries({ queryKey: packageKeys.list() });
+      // Invalidate lookup for this package to update installed versions
+      queryClient.invalidateQueries({ queryKey: packageKeys.lookup(data.name) });
+    },
+  });
 }
 
 /**
@@ -147,56 +148,56 @@ export function useInstallPackage() {
  * }, [events]);
  */
 export function useInstallPackageWithProgress() {
-	const queryClient = useQueryClient();
-	const [events, setEvents] = useState<import("../types").InstallEvent[]>([]);
-	const [isInstalling, setIsInstalling] = useState(false);
-	const [error, setError] = useState<Error | null>(null);
-	const abortRef = useRef<(() => void) | null>(null);
+  const queryClient = useQueryClient();
+  const [events, setEvents] = useState<import("../types").InstallEvent[]>([]);
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const abortRef = useRef<(() => void) | null>(null);
 
-	const install = useCallback(
-		(request: PackageInstallRequest) => {
-			setEvents([]);
-			setError(null);
-			setIsInstalling(true);
+  const install = useCallback(
+    (request: PackageInstallRequest) => {
+      setEvents([]);
+      setError(null);
+      setIsInstalling(true);
 
-			abortRef.current = serverApi.installPackageWithProgress(
-				request,
-				(event) => {
-					setEvents((prev) => [...prev, event]);
-				},
-				(err) => {
-					setError(err);
-					setIsInstalling(false);
-				},
-				() => {
-					setIsInstalling(false);
-					// Invalidate caches on completion
-					queryClient.invalidateQueries({ queryKey: packageKeys.list() });
-					queryClient.invalidateQueries({ queryKey: packageKeys.lookup(request.name) });
-				},
-			);
-		},
-		[queryClient],
-	);
+      abortRef.current = serverApi.installPackageWithProgress(
+        request,
+        (event) => {
+          setEvents((prev) => [...prev, event]);
+        },
+        (err) => {
+          setError(err);
+          setIsInstalling(false);
+        },
+        () => {
+          setIsInstalling(false);
+          // Invalidate caches on completion
+          queryClient.invalidateQueries({ queryKey: packageKeys.list() });
+          queryClient.invalidateQueries({ queryKey: packageKeys.lookup(request.name) });
+        }
+      );
+    },
+    [queryClient]
+  );
 
-	const abort = useCallback(() => {
-		abortRef.current?.();
-		setIsInstalling(false);
-	}, []);
+  const abort = useCallback(() => {
+    abortRef.current?.();
+    setIsInstalling(false);
+  }, []);
 
-	const reset = useCallback(() => {
-		setEvents([]);
-		setError(null);
-		setIsInstalling(false);
-	}, []);
+  const reset = useCallback(() => {
+    setEvents([]);
+    setError(null);
+    setIsInstalling(false);
+  }, []);
 
-	return {
-		install,
-		abort,
-		reset,
-		events,
-		isInstalling,
-		error,
-		latestEvent: events[events.length - 1] ?? null,
-	};
+  return {
+    install,
+    abort,
+    reset,
+    events,
+    isInstalling,
+    error,
+    latestEvent: events[events.length - 1] ?? null,
+  };
 }

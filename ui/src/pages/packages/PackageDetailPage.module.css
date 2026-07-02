@@ -1,7 +1,7 @@
 .tabStack {
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .filters,
@@ -10,116 +10,244 @@
 .resourceCell,
 .metrics,
 .resourceTypes {
-	display: flex;
-	align-items: center;
-	gap: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .filters,
 .headerActions,
 .metrics,
 .resourceTypes {
-	flex-wrap: wrap;
+  flex-wrap: wrap;
 }
 
 .searchInput {
-	flex: 1 1 280px;
-	max-width: 460px;
+  flex: 1 1 280px;
+  max-width: 460px;
+}
+
+.resultsMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+  min-height: 18px;
+}
+
+/* ---- Overview stats ---- */
+
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.statCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 8px;
+  background: var(--octo-surface-1);
+}
+
+.statLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.statValue {
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.breakdownHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.typeBreakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.typeRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 8px;
+  background: var(--octo-surface-1);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.typeRow:hover {
+  border-color: var(--octo-accent-primary);
+  transform: translateY(-1px);
+}
+
+.typeRowTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.typeName {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--octo-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.typeStats {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.typeBar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--octo-surface-3);
+  overflow: hidden;
+}
+
+.typeBarFill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--octo-accent-primary);
+}
+
+.nameButton {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--octo-accent-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.nameButton:hover {
+  text-decoration: underline;
 }
 
 .typeSelect {
-	flex: 0 0 250px;
+  flex: 0 0 250px;
 }
 
 .tablePanel,
 .panel,
 .panelMuted {
-	border: 1px solid var(--octo-border-subtle);
-	border-radius: 8px;
-	background: var(--octo-surface-1);
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 8px;
+  background: var(--octo-surface-1);
 }
 
 .tablePanel {
-	overflow: hidden;
+  overflow: hidden;
 }
 
 .panel,
 .panelMuted {
-	padding: 12px;
+  padding: 12px;
 }
 
 .panelMuted {
-	background: var(--octo-surface-3);
+  background: var(--octo-surface-3);
 }
 
 .statePanel,
 .modalState {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	gap: 8px;
-	min-height: 220px;
-	padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 220px;
+  padding: 24px;
 }
 
 .modalState {
-	min-height: 320px;
+  min-height: 320px;
 }
 
 .codeScroll {
-	max-height: 400px;
-	overflow: auto;
+  max-height: 400px;
+  overflow: auto;
 }
 
 .codeBlockSmall {
-	font-size: 12px;
+  font-size: 12px;
 }
 
 .panelStack {
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .truncateText {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .resourceTypeIcon {
-	box-sizing: border-box;
-	display: inline-flex;
-	width: 22px;
-	height: 22px;
-	flex: 0 0 auto;
-	align-items: center;
-	justify-content: center;
-	border-radius: 6px;
-	background: var(--octo-accent-primary-bg);
-	color: var(--octo-accent-primary);
+  box-sizing: border-box;
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--octo-accent-primary-bg);
+  color: var(--octo-accent-primary);
 }
 
 .resourceTypeIcon[data-resource-type="ValueSet"],
 .resourceTypeIcon[data-resource-type="CapabilityStatement"] {
-	color: var(--octo-brand-info);
+  color: var(--octo-brand-info);
 }
 
 .resourceTypeIcon[data-resource-type="CodeSystem"],
 .resourceTypeIcon[data-resource-type="CompartmentDefinition"] {
-	color: var(--octo-accent-warm);
+  color: var(--octo-accent-warm);
 }
 
 .resourceTypeIcon[data-resource-type="OperationDefinition"],
 .resourceTypeIcon[data-resource-type="NamingSystem"] {
-	color: var(--octo-accent-fire);
+  color: var(--octo-accent-fire);
 }
 
 @media (max-width: 720px) {
-	.searchInput,
-	.typeSelect {
-		flex-basis: 100%;
-		max-width: none;
-	}
+  .searchInput,
+  .typeSelect {
+    flex-basis: 100%;
+    max-width: none;
+  }
 }

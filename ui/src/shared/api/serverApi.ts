@@ -1036,10 +1036,11 @@ class ServerApiClient {
   async getPackageResources(
     name: string,
     version: string,
-    params?: { resourceType?: string; limit?: number; offset?: number }
+    params?: { resourceType?: string; search?: string; limit?: number; offset?: number }
   ): Promise<PackageResourcesResponse> {
     const queryParams = new URLSearchParams();
     if (params?.resourceType) queryParams.set("resource_type", params.resourceType);
+    if (params?.search) queryParams.set("search", params.search);
     if (params?.limit) queryParams.set("limit", String(params.limit));
     if (params?.offset) queryParams.set("offset", String(params.offset));
     const queryString = queryParams.toString();

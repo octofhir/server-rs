@@ -567,6 +567,10 @@ export interface PackageResourceSummary {
   name?: string;
   version?: string;
   resourceType: string;
+  /** StructureDefinition.derivation: "specialization" (base) or "constraint" (profile). */
+  derivation?: string;
+  /** StructureDefinition.kind: "resource" | "complex-type" | "primitive-type" | "logical". */
+  kind?: string;
 }
 
 export interface PackageResourcesResponse {

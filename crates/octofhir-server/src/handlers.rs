@@ -21,7 +21,6 @@ use octofhir_fhir_model::ModelProvider;
 use octofhir_storage::StorageError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx_core::sql_str::AssertSqlSafe;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -5981,6 +5980,13 @@ pub struct PackageResourceSummary {
     pub version: Option<String>,
     #[serde(rename = "resourceType")]
     pub resource_type: String,
+    /// StructureDefinition.derivation: "specialization" (base resource/type) or
+    /// "constraint" (profile). None for non-StructureDefinition resources.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivation: Option<String>,
+    /// StructureDefinition.kind: "resource" | "complex-type" | "primitive-type" | "logical".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 /// Package resources list response
@@ -5993,9 +5999,12 @@ pub struct PackageResourcesResponse {
 /// Query parameters for package resources
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct PackageResourcesQuery {
-    /// Filter by resource type
-    #[serde(rename = "resourceType")]
+    /// Filter by resource type. Accept both `resource_type` and `resourceType`.
+    #[serde(alias = "resourceType")]
     pub resource_type: Option<String>,
+    /// Free-text search across name, url and resource id (case-insensitive).
+    #[serde(alias = "q")]
+    pub search: Option<String>,
     /// Limit results
     pub limit: Option<usize>,
     /// Offset for pagination
@@ -6143,56 +6152,68 @@ pub async fn api_packages_resources(
     Path((name, version)): Path<(String, String)>,
     Query(params): Query<PackageResourcesQuery>,
 ) -> Result<Json<PackageResourcesResponse>, ApiError> {
-    use sqlx_core::query::query;
     use sqlx_core::row::Row;
+    use sqlx_postgres::Postgres;
 
     let limit = params.limit.unwrap_or(100).min(1000);
     let offset = params.offset.unwrap_or(0);
 
-    // Build query with optional filter
-    let (sql, bind_type) = if let Some(ref rt) = params.resource_type {
-        (
-            r#"
-            SELECT resource_type, resource_id, url, name, version
-            FROM fcm.resources
-            WHERE package_name = $1 AND package_version = $2 AND resource_type = $3
-            ORDER BY resource_type, name, url
-            LIMIT $4 OFFSET $5
-            "#,
-            Some(rt.clone()),
-        )
-    } else {
-        (
-            r#"
-            SELECT resource_type, resource_id, url, name, version
-            FROM fcm.resources
-            WHERE package_name = $1 AND package_version = $2
-            ORDER BY resource_type, name, url
-            LIMIT $3 OFFSET $4
-            "#,
-            None,
-        )
+    // Normalize optional filters.
+    let resource_type = params
+        .resource_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let search = params
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    // ILIKE pattern; escape wildcards so user input is matched literally.
+    let search_pattern = search.map(|s| {
+        let escaped = s
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        format!("%{}%", escaped)
+    });
+
+    // Shared WHERE-clause builder so list and count stay in sync.
+    let push_filters = |qb: &mut sqlx_core::query_builder::QueryBuilder<Postgres>| {
+        qb.push(" WHERE package_name = ")
+            .push_bind(name.clone())
+            .push(" AND package_version = ")
+            .push_bind(version.clone());
+        if let Some(rt) = resource_type {
+            qb.push(" AND resource_type = ").push_bind(rt.to_string());
+        }
+        if let Some(ref pat) = search_pattern {
+            qb.push(" AND (name ILIKE ")
+                .push_bind(pat.clone())
+                .push(" ESCAPE '\\' OR url ILIKE ")
+                .push_bind(pat.clone())
+                .push(" ESCAPE '\\' OR resource_id ILIKE ")
+                .push_bind(pat.clone())
+                .push(" ESCAPE '\\')");
+        }
     };
 
-    let rows = if let Some(rt) = bind_type {
-        query(AssertSqlSafe((sql).to_string()))
-            .bind(&name)
-            .bind(&version)
-            .bind(rt)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(state.db_pool.as_ref())
-            .await
-    } else {
-        query(AssertSqlSafe((sql).to_string()))
-            .bind(&name)
-            .bind(&version)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(state.db_pool.as_ref())
-            .await
-    }
-    .map_err(|e| ApiError::Internal(format!("Database error: {}", e)))?;
+    let mut qb = sqlx_core::query_builder::QueryBuilder::<Postgres>::new(
+        "SELECT resource_type, resource_id, url, name, version, \
+         content->>'derivation' AS derivation, content->>'kind' AS kind \
+         FROM fcm.resources",
+    );
+    push_filters(&mut qb);
+    qb.push(" ORDER BY resource_type, name, url LIMIT ")
+        .push_bind(limit as i64)
+        .push(" OFFSET ")
+        .push_bind(offset as i64);
+
+    let rows = qb
+        .build()
+        .fetch_all(state.db_pool.as_ref())
+        .await
+        .map_err(|e| ApiError::Internal(format!("Database error: {}", e)))?;
 
     let resources: Vec<PackageResourceSummary> = rows
         .iter()
@@ -6202,32 +6223,21 @@ pub async fn api_packages_resources(
             name: row.get("name"),
             version: row.get("version"),
             resource_type: row.get("resource_type"),
+            derivation: row.get("derivation"),
+            kind: row.get("kind"),
         })
         .collect();
 
-    // Get total count
-    let count_sql = if params.resource_type.is_some() {
-        "SELECT COUNT(*) FROM fcm.resources WHERE package_name = $1 AND package_version = $2 AND resource_type = $3"
-    } else {
-        "SELECT COUNT(*) FROM fcm.resources WHERE package_name = $1 AND package_version = $2"
-    };
-
-    let total: i64 = if let Some(ref rt) = params.resource_type {
-        sqlx_core::query_scalar::query_scalar(AssertSqlSafe((count_sql).to_string()))
-            .bind(&name)
-            .bind(&version)
-            .bind(rt)
-            .fetch_one(state.db_pool.as_ref())
-            .await
-            .unwrap_or(0)
-    } else {
-        sqlx_core::query_scalar::query_scalar(AssertSqlSafe((count_sql).to_string()))
-            .bind(&name)
-            .bind(&version)
-            .fetch_one(state.db_pool.as_ref())
-            .await
-            .unwrap_or(0)
-    };
+    // Total count with the same filters (ignoring limit/offset).
+    let mut count_qb = sqlx_core::query_builder::QueryBuilder::<Postgres>::new(
+        "SELECT COUNT(*) FROM fcm.resources",
+    );
+    push_filters(&mut count_qb);
+    let total: i64 = count_qb
+        .build_query_scalar()
+        .fetch_one(state.db_pool.as_ref())
+        .await
+        .unwrap_or(0);
 
     Ok(Json(PackageResourcesResponse {
         resources,
@@ -6286,21 +6296,72 @@ pub async fn api_packages_fhirschema(
     let decoded_url = urlencoding::decode(&url)
         .map_err(|e| ApiError::BadRequest(format!("Invalid URL encoding: {}", e)))?;
 
-    // Try to get the FHIRSchema from the database
+    // Try to get the pre-converted FHIRSchema from the database first.
     match store
         .get_fhirschema_from_package(&decoded_url, &name, &version)
         .await
     {
-        Ok(Some(schema)) => Ok(Json(schema.content)),
-        Ok(None) => {
-            // Schema not found - could convert on-demand here, but for now return 404
-            Err(ApiError::NotFound(format!(
-                "FHIRSchema not found for {} in {}@{}. Schema may need to be converted.",
-                decoded_url, name, version
-            )))
-        }
-        Err(e) => Err(ApiError::Internal(format!("Database error: {}", e))),
+        Ok(Some(schema)) => return Ok(Json(schema.content)),
+        Ok(None) => { /* fall through to on-the-fly conversion */ }
+        Err(e) => return Err(ApiError::Internal(format!("Database error: {}", e))),
     }
+
+    // Fallback: convert the StructureDefinition to a FHIRSchema on the fly.
+    convert_structure_definition_on_the_fly(&state, &name, &version, &decoded_url).await
+}
+
+/// Fetch a StructureDefinition resource from a package and translate it to a
+/// FHIRSchema at request time (used when no schema was pre-converted at install).
+async fn convert_structure_definition_on_the_fly(
+    state: &crate::server::AppState,
+    name: &str,
+    version: &str,
+    decoded_url: &str,
+) -> Result<Json<Value>, ApiError> {
+    use octofhir_fhirschema::types::StructureDefinition;
+    use sqlx_core::query::query;
+    use sqlx_core::row::Row;
+
+    let row = query(
+        r#"
+        SELECT content, resource_type
+        FROM fcm.resources
+        WHERE package_name = $1 AND package_version = $2 AND url = $3
+        "#,
+    )
+    .bind(name)
+    .bind(version)
+    .bind(decoded_url)
+    .fetch_optional(state.db_pool.as_ref())
+    .await
+    .map_err(|e| ApiError::Internal(format!("Database error: {}", e)))?;
+
+    let Some(row) = row else {
+        return Err(ApiError::NotFound(format!(
+            "Resource not found: {} in {}@{}",
+            decoded_url, name, version
+        )));
+    };
+
+    let resource_type: String = row.get("resource_type");
+    if resource_type != "StructureDefinition" {
+        return Err(ApiError::BadRequest(format!(
+            "FHIRSchema is only available for StructureDefinition resources (got {})",
+            resource_type
+        )));
+    }
+
+    let content: Value = row.get("content");
+    let sd: StructureDefinition = serde_json::from_value(content)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid StructureDefinition: {}", e)))?;
+
+    let schema = octofhir_fhirschema::translate(sd, None)
+        .map_err(|e| ApiError::Internal(format!("Failed to convert StructureDefinition: {}", e)))?;
+
+    let schema_json = serde_json::to_value(&schema)
+        .map_err(|e| ApiError::Internal(format!("Failed to serialize FHIRSchema: {}", e)))?;
+
+    Ok(Json(schema_json))
 }
 
 // ============================================================================
