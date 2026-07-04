@@ -4192,9 +4192,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhir-model"
-version = "0.1.13"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae09dfaeff9cc74cf3e1830866e4c181a831eb4eeafbd3040547ab0a4f83163e"
+checksum = "82084883ead14804c6199e8ab94249ba01175b603c4e0b5f53ae4c7360147139"
 dependencies = [
  "async-trait",
  "indexmap 2.14.0",
@@ -4211,9 +4211,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirpath"
-version = "0.4.48"
+version = "0.4.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ad86b0068d056b772bd7b80d0dea6179c032ba964cf6de1f1ee0d508d5dddc7"
+checksum = "cc83269fc90cdf1733dce2c4a8af316f71738faff54a32612783bb375c68cab5"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -4258,9 +4258,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirschema"
-version = "0.3.22"
+version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f119f0886f1a2ab52ec8a88fcb004ddaf1300aee4cbc7337a213cf7ec483f752"
+checksum = "cb746331bc6422d3559cb42195fd651009d6f204bb0fb74ff34fe3f50a8808ab"
 dependencies = [
  "async-recursion",
  "async-trait",
