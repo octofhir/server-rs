@@ -15,12 +15,14 @@ default:
 build:
     RUST_LOG={{RUST_LOG}} cargo build
 
-# Run server with config file
+# Run server with config file (builds UI bundle first)
 run:
+    pnpm -C ui install
+    pnpm -C ui build
     OCTOFHIR_CONFIG={{CONFIG}} \
     RUST_LOG={{RUST_LOG}} \
     OTEL_EXPORTER_OTLP_ENDPOINT={{OTEL_EXPORTER_OTLP_ENDPOINT}} \
-    pnpm install && pnpm -C ui build && cargo run --bin octofhir-server
+    cargo run --bin octofhir-server
 
 # Developer mode: auto-rebuild and run on changes (requires cargo-watch)
 dev:

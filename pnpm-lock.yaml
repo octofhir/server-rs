@@ -189,6 +189,9 @@ importers:
       monaco-graphql:
         specifier: 1.8.0
         version: 1.8.0(graphql@17.0.1)(monaco-editor@0.52.2)(prettier@3.8.4)
+      prismjs:
+        specifier: 1.30.0
+        version: 1.30.0
       react:
         specifier: ^19.2.7
         version: 19.2.7

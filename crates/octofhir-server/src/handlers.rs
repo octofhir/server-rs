@@ -831,6 +831,18 @@ fn fhir_versioned_resource_url(
     )
 }
 
+/// Extract the resource id from a FHIR Location header of the form
+/// `{base}/{ResourceType}/{id}/_history/{version}`.
+fn extract_id_from_location(location: &str) -> Option<String> {
+    let before_history = location.split("/_history/").next()?;
+    let id = before_history.trim_end_matches('/').rsplit('/').next()?;
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
+    }
+}
+
 fn insert_header_if_valid(headers: &mut HeaderMap, name: header::HeaderName, value: String) {
     if let Ok(val) = header::HeaderValue::from_str(&value) {
         headers.insert(name, val);
@@ -7014,22 +7026,40 @@ pub async fn internal_create_resource(
     .await?;
 
     // Reconcile operations if this is an App resource
-    if resource_type == "App"
-        && let Err(e) = reconcile_app_operations(&state, &payload).await
-    {
-        // Rollback: delete the App we just created
-        if let Some(app_id) = payload.get("id").and_then(|v| v.as_str()) {
-            let _ = state.storage.delete("App", app_id).await;
+    if resource_type == "App" {
+        // On create, the server assigns the id (client-supplied id is ignored per
+        // FHIR §3.1.0.1.3), so the request payload has none. Recover it from the
+        // Location header and inject it before reconciling.
+        let app_id = response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(extract_id_from_location);
+
+        let Some(app_id) = app_id else {
+            return Err(ApiError::internal(
+                "Failed to reconcile operations: could not determine created App id",
+            ));
+        };
+
+        let mut app_payload = payload.clone();
+        if let Some(obj) = app_payload.as_object_mut() {
+            obj.insert("id".to_string(), Value::String(app_id.clone()));
+        }
+
+        if let Err(e) = reconcile_app_operations(&state, &app_payload).await {
+            // Rollback: delete the App we just created
+            let _ = state.storage.delete("App", &app_id).await;
             tracing::error!(
                 error = %e,
                 app_id = %app_id,
                 "Failed to reconcile operations, rolled back App creation"
             );
+            return Err(ApiError::internal(format!(
+                "Failed to reconcile operations: {}",
+                e
+            )));
         }
-        return Err(ApiError::internal(format!(
-            "Failed to reconcile operations: {}",
-            e
-        )));
     }
 
     Ok(response.into_response())
@@ -7119,9 +7149,16 @@ pub async fn internal_update_resource(
     )
     .await?;
 
-    // Reconcile operations if this is an App resource
+    // Reconcile operations if this is an App resource. PUT uses the URL id, which
+    // the request body may omit — inject it so reconciliation can find the App.
+    let mut app_payload = payload.clone();
     if resource_type == "App"
-        && let Err(e) = reconcile_app_operations(&state, &payload).await
+        && let Some(obj) = app_payload.as_object_mut()
+    {
+        obj.insert("id".to_string(), Value::String(id.clone()));
+    }
+    if resource_type == "App"
+        && let Err(e) = reconcile_app_operations(&state, &app_payload).await
     {
         // Rollback: restore old App state
         if let Some(old_resource) = old_app {

@@ -150,6 +150,7 @@ export default defineConfig({
       "@graphiql/react",
       "monaco-editor",
       "monaco-graphql",
+      "prismjs",
     ],
   },
   worker: {
