@@ -112,9 +112,7 @@ impl Loader<ResourceKey> for ResourceLoader {
 
         let mut results: HashMap<ResourceKey, Self::Value> = HashMap::with_capacity(keys.len());
 
-        // Fetch each resource type group
-        // TODO: Consider using search with _id parameter for true batch loading
-        // For now, we fetch individually but in parallel per type
+        // One `id = ANY($1)` query per resource type.
         for (resource_type, type_keys) in by_type {
             trace!(
                 resource_type = %resource_type,
@@ -122,21 +120,15 @@ impl Loader<ResourceKey> for ResourceLoader {
                 "Fetching resource type batch"
             );
 
-            // Fetch resources for this type
-            for key in type_keys {
-                match self.storage.read(&key.resource_type, &key.id).await {
-                    Ok(Some(stored)) => {
-                        results.insert(key.clone(), stored.resource);
+            let ids: Vec<String> = type_keys.iter().map(|k| k.id.clone()).collect();
+            match self.storage.read_many(resource_type, &ids).await {
+                Ok(stored) => {
+                    for s in stored {
+                        results.insert(ResourceKey::new(resource_type, s.id), s.resource);
                     }
-                    Ok(None) => {
-                        // Resource not found - don't include in results
-                        // DataLoader will return None for missing keys
-                        trace!(key = %key, "Resource not found");
-                    }
-                    Err(e) => {
-                        // Log error but continue with other resources
-                        tracing::warn!(key = %key, error = %e, "Failed to load resource");
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!(resource_type = %resource_type, error = %e, "Failed to batch-load resources");
                 }
             }
         }

@@ -94,7 +94,6 @@ pub fn record_http_request(method: &str, path: &str, status: u16, duration: Dura
         names::HTTP_REQUESTS_TOTAL,
         "method" => method_owned.clone(),
         "path" => normalized_path.clone(),
-        "status" => status.to_string(),
         "status_class" => status_class.to_string()
     )
     .increment(1);
@@ -195,14 +194,19 @@ fn normalize_path(path: &str) -> String {
             result.push('/');
         }
 
-        if is_likely_id(part) && i > 0 {
-            if prev_segment == "_history" {
-                result.push_str("{vid}");
-            } else if prev_segment == "_async-status" {
-                result.push_str("{job_id}");
-            } else {
-                result.push_str("{id}");
-            }
+        if i > 0 && prev_segment == "_history" {
+            result.push_str("{vid}");
+        } else if i > 0 && prev_segment == "_async-status" {
+            result.push_str("{job_id}");
+        } else if i > 0
+            && !part.is_empty()
+            && !part.starts_with('_')
+            && !part.starts_with('$')
+            && (is_likely_id(part) || is_resource_type_segment(prev_segment))
+        {
+            // The segment after a resource type is always an id, regardless of
+            // its shape — normalizes short/slug ids that `is_likely_id` misses.
+            result.push_str("{id}");
         } else {
             result.push_str(part);
         }
@@ -211,6 +215,18 @@ fn normalize_path(path: &str) -> String {
     }
 
     result
+}
+
+/// True if a path segment looks like a FHIR resource type (e.g. `Patient`,
+/// `ValueSet`): starts with an uppercase ASCII letter and is otherwise
+/// alphanumeric. Used so the following segment is treated as a resource id.
+fn is_resource_type_segment(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_uppercase() => {}
+        _ => return false,
+    }
+    s.len() >= 2 && chars.all(|c| c.is_ascii_alphanumeric())
 }
 
 /// Check if a string looks like an ID (UUID or numeric).

@@ -109,10 +109,14 @@ struct CachedEntry {
 pub struct LocalAuthCache {
     cache: DashMap<String, CachedEntry>,
     ttl: Duration,
+    max_size: usize,
     hits: std::sync::atomic::AtomicU64,
     misses: std::sync::atomic::AtomicU64,
     evictions: std::sync::atomic::AtomicU64,
 }
+
+/// Hard cap on cached auth contexts; bounds memory between TTL sweeps.
+const DEFAULT_MAX_SIZE: usize = 50_000;
 
 impl LocalAuthCache {
     /// Create a new local auth cache with the specified TTL.
@@ -133,6 +137,7 @@ impl LocalAuthCache {
         Self {
             cache: DashMap::new(),
             ttl,
+            max_size: DEFAULT_MAX_SIZE,
             hits: std::sync::atomic::AtomicU64::new(0),
             misses: std::sync::atomic::AtomicU64::new(0),
             evictions: std::sync::atomic::AtomicU64::new(0),
@@ -200,6 +205,14 @@ impl AuthContextCache for LocalAuthCache {
             context: Arc::clone(&arc_ctx),
             expires_at: Instant::now() + self.ttl,
         };
+        // Bound memory: at capacity, drop expired entries first; if still full,
+        // skip caching this entry rather than growing without limit.
+        if self.cache.len() >= self.max_size {
+            self.cleanup_expired();
+            if self.cache.len() >= self.max_size {
+                return arc_ctx;
+            }
+        }
         self.cache.insert(jti, entry);
         arc_ctx
     }

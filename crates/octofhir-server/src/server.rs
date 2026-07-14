@@ -1730,7 +1730,7 @@ pub async fn build_app(
         json_schema_cache: Arc::new(dashmap::DashMap::new()),
         resource_cache: if cfg.cache.resource_ttl_secs > 0 {
             Some(Arc::new(crate::cache::ResourceCache::new(
-                crate::cache::CacheBackend::new_local(),
+                cfg.cache.local_cache_max_entries as u64,
                 std::time::Duration::from_secs(cfg.cache.resource_ttl_secs),
             )))
         } else {

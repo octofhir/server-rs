@@ -142,15 +142,20 @@ pub struct AsyncJobManager {
     db_pool: Arc<PgPool>,
     config: Arc<AsyncJobConfig>,
     executor: Arc<std::sync::RwLock<Option<JobExecutor>>>,
+    /// Caps concurrently executing jobs at `config.max_concurrent_jobs` so a
+    /// submit burst cannot spawn unbounded background tasks.
+    job_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl AsyncJobManager {
     /// Create a new async job manager
     pub fn new(db_pool: Arc<PgPool>, config: AsyncJobConfig) -> Self {
+        let permits = config.max_concurrent_jobs.max(1);
         Self {
             db_pool,
             config: Arc::new(config),
             executor: Arc::new(std::sync::RwLock::new(None)),
+            job_semaphore: Arc::new(tokio::sync::Semaphore::new(permits)),
         }
     }
 
@@ -210,8 +215,11 @@ impl AsyncJobManager {
             let req_method = request.method.clone();
             let req_url = request.url.clone();
             let req_body = request.body.clone();
+            let semaphore = self.job_semaphore.clone();
 
             tokio::spawn(async move {
+                // Bound concurrency: wait for a permit before executing.
+                let _permit = semaphore.acquire().await;
                 manager
                     .execute_job(job_id, exec, req_type, req_method, req_url, req_body)
                     .await;

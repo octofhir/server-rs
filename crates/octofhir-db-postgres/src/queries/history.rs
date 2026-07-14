@@ -15,7 +15,7 @@ use time::OffsetDateTime;
 
 use octofhir_storage::{
     HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, RawHistoryEntry, RawHistoryResult,
-    RawStoredResource, StorageError, StoredResource,
+    RawStoredResource, StorageError, StoredResource, TotalMode,
 };
 
 use crate::schema::SchemaManager;
@@ -100,23 +100,27 @@ pub async fn get_history(
            ORDER BY txid DESC
            LIMIT {limit} OFFSET {offset}"#
     );
-    let count_sql = format!(
-        r#"WITH all_versions AS ({sql})
-           SELECT COUNT(*)::bigint FROM all_versions"#
-    );
-
-    // Execute query with appropriate bindings
-    let total = execute_history_count_query(
-        &count_sql,
-        pool,
-        id_str.clone(),
-        since_chrono,
-        at_chrono,
-        has_id,
-        has_since,
-        has_at,
-    )
-    .await?;
+    let total = if matches!(params.total, Some(TotalMode::Accurate)) {
+        let count_sql = format!(
+            r#"WITH all_versions AS ({sql})
+               SELECT COUNT(*)::bigint FROM all_versions"#
+        );
+        Some(
+            execute_history_count_query(
+                &count_sql,
+                pool,
+                id_str.clone(),
+                since_chrono,
+                at_chrono,
+                has_id,
+                has_since,
+                has_at,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     let rows = execute_history_query(
         &full_sql,
@@ -150,10 +154,7 @@ pub async fn get_history(
         })
         .collect();
 
-    Ok(HistoryResult {
-        entries,
-        total: Some(total),
-    })
+    Ok(HistoryResult { entries, total })
 }
 
 /// Retrieves history across all resource types (system-level history).
@@ -231,14 +232,16 @@ pub async fn get_system_history(
            LIMIT {limit} OFFSET {offset}"#,
         unions.join(" UNION ALL ")
     );
-    let count_sql = format!(
-        r#"WITH all_versions AS ({})
-           SELECT COUNT(*)::bigint FROM all_versions"#,
-        unions.join(" UNION ALL ")
-    );
-
-    let total =
-        execute_system_history_count_query(&count_sql, pool, since_chrono, at_chrono).await?;
+    let total = if matches!(params.total, Some(TotalMode::Accurate)) {
+        let count_sql = format!(
+            r#"WITH all_versions AS ({})
+               SELECT COUNT(*)::bigint FROM all_versions"#,
+            unions.join(" UNION ALL ")
+        );
+        Some(execute_system_history_count_query(&count_sql, pool, since_chrono, at_chrono).await?)
+    } else {
+        None
+    };
 
     // Execute with appropriate bindings
     let rows: Vec<SystemHistoryRow> = match (since_chrono, at_chrono) {
@@ -292,10 +295,7 @@ pub async fn get_system_history(
         )
         .collect();
 
-    Ok(HistoryResult {
-        entries,
-        total: Some(total),
-    })
+    Ok(HistoryResult { entries, total })
 }
 
 /// Row type for raw history queries (id, txid, created_at, updated_at, resource_text, status).
@@ -349,22 +349,27 @@ pub async fn get_history_raw(
            ORDER BY txid DESC
            LIMIT {limit} OFFSET {offset}"#
     );
-    let count_sql = format!(
-        r#"WITH all_versions AS ({sql})
-           SELECT COUNT(*)::bigint FROM all_versions"#
-    );
-
-    let total = execute_history_count_query(
-        &count_sql,
-        pool,
-        id_str.clone(),
-        since_chrono,
-        at_chrono,
-        has_id,
-        has_since,
-        has_at,
-    )
-    .await?;
+    let total = if matches!(params.total, Some(TotalMode::Accurate)) {
+        let count_sql = format!(
+            r#"WITH all_versions AS ({sql})
+               SELECT COUNT(*)::bigint FROM all_versions"#
+        );
+        Some(
+            execute_history_count_query(
+                &count_sql,
+                pool,
+                id_str.clone(),
+                since_chrono,
+                at_chrono,
+                has_id,
+                has_since,
+                has_at,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     let rows: Vec<RawHistoryRow> = execute_raw_history_query(
         &full_sql,
@@ -399,10 +404,7 @@ pub async fn get_history_raw(
         )
         .collect();
 
-    Ok(RawHistoryResult {
-        entries,
-        total: Some(total),
-    })
+    Ok(RawHistoryResult { entries, total })
 }
 
 /// Retrieves system history as raw JSON strings (zero-copy path).
@@ -468,14 +470,16 @@ pub async fn get_system_history_raw(
            LIMIT {limit} OFFSET {offset}"#,
         unions.join(" UNION ALL ")
     );
-    let count_sql = format!(
-        r#"WITH all_versions AS ({})
-           SELECT COUNT(*)::bigint FROM all_versions"#,
-        unions.join(" UNION ALL ")
-    );
-
-    let total =
-        execute_system_history_count_query(&count_sql, pool, since_chrono, at_chrono).await?;
+    let total = if matches!(params.total, Some(TotalMode::Accurate)) {
+        let count_sql = format!(
+            r#"WITH all_versions AS ({})
+               SELECT COUNT(*)::bigint FROM all_versions"#,
+            unions.join(" UNION ALL ")
+        );
+        Some(execute_system_history_count_query(&count_sql, pool, since_chrono, at_chrono).await?)
+    } else {
+        None
+    };
 
     let rows: Vec<RawSystemHistoryRow> = match (since_chrono, at_chrono) {
         (Some(since), Some(at)) => {
@@ -527,10 +531,7 @@ pub async fn get_system_history_raw(
         )
         .collect();
 
-    Ok(RawHistoryResult {
-        entries,
-        total: Some(total),
-    })
+    Ok(RawHistoryResult { entries, total })
 }
 
 /// Builds a UNION ALL query with `resource::text` for raw history.

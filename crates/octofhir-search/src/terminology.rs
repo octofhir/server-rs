@@ -112,7 +112,7 @@ pub struct HybridTerminologyProvider {
     /// ExplanationOfBenefit has 8 currency-bound fields, each re-resolving the
     /// currencies ValueSet + ISO-4217 code system from storage), so memoising the
     /// result collapses that to a single computation.
-    vs_validation_cache: dashmap::DashMap<String, ValidationResult>,
+    vs_validation_cache: moka::sync::Cache<String, ValidationResult>,
 
     /// Negative cache for remote validation errors, keyed like
     /// `vs_validation_cache`, with the failure instant for TTL expiry. A remote
@@ -124,10 +124,30 @@ pub struct HybridTerminologyProvider {
     /// Single-flight guards: at most one in-flight remote validation per cache
     /// key; concurrent duplicates await the winner and read the cache.
     vs_validation_inflight: dashmap::DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+
+    /// Cache of canonical resources (ValueSet/CodeSystem) resolved by URL.
+    /// Binding validation resolves the same canonicals on every write; without
+    /// this each resolve is a `fcm.resources` DB query. `None` caches a
+    /// resolution miss for the TTL window.
+    canonical_cache: moka::sync::Cache<String, Option<Arc<CachedCanonical>>>,
+}
+
+/// A canonical resource resolved from the canonical manager, reduced to the
+/// fields terminology validation needs.
+#[derive(Debug)]
+struct CachedCanonical {
+    resource_type: String,
+    content: serde_json::Value,
 }
 
 /// How long a remote validation error stays negative-cached.
 const VS_VALIDATION_NEGATIVE_TTL: Duration = Duration::from_secs(60);
+
+/// Max entries retained in the positive validation cache before LRU eviction.
+const VS_VALIDATION_CACHE_CAPACITY: u64 = 100_000;
+
+/// Max canonical resources (ValueSet/CodeSystem) cached by URL.
+const CANONICAL_CACHE_CAPACITY: u64 = 20_000;
 
 impl HybridTerminologyProvider {
     /// Create a new hybrid terminology provider.
@@ -156,17 +176,41 @@ impl HybridTerminologyProvider {
         Ok(Self {
             canonical_manager,
             remote,
-            vs_validation_cache: dashmap::DashMap::new(),
+            vs_validation_cache: moka::sync::Cache::builder()
+                .max_capacity(VS_VALIDATION_CACHE_CAPACITY)
+                .time_to_live(Duration::from_secs(config.cache_ttl_secs))
+                .build(),
             vs_validation_negative_cache: dashmap::DashMap::new(),
             vs_validation_inflight: dashmap::DashMap::new(),
+            canonical_cache: moka::sync::Cache::builder()
+                .max_capacity(CANONICAL_CACHE_CAPACITY)
+                .time_to_live(Duration::from_secs(config.cache_ttl_secs))
+                .build(),
         })
+    }
+
+    /// Resolve a canonical URL (ValueSet/CodeSystem) with process-level caching.
+    /// Returns `None` if the canonical cannot be resolved locally.
+    async fn resolve_cached(&self, url: &str) -> Option<Arc<CachedCanonical>> {
+        if let Some(hit) = self.canonical_cache.get(url) {
+            return hit;
+        }
+        let value = self.canonical_manager.resolve(url).await.ok().map(|r| {
+            Arc::new(CachedCanonical {
+                resource_type: r.resource.resource_type,
+                content: r.resource.content,
+            })
+        });
+        self.canonical_cache.insert(url.to_string(), value.clone());
+        value
     }
 
     /// Clear all caches.
     pub fn clear_cache(&self) {
         self.remote.clear_cache();
-        self.vs_validation_cache.clear();
+        self.vs_validation_cache.invalidate_all();
         self.vs_validation_negative_cache.clear();
+        self.canonical_cache.invalidate_all();
         tracing::debug!("Cleared terminology caches");
     }
 
@@ -204,14 +248,14 @@ impl HybridTerminologyProvider {
         valueset_url: &str,
     ) -> Option<(ValueSetExpansion, bool)> {
         // Try to resolve the ValueSet by canonical URL
-        let resolved = self.canonical_manager.resolve(valueset_url).await.ok()?;
+        let resolved = self.resolve_cached(valueset_url).await?;
 
         // Verify it's a ValueSet
-        if resolved.resource.resource_type != "ValueSet" {
+        if resolved.resource_type != "ValueSet" {
             return None;
         }
 
-        let valueset = &resolved.resource.content;
+        let valueset = &resolved.content;
 
         // A pre-computed expansion is treated as authoritative.
         if let Some(expansion) = valueset.get("expansion") {
@@ -349,13 +393,13 @@ impl HybridTerminologyProvider {
 
     /// Load all concepts from a CodeSystem by URL.
     async fn load_codesystem_concepts(&self, system_url: &str) -> Option<Vec<ValueSetConcept>> {
-        let resolved = self.canonical_manager.resolve(system_url).await.ok()?;
+        let resolved = self.resolve_cached(system_url).await?;
 
-        if resolved.resource.resource_type != "CodeSystem" {
+        if resolved.resource_type != "CodeSystem" {
             return None;
         }
 
-        let codesystem = &resolved.resource.content;
+        let codesystem = &resolved.content;
         let concept_arr = codesystem.get("concept")?.as_array()?;
 
         let mut concepts = Vec::new();
@@ -430,14 +474,14 @@ impl HybridTerminologyProvider {
     /// avoiding expensive remote calls to tx.fhir.org.
     async fn validate_code_local(&self, code: &str, system: &str) -> Option<bool> {
         // Try to resolve the CodeSystem by URL
-        let resolved = self.canonical_manager.resolve(system).await.ok()?;
+        let resolved = self.resolve_cached(system).await?;
 
         // Verify it's a CodeSystem
-        if resolved.resource.resource_type != "CodeSystem" {
+        if resolved.resource_type != "CodeSystem" {
             return None;
         }
 
-        let codesystem = &resolved.resource.content;
+        let codesystem = &resolved.content;
         let concept_arr = codesystem.get("concept")?.as_array()?;
 
         // Check recursively if the code exists
@@ -682,7 +726,7 @@ impl TerminologyProvider for HybridTerminologyProvider {
         // remote server every time.
         let cache_key = format!("{valueset}|{}|{code}", system.unwrap_or(""));
         if let Some(hit) = self.vs_validation_cache.get(&cache_key) {
-            return Ok(hit.clone());
+            return Ok(hit);
         }
         if let Some(neg) = self.vs_validation_negative_cache.get(&cache_key) {
             if neg.1.elapsed() < VS_VALIDATION_NEGATIVE_TTL {
@@ -703,7 +747,7 @@ impl TerminologyProvider for HybridTerminologyProvider {
 
         // Re-check after acquiring the lock — the winner may have populated it.
         if let Some(hit) = self.vs_validation_cache.get(&cache_key) {
-            return Ok(hit.clone());
+            return Ok(hit);
         }
         if let Some(neg) = self.vs_validation_negative_cache.get(&cache_key)
             && neg.1.elapsed() < VS_VALIDATION_NEGATIVE_TTL

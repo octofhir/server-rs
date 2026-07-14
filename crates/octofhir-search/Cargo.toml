@@ -25,6 +25,7 @@ octofhir-fhirpath = { workspace = true }
 
 # Workspace dependencies
 dashmap = { workspace = true }
+moka = { version = "0.12", features = ["sync"] }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }

@@ -85,6 +85,45 @@ pub trait FhirStorage: Send + Sync {
         Ok(self.read(resource_type, id).await?.is_some())
     }
 
+    /// Batch existence check: returns the subset of `ids` that exist (live, not
+    /// deleted) for the given `resource_type`.
+    ///
+    /// Default implementation issues one `exists()` per id; backends should
+    /// override with a single `id = ANY($1)` query so validating a resource with
+    /// N references costs one round-trip instead of N.
+    async fn exists_many(
+        &self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        let mut found = std::collections::HashSet::new();
+        for id in ids {
+            if self.exists(resource_type, id).await? {
+                found.insert(id.clone());
+            }
+        }
+        Ok(found)
+    }
+
+    /// Batch read: returns the live (non-deleted) resources among `ids` for the
+    /// given `resource_type`. Order is unspecified; missing ids are omitted.
+    ///
+    /// Default implementation issues one `read()` per id; backends should
+    /// override with a single `id = ANY($1)` query.
+    async fn read_many(
+        &self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<Vec<StoredResource>, StorageError> {
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(r) = self.read(resource_type, id).await? {
+                out.push(r);
+            }
+        }
+        Ok(out)
+    }
+
     /// Reads a resource as raw JSON string, avoiding serde_json::Value round-trip.
     ///
     /// This is an optimized read path that returns the resource JSON as a raw string

@@ -305,6 +305,11 @@ pub struct HistoryParams {
     /// Number of entries to skip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<u32>,
+    /// How to calculate the total count. When unset, no count is computed and
+    /// `Bundle.total` is omitted — avoids a full scan of the current + history
+    /// rows on every history request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<TotalMode>,
 }
 
 impl HistoryParams {
@@ -312,6 +317,13 @@ impl HistoryParams {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the total mode.
+    #[must_use]
+    pub fn total(mut self, mode: TotalMode) -> Self {
+        self.total = Some(mode);
+        self
     }
 
     /// Sets the since parameter.

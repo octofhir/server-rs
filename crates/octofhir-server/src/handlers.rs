@@ -587,6 +587,79 @@ async fn postprocess_resource(
 
 // ---- CRUD & Search placeholders ----
 
+/// Recursively collect all `"reference"` string values from a resource tree.
+fn collect_reference_strings(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (k, v) in map {
+                if k == "reference"
+                    && let Some(s) = v.as_str()
+                {
+                    out.push(s.to_string());
+                    continue;
+                }
+                collect_reference_strings(v, out);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr {
+                collect_reference_strings(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Local references in `payload` that already exist in storage, as `"Type/id"`
+/// strings, checked with one batched query per referenced type. Passed to the
+/// validator as known-existing references so it skips a per-reference existence
+/// query. References that are missing, external, urn, or contained are absent
+/// from the result and validated normally.
+async fn existing_local_refs(
+    payload: &Value,
+    state: &crate::server::AppState,
+) -> std::collections::HashSet<String> {
+    use std::collections::{HashMap, HashSet};
+
+    if state.config.validation.skip_reference_validation {
+        return HashSet::new();
+    }
+
+    let mut refs: Vec<String> = Vec::new();
+    collect_reference_strings(payload, &mut refs);
+    if refs.is_empty() {
+        return HashSet::new();
+    }
+
+    let base_url = state.base_url.as_str();
+    let mut by_type: HashMap<String, Vec<String>> = HashMap::new();
+    for r in refs {
+        if let Ok(parsed) = octofhir_core::fhir_reference::parse_reference(&r, Some(base_url)) {
+            by_type
+                .entry(parsed.resource_type)
+                .or_default()
+                .push(parsed.id);
+        }
+    }
+
+    let mut known: HashSet<String> = HashSet::new();
+    for (rtype, mut ids) in by_type {
+        ids.sort();
+        ids.dedup();
+        match state.storage.exists_many(&rtype, &ids).await {
+            Ok(found) => {
+                for id in found {
+                    known.insert(format!("{rtype}/{id}"));
+                }
+            }
+            Err(e) => {
+                tracing::debug!(resource_type = %rtype, error = %e, "batch exists check failed");
+            }
+        }
+    }
+    known
+}
+
 #[tracing::instrument(name = "fhir.create", skip_all, fields(resource_type = %resource_type))]
 pub async fn create_resource(
     State(state): State<crate::server::AppState>,
@@ -606,7 +679,11 @@ pub async fn create_resource(
     let skip_validation = should_skip_validation(&headers, &state.config.validation);
 
     if !skip_validation {
-        let validation_outcome = state.validation_service.validate(&payload).await;
+        let known_refs = existing_local_refs(&payload, &state).await;
+        let validation_outcome = state
+            .validation_service
+            .validate_with_known_refs(&payload, &known_refs)
+            .await;
         if !validation_outcome.valid {
             return Err(ApiError::UnprocessableEntity {
                 message: "Resource validation failed".to_string(),
@@ -919,6 +996,15 @@ fn apply_result_params_to_resource(
 
 // ---- History Query Parameters ----
 
+/// Parse a FHIR `_total` query value into a [`TotalMode`]. Unknown/absent → None.
+fn parse_total_mode(s: Option<&str>) -> Option<octofhir_storage::TotalMode> {
+    match s.map(str::to_ascii_lowercase).as_deref() {
+        Some("accurate") => Some(octofhir_storage::TotalMode::Accurate),
+        Some("estimate") => Some(octofhir_storage::TotalMode::Estimate),
+        _ => None,
+    }
+}
+
 /// Query parameters for history endpoints
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct HistoryQueryParams {
@@ -934,6 +1020,10 @@ pub struct HistoryQueryParams {
     /// Number of entries to skip for pagination
     #[serde(rename = "_offset", alias = "__offset")]
     pub offset: Option<u32>,
+    /// Total-count mode: `accurate` computes `Bundle.total`. Omitted by default
+    /// so history does not scan the full current + history set on every request.
+    #[serde(rename = "_total")]
+    pub total: Option<String>,
 }
 
 /// Parse a FHIR instant/datetime string into OffsetDateTime
@@ -972,26 +1062,27 @@ pub async fn read_resource(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
     // Try resource cache first
-    let stored = if let Some(cache) = &state.resource_cache {
-        if let Some(cached) = cache.get(&resource_type, &id).await {
-            Some(cached)
+    let stored: Option<std::sync::Arc<octofhir_storage::RawStoredResource>> =
+        if let Some(cache) = &state.resource_cache {
+            if let Some(cached) = cache.get(&resource_type, &id).await {
+                Some(cached)
+            } else {
+                match state.storage.read_raw(&resource_type, &id).await {
+                    Ok(Some(s)) => {
+                        cache.set(&s).await;
+                        Some(std::sync::Arc::new(s))
+                    }
+                    Ok(None) => None,
+                    Err(e) => return Err(map_storage_error(e)),
+                }
+            }
         } else {
             match state.storage.read_raw(&resource_type, &id).await {
-                Ok(Some(s)) => {
-                    cache.set(&s).await;
-                    Some(s)
-                }
+                Ok(Some(s)) => Some(std::sync::Arc::new(s)),
                 Ok(None) => None,
                 Err(e) => return Err(map_storage_error(e)),
             }
-        }
-    } else {
-        match state.storage.read_raw(&resource_type, &id).await {
-            Ok(Some(s)) => Some(s),
-            Ok(None) => None,
-            Err(e) => return Err(map_storage_error(e)),
-        }
-    };
+        };
 
     match stored {
         Some(stored) => {
@@ -1038,7 +1129,7 @@ pub async fn read_resource(
 
             let body = match apply_result_params_to_resource(&stored.resource_json, &params)? {
                 Some(filtered) => Body::from(filtered),
-                None => Body::from(stored.resource_json),
+                None => Body::from(stored.resource_json.clone()),
             };
 
             Ok(builder.body(body).unwrap())
@@ -1149,6 +1240,7 @@ pub async fn instance_history(
     let offset = params.offset.unwrap_or(0);
     history_params.count = Some(count);
     history_params.offset = Some(offset);
+    history_params.total = parse_total_mode(params.total.as_deref());
 
     // Get history from storage (raw path: skips JSONB → Value round-trip)
     let result = state
@@ -1234,6 +1326,7 @@ pub async fn type_history(
     let offset = params.offset.unwrap_or(0);
     history_params.count = Some(count);
     history_params.offset = Some(offset);
+    history_params.total = parse_total_mode(params.total.as_deref());
 
     // Get history from storage (raw path, None for id = type-level history)
     let result = state
@@ -1308,6 +1401,7 @@ pub async fn system_history(
     let offset = params.offset.unwrap_or(0);
     history_params.count = Some(count);
     history_params.offset = Some(offset);
+    history_params.total = parse_total_mode(params.total.as_deref());
 
     // Get system-level history from storage (raw path)
     let result = state
@@ -1377,7 +1471,11 @@ pub async fn update_resource(
     let skip_validation = should_skip_validation(&headers, &state.config.validation);
 
     if !skip_validation {
-        let validation_outcome = state.validation_service.validate(&payload).await;
+        let known_refs = existing_local_refs(&payload, &state).await;
+        let validation_outcome = state
+            .validation_service
+            .validate_with_known_refs(&payload, &known_refs)
+            .await;
         if !validation_outcome.valid {
             return Err(ApiError::UnprocessableEntity {
                 message: "Resource validation failed".to_string(),
@@ -3945,6 +4043,36 @@ async fn process_transaction(
         resolved_entries.push((*original_idx, resolved_entry));
     }
 
+    // Validate POST entries before opening the transaction: validation issues
+    // its own DB reads, which must not run while the write connection is held.
+    if !skip_validation {
+        for (original_idx, entry) in &resolved_entries {
+            let method = entry["request"]["method"]
+                .as_str()
+                .unwrap_or("")
+                .to_uppercase();
+            if method != "POST" || matched_conditional.contains_key(original_idx) {
+                continue;
+            }
+            let url = entry["request"]["url"].as_str().unwrap_or("");
+            let resource_type = url.split('?').next().unwrap_or(url).to_string();
+            let Some(mut resource) = entry.get("resource").cloned() else {
+                continue;
+            };
+            resource["resourceType"] = json!(resource_type);
+            let validation_outcome = state
+                .validation_service
+                .validate_with_known_refs(&resource, &known_refs)
+                .await;
+            if !validation_outcome.valid {
+                return Err(ApiError::UnprocessableEntity {
+                    message: "Resource validation failed".to_string(),
+                    operation_outcome: Some(validation_outcome.to_operation_outcome()),
+                });
+            }
+        }
+    }
+
     // Phase 3: Execute all entries in one database transaction.
     //
     // POST entries are gathered into per-resource-type batches and inserted
@@ -3998,23 +4126,6 @@ async fn process_transaction(
                 .cloned()
                 .ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
             resource["resourceType"] = json!(resource_type);
-
-            // Full schema + FHIRPath + terminology validation, mirroring single
-            // POST (create_resource). The resource is already reference-resolved
-            // (Phase 2). Conditional-matched entries returned existing above.
-            // A failure aborts the whole transaction (tx auto-rolls back on drop).
-            if !skip_validation {
-                let validation_outcome = state
-                    .validation_service
-                    .validate_with_known_refs(&resource, &known_refs)
-                    .await;
-                if !validation_outcome.valid {
-                    return Err(ApiError::UnprocessableEntity {
-                        message: "Resource validation failed".to_string(),
-                        operation_outcome: Some(validation_outcome.to_operation_outcome()),
-                    });
-                }
-            }
 
             post_batches
                 .entry(resource_type)

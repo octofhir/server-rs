@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_graphql::dataloader::Loader;
-use octofhir_core::fhir_reference::{UnresolvableReference, parse_reference};
+use octofhir_core::fhir_reference::{parse_reference, UnresolvableReference};
 use octofhir_storage::DynStorage;
 use tracing::{debug, instrument, trace, warn};
 
@@ -230,7 +230,7 @@ impl Loader<ReferenceKey> for ReferenceLoader {
                 .push((key, parsed));
         }
 
-        // Fetch resources by type
+        // Fetch resources by type: one `id = ANY($1)` query per type.
         for (resource_type, refs) in by_type {
             trace!(
                 resource_type = %resource_type,
@@ -238,42 +238,31 @@ impl Loader<ReferenceKey> for ReferenceLoader {
                 "Fetching references for type"
             );
 
-            for (key, parsed) in refs {
-                match self.storage.read(resource_type, &parsed.id).await {
-                    Ok(Some(stored)) => {
-                        results.insert(
-                            (*key).clone(),
-                            ResolvedReference {
-                                parsed: parsed.clone(),
-                                resource: Some(stored.resource),
-                            },
-                        );
-                    }
-                    Ok(None) => {
-                        trace!(reference = %key.reference, "Referenced resource not found");
-                        results.insert(
-                            (*key).clone(),
-                            ResolvedReference {
-                                parsed: parsed.clone(),
-                                resource: None,
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            reference = %key.reference,
-                            error = %e,
-                            "Failed to load referenced resource"
-                        );
-                        results.insert(
-                            (*key).clone(),
-                            ResolvedReference {
-                                parsed: parsed.clone(),
-                                resource: None,
-                            },
-                        );
-                    }
+            let ids: Vec<String> = refs.iter().map(|(_, p)| p.id.clone()).collect();
+            let found: HashMap<String, serde_json::Value> = match self
+                .storage
+                .read_many(resource_type, &ids)
+                .await
+            {
+                Ok(stored) => stored.into_iter().map(|s| (s.id, s.resource)).collect(),
+                Err(e) => {
+                    warn!(resource_type = %resource_type, error = %e, "Failed to batch-load references");
+                    HashMap::new()
                 }
+            };
+
+            for (key, parsed) in refs {
+                let resource = found.get(&parsed.id).cloned();
+                if resource.is_none() {
+                    trace!(reference = %key.reference, "Referenced resource not found");
+                }
+                results.insert(
+                    (*key).clone(),
+                    ResolvedReference {
+                        parsed: parsed.clone(),
+                        resource,
+                    },
+                );
             }
         }
 

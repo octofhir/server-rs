@@ -172,11 +172,14 @@ impl SchemaManager {
              CREATE INDEX IF NOT EXISTS \"idx_{table}_status\" ON \"{table}\"(status);\n"
         ));
 
-        // History indexes
+        // History indexes. History rows are append-only and inserted in
+        // updated_at order, so a BRIN index on updated_at gives cheap range
+        // scans (type/system history time filters, retention pruning) at a
+        // fraction of a btree's size and write cost.
         if !is_internal {
             sql.push_str(&format!(
-                "CREATE INDEX IF NOT EXISTS \"idx_{history_table}_updated_at\" \
-                    ON \"{history_table}\"(updated_at);\n\
+                "CREATE INDEX IF NOT EXISTS \"idx_{history_table}_updated_at_brin\" \
+                    ON \"{history_table}\" USING BRIN (updated_at);\n\
                  CREATE INDEX IF NOT EXISTS \"idx_{history_table}_id\" \
                     ON \"{history_table}\"(id);\n"
             ));

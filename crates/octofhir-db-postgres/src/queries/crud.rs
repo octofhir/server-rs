@@ -219,6 +219,96 @@ pub async fn exists(pool: &PgPool, resource_type: &str, id: &str) -> Result<bool
     Ok(exists.0)
 }
 
+/// Batch existence check: returns the subset of `ids` present and live (not
+/// deleted) in `{resource_type}`. One `id = ANY($1)` round-trip for the whole
+/// slice instead of one query per id.
+pub async fn exists_many(
+    pool: &PgPool,
+    resource_type: &str,
+    ids: &[String],
+) -> Result<std::collections::HashSet<String>, StorageError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let table = SchemaManager::table_name(resource_type);
+    let sql = format!(r#"SELECT id FROM "{table}" WHERE id = ANY($1) AND status != 'deleted'"#);
+
+    let rows: Vec<(String,)> = query_as(AssertSqlSafe(sql.to_string()))
+        .bind(ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            // Missing table = none of the ids exist; not an error for validation.
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!("Table does not exist: {e}"));
+            }
+            StorageError::internal(format!("Failed to batch-check existence: {e}"))
+        })?;
+
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// Batch read of live (non-deleted) resources for `ids` in `{resource_type}`.
+/// One `id = ANY($1)` round-trip; missing/deleted ids are omitted. Meta
+/// (versionId/lastUpdated) is merged into each returned resource.
+pub async fn read_many(
+    pool: &PgPool,
+    resource_type: &str,
+    ids: &[String],
+) -> Result<Vec<StoredResource>, StorageError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let table = SchemaManager::table_name(resource_type);
+    let sql = format!(
+        r#"SELECT id, txid, created_at, updated_at, resource
+           FROM "{table}"
+           WHERE id = ANY($1) AND status != 'deleted'"#
+    );
+
+    let rows: Vec<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> =
+        query_as(AssertSqlSafe(sql.to_string()))
+            .bind(ids)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("Table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to batch-read resources: {e}"))
+            })?;
+
+    let out = rows
+        .into_iter()
+        .map(|(row_id, txid, created_at, updated_at, mut resource)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+            if let Some(meta_obj) = resource.get_mut("meta").and_then(Value::as_object_mut) {
+                meta_obj.insert("versionId".to_string(), serde_json::json!(txid.to_string()));
+                meta_obj.insert(
+                    "lastUpdated".to_string(),
+                    serde_json::json!(updated_at.to_rfc3339()),
+                );
+            } else {
+                resource["meta"] = serde_json::json!({
+                    "versionId": txid.to_string(),
+                    "lastUpdated": updated_at.to_rfc3339()
+                });
+            }
+            StoredResource {
+                id: row_id,
+                version_id: txid.to_string(),
+                resource_type: resource_type.to_string(),
+                resource,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
+            }
+        })
+        .collect();
+
+    Ok(out)
+}
+
 /// Reads a FHIR resource by type and ID.
 ///
 /// Returns `None` if the resource doesn't exist.

@@ -147,19 +147,6 @@ impl PostgresStorage {
             .and_then(|r| r.get(resource_type, code))
     }
 
-    fn raw_from_stored(stored: &StoredResource) -> Result<RawStoredResource, StorageError> {
-        let resource_json = serde_json::to_string(&stored.resource)
-            .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
-        Ok(RawStoredResource {
-            id: stored.id.clone(),
-            version_id: stored.version_id.clone(),
-            resource_type: stored.resource_type.clone(),
-            resource_json,
-            last_updated: stored.last_updated,
-            created_at: stored.created_at,
-        })
-    }
-
     /// Retrieves history across all resource types (system-level history).
     ///
     /// This is a PostgreSQL-specific extension that queries history
@@ -183,28 +170,14 @@ impl PostgresStorage {
 #[async_trait]
 impl FhirStorage for PostgresStorage {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-        })?;
-        let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-        })?;
-        Ok(result)
+        queries::crud::create(&self.pool, resource).await
     }
 
     async fn create_raw(
         &self,
         resource: &Value,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-        })?;
-        let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-        })?;
-        Self::raw_from_stored(&result)
+        queries::crud::create_raw(&self.pool, resource).await
     }
 
     async fn read(
@@ -217,6 +190,22 @@ impl FhirStorage for PostgresStorage {
 
     async fn exists(&self, resource_type: &str, id: &str) -> Result<bool, StorageError> {
         queries::exists(self.read_pool(), resource_type, id).await
+    }
+
+    async fn exists_many(
+        &self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        queries::exists_many(self.read_pool(), resource_type, ids).await
+    }
+
+    async fn read_many(
+        &self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<Vec<StoredResource>, StorageError> {
+        queries::read_many(self.read_pool(), resource_type, ids).await
     }
 
     async fn read_raw(
@@ -232,15 +221,7 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-        })?;
-        let result =
-            queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None).await?;
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-        })?;
-        Ok(result)
+        queries::crud::update(&self.pool, resource, if_match).await
     }
 
     async fn update_raw(
@@ -248,26 +229,11 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-        })?;
-        let result =
-            queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None).await?;
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-        })?;
-        Self::raw_from_stored(&result)
+        queries::crud::update_raw(&self.pool, resource, if_match).await
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-        })?;
-        queries::crud::delete_with_tx(&mut tx, resource_type, id, None).await?;
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-        })?;
-        Ok(())
+        queries::crud::delete(&self.pool, resource_type, id).await
     }
 
     async fn vread(

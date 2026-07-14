@@ -146,6 +146,22 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         self.inner.exists(resource_type, id).await
     }
 
+    async fn exists_many(
+        &self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        self.inner.exists_many(resource_type, ids).await
+    }
+
+    async fn read_many(
+        &self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<Vec<StoredResource>, StorageError> {
+        self.inner.read_many(resource_type, ids).await
+    }
+
     async fn read_raw(
         &self,
         resource_type: &str,
