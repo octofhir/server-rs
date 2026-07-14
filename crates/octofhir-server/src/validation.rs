@@ -184,7 +184,28 @@ impl ValidationService {
         }
     }
 
-    /// Validate a resource against its base schema
+    /// Schemas to validate a resource against: its base type plus every profile
+    /// declared in `meta.profile`.
+    ///
+    /// A resource claiming conformance to a profile SHALL conform to it, so the
+    /// declared canonicals are validated alongside the base type. Profiles the
+    /// server cannot resolve are reported by the validator as warnings and do
+    /// not fail the resource.
+    fn schemas_for(resource: &JsonValue, resource_type: &str) -> Vec<String> {
+        let mut schemas = vec![resource_type.to_string()];
+
+        if let Some(profiles) = resource
+            .get("meta")
+            .and_then(|m| m.get("profile"))
+            .and_then(|p| p.as_array())
+        {
+            schemas.extend(profiles.iter().filter_map(|p| p.as_str()).map(String::from));
+        }
+
+        schemas
+    }
+
+    /// Validate a resource against its base schema and any declared profiles
     pub async fn validate(&self, resource: &JsonValue) -> ValidationOutcome {
         // Extract resource type
         let resource_type = match resource.get("resourceType").and_then(|v| v.as_str()) {
@@ -197,7 +218,7 @@ impl ValidationService {
         // Validate using shared validator (schemas loaded lazily via SchemaProvider)
         let validation_result = self
             .validator
-            .validate(resource, vec![resource_type.to_string()])
+            .validate(resource, Self::schemas_for(resource, resource_type))
             .await;
 
         Self::convert_result(validation_result)
@@ -224,7 +245,7 @@ impl ValidationService {
             .validator
             .validate_with_known_references(
                 resource,
-                vec![resource_type.to_string()],
+                Self::schemas_for(resource, resource_type),
                 Some(known_refs),
             )
             .await;
