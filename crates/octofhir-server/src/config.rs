@@ -613,10 +613,40 @@ pub struct ValidationSettings {
     /// Default: false (reference validation is enabled)
     #[serde(default)]
     pub skip_reference_validation: bool,
+
+    /// Validate that references conform to their declared `targetProfile`.
+    /// When enabled, each typed reference is dereferenced and the referenced
+    /// resource is validated against the profile(s) it must conform to.
+    /// Default: false — this performs a fetch + full re-validation per typed
+    /// reference and is intentionally off (also keeps write benchmarks honest).
+    #[serde(default)]
+    pub check_target_profile: bool,
+
+    /// Dereference external absolute-URL references over the network for
+    /// `targetProfile` conformance. Subject to an SSRF guard (private/loopback
+    /// targets are always blocked). Default: false.
+    #[serde(default)]
+    pub fetch_external_references: bool,
+
+    /// Per-request timeout (ms) for external reference fetches.
+    #[serde(default = "default_reference_fetch_timeout_ms")]
+    pub reference_fetch_timeout_ms: u64,
+
+    /// Maximum recursion depth for transitive `targetProfile` conformance.
+    #[serde(default = "default_max_reference_depth")]
+    pub max_reference_depth: usize,
 }
 
 fn default_allow_skip_validation() -> bool {
     false
+}
+
+fn default_reference_fetch_timeout_ms() -> u64 {
+    5000
+}
+
+fn default_max_reference_depth() -> usize {
+    5
 }
 
 impl Default for ValidationSettings {
@@ -624,6 +654,10 @@ impl Default for ValidationSettings {
         Self {
             allow_skip_validation: default_allow_skip_validation(),
             skip_reference_validation: false,
+            check_target_profile: false,
+            fetch_external_references: false,
+            reference_fetch_timeout_ms: default_reference_fetch_timeout_ms(),
+            max_reference_depth: default_max_reference_depth(),
         }
     }
 }

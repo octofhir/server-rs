@@ -92,6 +92,10 @@ jobs:
           OCTOFHIR__STORAGE__POSTGRES__PASSWORD: postgres
           OCTOFHIR__STORAGE__POSTGRES__DATABASE: octofhir
           OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD: admin123
+          # targetProfile conformance adds a fetch + full re-validation per typed
+          # reference. Pin it OFF so benchmark write-throughput stays comparable
+          # even if the default flips on later.
+          OCTOFHIR__VALIDATION__CHECK_TARGET_PROFILE: "false"
           RUST_LOG: warn
         run: |
           ./target/release/octofhir-server &

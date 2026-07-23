@@ -169,6 +169,29 @@ impl ValidationService {
         reference_resolver: Option<Arc<dyn ReferenceResolver>>,
         terminology_service: Option<Arc<dyn TerminologyService>>,
     ) -> Self {
+        Self::with_options_full(
+            model_provider,
+            fhirpath_engine,
+            reference_resolver,
+            terminology_service,
+            false,
+            5,
+        )
+    }
+
+    /// Full builder including `targetProfile` conformance validation.
+    ///
+    /// `check_target_profile` enables dereferencing typed references and
+    /// validating the referenced resource against its declared targetProfile(s);
+    /// `max_reference_depth` bounds transitive conformance recursion.
+    pub fn with_options_full(
+        model_provider: Arc<OctoFhirModelProvider>,
+        fhirpath_engine: Arc<FhirPathEngine>,
+        reference_resolver: Option<Arc<dyn ReferenceResolver>>,
+        terminology_service: Option<Arc<dyn TerminologyService>>,
+        check_target_profile: bool,
+        max_reference_depth: usize,
+    ) -> Self {
         let mut validator = FhirValidator::new_with_fhirpath(model_provider, fhirpath_engine);
 
         if let Some(resolver) = reference_resolver {
@@ -177,6 +200,12 @@ impl ValidationService {
 
         if let Some(terminology) = terminology_service {
             validator = validator.with_terminology_service(terminology);
+        }
+
+        if check_target_profile {
+            validator = validator
+                .with_target_profile_validation(true)
+                .with_max_reference_depth(max_reference_depth);
         }
 
         Self {

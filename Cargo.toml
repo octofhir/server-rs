@@ -100,7 +100,7 @@ hostname = "0.4"
 json-patch = "4"
 
 octofhir-fhirpath = { version = "0.4.51", features = ["lsp"] }
-octofhir-fhirschema = { version = "0.3.24" }
+octofhir-fhirschema = { version = "0.3.25" }
 
 octofhir-cql = { version = "0.1.0" }
 octofhir-cql-types = { version = "0.1.0" }
@@ -146,3 +146,8 @@ inherits = "release"
 lto = "thin"
 codegen-units = 16
 debug = 2
+
+# Use the local fhirschema checkout for in-progress engine work (targetProfile
+# conformance validation) until it is published. Path is alongside this repo.
+[patch.crates-io]
+octofhir-fhirschema = { path = "../fhirschema/octofhir-fhirschema" }

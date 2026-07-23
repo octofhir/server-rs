@@ -1212,10 +1212,19 @@ pub async fn build_app(
     // Prepare optional reference resolver
     let reference_resolver: Option<Arc<dyn octofhir_fhirschema::reference::ReferenceResolver>> =
         if !cfg.validation.skip_reference_validation {
-            tracing::info!("Validation service with reference existence validation");
-            Some(Arc::new(StorageReferenceResolver::new(
+            if cfg.validation.check_target_profile {
+                tracing::info!(
+                    fetch_external = cfg.validation.fetch_external_references,
+                    "Validation service with reference existence + targetProfile conformance"
+                );
+            } else {
+                tracing::info!("Validation service with reference existence validation");
+            }
+            Some(Arc::new(StorageReferenceResolver::with_options(
                 storage.clone(),
                 cfg.base_url(),
+                cfg.validation.check_target_profile && cfg.validation.fetch_external_references,
+                cfg.validation.reference_fetch_timeout_ms,
             )))
         } else {
             tracing::info!("Validation service (reference validation disabled)");
@@ -1232,11 +1241,13 @@ pub async fn build_app(
         };
 
     // Create validation service with shared validator
-    let validation_service = ValidationService::with_options(
+    let validation_service = ValidationService::with_options_full(
         model_provider.clone(),
         fhirpath_engine.clone(),
         reference_resolver,
         terminology_service,
+        cfg.validation.check_target_profile,
+        cfg.validation.max_reference_depth,
     );
 
     // Process gateway routes from parallel Phase 2
