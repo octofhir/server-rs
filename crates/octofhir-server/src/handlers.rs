@@ -4016,6 +4016,26 @@ async fn process_transaction(
         }
     }
 
+    // Phase 1b: Resolve conditional references (`{"reference": "Type?query"}`).
+    // Synthea bundles reference Practitioner/Location/Organization by identifier
+    // — thousands of times per bundle, heavily duplicated. Collect the distinct
+    // conditional references and resolve them batched (one search per resource
+    // type over the union of identifiers) so a 1600-entry bundle costs a handful
+    // of searches, not one per occurrence. Resolved `Type/id` targets merge into
+    // `reference_map` so Phase 2 rewrites them like any other reference.
+    let mut conditional_refs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (_, entry) in &sorted_entries {
+        if let Some(res) = entry.get("resource") {
+            collect_conditional_reference_strings(res, &mut conditional_refs);
+        }
+    }
+    if !conditional_refs.is_empty() {
+        let resolved = resolve_conditional_references_batched(state, &conditional_refs).await?;
+        for (cond, target) in resolved {
+            reference_map.entry(cond).or_insert(target);
+        }
+    }
+
     // Every resource the Bundle creates, updates, or matches conditionally —
     // as resolved `Type/id` strings. After Phase 2 rewrites urn:uuid references
     // into these strings, reference existence validation must treat them as
@@ -5458,6 +5478,197 @@ fn resolve_references_recursive(
         _ => {}
     }
     Ok(())
+}
+
+/// Collect distinct conditional-reference strings (`"Type?query"`) from a
+/// resource tree. These resolve to a concrete `Type/id` via a search at
+/// transaction time (FHIR http.html conditional references).
+fn collect_conditional_reference_strings(
+    value: &Value,
+    out: &mut std::collections::HashSet<String>,
+) {
+    match value {
+        Value::Object(map) => {
+            for (k, v) in map {
+                if k == "reference"
+                    && let Some(s) = v.as_str()
+                    && is_conditional_reference(s)
+                {
+                    out.insert(s.to_string());
+                    continue;
+                }
+                collect_conditional_reference_strings(v, out);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr {
+                collect_conditional_reference_strings(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// True for `Type?query` conditional references — excludes `urn:` placeholders,
+/// contained `#id`, absolute URLs, and resolved `Type/id` references.
+fn is_conditional_reference(s: &str) -> bool {
+    match s.split_once('?') {
+        Some((head, rest)) => {
+            !rest.is_empty()
+                && head.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && head.chars().all(|c| c.is_ascii_alphabetic())
+        }
+        None => false,
+    }
+}
+
+/// If `query` is exactly one `identifier=<token>` condition, return the token
+/// (`system|value` or bare `value`). Multi-parameter or non-identifier queries
+/// return `None` and take the per-query fallback path.
+fn single_identifier_condition(query: &str) -> Option<String> {
+    if query.contains('&') {
+        return None;
+    }
+    let (key, value) = query.split_once('=')?;
+    if key != "identifier" || value.is_empty() {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+/// All identifier match tokens for a resource: both `system|value` and bare
+/// `value`, so a conditional reference matches regardless of whether it names a
+/// system.
+fn identifier_tokens(resource: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(idents) = resource.get("identifier").and_then(|v| v.as_array()) {
+        for id in idents {
+            if let Some(value) = id.get("value").and_then(|v| v.as_str()) {
+                out.push(value.to_string());
+                if let Some(system) = id.get("system").and_then(|v| v.as_str()) {
+                    out.push(format!("{system}|{value}"));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Resolve conditional references (`Type?query`) to `Type/id` strings in bulk.
+///
+/// Pure `identifier=` conditions are grouped by resource type and unioned into a
+/// single search per type (`identifier=v1,v2,...`), then mapped back by
+/// identifier token — collapsing the per-reference N+1 that Synthea bundles
+/// (thousands of `Location?identifier=...`/`Organization?identifier=...` refs)
+/// would otherwise trigger. Any other condition falls back to one search per
+/// distinct query string (already deduplicated across the bundle).
+///
+/// Per FHIR transaction processing a conditional reference SHALL resolve to
+/// exactly one resource: zero matches or multiple matches fail the transaction.
+async fn resolve_conditional_references_batched(
+    state: &crate::server::AppState,
+    cond_refs: &std::collections::HashSet<String>,
+) -> Result<std::collections::HashMap<String, String>, ApiError> {
+    use std::collections::HashMap;
+
+    // resource_type -> [(conditional_ref_string, identifier_token)]
+    let mut by_type_idents: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut other: Vec<String> = Vec::new();
+
+    for cref in cond_refs {
+        let Some((rtype, query)) = cref.split_once('?') else {
+            continue;
+        };
+        if let Some(ident) = single_identifier_condition(query) {
+            by_type_idents
+                .entry(rtype.to_string())
+                .or_default()
+                .push((cref.clone(), ident));
+        } else {
+            other.push(cref.clone());
+        }
+    }
+
+    let mut resolved: HashMap<String, String> = HashMap::new();
+
+    // Identifier fast path: one search per type over the union of identifiers.
+    for (rtype, refs) in &by_type_idents {
+        let mut tokens: Vec<String> = refs.iter().map(|(_, t)| t.clone()).collect();
+        tokens.sort();
+        tokens.dedup();
+
+        // FHIR OR syntax joins alternatives with commas. Identifier tokens never
+        // contain a comma, so no escaping is required.
+        let joined = tokens.join(",");
+        let count = tokens.len() as u32 + 1;
+        let query = format!("identifier={joined}&_count={count}");
+        let params = octofhir_search::parse_query_string(&query, count, 100_000);
+        let result = state.storage.search(rtype, &params).await.map_err(|e| {
+            ApiError::bad_request(format!(
+                "Conditional reference search failed for {rtype}: {e}"
+            ))
+        })?;
+
+        // token -> distinct resource ids matching it
+        let mut by_ident: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        for entry in &result.entries {
+            for tok in identifier_tokens(&entry.resource) {
+                by_ident.entry(tok).or_default().insert(entry.id.clone());
+            }
+        }
+
+        for (cref, token) in refs {
+            let ids = by_ident.get(token).map(|s| s.len()).unwrap_or(0);
+            match ids {
+                1 => {
+                    let id = by_ident[token].iter().next().unwrap();
+                    resolved.insert(cref.clone(), format!("{rtype}/{id}"));
+                }
+                0 => {
+                    return Err(ApiError::unprocessable_entity(
+                        format!("Conditional reference matched no resources: {cref}"),
+                        None,
+                    ));
+                }
+                _ => {
+                    return Err(ApiError::precondition_failed(format!(
+                        "Conditional reference matched multiple resources: {cref}"
+                    )));
+                }
+            }
+        }
+    }
+
+    // Fallback: one search per distinct non-identifier conditional query.
+    for cref in other {
+        let Some((rtype, query)) = cref.split_once('?') else {
+            continue;
+        };
+        let params = octofhir_search::parse_query_string(query, 2, 10);
+        let result = state.storage.search(rtype, &params).await.map_err(|e| {
+            ApiError::bad_request(format!(
+                "Conditional reference search failed for {cref}: {e}"
+            ))
+        })?;
+        match result.entries.len() {
+            1 => {
+                resolved.insert(cref.clone(), format!("{rtype}/{}", result.entries[0].id));
+            }
+            0 => {
+                return Err(ApiError::unprocessable_entity(
+                    format!("Conditional reference matched no resources: {cref}"),
+                    None,
+                ));
+            }
+            _ => {
+                return Err(ApiError::precondition_failed(format!(
+                    "Conditional reference matched multiple resources: {cref}"
+                )));
+            }
+        }
+    }
+
+    Ok(resolved)
 }
 
 /// Build a transaction response entry
@@ -7367,6 +7578,75 @@ async fn reconcile_app_operations(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn conditional_reference_detection() {
+        assert!(is_conditional_reference(
+            "Organization?identifier=http://ex.org|ORG-1"
+        ));
+        assert!(is_conditional_reference("Patient?identifier=12345"));
+        // Not conditional references:
+        assert!(!is_conditional_reference("Patient/123"));
+        assert!(!is_conditional_reference("urn:uuid:abc-123"));
+        assert!(!is_conditional_reference("#contained"));
+        assert!(!is_conditional_reference(
+            "http://ext.example/fhir/Patient/1"
+        ));
+        assert!(!is_conditional_reference("Patient?")); // empty query
+    }
+
+    #[test]
+    fn single_identifier_condition_extracts_token() {
+        assert_eq!(
+            single_identifier_condition("identifier=http://ex.org|ORG-1").as_deref(),
+            Some("http://ex.org|ORG-1")
+        );
+        assert_eq!(
+            single_identifier_condition("identifier=12345").as_deref(),
+            Some("12345")
+        );
+        // Multi-param or non-identifier conditions take the fallback path.
+        assert_eq!(
+            single_identifier_condition("identifier=a&active=true"),
+            None
+        );
+        assert_eq!(single_identifier_condition("name=Smith"), None);
+        assert_eq!(single_identifier_condition("identifier="), None);
+    }
+
+    #[test]
+    fn identifier_tokens_yields_system_value_and_bare_value() {
+        let resource = json!({
+            "resourceType": "Organization",
+            "identifier": [
+                {"system": "http://ex.org", "value": "ORG-1"},
+                {"value": "bare-only"}
+            ]
+        });
+        let tokens = identifier_tokens(&resource);
+        assert!(tokens.contains(&"ORG-1".to_string()));
+        assert!(tokens.contains(&"http://ex.org|ORG-1".to_string()));
+        assert!(tokens.contains(&"bare-only".to_string()));
+    }
+
+    #[test]
+    fn collect_conditional_references_dedupes_and_skips_non_conditional() {
+        let resource = json!({
+            "resourceType": "Encounter",
+            "subject": {"reference": "urn:uuid:pat-1"},
+            "serviceProvider": {"reference": "Organization?identifier=sys|ORG-1"},
+            "participant": [
+                {"individual": {"reference": "Organization?identifier=sys|ORG-1"}},
+                {"individual": {"reference": "Practitioner?identifier=npi|999"}}
+            ],
+            "location": [{"location": {"reference": "Location/already-resolved"}}]
+        });
+        let mut out = std::collections::HashSet::new();
+        collect_conditional_reference_strings(&resource, &mut out);
+        assert_eq!(out.len(), 2, "duplicates collapse, non-conditional skipped");
+        assert!(out.contains("Organization?identifier=sys|ORG-1"));
+        assert!(out.contains("Practitioner?identifier=npi|999"));
+    }
 
     #[test]
     fn test_sort_transaction_entries_preserves_original_indexes() {
