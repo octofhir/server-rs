@@ -2185,10 +2185,11 @@ mod tests {
         .unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("fhir_qty_extract_max_numeric")
+            built.sql.contains("fhir_qty_hull_range_arr")
+                && built.sql.contains("&& numrange")
                 && built.sql.contains("@?")
                 && built.sql.contains("mg"),
-            "quantity runtime path should use the union min/max btree + unit recheck, got: {}",
+            "eq quantity should use the GiST hull-range overlap + unit recheck, got: {}",
             built.sql
         );
         let plan = converted.debug_plan.expect("debug plan collected");
@@ -2199,7 +2200,7 @@ mod tests {
         assert!(plan.predicates[0].index_backed);
         assert_eq!(
             plan.predicates[0].expected_index,
-            Some("idx_observation_value-quantity_qmax".to_string())
+            Some("idx_observation_value-quantity_qhull".to_string())
         );
     }
 

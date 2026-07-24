@@ -45,6 +45,20 @@ const FHIR_QTY_HULL_RANGE_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_qty_hull_
        FROM jsonb_array_elements_text(jsonb_path_query_array(res, jp)) AS x; \
      $$;";
 
+/// Numeric hull (`numrange(min,max,'[]')`) spanning EVERY value location matched by ANY
+/// of `jps` — the array analogue of `fhir_qty_hull_range`, folding a quantity param's
+/// top-level and `component[*]` locations into one range. Backs a GiST index the eq/ap
+/// predicate probes as `fhir_qty_hull_range_arr(resource, <paths>) && numrange(lo,hi)`:
+/// one selective range overlap that streams under LIMIT, replacing the qmax/qmin
+/// `BitmapAnd` whose low-bound half matched most of the table. NULL when no value matches.
+const FHIR_QTY_HULL_RANGE_ARR_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_qty_hull_range_arr(res jsonb, jps jsonpath[]) RETURNS numrange \
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
+       SELECT CASE WHEN min(x::numeric) IS NULL THEN NULL \
+                   ELSE numrange(min(x::numeric), max(x::numeric), '[]') END \
+       FROM unnest(jps) AS jp \
+       CROSS JOIN LATERAL jsonb_array_elements_text(jsonb_path_query_array(res, jp)) AS x; \
+     $$;";
+
 /// Global numeric max (and min, below) of every `.value` scalar matched by ANY of
 /// `jps` — folding a quantity param's top-level and `component[*]` value locations
 /// into ONE scalar. Backs a single btree that the search predicate hits as
@@ -118,6 +132,15 @@ pub async fn create_default_search_indexes(
         .await
     {
         warn!(error = %e, "failed to create quantity hull helper");
+    }
+    // Array hull helper — backs the eq/ap GiST index and the eq/ap query predicate, so
+    // create it unconditionally (a query may target a non-indexed quantity param).
+    if let Err(e) =
+        sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_QTY_HULL_RANGE_ARR_DDL.to_string()))
+            .execute(pool)
+            .await
+    {
+        warn!(error = %e, "failed to create quantity array-hull helper");
     }
     // Quantity union min/max extractors — back the single-btree quantity predicate and
     // its functional indexes; used at query time even for non-indexed quantity params.
@@ -325,6 +348,15 @@ pub async fn create_default_search_indexes(
                     format!(
                         "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qmin\" ON \"{table}\" \
                          ((fhir_qty_extract_min_numeric(resource, {arr})))"
+                    ),
+                    // GiST hull-range over the same value union, serving the eq/ap
+                    // predicate's `fhir_qty_hull_range_arr(resource, <paths>) && numrange`.
+                    // A single range-overlap probe that streams under LIMIT — the qmax/qmin
+                    // btrees above force a BitmapAnd for two-sided bounds whose low half
+                    // matches most rows.
+                    format!(
+                        "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qhull\" ON \"{table}\" \
+                         USING gist ((fhir_qty_hull_range_arr(resource, {arr})))"
                     ),
                 ];
                 for ddl in &qddls {

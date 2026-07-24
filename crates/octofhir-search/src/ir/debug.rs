@@ -360,19 +360,27 @@ fn number_sql_shape(predicate: &NumberPredicate) -> String {
 
 fn debug_quantity_clause(resource_type: &str, clause: &QuantityClause) -> DebugPredicate {
     let (strategy, expected_index, index_backed, sql_shape) = match &clause.predicate {
-        // Every comparison is served by the union min/max functional btree on
-        // `fhir_qty_extract_min/max_numeric(resource, <all value paths>)`; an `@?`
-        // recheck (for eq/ne/ap or a unit constraint) rides on top.
-        QuantityPredicate::Comparison { .. } => (
-            IndexStrategy::JsonbExpressionIndex,
-            Some(format!(
-                "idx_{}_{}_qmax",
-                resource_type.to_lowercase(),
-                clause.param_code
-            )),
-            true,
-            quantity_sql_shape(&clause.predicate),
-        ),
+        // Single-bound comparisons ride the union min/max functional btree on
+        // `fhir_qty_extract_min/max_numeric(resource, <all value paths>)`. Two-sided
+        // eq/ap instead probe the GiST hull-range index (`..._qhull`) with a `hull &&
+        // numrange` overlap — the btree pair forced a BitmapAnd on a table-wide low
+        // bound. An `@?` recheck rides on top for eq/ne/ap or a unit constraint.
+        QuantityPredicate::Comparison { prefix, .. } => {
+            let suffix = match prefix {
+                SearchPrefix::Eq | SearchPrefix::Ap => "qhull",
+                _ => "qmax",
+            };
+            (
+                IndexStrategy::JsonbExpressionIndex,
+                Some(format!(
+                    "idx_{}_{}_{suffix}",
+                    resource_type.to_lowercase(),
+                    clause.param_code
+                )),
+                true,
+                quantity_sql_shape(&clause.predicate),
+            )
+        }
         QuantityPredicate::Missing { .. } => (
             IndexStrategy::JsonbTraversal,
             None,
@@ -894,7 +902,7 @@ mod tests {
         assert!(plan.predicates[0].index_backed);
         assert_eq!(
             plan.predicates[0].expected_index,
-            Some("idx_observation_value-quantity_qmax".to_string())
+            Some("idx_observation_value-quantity_qhull".to_string())
         );
         assert!(
             plan.predicates[0]

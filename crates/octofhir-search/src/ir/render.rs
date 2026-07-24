@@ -400,6 +400,7 @@ pub fn render_quantity_union_clauses_as_or(
     let arr = crate::sql_builder::quantity_value_jsonpath_array(paths);
     let maxfn = format!("fhir_qty_extract_max_numeric({col}, {arr})");
     let minfn = format!("fhir_qty_extract_min_numeric({col}, {arr})");
+    let hullfn = format!("fhir_qty_hull_range_arr({col}, {arr})");
     let mut exprs = Vec::new();
     for clause in clauses {
         match &clause.predicate {
@@ -417,7 +418,23 @@ pub fn render_quantity_union_clauses_as_or(
             } => {
                 let number =
                     RenderDecimalParts::parse(value).map_err(|_| invalid_quantity_number(value))?;
-                let index_cond = quantity_union_index_cond(&maxfn, &minfn, *prefix, &number);
+                // Two-sided prefixes (eq/ap) served by a GiST hull-range overlap, not the
+                // qmax/qmin btree pair: `qmax >= lo AND qmin < hi` forced a BitmapAnd whose
+                // `qmin < hi` half matches most of the table (a huge bitmap the planner must
+                // fully materialize before the AND, defeating LIMIT). `hull && numrange` is
+                // one selective range probe that streams under LIMIT. Single-bound prefixes
+                // stay on the exact qmax/qmin btrees (no over-return, no recheck).
+                let index_cond = match prefix {
+                    SearchPrefix::Eq => {
+                        let (lo, hi) = number.implicit_eq_bounds();
+                        Some(format!("{hullfn} && numrange({lo}, {hi}, '[)')"))
+                    }
+                    SearchPrefix::Ap => {
+                        let (lo, hi) = number.approximate_bounds();
+                        Some(format!("{hullfn} && numrange({lo}, {hi}, '[]')"))
+                    }
+                    _ => quantity_union_index_cond(&maxfn, &minfn, *prefix, &number),
+                };
                 // The min/max prefilter is exact for single-bound prefixes with no
                 // unit constraint; otherwise an `@?` recheck enforces the exact match.
                 let need_recheck = matches!(
