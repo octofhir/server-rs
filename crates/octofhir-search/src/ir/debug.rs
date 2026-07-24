@@ -85,9 +85,22 @@ pub fn build_date_debug_plan(resource_type: &str, clauses: &[DateClause]) -> Sea
 /// text-blob expression on the resource JSONB.
 ///
 /// SQL shapes intentionally use symbolic bind names instead of actual values.
-pub fn build_string_debug_plan(resource_type: &str, clauses: &[StringClause]) -> SearchDebugPlan {
+/// `has_typed_index` reflects whether the param carries a per-param typed
+/// extraction function (`typed_extract_fn`), which is set only when a matching
+/// `idx_{table}_{param}_str` trigram GIN was created at bootstrap. Without it
+/// the rendered SQL uses the generic `fhir_extract_text(...)` expression that no
+/// index serves, so the predicate is a seq scan — the plan must say so rather
+/// than claim a non-existent index match.
+pub fn build_string_debug_plan(
+    resource_type: &str,
+    clauses: &[StringClause],
+    has_typed_index: bool,
+) -> SearchDebugPlan {
     let mut plan = SearchDebugPlan::new(resource_type);
-    plan.predicates = clauses.iter().map(debug_string_clause).collect();
+    plan.predicates = clauses
+        .iter()
+        .map(|c| debug_string_clause(c, has_typed_index))
+        .collect();
     plan
 }
 
@@ -244,23 +257,35 @@ fn date_sql_shape(predicate: &DatePredicate) -> String {
     }
 }
 
-fn debug_string_clause(clause: &StringClause) -> DebugPredicate {
-    let trgm_index = || Some(string_index_name(&clause.resource_type, &clause.param_code));
+fn debug_string_clause(clause: &StringClause, has_typed_index: bool) -> DebugPredicate {
+    // The trigram GIN index is on `fhir_text_blob(fhir_s_{table}_{param}(resource))`.
+    // The rendered predicate only uses that typed function — and so only matches
+    // the index — when the param carries a `typed_extract_fn`. Otherwise it falls
+    // back to the generic `fhir_extract_text(...)` expression, which is a seq scan.
+    let trgm_index =
+        || has_typed_index.then(|| string_index_name(&clause.resource_type, &clause.param_code));
+    let indexed_strategy = || {
+        if has_typed_index {
+            IndexStrategy::JsonbExpressionIndex
+        } else {
+            IndexStrategy::JsonbTraversal
+        }
+    };
     let (strategy, expected_index, sql_shape) = match &clause.predicate {
         StringPredicate::Prefix { .. } => (
-            IndexStrategy::JsonbExpressionIndex,
+            indexed_strategy(),
             trgm_index(),
             format!("{STRING_BLOB_EXPR} LIKE $prefix"),
         ),
         StringPredicate::Contains { .. } => (
-            IndexStrategy::JsonbExpressionIndex,
+            indexed_strategy(),
             trgm_index(),
             format!("{STRING_BLOB_EXPR} LIKE $contains"),
         ),
         // `:text` is approximated as a substring match over the same
         // normalized text blob (and served by the same trigram index).
         StringPredicate::Text { .. } => (
-            IndexStrategy::JsonbExpressionIndex,
+            indexed_strategy(),
             trgm_index(),
             format!("{STRING_BLOB_EXPR} LIKE $text"),
         ),
@@ -741,7 +766,7 @@ mod tests {
             },
         }];
 
-        let plan = build_string_debug_plan("Patient", &clauses);
+        let plan = build_string_debug_plan("Patient", &clauses, true);
         let json = serde_json::to_string(&plan).unwrap();
 
         assert!(json.contains("Patient"));
@@ -757,6 +782,27 @@ mod tests {
     }
 
     #[test]
+    fn string_debug_plan_without_typed_index_is_not_index_backed() {
+        // A param not in `indexed_params` has no typed extraction function, so
+        // the rendered SQL uses the generic `fhir_extract_text(...)` that no
+        // index serves. The plan must report the seq scan honestly instead of
+        // pointing at an `idx_{table}_{param}_str` that the predicate can't hit.
+        let clauses = vec![StringClause {
+            resource_type: "Patient".to_string(),
+            param_code: "family".to_string(),
+            predicate: StringPredicate::Prefix {
+                value: "Smith".to_string(),
+            },
+        }];
+
+        let plan = build_string_debug_plan("Patient", &clauses, false);
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+    }
+
+    #[test]
     fn string_exact_debug_plan_is_traversal_over_raw_values() {
         let clauses = vec![StringClause {
             resource_type: "Patient".to_string(),
@@ -766,7 +812,7 @@ mod tests {
             },
         }];
 
-        let plan = build_string_debug_plan("Patient", &clauses);
+        let plan = build_string_debug_plan("Patient", &clauses, true);
 
         assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
         assert!(!plan.predicates[0].index_backed);

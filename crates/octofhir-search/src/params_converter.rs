@@ -289,6 +289,7 @@ pub fn build_native_ir_query_from_params_with_config(
                     debug_plan.as_mut(),
                     &parsed,
                     param_def.param_type,
+                    param_def.typed_extract_fn.is_some(),
                     resource_type,
                 )?;
                 collect_number_debug_plan(
@@ -552,6 +553,7 @@ fn collect_string_debug_plan(
     debug_plan: Option<&mut SearchDebugPlan>,
     parsed: &ParsedParam,
     param_type: SearchParameterType,
+    has_typed_index: bool,
     resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
     if param_type != SearchParameterType::String {
@@ -567,7 +569,7 @@ fn collect_string_debug_plan(
     }
 
     let clauses = StringClause::from_parsed_param(parsed, resource_type)?;
-    append_string_debug_plan(debug_plan, resource_type, &clauses);
+    append_string_debug_plan(debug_plan, resource_type, &clauses, has_typed_index);
     Ok(())
 }
 
@@ -582,10 +584,11 @@ fn append_string_debug_plan(
     debug_plan: Option<&mut SearchDebugPlan>,
     resource_type: &str,
     clauses: &[StringClause],
+    has_typed_index: bool,
 ) {
     if let Some(plan) = debug_plan {
         plan.predicates
-            .extend(build_string_debug_plan(resource_type, clauses).predicates);
+            .extend(build_string_debug_plan(resource_type, clauses, has_typed_index).predicates);
     }
 }
 
@@ -1663,6 +1666,49 @@ mod tests {
         registry
     }
 
+    #[test]
+    fn string_debug_plan_is_index_backed_when_typed_fn_present() {
+        // When the param carries a typed extraction function (set at bootstrap
+        // once the matching trigram index exists), the rendered SQL uses that
+        // typed function and the plan legitimately reports the index match.
+        use crate::parameters::SearchParameter;
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "family",
+                "http://hl7.org/fhir/SearchParameter/Patient-family",
+                SearchParameterType::String,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.name.family")
+            .with_typed_extract_fn("fhir_s_patient_family"),
+        );
+        let params = parse_query_string("family:contains=Smith&_count=5", 10, 100);
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+        let converted = build_native_ir_query_from_params_with_config(
+            "Patient", &params, &registry, "public", &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbExpressionIndex
+        );
+        assert_eq!(
+            plan.predicates[0].expected_index.as_deref(),
+            Some("idx_patient_family_str")
+        );
+
+        // And the rendered SQL uses the typed function that matches that index.
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(built.sql.contains("fhir_s_patient_family("));
+    }
+
     fn token_registry_with_expression() -> SearchParameterRegistry {
         use crate::parameters::SearchParameter;
         let registry = SearchParameterRegistry::new();
@@ -1980,10 +2026,15 @@ mod tests {
         assert_eq!(plan.predicates.len(), 1);
         assert_eq!(plan.predicates[0].param_code, "family");
         assert_eq!(plan.predicates[0].search_type, SearchParameterType::String);
-        assert!(plan.predicates[0].index_backed);
+        // This registry has no `typed_extract_fn` (the param is not in
+        // `indexed_params`), so the rendered SQL uses the generic
+        // `fhir_extract_text(...)` expression that no index serves. The plan must
+        // report the seq scan honestly rather than claim `idx_patient_family_str`.
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
         assert_eq!(
             plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::JsonbExpressionIndex
+            crate::ir::IndexStrategy::JsonbTraversal
         );
         assert!(
             plan.predicates[0]
@@ -1999,8 +2050,8 @@ mod tests {
         );
 
         let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("jsonb_expression_index"));
-        assert!(json.contains("idx_patient_family_str"));
+        assert!(json.contains("jsonb_traversal"));
+        assert!(!json.contains("idx_patient_family_str"));
         assert!(
             !json.contains("Smíth") && !json.contains("smith"),
             "debug output must stay redacted: {json}"
