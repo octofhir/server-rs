@@ -219,7 +219,10 @@ async fn create_config_db_pool(cfg: &AppConfig) -> Result<PgPool, anyhow::Error>
         .with_pool_size(5)
         .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
         .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
-        .with_run_migrations(true);
+        .with_run_migrations(true)
+        // Auxiliary pool for `_configuration` only — the main storage pool owns
+        // GIN maintenance, so don't spawn a second flusher here.
+        .with_gin_maintenance(false);
 
     let pg_storage = PostgresStorage::new(postgres_config)
         .await

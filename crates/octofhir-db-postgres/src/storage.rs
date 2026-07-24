@@ -57,7 +57,15 @@ impl PostgresStorage {
 
         let schema_manager = SchemaManager::new(pool.clone());
 
-        crate::gin_maintenance::spawn_gin_cleaner(pool.clone());
+        // Run the GIN pending-list flusher on exactly one pool. Small auxiliary
+        // pools (e.g. the config pool) disable it so it isn't spawned twice,
+        // where the duplicate would compete for connections and DB time.
+        if config.gin_maintenance {
+            crate::gin_maintenance::spawn_gin_cleaner_with_interval(
+                pool.clone(),
+                std::time::Duration::from_secs(config.gin_maintenance_interval_secs),
+            );
+        }
 
         Ok(Self {
             pool,

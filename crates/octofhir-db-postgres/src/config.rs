@@ -32,6 +32,29 @@ pub struct PostgresConfig {
 
     /// Whether to run migrations on startup.
     pub run_migrations: bool,
+
+    /// Whether to run the background GIN pending-list flusher on this pool.
+    /// Each flush lists every GIN index and runs `gin_clean_pending_list()` per
+    /// index, holding a pool connection and doing DB work — so it should run on
+    /// exactly one pool (the main resource pool), never on small auxiliary pools
+    /// like the config pool. Default: true.
+    #[serde(default = "default_gin_maintenance")]
+    pub gin_maintenance: bool,
+
+    /// How often (seconds) the GIN pending-list flusher runs. Longer cadence
+    /// reduces contention with request traffic under write-heavy load, at the
+    /// cost of a slightly staler pending list (autovacuum still backs it up).
+    /// Default: 120.
+    #[serde(default = "default_gin_maintenance_interval_secs")]
+    pub gin_maintenance_interval_secs: u64,
+}
+
+fn default_gin_maintenance() -> bool {
+    true
+}
+
+fn default_gin_maintenance_interval_secs() -> u64 {
+    120
 }
 
 impl Default for PostgresConfig {
@@ -47,6 +70,8 @@ impl Default for PostgresConfig {
             idle_timeout_ms: Some(300_000),
             max_lifetime_secs: None,
             run_migrations: true,
+            gin_maintenance: true,
+            gin_maintenance_interval_secs: 120,
         }
     }
 }
@@ -100,6 +125,20 @@ impl PostgresConfig {
     #[must_use]
     pub fn with_run_migrations(mut self, run: bool) -> Self {
         self.run_migrations = run;
+        self
+    }
+
+    /// Sets whether the background GIN pending-list flusher runs on this pool.
+    #[must_use]
+    pub fn with_gin_maintenance(mut self, on: bool) -> Self {
+        self.gin_maintenance = on;
+        self
+    }
+
+    /// Sets how often (seconds) the GIN pending-list flusher runs.
+    #[must_use]
+    pub fn with_gin_maintenance_interval_secs(mut self, secs: u64) -> Self {
+        self.gin_maintenance_interval_secs = secs;
         self
     }
 }
