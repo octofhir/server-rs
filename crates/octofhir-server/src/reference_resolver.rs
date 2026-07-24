@@ -5,12 +5,13 @@
 //! `targetProfile` conformance) fetches referenced resource bodies from either
 //! local storage or, when enabled, over the network.
 
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use octofhir_core::fhir_reference::{FhirReference, UnresolvableReference, parse_reference};
+use octofhir_core::fhir_reference::{parse_reference, FhirReference, UnresolvableReference};
 use octofhir_fhirschema::reference::{
     ReferenceError, ReferenceResolutionResult, ReferenceResolver, ReferenceResult,
 };
@@ -198,6 +199,111 @@ impl ReferenceResolver for StorageReferenceResolver {
             Err(_) => Ok(None),
         }
     }
+
+    async fn resolve_references_batch(
+        &self,
+        references: &[String],
+    ) -> Vec<ReferenceResult<ReferenceResolutionResult>> {
+        // Parse once, group ids by resource type, then one existence query per
+        // type (`exists_many` → `id = ANY($1)`). A reference-heavy resource costs
+        // O(distinct types) checkouts instead of O(references) concurrent ones.
+        let parsed: Vec<Option<FhirReference>> =
+            references.iter().map(|r| self.parse_reference(r)).collect();
+
+        let mut ids_by_type: HashMap<String, Vec<String>> = HashMap::new();
+        for p in parsed.iter().flatten() {
+            ids_by_type
+                .entry(p.resource_type.clone())
+                .or_default()
+                .push(p.id.clone());
+        }
+
+        // Existing ids per type. A failed lookup leaves the type absent, treated
+        // below as "skipped" (transient) rather than a false "not found".
+        let mut existing: HashMap<String, HashSet<String>> = HashMap::new();
+        for (rt, ids) in &ids_by_type {
+            if let Ok(found) = self.storage.exists_many(rt, ids).await {
+                existing.insert(rt.clone(), found);
+            }
+        }
+
+        parsed
+            .iter()
+            .map(|p| match p {
+                // Unparseable / contained / urn / external: skip (treated as existing).
+                None => Ok(ReferenceResolutionResult::skipped()),
+                Some(pr) => match existing.get(&pr.resource_type) {
+                    Some(found) => Ok(if found.contains(&pr.id) {
+                        ReferenceResolutionResult::found(pr.resource_type.clone(), pr.id.clone())
+                    } else {
+                        ReferenceResolutionResult::not_found()
+                    }),
+                    // exists_many failed for this type: transient — skip.
+                    None => Ok(ReferenceResolutionResult::skipped()),
+                },
+            })
+            .collect()
+    }
+
+    async fn fetch_resources_batch(
+        &self,
+        references: &[String],
+    ) -> Vec<ReferenceResult<Option<Arc<Value>>>> {
+        // Local references batch by type via `read_many`; anything the local
+        // parser rejects (external absolute URLs, contained, urn) falls back to
+        // the per-reference path, preserving external-fetch behaviour.
+        let parsed: Vec<Option<FhirReference>> =
+            references.iter().map(|r| self.parse_reference(r)).collect();
+
+        let mut ids_by_type: HashMap<String, Vec<String>> = HashMap::new();
+        for p in parsed.iter().flatten() {
+            ids_by_type
+                .entry(p.resource_type.clone())
+                .or_default()
+                .push(p.id.clone());
+        }
+
+        // (type, id) -> body for everything read; types whose read failed are
+        // recorded so we surface a transient error rather than a false "None".
+        let mut bodies: HashMap<(String, String), Arc<Value>> = HashMap::new();
+        let mut failed_types: HashSet<String> = HashSet::new();
+        for (rt, ids) in &ids_by_type {
+            match self.storage.read_many(rt, ids).await {
+                Ok(list) => {
+                    for stored in list {
+                        bodies.insert((rt.clone(), stored.id), Arc::new(stored.resource));
+                    }
+                }
+                Err(_) => {
+                    failed_types.insert(rt.clone());
+                }
+            }
+        }
+
+        let mut out = Vec::with_capacity(references.len());
+        for (reference, p) in references.iter().zip(parsed.iter()) {
+            match p {
+                Some(pr) => {
+                    if failed_types.contains(&pr.resource_type) {
+                        out.push(Err(ReferenceError::ServiceUnavailable {
+                            message: format!(
+                                "batch read failed for resource type '{}'",
+                                pr.resource_type
+                            ),
+                        }));
+                    } else {
+                        out.push(Ok(bodies
+                            .get(&(pr.resource_type.clone(), pr.id.clone()))
+                            .cloned()));
+                    }
+                }
+                // External / contained / urn: per-reference fallback (may hit the
+                // network for external absolute URLs when fetch_external is on).
+                None => out.push(self.fetch_resource(reference).await),
+            }
+        }
+        out
+    }
 }
 
 /// SSRF guard: whether the URL's host is safe to fetch.
@@ -276,10 +382,7 @@ mod tests {
             "0.0.0.0",
             "100.64.0.1",
         ] {
-            assert!(
-                is_blocked_ip(ip.parse().unwrap()),
-                "{ip} should be blocked"
-            );
+            assert!(is_blocked_ip(ip.parse().unwrap()), "{ip} should be blocked");
         }
     }
 
@@ -296,10 +399,7 @@ mod tests {
     #[test]
     fn blocks_internal_ipv6() {
         for ip in ["::1", "::", "fe80::1", "fc00::1", "fd12:3456::1"] {
-            assert!(
-                is_blocked_ip(ip.parse().unwrap()),
-                "{ip} should be blocked"
-            );
+            assert!(is_blocked_ip(ip.parse().unwrap()), "{ip} should be blocked");
         }
     }
 }
