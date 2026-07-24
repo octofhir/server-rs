@@ -642,22 +642,26 @@ async fn existing_local_refs(
         }
     }
 
-    let mut known: HashSet<String> = HashSet::new();
-    for (rtype, mut ids) in by_type {
-        ids.sort();
-        ids.dedup();
-        match state.storage.exists_many(&rtype, &ids).await {
-            Ok(found) => {
-                for id in found {
-                    known.insert(format!("{rtype}/{id}"));
-                }
-            }
-            Err(e) => {
-                tracing::debug!(resource_type = %rtype, error = %e, "batch exists check failed");
-            }
+    // One grouped round-trip for all referenced types instead of a serial
+    // `exists_many` per type: reference-heavy resources (ExplanationOfBenefit,
+    // Claim) reference several distinct types, and under write load the serial
+    // per-type checks dominated latency and connection-pool pressure.
+    let groups: Vec<(String, Vec<String>)> = by_type
+        .into_iter()
+        .map(|(rtype, mut ids)| {
+            ids.sort();
+            ids.dedup();
+            (rtype, ids)
+        })
+        .collect();
+
+    match state.storage.exists_many_grouped(&groups).await {
+        Ok(found) => found,
+        Err(e) => {
+            tracing::debug!(error = %e, "grouped exists check failed");
+            HashSet::new()
         }
     }
-    known
 }
 
 #[tracing::instrument(name = "fhir.create", skip_all, fields(resource_type = %resource_type))]
@@ -6718,6 +6722,10 @@ async fn refresh_resource_type_cache(state: &crate::server::AppState) {
             let new_set: HashSet<String> = resource_types.into_iter().collect();
             state.resource_type_set.store(Arc::new(new_set));
             state.model_provider.invalidate_schema_caches();
+            // The FHIRPath engine memoizes element-type resolution
+            // (`(type, property) -> TypeInfo`) across evaluations; those entries
+            // are derived from the schema set and go stale when packages change.
+            state.fhirpath_engine.clear_element_type_cache();
             tracing::info!(resource_types = count, "Resource type cache refreshed");
         }
         Err(e) => {

@@ -27,6 +27,7 @@ pub struct CanonicalPackageState {
     pub config: Arc<AppConfig>,
     pub package_store: Arc<PostgresPackageStore>,
     pub model_provider: Arc<crate::model_provider::OctoFhirModelProvider>,
+    pub fhirpath_engine: Arc<octofhir_fhirpath::FhirPathEngine>,
 }
 
 impl axum::extract::FromRef<crate::server::AppState> for CanonicalPackageState {
@@ -35,6 +36,7 @@ impl axum::extract::FromRef<crate::server::AppState> for CanonicalPackageState {
             config: app_state.config.clone(),
             package_store: app_state.package_store.clone(),
             model_provider: app_state.model_provider.clone(),
+            fhirpath_engine: app_state.fhirpath_engine.clone(),
         }
     }
 }
@@ -132,6 +134,9 @@ pub async fn upload_package(
     // Invalidate ModelProvider caches to force reload of new schemas
     info!("Invalidating ModelProvider schema caches");
     state.model_provider.invalidate_schema_caches();
+    // Drop the FHIRPath engine's element-type memo: its cached
+    // `(type, property) -> TypeInfo` entries derive from the schema set.
+    state.fhirpath_engine.clear_element_type_cache();
 
     info!(
         package = %package_name,

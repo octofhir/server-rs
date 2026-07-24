@@ -248,6 +248,84 @@ pub async fn exists_many(
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
+/// Batch existence across several resource types in one round-trip.
+///
+/// `groups` pairs each resource type with the ids to check. Returns the found
+/// references as `"Type/id"`. The per-type existence queries are combined with
+/// `UNION ALL` so N distinct referenced types cost one DB round-trip (one pool
+/// checkout) instead of N — which matters under write load, where the serial
+/// per-type checks dominated latency and pool pressure.
+///
+/// If the union query fails (e.g. one referenced type has no table yet), it
+/// falls back to per-type `exists_many`, treating a missing table as "none
+/// exist" — matching the single-type path's behavior.
+pub async fn exists_many_grouped(
+    pool: &PgPool,
+    groups: &[(String, Vec<String>)],
+) -> Result<std::collections::HashSet<String>, StorageError> {
+    // Only groups with ids to check contribute a query branch.
+    let groups: Vec<&(String, Vec<String>)> =
+        groups.iter().filter(|(_, ids)| !ids.is_empty()).collect();
+    if groups.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+
+    // One type: the single-table path already does one round-trip.
+    if groups.len() == 1 {
+        let (rt, ids) = groups[0];
+        return Ok(exists_many(pool, rt, ids)
+            .await?
+            .into_iter()
+            .map(|id| format!("{rt}/{id}"))
+            .collect());
+    }
+
+    // Build `UNION ALL` of one `id = ANY($n)` existence query per type. Each
+    // branch tags its rows with the group index (a bound-free integer literal),
+    // so no resource-type string is interpolated into the SQL.
+    let mut sql = String::new();
+    for (i, (rt, _ids)) in groups.iter().enumerate() {
+        let table = SchemaManager::table_name(rt);
+        if i > 0 {
+            sql.push_str(" UNION ALL ");
+        }
+        sql.push_str(&format!(
+            r#"SELECT {i}::int AS grp, id FROM "{table}" WHERE id = ANY(${n}) AND status != 'deleted'"#,
+            n = i + 1
+        ));
+    }
+
+    let mut q = query_as::<_, (i32, String)>(AssertSqlSafe(sql));
+    for (_, ids) in &groups {
+        q = q.bind(ids);
+    }
+
+    match q.fetch_all(pool).await {
+        Ok(rows) => Ok(rows
+            .into_iter()
+            .filter_map(|(grp, id)| groups.get(grp as usize).map(|(rt, _)| format!("{rt}/{id}")))
+            .collect()),
+        Err(_) => {
+            // A branch table may not exist. Fall back to per-type checks, where
+            // a missing table is treated as "none of those ids exist".
+            let mut found = std::collections::HashSet::new();
+            for (rt, ids) in &groups {
+                match exists_many(pool, rt, ids).await {
+                    Ok(ids_found) => {
+                        for id in ids_found {
+                            found.insert(format!("{rt}/{id}"));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(resource_type = %rt, error = %e, "grouped existence fallback: skipping type");
+                    }
+                }
+            }
+            Ok(found)
+        }
+    }
+}
+
 /// Batch read of live (non-deleted) resources for `ids` in `{resource_type}`.
 /// One `id = ANY($1)` round-trip; missing/deleted ids are omitted. Meta
 /// (versionId/lastUpdated) is merged into each returned resource.

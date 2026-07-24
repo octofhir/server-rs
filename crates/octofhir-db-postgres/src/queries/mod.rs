@@ -8,8 +8,8 @@ pub mod search;
 
 // Re-export CRUD operations
 pub use crud::{
-    create, create_raw, delete, exists, exists_many, read, read_many, read_raw, update, update_raw,
-    vread, vread_raw,
+    create, create_raw, delete, exists, exists_many, exists_many_grouped, read, read_many,
+    read_raw, update, update_raw, vread, vread_raw,
 };
 
 // Re-export history operations
@@ -17,8 +17,8 @@ pub use history::{get_history, get_history_raw, get_system_history, get_system_h
 
 // Re-export search operations
 pub use search::{
-    execute_search, execute_search_raw, execute_search_raw_with_config,
-    execute_search_raw_with_options, execute_search_raw_with_terminology,
-    execute_search_raw_with_terminology_options, execute_search_with_tx, RawSearchOptions,
-    SearchUnknownParamHandling,
+    RawSearchOptions, SearchUnknownParamHandling, execute_search, execute_search_raw,
+    execute_search_raw_with_config, execute_search_raw_with_options,
+    execute_search_raw_with_terminology, execute_search_raw_with_terminology_options,
+    execute_search_with_tx,
 };

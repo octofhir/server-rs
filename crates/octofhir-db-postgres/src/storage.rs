@@ -208,6 +208,13 @@ impl FhirStorage for PostgresStorage {
         queries::exists_many(self.read_pool(), resource_type, ids).await
     }
 
+    async fn exists_many_grouped(
+        &self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        queries::exists_many_grouped(self.read_pool(), groups).await
+    }
+
     async fn read_many(
         &self,
         resource_type: &str,

@@ -154,6 +154,13 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         self.inner.exists_many(resource_type, ids).await
     }
 
+    async fn exists_many_grouped(
+        &self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        self.inner.exists_many_grouped(groups).await
+    }
+
     async fn read_many(
         &self,
         resource_type: &str,

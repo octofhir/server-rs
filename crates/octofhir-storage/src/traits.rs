@@ -105,6 +105,30 @@ pub trait FhirStorage: Send + Sync {
         Ok(found)
     }
 
+    /// Batch existence check spanning multiple resource types, returning the
+    /// found references as `"Type/id"` strings. `groups` pairs each resource
+    /// type with the ids to check.
+    ///
+    /// Validating a reference-heavy resource (an `ExplanationOfBenefit` points at
+    /// a Patient, Organization, several Practitioners, a Claim, …) otherwise
+    /// costs one `exists_many` round-trip *per distinct type*, and under load
+    /// those serial round-trips dominate write latency and pool pressure.
+    /// Backends should override this with a single round-trip that unions the
+    /// per-type existence queries. The default implementation falls back to one
+    /// `exists_many` per group.
+    async fn exists_many_grouped(
+        &self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        let mut found = std::collections::HashSet::new();
+        for (resource_type, ids) in groups {
+            for id in self.exists_many(resource_type, ids).await? {
+                found.insert(format!("{resource_type}/{id}"));
+            }
+        }
+        Ok(found)
+    }
+
     /// Batch read: returns the live (non-deleted) resources among `ids` for the
     /// given `resource_type`. Order is unspecified; missing ids are omitted.
     ///

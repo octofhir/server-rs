@@ -262,8 +262,7 @@ pub async fn create_default_search_indexes(
                 let lower_jpa = paths_to_jsonpath_array(&date_lower_paths(&segments));
                 let upper_jpa = paths_to_jsonpath_array(&date_upper_paths(&segments));
                 format!(
-                    "DROP INDEX IF EXISTS \"idx_{table}_{code}_date\"; \
-                     CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_date\" ON \"{table}\" \
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_date\" ON \"{table}\" \
                      USING gist (tstzrange(\
                        fhir_extract_date_min(resource, {lower_jpa}), \
                        fhir_extract_date_max(resource, {upper_jpa}), '[]'))"
