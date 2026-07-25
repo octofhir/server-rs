@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_graphql::dataloader::Loader;
-use octofhir_core::fhir_reference::{parse_reference, UnresolvableReference};
+use octofhir_core::fhir_reference::{UnresolvableReference, parse_reference};
 use octofhir_storage::DynStorage;
 use tracing::{debug, instrument, trace, warn};
 

@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-07-25T10:31:09.530Z",
+  "test": "transaction-batch",
+  "metrics": {
+    "transaction": {
+      "success": 13474,
+      "failure": 0,
+      "duration_p50": 147,
+      "duration_p95": 361,
+      "duration_p99": 593.2699999999999
+    },
+    "batch": {
+      "success": 13474,
+      "failure": 0,
+      "duration_p50": 344,
+      "duration_p95": 1406.699999999999,
+      "duration_p99": 2295.27
+    }
+  }
+}

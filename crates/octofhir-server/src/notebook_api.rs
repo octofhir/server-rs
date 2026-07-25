@@ -4,10 +4,10 @@
 
 use crate::server::AppState;
 use axum::{
-    extract::{Path, Query, State},
-    http::{header, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::{Path, Query, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use octofhir_api::ApiError;
 use octofhir_notebook::{self as nb, Format};
