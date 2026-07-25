@@ -294,6 +294,15 @@ pub struct PostgresStorageConfig {
     /// empty list to drop the index entirely.
     #[serde(default)]
     pub document_gin_resource_types: Option<Vec<String>>,
+
+    /// Give every resource table a generated `profile` column (from
+    /// `meta.profile`) with partial covering and GIN indexes.
+    ///
+    /// On by default: it backs `_profile` search and the `targetProfile`
+    /// conformance fast path. The column is created with the table, so changing
+    /// this takes effect only for a recreated database.
+    #[serde(default = "default_profile_column")]
+    pub profile_column: bool,
 }
 
 /// Read replica configuration. Only `url` is required;
@@ -330,6 +339,9 @@ fn default_postgres_database() -> String {
 }
 fn default_postgres_pool_size() -> u32 {
     10
+}
+fn default_profile_column() -> bool {
+    true
 }
 fn default_postgres_connect_timeout() -> u64 {
     5000
@@ -372,6 +384,7 @@ impl Default for PostgresStorageConfig {
             idle_timeout_ms: Some(300_000), // 5 minutes
             read_replica: None,
             document_gin_resource_types: None,
+            profile_column: default_profile_column(),
         }
     }
 }

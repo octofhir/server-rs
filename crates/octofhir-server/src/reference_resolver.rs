@@ -317,6 +317,52 @@ impl ReferenceResolver for StorageReferenceResolver {
         }
         out
     }
+
+    async fn fetch_profiles_batch(&self, references: &[String]) -> HashMap<String, Vec<String>> {
+        // One grouped query over the generated `profile` column, served by the
+        // partial covering index — no resource body, no TOAST, no JSONB parse.
+        // Only local references participate; an external URL would have to be
+        // dereferenced to learn anything, which is the slow path by definition.
+        let parsed: Vec<Option<FhirReference>> =
+            references.iter().map(|r| self.parse_reference(r)).collect();
+
+        let mut ids_by_type: HashMap<String, Vec<String>> = HashMap::new();
+        for p in parsed.iter().flatten() {
+            ids_by_type
+                .entry(p.resource_type.clone())
+                .or_default()
+                .push(p.id.clone());
+        }
+        if ids_by_type.is_empty() {
+            return HashMap::new();
+        }
+
+        let groups: Vec<(String, Vec<String>)> = ids_by_type
+            .into_iter()
+            .map(|(resource_type, mut ids)| {
+                ids.sort();
+                ids.dedup();
+                (resource_type, ids)
+            })
+            .collect();
+
+        let Ok(by_key) = self.storage.profiles_many_grouped(&groups).await else {
+            // Nothing known: every reference falls through to fetch-and-validate.
+            return HashMap::new();
+        };
+
+        // Re-key from `"Type/id"` onto the caller's original reference strings,
+        // which may be absolute or versioned and so are not the same text.
+        let mut out = HashMap::new();
+        for (reference, p) in references.iter().zip(parsed.iter()) {
+            if let Some(pr) = p
+                && let Some(profiles) = by_key.get(&format!("{}/{}", pr.resource_type, pr.id))
+            {
+                out.insert(reference.clone(), profiles.clone());
+            }
+        }
+        out
+    }
 }
 
 /// SSRF guard: whether the URL's host is safe to fetch.

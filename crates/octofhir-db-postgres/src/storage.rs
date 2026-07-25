@@ -56,7 +56,8 @@ impl PostgresStorage {
         }
 
         let schema_manager = SchemaManager::new(pool.clone())
-            .with_document_gin_tables(config.document_gin_resource_types.as_deref());
+            .with_document_gin_tables(config.document_gin_resource_types.as_deref())
+            .with_profile_column(config.profile_column);
 
         // Run the GIN pending-list flusher on exactly one pool. Small auxiliary
         // pools (e.g. the config pool) disable it so it isn't spawned twice,
@@ -214,6 +215,13 @@ impl FhirStorage for PostgresStorage {
         groups: &[(String, Vec<String>)],
     ) -> Result<std::collections::HashSet<String>, StorageError> {
         queries::exists_many_grouped(self.read_pool(), groups).await
+    }
+
+    async fn profiles_many_grouped(
+        &self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashMap<String, Vec<String>>, StorageError> {
+        queries::profiles_many_grouped(self.read_pool(), groups).await
     }
 
     async fn read_many(

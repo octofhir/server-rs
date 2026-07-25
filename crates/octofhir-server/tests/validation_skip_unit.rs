@@ -38,6 +38,7 @@ fn test_skip_validation_header_parsing() {
     let config = ValidationSettings {
         allow_skip_validation: true,
         skip_reference_validation: false,
+        ..Default::default()
     };
 
     // Test with "true"
@@ -96,6 +97,7 @@ fn test_two_layer_security() {
     let config_disabled = ValidationSettings {
         allow_skip_validation: false,
         skip_reference_validation: false,
+        ..Default::default()
     };
 
     let mut headers = HeaderMap::new();
@@ -108,6 +110,7 @@ fn test_two_layer_security() {
     let config_enabled = ValidationSettings {
         allow_skip_validation: true,
         skip_reference_validation: false,
+        ..Default::default()
     };
     headers.clear();
 

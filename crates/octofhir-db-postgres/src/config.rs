@@ -58,9 +58,27 @@ pub struct PostgresConfig {
     /// to an empty list to drop the index entirely.
     #[serde(default)]
     pub document_gin_resource_types: Option<Vec<String>>,
+
+    /// Give every resource table a generated `profile` column (from
+    /// `meta.profile`) plus partial covering and GIN indexes on it.
+    ///
+    /// On by default: it backs both `_profile` search and the `targetProfile`
+    /// conformance fast path. Turning it off falls back to reading
+    /// `meta.profile` out of the resource JSONB for search, and to
+    /// dereferencing and re-validating referenced resources for conformance.
+    ///
+    /// The column is created with the table, so changing this takes effect only
+    /// for a recreated database. On data that declares no profiles the column is
+    /// NULL and both indexes stay empty.
+    #[serde(default = "default_profile_column")]
+    pub profile_column: bool,
 }
 
 fn default_gin_maintenance() -> bool {
+    true
+}
+
+fn default_profile_column() -> bool {
     true
 }
 
@@ -84,6 +102,7 @@ impl Default for PostgresConfig {
             gin_maintenance: true,
             gin_maintenance_interval_secs: 120,
             document_gin_resource_types: None,
+            profile_column: true,
         }
     }
 }
@@ -151,6 +170,15 @@ impl PostgresConfig {
     #[must_use]
     pub fn with_document_gin_resource_types(mut self, types: Option<Vec<String>>) -> Self {
         self.document_gin_resource_types = types;
+        self
+    }
+
+    /// Sets whether resource tables carry the generated `profile` column and
+    /// its covering index. Enable only alongside `targetProfile` conformance —
+    /// nothing else reads it, and every write pays for it.
+    #[must_use]
+    pub fn with_profile_column(mut self, on: bool) -> Self {
+        self.profile_column = on;
         self
     }
 

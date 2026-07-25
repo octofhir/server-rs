@@ -37,6 +37,9 @@ pub struct PostgresPackageStore {
     /// Resource types whose tables get a whole-document GIN index. Empty unless
     /// configured — see `PostgresConfig::document_gin_resource_types`.
     document_gin_resource_types: Option<Vec<String>>,
+    /// Whether created tables carry the generated `profile` column and its
+    /// covering index — see `PostgresConfig::profile_column`.
+    profile_column: bool,
 }
 
 /// Helper struct for StructureDefinition fields
@@ -142,6 +145,7 @@ impl PostgresPackageStore {
         Self {
             pool,
             document_gin_resource_types: None,
+            profile_column: false,
         }
     }
 
@@ -150,6 +154,16 @@ impl PostgresPackageStore {
     #[must_use]
     pub fn with_document_gin_resource_types(mut self, types: Option<Vec<String>>) -> Self {
         self.document_gin_resource_types = types;
+        self
+    }
+
+    /// Sets whether tables created by `ensure_resource_tables` carry the
+    /// generated `profile` column and its covering index. Enable only alongside
+    /// `targetProfile` conformance — nothing else reads the column, and every
+    /// write recomputes it.
+    #[must_use]
+    pub fn with_profile_column(mut self, on: bool) -> Self {
+        self.profile_column = on;
         self
     }
 
@@ -554,12 +568,13 @@ impl PostgresPackageStore {
             "Resource-schema cold/warm decision"
         );
 
+        let schema_manager = SchemaManager::new(self.pool.clone())
+            .with_document_gin_tables(self.document_gin_resource_types.as_deref())
+            .with_profile_column(self.profile_column);
+
         if need_create.is_empty() {
             return Ok(0);
         }
-
-        let schema_manager = SchemaManager::new(self.pool.clone())
-            .with_document_gin_tables(self.document_gin_resource_types.as_deref());
 
         // Parallelize schema creation. Each call now issues one round-trip
         // (multi-statement DDL via raw_sql). Concurrency is bounded so we

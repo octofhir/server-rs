@@ -8,7 +8,10 @@
 
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
-use crate::{ir::UriClause, ir::render_uri_array_clauses_as_or, ir::render_uri_clauses_as_or};
+use crate::{
+    ir::UriClause, ir::render_uri_array_clauses_as_or, ir::render_uri_clauses_as_or,
+    ir::render_uri_text_array_clauses_as_or,
+};
 
 /// Build SQL conditions for URI search.
 ///
@@ -34,6 +37,19 @@ pub fn build_uri_array_search(
 ) -> Result<(), SqlBuilderError> {
     let clauses = UriClause::from_parsed_param(param, "")?;
     if let Some(sql) = render_uri_array_clauses_as_or(builder, &clauses, array_path) {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
+/// Build URI search over a `text[]` column of URIs (`_profile`).
+pub fn build_uri_text_array_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    column: &str,
+) -> Result<(), SqlBuilderError> {
+    let clauses = UriClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_uri_text_array_clauses_as_or(builder, &clauses, column) {
         builder.add_condition(sql);
     }
     Ok(())

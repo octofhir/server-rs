@@ -338,8 +338,14 @@ async fn bootstrap_conformance_if_postgres(
         .postgres
         .as_ref()
         .and_then(|pg| pg.document_gin_resource_types.clone());
+    let profile_column = cfg
+        .storage
+        .postgres
+        .as_ref()
+        .is_none_or(|pg| pg.profile_column);
     let fcm_storage = octofhir_db_postgres::PostgresPackageStore::new((*pool).clone())
-        .with_document_gin_resource_types(document_gin_types);
+        .with_document_gin_resource_types(document_gin_types)
+        .with_profile_column(profile_column);
     match fcm_storage.ensure_resource_tables().await {
         Ok(count) => {
             tracing::info!(
@@ -553,6 +559,7 @@ async fn create_storage(
         .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
         .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
         .with_document_gin_resource_types(pg_cfg.document_gin_resource_types.clone())
+        .with_profile_column(pg_cfg.profile_column)
         .with_run_migrations(true);
 
     let mut pg_storage = PostgresStorage::new(postgres_config)

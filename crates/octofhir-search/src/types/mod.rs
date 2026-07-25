@@ -40,7 +40,7 @@ pub use token::{
     build_identifier_search, build_token_coding_array_search, build_token_coding_subtree_search,
     build_token_search, parse_token_value,
 };
-pub use uri::{build_uri_array_search, build_uri_search};
+pub use uri::{build_uri_array_search, build_uri_search, build_uri_text_array_search};
 
 use crate::ir::{
     ResourceColumnParam, render_date_column_clauses_as_or, resolve_composite_component_specs,
@@ -208,14 +208,30 @@ fn dispatch_search_inner(
             build_composite_search_with_specs(builder, param, resource_type, &components)
         }
 
-        SearchParameterType::Uri => match &definition.element_type_hint {
-            ElementTypeHint::Array(_) => {
-                let array_path =
-                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-                build_uri_array_search(builder, param, &array_path)
+        SearchParameterType::Uri => {
+            // `_profile` is a row column, not a jsonb path: the generated
+            // `profile` text[] answers an exact match by array containment,
+            // which an index can serve, instead of expanding `meta.profile` for
+            // every candidate row.
+            if matches!(
+                resolve_resource_column_param(definition),
+                Some(ResourceColumnParam::Profile)
+            ) {
+                return build_uri_text_array_search(
+                    builder,
+                    param,
+                    ResourceColumnParam::Profile.column_name(),
+                );
             }
-            _ => build_uri_search(builder, param, &jsonb_path),
-        },
+            match &definition.element_type_hint {
+                ElementTypeHint::Array(_) => {
+                    let array_path =
+                        build_jsonb_accessor(builder.resource_column(), &path_segments, false);
+                    build_uri_array_search(builder, param, &array_path)
+                }
+                _ => build_uri_search(builder, param, &jsonb_path),
+            }
+        }
 
         SearchParameterType::Special => {
             // Special parameters are usually handled by name, not by expression

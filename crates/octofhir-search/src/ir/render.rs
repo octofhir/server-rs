@@ -150,6 +150,25 @@ pub fn render_uri_array_clauses_as_or(
     or_exprs(exprs)
 }
 
+/// Render URI-array clauses as one OR group over a `text[]` column rather than a
+/// JSONB array path.
+///
+/// `_profile` is served from the generated `profile` column, where an exact
+/// match is array containment — the shape a GIN index on the column answers
+/// directly, instead of expanding `meta.profile` per row with
+/// `jsonb_array_elements_text`.
+pub fn render_uri_text_array_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[UriClause],
+    column: &str,
+) -> Option<SqlExpr> {
+    let exprs = clauses
+        .iter()
+        .map(|clause| uri_text_array_clause_expr(builder, clause, column))
+        .collect::<Vec<_>>();
+    or_exprs(exprs)
+}
+
 /// Render number clauses as one OR group over the current JSONB numeric-cast path.
 pub fn render_number_clauses_as_or(
     builder: &mut SqlBuilder,
@@ -932,6 +951,91 @@ fn uri_array_clause_expr(
         }
         UriPredicate::Missing { is_missing } => jsonb_array_presence_expr(array_path, *is_missing),
     }
+}
+
+/// URI-array predicates evaluated against a `text[]` column.
+///
+/// Only `Exact` gets an index-friendly form (`column @> ARRAY[$n]`, which a GIN
+/// index on the column answers). The prefix/substring modifiers have no
+/// array-index equivalent and unnest the column, which is still cheaper than
+/// unnesting `meta.profile` out of the resource JSONB: the column is a narrow
+/// inline value, so no TOAST chunk is touched.
+fn uri_text_array_clause_expr(
+    builder: &mut SqlBuilder,
+    clause: &UriClause,
+    column: &str,
+) -> SqlExpr {
+    match &clause.predicate {
+        UriPredicate::Exact { value } => {
+            let p = builder.add_text_param(value);
+            // `@>` on `text[]`: the operator a GIN index on the column answers.
+            SqlExpr::Compare {
+                lhs: SqlTerm::Ident(column.to_string()),
+                op: SqlOp::JsonbContains,
+                rhs: SqlTerm::Expr(Box::new(SqlExpr::Raw(format!("ARRAY[${p}]")))),
+            }
+        }
+        UriPredicate::Below { value } => {
+            let escaped = escape_like_pattern(value);
+            let p = builder.add_text_param(format!("{escaped}%"));
+            text_array_exists_expr(
+                column,
+                SqlExpr::Compare {
+                    lhs: SqlTerm::Ident("uri".to_string()),
+                    op: SqlOp::Like,
+                    rhs: SqlTerm::Param(p),
+                },
+            )
+        }
+        UriPredicate::Above { value } => {
+            let p = builder.add_text_param(value);
+            text_array_exists_expr(
+                column,
+                SqlExpr::Compare {
+                    lhs: SqlTerm::Param(p),
+                    op: SqlOp::Like,
+                    rhs: SqlTerm::Raw("uri || '%'".to_string()),
+                },
+            )
+        }
+        UriPredicate::Contains { value } => {
+            let escaped = escape_like_pattern(&value.to_lowercase());
+            let p = builder.add_text_param(format!("%{escaped}%"));
+            text_array_exists_expr(
+                column,
+                SqlExpr::Compare {
+                    lhs: SqlTerm::Ident("LOWER(uri)".to_string()),
+                    op: SqlOp::Like,
+                    rhs: SqlTerm::Param(p),
+                },
+            )
+        }
+        // A NULL column and an empty array both mean "declares nothing".
+        UriPredicate::Missing { is_missing } => {
+            let empty = SqlExpr::Compare {
+                lhs: SqlTerm::Raw(format!("COALESCE(array_length({column}, 1), 0)")),
+                op: SqlOp::Eq,
+                rhs: SqlTerm::Integer(0),
+            };
+            if *is_missing {
+                empty
+            } else {
+                SqlExpr::Not(Box::new(empty))
+            }
+        }
+    }
+}
+
+/// `EXISTS (SELECT 1 FROM unnest(<column>) AS uri WHERE <where_clause>)`
+fn text_array_exists_expr(column: &str, where_clause: SqlExpr) -> SqlExpr {
+    SqlExpr::Exists(Box::new(SelectStmt {
+        projection: vec![SqlTerm::Integer(1)],
+        from: SqlFrom {
+            table: format!("unnest({column})"),
+            alias: Some("uri".to_string()),
+        },
+        where_clause: Some(where_clause),
+    }))
 }
 
 fn uri_scalar_presence_expr(path: &str, is_missing: bool) -> SqlExpr {

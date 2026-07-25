@@ -129,6 +129,43 @@ pub trait FhirStorage: Send + Sync {
         Ok(found)
     }
 
+    /// Batch read of the profiles referenced resources declare in `meta.profile`,
+    /// keyed by `"Type/id"`. Entries are omitted for ids that are missing,
+    /// deleted, or declare no profile.
+    ///
+    /// `targetProfile` conformance needs nothing from a referenced resource but
+    /// the canonicals it claims, and a resource is validated against its own
+    /// `meta.profile` when it is written — so the declared set is a conclusive
+    /// answer, not a guess. Backends that can serve it without reading the
+    /// resource body should override; the default reads the bodies, which is
+    /// what this exists to avoid.
+    async fn profiles_many_grouped(
+        &self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashMap<String, Vec<String>>, StorageError> {
+        let mut out = std::collections::HashMap::new();
+        for (resource_type, ids) in groups {
+            for stored in self.read_many(resource_type, ids).await? {
+                let profiles: Vec<String> = stored
+                    .resource
+                    .get("meta")
+                    .and_then(|m| m.get("profile"))
+                    .and_then(|p| p.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|p| p.as_str())
+                            .map(String::from)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !profiles.is_empty() {
+                    out.insert(format!("{resource_type}/{}", stored.id), profiles);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Batch read: returns the live (non-deleted) resources among `ids` for the
     /// given `resource_type`. Order is unspecified; missing ids are omitted.
     ///

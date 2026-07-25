@@ -12,12 +12,16 @@ use std::sync::Arc;
 
 const RESOURCE_ID_URL: &str = "http://hl7.org/fhir/SearchParameter/Resource-id";
 const RESOURCE_LAST_UPDATED_URL: &str = "http://hl7.org/fhir/SearchParameter/Resource-lastUpdated";
+const RESOURCE_PROFILE_URL: &str = "http://hl7.org/fhir/SearchParameter/Resource-profile";
 
 /// Resource-level SearchParameter backed by a physical resource table column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceColumnParam {
     Id,
     LastUpdated,
+    /// `_profile`, served from the generated `profile` `text[]` column rather
+    /// than by expanding `meta.profile` out of the resource JSONB per row.
+    Profile,
 }
 
 impl ResourceColumnParam {
@@ -26,6 +30,7 @@ impl ResourceColumnParam {
         match self {
             Self::Id => "id",
             Self::LastUpdated => "updated_at",
+            Self::Profile => "profile",
         }
     }
 }
@@ -45,6 +50,9 @@ pub fn resolve_resource_column_param(param_def: &SearchParameter) -> Option<Reso
             SearchParameterType::Date,
             Some("Resource.meta.lastUpdated"),
         ) => Some(ResourceColumnParam::LastUpdated),
+        (RESOURCE_PROFILE_URL, SearchParameterType::Uri, Some("Resource.meta.profile")) => {
+            Some(ResourceColumnParam::Profile)
+        }
         _ => None,
     }
 }

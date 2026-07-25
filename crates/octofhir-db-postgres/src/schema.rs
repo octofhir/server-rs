@@ -34,6 +34,29 @@ const ARCHIVE_FN_SQL: &str = r#"
     $$ LANGUAGE plpgsql;
 "#;
 
+/// Extracts `meta.profile` as a `text[]`, or NULL when the resource declares no
+/// profiles. Backs the generated `profile` column on every resource table.
+///
+/// Declared `IMMUTABLE` because a generated column's expression may only call
+/// immutable functions. A plain `resource->'meta'->'profile'` expression would
+/// avoid the function entirely, but yields `jsonb`; `text[]` decodes straight
+/// into `Vec<String>` and supports array-overlap (`&&`) membership tests.
+///
+/// Never dropped: PostgreSQL records a dependency from the generated column to
+/// this function, so `DROP FUNCTION` fails while any resource table exists.
+/// `CREATE OR REPLACE` with an unchanged signature stays legal, which is what
+/// makes re-running this on every boot safe.
+const META_PROFILES_FN_SQL: &str = r#"
+    CREATE OR REPLACE FUNCTION octofhir_meta_profiles(res jsonb)
+    RETURNS text[] AS $$
+        SELECT CASE
+            WHEN jsonb_typeof(res->'meta'->'profile') = 'array'
+            THEN ARRAY(SELECT jsonb_array_elements_text(res->'meta'->'profile'))
+            ELSE NULL
+        END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+"#;
+
 /// Manages the database schema for FHIR resources.
 ///
 /// The `SchemaManager` is responsible for:
@@ -55,6 +78,9 @@ pub struct SchemaManager {
     /// `resource`. `None` means every table gets one — see
     /// [`SchemaManager::with_document_gin_tables`].
     document_gin_tables: Option<std::collections::HashSet<String>>,
+    /// Whether resource tables carry the generated `profile` column and its
+    /// covering index — see [`SchemaManager::with_profile_column`].
+    profile_column: bool,
 }
 
 impl SchemaManager {
@@ -65,7 +91,26 @@ impl SchemaManager {
         Self {
             pool,
             document_gin_tables: None,
+            profile_column: false,
         }
+    }
+
+    /// Adds a generated `profile` column (from `meta.profile`) and a partial
+    /// covering index on it to every resource table.
+    ///
+    /// Only `targetProfile` conformance reads it, and nothing else does, so this
+    /// is off by default: the column is recomputed on every write regardless,
+    /// and on profile-heavy data the column plus index roughly double the cost
+    /// of a bulk insert. Enable it together with
+    /// `validation.check_target_profile`.
+    ///
+    /// The column is created with the table and never added afterwards:
+    /// switching this on for an existing database has no effect until the
+    /// database is recreated.
+    #[must_use]
+    pub fn with_profile_column(mut self, on: bool) -> Self {
+        self.profile_column = on;
+        self
     }
 
     /// Restricts the whole-document GIN index on `resource` to the given
@@ -157,6 +202,16 @@ impl SchemaManager {
         // keep the new version on the same page, and autovacuum runs far more
         // eagerly than the stock 0.2 scale factor — at that setting a
         // million-row table waits for 200k dead tuples.
+        // `profile` is generated from `meta.profile` and exists only to serve
+        // `targetProfile` conformance, so it is created with the table or not at
+        // all — see `with_profile_column`. Flipping the setting on an existing
+        // database is not supported: the database is recreated instead, which
+        // also avoids the table rewrite `ADD COLUMN ... STORED` would impose.
+        let profile_col = if self.profile_column {
+            ",\n                profile TEXT[] GENERATED ALWAYS AS (octofhir_meta_profiles(resource)) STORED"
+        } else {
+            ""
+        };
         sql.push_str(&format!(
             "CREATE TABLE IF NOT EXISTS \"{table}\" (\n\
                 id TEXT PRIMARY KEY,\n\
@@ -164,7 +219,7 @@ impl SchemaManager {
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n\
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n\
                 resource JSONB NOT NULL,\n\
-                status resource_status NOT NULL DEFAULT 'created'\n\
+                status resource_status NOT NULL DEFAULT 'created'{profile_col}\n\
             );\n\
             ALTER TABLE \"{table}\" SET (\n\
                 toast_tuple_target = 8160,\n\
@@ -238,6 +293,41 @@ impl SchemaManager {
             ));
         }
 
+        // Generated `profile` column plus its covering index, for the
+        // `targetProfile` fast path. Opt-in (see `with_profile_column`) because
+        // every write recomputes the column whether or not anything reads it.
+        //
+        // Reading the profiles a referenced resource declares must not touch the
+        // heap: the heap tuple drags in the whole `resource` JSONB (and its
+        // TOAST chunks) for what is a set-membership test against a handful of
+        // canonicals.
+        //
+        // The index is partial on `profile IS NOT NULL` so it stays small —
+        // resources declaring no profile (all of plain R4) contribute no index
+        // tuple, and the primary key keeps its current width. Callers must spell
+        // `profile IS NOT NULL` in the query for the planner to consider it; the
+        // fast path only cares about profiled rows anyway, since existence was
+        // already settled by the batched existence check.
+        //
+        // `status` rides along in INCLUDE for the same reason: without it the
+        // `status != 'deleted'` filter forces a heap fetch and the index-only
+        // scan degrades into exactly the read we were avoiding.
+        // Both indexes are partial on `profile IS NOT NULL`, so a deployment on
+        // plain R4 — where nothing declares a profile — carries two empty
+        // indexes rather than two full ones.
+        //
+        // The GIN index serves `_profile` search: an exact match renders as
+        // `profile @> ARRAY[$1]`, and `@>` being strict is what lets the planner
+        // prove the partial-index predicate holds.
+        if self.profile_column {
+            sql.push_str(&format!(
+                "CREATE INDEX IF NOT EXISTS \"idx_{table}_profile_cov\" ON \"{table}\" \
+                 (id) INCLUDE (profile, status) WHERE profile IS NOT NULL;\n\
+                 CREATE INDEX IF NOT EXISTS \"idx_{table}_profile_gin\" ON \"{table}\" \
+                 USING GIN (profile) WHERE profile IS NOT NULL;\n"
+            ));
+        }
+
         // Gateway notify trigger
         if is_gateway {
             let trig = format!("{}_gateway_notify", table);
@@ -261,10 +351,16 @@ impl SchemaManager {
         sql
     }
 
-    /// Ensure the shared `archive_to_history()` function exists. Call once
-    /// before parallel resource-schema creation.
+    /// Ensure the shared `archive_to_history()` and `octofhir_meta_profiles()`
+    /// functions exist. Call once before parallel resource-schema creation —
+    /// `octofhir_meta_profiles` backs the generated `profile` column, so it must
+    /// be in place before any table referencing it is created.
     pub async fn ensure_archive_function(pool: &PgPool) -> Result<()> {
         sqlx_core::query::query(AssertSqlSafe((ARCHIVE_FN_SQL).to_string()))
+            .execute(pool)
+            .await
+            .map_err(PostgresError::from)?;
+        sqlx_core::query::query(AssertSqlSafe((META_PROFILES_FN_SQL).to_string()))
             .execute(pool)
             .await
             .map_err(PostgresError::from)?;

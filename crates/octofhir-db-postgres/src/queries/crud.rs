@@ -372,6 +372,71 @@ pub async fn exists_many_grouped_with_tx(
         .collect())
 }
 
+/// Batch read of the profiles referenced resources declare, without reading
+/// their bodies.
+///
+/// Returns `"Type/id" -> meta.profile` for every live row that declares at
+/// least one profile. Rows with no declared profile are simply absent — the
+/// caller cannot distinguish them from missing ids here, and does not need to:
+/// existence is settled separately, and an unprofiled target falls back to the
+/// slow path either way.
+///
+/// This backs `targetProfile` conformance. The declared canonicals are the
+/// whole answer for that check, and they live in the generated `profile`
+/// column, so the query is served entirely from
+/// `idx_{table}_profile_cov` — the `profile IS NOT NULL` predicate is what
+/// makes that partial index eligible. Reading the row instead would drag the
+/// full `resource` JSONB (plus TOAST) through the heap for a set-membership
+/// test.
+pub async fn profiles_many_grouped(
+    pool: &PgPool,
+    groups: &[(String, Vec<String>)],
+) -> Result<std::collections::HashMap<String, Vec<String>>, StorageError> {
+    let groups: Vec<&(String, Vec<String>)> =
+        groups.iter().filter(|(_, ids)| !ids.is_empty()).collect();
+    if groups.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut sql = String::new();
+    for (i, (resource_type, _ids)) in groups.iter().enumerate() {
+        let table = SchemaManager::table_name(resource_type);
+        if i > 0 {
+            sql.push_str(" UNION ALL ");
+        }
+        sql.push_str(&format!(
+            r#"SELECT {i}::int AS grp, id, profile FROM "{table}" WHERE id = ANY(${n}) AND profile IS NOT NULL AND status != 'deleted'"#,
+            n = i + 1
+        ));
+    }
+
+    let mut query = query_as::<_, (i32, String, Vec<String>)>(AssertSqlSafe(sql));
+    for (_, ids) in &groups {
+        query = query.bind(ids);
+    }
+
+    // A missing table (or any other failure) degrades to "no profiles known",
+    // which sends every reference down the fetch-and-validate path — the
+    // behaviour before this fast path existed. A fast path must never be able
+    // to turn a storage hiccup into a validation error.
+    let rows = match query.fetch_all(pool).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::debug!(error = %e, "batch profile read failed; falling back to full validation");
+            return Ok(std::collections::HashMap::new());
+        }
+    };
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(group, id, profiles)| {
+            groups
+                .get(group as usize)
+                .map(|(resource_type, _)| (format!("{resource_type}/{id}"), profiles))
+        })
+        .collect())
+}
+
 /// Batch read of live (non-deleted) resources for `ids` in `{resource_type}`.
 /// One `id = ANY($1)` round-trip; missing/deleted ids are omitted. Meta
 /// (versionId/lastUpdated) is merged into each returned resource.
