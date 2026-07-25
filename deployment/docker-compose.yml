@@ -26,11 +26,18 @@ services:
       - "-c"
       - "wal_buffers=16MB"
       - "-c"
-      - "max_wal_size=2GB"
+      # Resource tables run into the gigabytes and no update can be HOT, so a
+      # small max_wal_size means frequent checkpoints and a full-page image on
+      # the next touch of every page — write amplification well beyond the
+      # actual change.
+      - "max_wal_size=16GB"
       - "-c"
-      - "min_wal_size=128MB"
+      - "min_wal_size=2GB"
       - "-c"
       - "checkpoint_completion_target=0.9"
+      # Those full-page images are jsonb-heavy and compress well.
+      - "-c"
+      - "wal_compression=zstd"
       # Connections
       - "-c"
       - "max_connections=200"

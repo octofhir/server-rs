@@ -47,6 +47,17 @@ pub struct PostgresConfig {
     /// Default: 120.
     #[serde(default = "default_gin_maintenance_interval_secs")]
     pub gin_maintenance_interval_secs: u64,
+
+    /// Resource types that get a whole-document GIN index on `resource`.
+    ///
+    /// `None` (the default) gives every type one. That index covers any search
+    /// parameter at once, so it is what keeps a search on a parameter outside
+    /// `search.indexed_params` from turning into a sequential scan. It is also
+    /// the largest index on a resource table and is maintained by every write,
+    /// so a deployment that knows its query mix can narrow the list — or set it
+    /// to an empty list to drop the index entirely.
+    #[serde(default)]
+    pub document_gin_resource_types: Option<Vec<String>>,
 }
 
 fn default_gin_maintenance() -> bool {
@@ -72,6 +83,7 @@ impl Default for PostgresConfig {
             run_migrations: true,
             gin_maintenance: true,
             gin_maintenance_interval_secs: 120,
+            document_gin_resource_types: None,
         }
     }
 }
@@ -132,6 +144,13 @@ impl PostgresConfig {
     #[must_use]
     pub fn with_gin_maintenance(mut self, on: bool) -> Self {
         self.gin_maintenance = on;
+        self
+    }
+
+    /// Sets the resource types that get a whole-document GIN index.
+    #[must_use]
+    pub fn with_document_gin_resource_types(mut self, types: Option<Vec<String>>) -> Self {
+        self.document_gin_resource_types = types;
         self
     }
 

@@ -587,54 +587,56 @@ async fn postprocess_resource(
 
 // ---- CRUD & Search placeholders ----
 
-/// Recursively collect all `"reference"` string values from a resource tree.
+#[derive(Default)]
+struct LocalReferenceSet {
+    groups: Vec<(String, Vec<String>)>,
+    all: HashSet<String>,
+}
+
+enum CheckedRawWrite {
+    Written(octofhir_storage::RawStoredResource),
+    Missing(HashSet<String>),
+}
+
 fn collect_reference_strings(value: &Value, out: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
-            for (k, v) in map {
-                if k == "reference"
-                    && let Some(s) = v.as_str()
+            for (key, value) in map {
+                if key == "reference"
+                    && let Some(reference) = value.as_str()
                 {
-                    out.push(s.to_string());
-                    continue;
+                    out.push(reference.to_string());
+                } else {
+                    collect_reference_strings(value, out);
                 }
-                collect_reference_strings(v, out);
             }
         }
-        Value::Array(arr) => {
-            for v in arr {
-                collect_reference_strings(v, out);
+        Value::Array(values) => {
+            for value in values {
+                collect_reference_strings(value, out);
             }
         }
         _ => {}
     }
 }
 
-/// Local references in `payload` that already exist in storage, as `"Type/id"`
-/// strings, checked with one batched query per referenced type. Passed to the
-/// validator as known-existing references so it skips a per-reference existence
-/// query. References that are missing, external, urn, or contained are absent
-/// from the result and validated normally.
-async fn existing_local_refs(
+fn local_reference_set(
     payload: &Value,
     state: &crate::server::AppState,
-) -> std::collections::HashSet<String> {
-    use std::collections::{HashMap, HashSet};
-
+) -> LocalReferenceSet {
     if state.config.validation.skip_reference_validation {
-        return HashSet::new();
+        return LocalReferenceSet::default();
     }
 
-    let mut refs: Vec<String> = Vec::new();
-    collect_reference_strings(payload, &mut refs);
-    if refs.is_empty() {
-        return HashSet::new();
-    }
+    let mut references = Vec::new();
+    collect_reference_strings(payload, &mut references);
 
-    let base_url = state.base_url.as_str();
     let mut by_type: HashMap<String, Vec<String>> = HashMap::new();
-    for r in refs {
-        if let Ok(parsed) = octofhir_core::fhir_reference::parse_reference(&r, Some(base_url)) {
+    for reference in references {
+        if let Ok(parsed) = octofhir_core::fhir_reference::parse_reference(
+            &reference,
+            Some(state.base_url.as_str()),
+        ) {
             by_type
                 .entry(parsed.resource_type)
                 .or_default()
@@ -642,26 +644,327 @@ async fn existing_local_refs(
         }
     }
 
-    // One grouped round-trip for all referenced types instead of a serial
-    // `exists_many` per type: reference-heavy resources (ExplanationOfBenefit,
-    // Claim) reference several distinct types, and under write load the serial
-    // per-type checks dominated latency and connection-pool pressure.
-    let groups: Vec<(String, Vec<String>)> = by_type
+    let mut groups: Vec<(String, Vec<String>)> = by_type
         .into_iter()
-        .map(|(rtype, mut ids)| {
+        .map(|(resource_type, mut ids)| {
             ids.sort();
             ids.dedup();
-            (rtype, ids)
+            (resource_type, ids)
+        })
+        .collect();
+    groups.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let all = groups
+        .iter()
+        .flat_map(|(resource_type, ids)| {
+            ids.iter().map(move |id| format!("{resource_type}/{id}"))
         })
         .collect();
 
-    match state.storage.exists_many_grouped(&groups).await {
-        Ok(found) => found,
-        Err(e) => {
-            tracing::debug!(error = %e, "grouped exists check failed");
-            HashSet::new()
-        }
+    LocalReferenceSet { groups, all }
+}
+
+fn validation_error(
+    validation_outcome: crate::validation::ValidationOutcome,
+) -> ApiError {
+    ApiError::UnprocessableEntity {
+        message: "Resource validation failed".to_string(),
+        operation_outcome: Some(validation_outcome.to_operation_outcome()),
     }
+}
+
+async fn validate_for_checked_write(
+    payload: &Value,
+    state: &crate::server::AppState,
+) -> Result<LocalReferenceSet, ApiError> {
+    let references = local_reference_set(payload, state);
+
+    // Schema and FHIRPath validation is CPU work. Treat parseable local
+    // references as provisionally present here; their existence is checked on
+    // the same acquired connection as the following write.
+    let validation_outcome = state
+        .validation_service
+        .validate_with_known_refs(payload, &references.all)
+        .await;
+    if !validation_outcome.valid {
+        return Err(validation_error(validation_outcome));
+    }
+
+    Ok(references)
+}
+
+async fn validate_missing_references(
+    payload: &Value,
+    state: &crate::server::AppState,
+    found: &HashSet<String>,
+) -> ApiError {
+    let validation_outcome = state
+        .validation_service
+        .validate_with_known_refs(payload, found)
+        .await;
+    validation_error(validation_outcome)
+}
+
+async fn existing_references_on_connection(
+    connection: &mut sqlx_core::pool::PoolConnection<sqlx_postgres::Postgres>,
+    groups: &[(String, Vec<String>)],
+) -> Result<HashSet<String>, StorageError> {
+    use sqlx_core::query_as::query_as;
+    use sqlx_core::sql_str::AssertSqlSafe;
+
+    if groups.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let mut sql = String::new();
+    for (index, (resource_type, _)) in groups.iter().enumerate() {
+        if index > 0 {
+            sql.push_str(" UNION ALL ");
+        }
+        let table = octofhir_db_postgres::SchemaManager::table_name(resource_type);
+        sql.push_str(&format!(
+            r#"SELECT {index}::int AS grp, id
+               FROM "{table}"
+               WHERE id = ANY(${parameter}) AND status != 'deleted'"#,
+            parameter = index + 1,
+        ));
+    }
+
+    let mut query = query_as::<_, (i32, String)>(AssertSqlSafe(sql));
+    for (_, ids) in groups {
+        query = query.bind(ids);
+    }
+
+    let rows = query
+        .fetch_all(&mut **connection)
+        .await
+        .map_err(|error| {
+            StorageError::internal(format!("Failed to batch-check references: {error}"))
+        })?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(group, id)| {
+            groups
+                .get(group as usize)
+                .map(|(resource_type, _)| format!("{resource_type}/{id}"))
+        })
+        .collect())
+}
+
+fn chrono_to_time(value: chrono::DateTime<chrono::Utc>) -> time::OffsetDateTime {
+    time::OffsetDateTime::from_unix_timestamp(value.timestamp())
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+        + time::Duration::nanoseconds(value.timestamp_subsec_nanos() as i64)
+}
+
+async fn postgres_create_raw_checked(
+    state: &crate::server::AppState,
+    resource: &Value,
+    references: &LocalReferenceSet,
+) -> Result<CheckedRawWrite, StorageError> {
+    use chrono::Utc;
+    use sqlx_core::query_as::query_as;
+    use sqlx_core::sql_str::AssertSqlSafe;
+
+    let mut connection = state.db_pool.acquire().await.map_err(|error| {
+        StorageError::internal(format!("Failed to acquire PostgreSQL connection: {error}"))
+    })?;
+    let found = existing_references_on_connection(&mut connection, &references.groups).await?;
+    if found != references.all {
+        return Ok(CheckedRawWrite::Missing(found));
+    }
+
+    let resource_type = resource["resourceType"]
+        .as_str()
+        .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
+    let id = if let Some(provided_id) = resource["id"].as_str() {
+        octofhir_core::validate_id(provided_id)
+            .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+        provided_id.to_string()
+    } else {
+        octofhir_core::generate_id()
+    };
+    let now = Utc::now();
+    let table = octofhir_db_postgres::SchemaManager::table_name(resource_type);
+    let sql = format!(
+        r#"WITH new_tx AS (
+               SELECT nextval('_transaction_txid_seq') AS txid
+           )
+           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           SELECT
+               $1,
+               new_tx.txid,
+               $2,
+               $2,
+               $3::jsonb || jsonb_build_object(
+                   'id', $1::text,
+                   'meta', COALESCE($3::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
+                       'versionId', new_tx.txid::text,
+                       'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                   )
+               ),
+               'created'
+           FROM new_tx
+           RETURNING id, txid, created_at, updated_at, resource::text"#
+    );
+
+    let row: (String, i64, chrono::DateTime<Utc>, chrono::DateTime<Utc>, String) =
+        query_as(AssertSqlSafe(sql))
+            .bind(&id)
+            .bind(now)
+            .bind(resource)
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(|error| {
+                if error.to_string().contains("duplicate key") {
+                    StorageError::already_exists(resource_type, &id)
+                } else {
+                    StorageError::internal(format!("Failed to create resource: {error}"))
+                }
+            })?;
+
+    Ok(CheckedRawWrite::Written(
+        octofhir_storage::RawStoredResource {
+            id: row.0,
+            version_id: row.1.to_string(),
+            resource_type: resource_type.to_string(),
+            resource_json: row.4,
+            created_at: chrono_to_time(row.2),
+            last_updated: chrono_to_time(row.3),
+        },
+    ))
+}
+
+async fn postgres_update_raw_checked(
+    state: &crate::server::AppState,
+    resource: &Value,
+    if_match: Option<&str>,
+    references: &LocalReferenceSet,
+) -> Result<CheckedRawWrite, StorageError> {
+    use chrono::Utc;
+    use sqlx_core::query_as::query_as;
+    use sqlx_core::query_scalar::query_scalar;
+    use sqlx_core::sql_str::AssertSqlSafe;
+
+    let mut connection = state.db_pool.acquire().await.map_err(|error| {
+        StorageError::internal(format!("Failed to acquire PostgreSQL connection: {error}"))
+    })?;
+    let found = existing_references_on_connection(&mut connection, &references.groups).await?;
+    if found != references.all {
+        return Ok(CheckedRawWrite::Missing(found));
+    }
+
+    let resource_type = resource["resourceType"]
+        .as_str()
+        .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
+    let id = resource["id"]
+        .as_str()
+        .ok_or_else(|| StorageError::invalid_resource("Missing id field"))?;
+    let table = octofhir_db_postgres::SchemaManager::table_name(resource_type);
+    let now = Utc::now();
+
+    let (sql, has_version_check) = if let Some(expected_version) = if_match {
+        let expected_txid: i64 = expected_version.parse().map_err(|_| {
+            StorageError::invalid_resource(format!("Invalid version format: {expected_version}"))
+        })?;
+        (
+            format!(
+                r#"WITH new_tx AS (
+                       SELECT nextval('_transaction_txid_seq') AS txid
+                   ),
+                   current AS (
+                       SELECT id, txid, created_at FROM "{table}"
+                       WHERE id = $1 AND status != 'deleted'
+                   )
+                   UPDATE "{table}" target
+                   SET txid = new_tx.txid,
+                       resource = $2::jsonb || jsonb_build_object(
+                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
+                               'versionId', new_tx.txid::text,
+                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                           )
+                       ),
+                       status = 'updated'
+                   FROM new_tx, current
+                   WHERE target.id = $1
+                     AND target.status != 'deleted'
+                     AND target.txid = {expected_txid}
+                   RETURNING target.id, new_tx.txid, target.created_at,
+                             target.updated_at, target.resource::text"#
+            ),
+            true,
+        )
+    } else {
+        (
+            format!(
+                r#"WITH new_tx AS (
+                       SELECT nextval('_transaction_txid_seq') AS txid
+                   )
+                   UPDATE "{table}" target
+                   SET txid = new_tx.txid,
+                       resource = $2::jsonb || jsonb_build_object(
+                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
+                               'versionId', new_tx.txid::text,
+                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                           )
+                       ),
+                       status = 'updated'
+                   FROM new_tx
+                   WHERE target.id = $1
+                   RETURNING target.id, new_tx.txid, target.created_at,
+                             target.updated_at, target.resource::text"#
+            ),
+            false,
+        )
+    };
+
+    let row: Option<(
+        String,
+        i64,
+        chrono::DateTime<Utc>,
+        chrono::DateTime<Utc>,
+        String,
+    )> = query_as(AssertSqlSafe(sql))
+        .bind(id)
+        .bind(resource)
+        .bind(now)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(|error| StorageError::internal(format!("Failed to update resource: {error}")))?;
+
+    let Some(row) = row else {
+        if has_version_check {
+            let current_sql =
+                format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
+            let current: Option<i64> = query_scalar(AssertSqlSafe(current_sql))
+                .bind(id)
+                .fetch_optional(&mut *connection)
+                .await
+                .map_err(|error| {
+                    StorageError::internal(format!("Failed to check resource: {error}"))
+                })?;
+            return match current {
+                Some(version) => Err(StorageError::version_conflict(
+                    if_match.unwrap_or_default(),
+                    version.to_string(),
+                )),
+                None => Err(StorageError::not_found(resource_type, id)),
+            };
+        }
+        return Err(StorageError::not_found(resource_type, id));
+    };
+
+    Ok(CheckedRawWrite::Written(
+        octofhir_storage::RawStoredResource {
+            id: row.0,
+            version_id: row.1.to_string(),
+            resource_type: resource_type.to_string(),
+            resource_json: row.4,
+            created_at: chrono_to_time(row.2),
+            last_updated: chrono_to_time(row.3),
+        },
+    ))
 }
 
 #[tracing::instrument(name = "fhir.create", skip_all, fields(resource_type = %resource_type))]
@@ -681,19 +984,10 @@ pub async fn create_resource(
 
     // Full schema + FHIRPath constraint validation using ValidationService
     let skip_validation = should_skip_validation(&headers, &state.config.validation);
+    let mut local_references = LocalReferenceSet::default();
 
     if !skip_validation {
-        let known_refs = existing_local_refs(&payload, &state).await;
-        let validation_outcome = state
-            .validation_service
-            .validate_with_known_refs(&payload, &known_refs)
-            .await;
-        if !validation_outcome.valid {
-            return Err(ApiError::UnprocessableEntity {
-                message: "Resource validation failed".to_string(),
-                operation_outcome: Some(validation_outcome.to_operation_outcome()),
-            });
-        }
+        local_references = validate_for_checked_write(&payload, &state).await?;
     } else {
         tracing::warn!(
             resource_type = %resource_type,
@@ -798,7 +1092,20 @@ pub async fn create_resource(
     }
 
     // Create resource using FhirStorage (raw path avoids serde round-trip)
-    match state.storage.create_raw(&payload).await {
+    let create_result =
+        if !local_references.groups.is_empty() && state.storage.backend_name() == "postgres" {
+            match postgres_create_raw_checked(&state, &payload, &local_references).await {
+                Ok(CheckedRawWrite::Written(stored)) => Ok(stored),
+                Ok(CheckedRawWrite::Missing(found)) => {
+                    return Err(validate_missing_references(&payload, &state, &found).await);
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            state.storage.create_raw(&payload).await
+        };
+
+    match create_result {
         Ok(stored) => {
             let id = stored.id.clone();
             let version_id = stored.version_id.clone();
@@ -1473,19 +1780,10 @@ pub async fn update_resource(
 
     // Full schema + FHIRPath constraint validation using ValidationService
     let skip_validation = should_skip_validation(&headers, &state.config.validation);
+    let mut local_references = LocalReferenceSet::default();
 
     if !skip_validation {
-        let known_refs = existing_local_refs(&payload, &state).await;
-        let validation_outcome = state
-            .validation_service
-            .validate_with_known_refs(&payload, &known_refs)
-            .await;
-        if !validation_outcome.valid {
-            return Err(ApiError::UnprocessableEntity {
-                message: "Resource validation failed".to_string(),
-                operation_outcome: Some(validation_outcome.to_operation_outcome()),
-            });
-        }
+        local_references = validate_for_checked_write(&payload, &state).await?;
     } else {
         tracing::warn!(
             resource_type = %resource_type,
@@ -1543,11 +1841,30 @@ pub async fn update_resource(
     }
 
     // Try update first using raw path (avoids serde round-trip).
-    match state
-        .storage
-        .update_raw(&payload, if_match.as_deref())
-        .await
-    {
+    let update_result =
+        if !local_references.groups.is_empty() && state.storage.backend_name() == "postgres" {
+            match postgres_update_raw_checked(
+                &state,
+                &payload,
+                if_match.as_deref(),
+                &local_references,
+            )
+            .await
+            {
+                Ok(CheckedRawWrite::Written(stored)) => Ok(stored),
+                Ok(CheckedRawWrite::Missing(found)) => {
+                    return Err(validate_missing_references(&payload, &state, &found).await);
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            state
+                .storage
+                .update_raw(&payload, if_match.as_deref())
+                .await
+        };
+
+    match update_result {
         Ok(stored) => {
             // Resource existed and was updated
             postprocess_resource(&resource_type, &id, &payload, &state).await?;
@@ -3943,9 +4260,27 @@ async fn process_transaction(
     // request index so the transaction-response can preserve FHIR response order.
     let sorted_entries = sort_transaction_entries(entries);
 
+    // Phase 0: Resolve every conditional query the bundle uses — `ifNoneExist`
+    // creates, conditional updates, conditional deletes — in one batched pass.
+    // Resolving them per entry costs one search each; a bundle that upserts a
+    // few hundred resources by identifier would spend its whole latency budget
+    // there.
+    let mut conditional_queries: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for (_, entry) in &sorted_entries {
+        if let Some(condition) = entry_conditional_query(entry) {
+            conditional_queries.insert(condition);
+        }
+    }
+    let conditional_matches = if conditional_queries.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        resolve_conditional_matches_batched(state, &conditional_queries).await?
+    };
+
     // Phase 1: Pre-scan — build complete reference map before creating anything,
-    // and resolve any conditional creates against existing data so we don't
-    // search twice (once here, once during entry processing).
+    // using the conditional matches resolved above so entry processing never
+    // has to repeat a search.
     let mut reference_map: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     let mut pre_assigned_ids: std::collections::HashMap<String, String> =
@@ -3955,67 +4290,70 @@ async fn process_transaction(
 
     for (original_idx, entry) in &sorted_entries {
         let method = entry["request"]["method"].as_str().unwrap_or("");
-        let request = &entry["request"];
         let full_url = entry["fullUrl"].as_str();
-        let url = request["url"].as_str().unwrap_or("");
+        let url = entry["request"]["url"].as_str().unwrap_or("");
+        let condition_key = entry_conditional_query(entry);
+        let matched = condition_key
+            .as_ref()
+            .and_then(|key| conditional_matches.get(key));
+        let resource_type = url.split('?').next().unwrap_or(url);
 
         match method.to_uppercase().as_str() {
-            "POST" => {
-                let resource_type = url.split('?').next().unwrap_or(url);
-                if let Some(condition) = transaction_post_condition(request, url) {
-                    let search_params = octofhir_search::parse_query_string(condition, 2, 10);
-                    let result = state
-                        .storage
-                        .search(resource_type, &search_params)
-                        .await
-                        .map_err(|e| ApiError::bad_request(e.to_string()))?;
-
-                    match result.entries.len() {
-                        0 => {
-                            let new_id = octofhir_core::generate_id();
-                            if let Some(fu) = full_url {
-                                reference_map.insert(
-                                    fu.to_string(),
-                                    format!("{}/{}", resource_type, new_id),
-                                );
-                                pre_assigned_ids.insert(fu.to_string(), new_id);
-                            }
-                        }
-                        1 => {
-                            let existing = &result.entries[0];
-                            if let Some(fu) = full_url {
-                                reference_map.insert(
-                                    fu.to_string(),
-                                    format!("{}/{}", resource_type, existing.id),
-                                );
-                            }
-                            matched_conditional.insert(
-                                *original_idx,
-                                MatchedExisting {
-                                    id: existing.id.clone(),
-                                    version_id: existing.version_id.clone(),
-                                    resource: existing.resource.clone(),
-                                },
-                            );
-                        }
-                        _ => {
-                            return Err(ApiError::precondition_failed(
-                                "Multiple matches for conditional create",
-                            ));
-                        }
+            "POST" => match matched {
+                Some(ConditionalMatch::One(existing)) => {
+                    if let Some(fu) = full_url {
+                        reference_map
+                            .insert(fu.to_string(), format!("{}/{}", resource_type, existing.id));
                     }
-                } else if let Some(fu) = full_url {
-                    let new_id = octofhir_core::generate_id();
-                    reference_map.insert(fu.to_string(), format!("{}/{}", resource_type, new_id));
-                    pre_assigned_ids.insert(fu.to_string(), new_id);
+                    matched_conditional.insert(*original_idx, existing.clone());
                 }
-            }
-            "PUT" => {
-                if let Some(fu) = full_url {
-                    // PUT URL is "ResourceType/id" — ID is already known
-                    reference_map.insert(fu.to_string(), url.to_string());
+                Some(ConditionalMatch::Many) => {
+                    return Err(ApiError::precondition_failed(
+                        "Multiple matches for conditional create",
+                    ));
                 }
-            }
+                // Either an unconditional create, or a conditional create that
+                // matched nothing — both create a new resource.
+                _ => {
+                    if let Some(fu) = full_url {
+                        let new_id = octofhir_core::generate_id();
+                        reference_map
+                            .insert(fu.to_string(), format!("{}/{}", resource_type, new_id));
+                        pre_assigned_ids.insert(fu.to_string(), new_id);
+                    }
+                }
+            },
+            "PUT" => match matched {
+                Some(ConditionalMatch::One(existing)) => {
+                    if let Some(fu) = full_url {
+                        reference_map
+                            .insert(fu.to_string(), format!("{}/{}", resource_type, existing.id));
+                    }
+                }
+                Some(ConditionalMatch::Many) => {
+                    return Err(ApiError::precondition_failed(
+                        "Multiple matches for conditional update",
+                    ));
+                }
+                Some(ConditionalMatch::NoMatch) => {
+                    // A conditional update that matches nothing creates a new
+                    // resource, so pre-assign its id like a create does —
+                    // otherwise references to this entry's fullUrl would be
+                    // rewritten to the search url.
+                    if let Some(fu) = full_url {
+                        let new_id = octofhir_core::generate_id();
+                        reference_map
+                            .insert(fu.to_string(), format!("{}/{}", resource_type, new_id));
+                        pre_assigned_ids.insert(fu.to_string(), new_id);
+                    }
+                }
+                // Plain `PUT Type/id` — the id is already in the url.
+                None => {
+                    if let Some(fu) = full_url {
+                        reference_map.insert(fu.to_string(), url.to_string());
+                    }
+                }
+            },
             _ => {}
         }
     }
@@ -4067,23 +4405,38 @@ async fn process_transaction(
         resolved_entries.push((*original_idx, resolved_entry));
     }
 
-    // Validate POST entries before opening the transaction: validation issues
-    // its own DB reads, which must not run while the write connection is held.
+    // Validate every entry that writes a resource body — POST and PUT alike —
+    // before opening the transaction: validation issues its own DB reads, which
+    // must not run while the write connection is held. Conditional creates that
+    // already matched write nothing, so they are skipped.
     if !skip_validation {
         for (original_idx, entry) in &resolved_entries {
             let method = entry["request"]["method"]
                 .as_str()
                 .unwrap_or("")
                 .to_uppercase();
-            if method != "POST" || matched_conditional.contains_key(original_idx) {
+            if !matches!(method.as_str(), "POST" | "PUT")
+                || matched_conditional.contains_key(original_idx)
+            {
                 continue;
             }
             let url = entry["request"]["url"].as_str().unwrap_or("");
-            let resource_type = url.split('?').next().unwrap_or(url).to_string();
+            // `Observation`, `Patient/123` and `Patient?identifier=x` all yield
+            // the resource type; only the `Type/id` form yields an id.
+            let target = url.split('?').next().unwrap_or(url);
+            let mut segments = target.split('/');
+            let resource_type = segments.next().unwrap_or(target).to_string();
+            let url_id = segments
+                .next()
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
             let Some(mut resource) = entry.get("resource").cloned() else {
                 continue;
             };
             resource["resourceType"] = json!(resource_type);
+            if let Some(id) = url_id {
+                resource["id"] = json!(id);
+            }
             let validation_outcome = state
                 .validation_service
                 .validate_with_known_refs(&resource, &known_refs)
@@ -4099,9 +4452,16 @@ async fn process_transaction(
 
     // Phase 3: Execute all entries in one database transaction.
     //
-    // POST entries are gathered into per-resource-type batches and inserted
-    // via `tx.create_batch` (one INSERT ... SELECT FROM UNNEST(...) per type).
-    // All other methods are processed individually via the per-entry path.
+    // Entries whose SQL differs only by the row it touches are gathered into
+    // per-resource-type batches and issued as a single set-based statement:
+    // `create_batch` (INSERT ... FROM UNNEST), `update_batch` (UPDATE ... FROM
+    // UNNEST) and `delete_batch` (DELETE ... WHERE id = ANY). What cannot join a
+    // batch — conditional urls, `If-Match`, PATCH, GET, repeated ids — falls
+    // through to the per-entry path.
+    //
+    // Batches flush in the same DELETE → POST → PUT order that
+    // `transaction_method_order` sorts entries into, so a bundle that deletes a
+    // row and then rewrites it still applies in that order.
     tracing::debug!("Beginning native PostgreSQL transaction for Bundle processing");
     let mut tx = state
         .storage
@@ -4112,49 +4472,114 @@ async fn process_transaction(
     let mut response_entries: Vec<Option<Value>> = vec![None; resolved_entries.len()];
     let mut post_batches: std::collections::HashMap<String, Vec<(usize, Value)>> =
         std::collections::HashMap::new();
+    let mut put_batches: std::collections::HashMap<String, Vec<(usize, Value)>> =
+        std::collections::HashMap::new();
+    let mut delete_batches: std::collections::HashMap<String, Vec<(usize, String)>> =
+        std::collections::HashMap::new();
 
     for (original_idx, entry) in &resolved_entries {
-        let method = entry["request"]["method"]
-            .as_str()
-            .unwrap_or("")
-            .to_uppercase();
+        let request = &entry["request"];
+        let method = request["method"].as_str().unwrap_or("").to_uppercase();
+        let url = request["url"].as_str().unwrap_or("");
 
-        if method == "POST" {
-            // Conditional create that matched in pre-scan — return existing
-            if let Some(matched) = matched_conditional.get(original_idx) {
-                let url = entry["request"]["url"].as_str().unwrap_or("");
-                let resource_type = url.split('?').next().unwrap_or(url);
-                response_entries[*original_idx] = Some(build_transaction_response_entry(
-                    if include_resource {
-                        Some(&matched.resource)
-                    } else {
-                        None
-                    },
-                    "200 OK",
-                    Some(resource_type),
-                    Some(&matched.id),
-                    Some(&matched.version_id),
-                ));
-                continue;
+        match method.as_str() {
+            "POST" => {
+                // Conditional create that matched in pre-scan — return existing
+                if let Some(matched) = matched_conditional.get(original_idx) {
+                    let resource_type = url.split('?').next().unwrap_or(url);
+                    response_entries[*original_idx] = Some(build_transaction_response_entry(
+                        if include_resource {
+                            Some(&matched.resource)
+                        } else {
+                            None
+                        },
+                        "200 OK",
+                        Some(resource_type),
+                        Some(&matched.id),
+                        Some(&matched.version_id),
+                    ));
+                    continue;
+                }
+
+                let resource_type = url.split('?').next().unwrap_or(url).to_string();
+
+                resource_type.parse::<ResourceType>().map_err(|_| {
+                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+                })?;
+
+                let mut resource = entry
+                    .get("resource")
+                    .cloned()
+                    .ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
+                resource["resourceType"] = json!(resource_type);
+
+                post_batches
+                    .entry(resource_type)
+                    .or_default()
+                    .push((*original_idx, resource));
             }
+            "PUT" => {
+                let Some((resource_type, id)) = batchable_target(url) else {
+                    continue; // conditional url — per-entry path
+                };
+                // `If-Match` needs a per-resource version check, and the admin
+                // access policy is guarded individually.
+                if request.get("ifMatch").is_some() || resource_type == "AccessPolicy" {
+                    continue;
+                }
+                if resource_type.parse::<ResourceType>().is_err() {
+                    continue; // let the per-entry path report the bad type
+                }
+                let Some(mut resource) = entry.get("resource").cloned() else {
+                    continue;
+                };
+                let slot = put_batches.entry(resource_type.to_string()).or_default();
+                // A set-based UPDATE touches each row once, so a second write to
+                // the same id must stay on the per-entry path — which runs after
+                // the batches and therefore still lands last.
+                if slot.iter().any(|(_, r)| r["id"].as_str() == Some(id)) {
+                    continue;
+                }
+                resource["id"] = json!(id);
+                resource["resourceType"] = json!(resource_type);
+                slot.push((*original_idx, resource));
+            }
+            "DELETE" => {
+                let Some((resource_type, id)) = batchable_target(url) else {
+                    continue; // conditional url — per-entry path
+                };
+                if resource_type == "AccessPolicy" {
+                    continue;
+                }
+                if resource_type.parse::<ResourceType>().is_err() {
+                    continue;
+                }
+                delete_batches
+                    .entry(resource_type.to_string())
+                    .or_default()
+                    .push((*original_idx, id.to_string()));
+            }
+            _ => {}
+        }
+    }
 
-            let url = entry["request"]["url"].as_str().unwrap_or("");
-            let resource_type = url.split('?').next().unwrap_or(url).to_string();
-
-            resource_type.parse::<ResourceType>().map_err(|_| {
-                ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
-            })?;
-
-            let mut resource = entry
-                .get("resource")
-                .cloned()
-                .ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
-            resource["resourceType"] = json!(resource_type);
-
-            post_batches
-                .entry(resource_type)
-                .or_default()
-                .push((*original_idx, resource));
+    // Flush all DELETE batches.
+    for (resource_type, items) in delete_batches {
+        let mut ids: Vec<String> = items.iter().map(|(_, id)| id.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        tx.delete_batch(&resource_type, &ids).await.map_err(|e| {
+            tracing::warn!("Transaction batch-delete failed, will auto-rollback: {}", e);
+            map_storage_error(e)
+        })?;
+        for (idx, id) in &items {
+            response_entries[*idx] = Some(build_transaction_response_entry(
+                None,
+                "204 No Content",
+                Some(&resource_type),
+                Some(id),
+                None,
+            ));
         }
     }
 
@@ -4183,12 +4608,96 @@ async fn process_transaction(
         }
     }
 
-    // Process non-POST entries (DELETE/PUT/PATCH/GET) individually.
+    // Flush all PUT batches. Ids that matched no row are re-issued as a single
+    // create batch — FHIR update-as-create.
+    for (resource_type, items) in put_batches {
+        let resources: Vec<Value> = items.iter().map(|(_, r)| r.clone()).collect();
+        let outcome = tx
+            .update_batch(&resource_type, &resources)
+            .await
+            .map_err(|e| {
+                tracing::warn!("Transaction batch-update failed, will auto-rollback: {}", e);
+                map_storage_error(e)
+            })?;
+
+        let index_of: std::collections::HashMap<&str, usize> = items
+            .iter()
+            .filter_map(|(idx, r)| r["id"].as_str().map(|id| (id, *idx)))
+            .collect();
+
+        for s in &outcome.updated {
+            let Some(idx) = index_of.get(s.id.as_str()) else {
+                continue;
+            };
+            response_entries[*idx] = Some(build_transaction_response_entry(
+                if include_resource {
+                    Some(&s.resource)
+                } else {
+                    None
+                },
+                "200 OK",
+                Some(&resource_type),
+                Some(&s.id),
+                Some(&s.version_id),
+            ));
+        }
+
+        if outcome.missing.is_empty() {
+            continue;
+        }
+        let missing: std::collections::HashSet<&str> =
+            outcome.missing.iter().map(String::as_str).collect();
+        let to_create: Vec<Value> = items
+            .iter()
+            .filter(|(_, r)| r["id"].as_str().is_some_and(|id| missing.contains(id)))
+            .map(|(_, r)| r.clone())
+            .collect();
+        let created = tx
+            .create_batch(&resource_type, &to_create)
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    "Transaction batch update-as-create failed, will auto-rollback: {}",
+                    e
+                );
+                map_storage_error(e)
+            })?;
+        for s in &created {
+            let Some(idx) = index_of.get(s.id.as_str()) else {
+                continue;
+            };
+            response_entries[*idx] = Some(build_transaction_response_entry(
+                if include_resource {
+                    Some(&s.resource)
+                } else {
+                    None
+                },
+                "201 Created",
+                Some(&resource_type),
+                Some(&s.id),
+                Some(&s.version_id),
+            ));
+        }
+    }
+
+    // Process whatever could not be batched (conditional urls, `If-Match`,
+    // repeated ids, PATCH, GET) individually.
     for (original_idx, entry) in &resolved_entries {
         if response_entries[*original_idx].is_some() {
             continue;
         }
-        match process_transaction_entry_with_tx(&mut *tx, state, entry, include_resource).await {
+        let pre_resolved = entry_conditional_query(entry)
+            .as_ref()
+            .and_then(|key| conditional_matches.get(key));
+        match process_transaction_entry_with_tx(
+            &mut *tx,
+            state,
+            entry,
+            include_resource,
+            pre_resolved,
+        )
+        .await
+        {
             Ok(response_entry) => response_entries[*original_idx] = Some(response_entry),
             Err(e) => {
                 tracing::warn!("Transaction failed, will auto-rollback: {}", e);
@@ -4214,6 +4723,22 @@ async fn process_transaction(
         response_entries.len()
     );
 
+    // Drop every row this bundle touched from the read cache. Single-resource
+    // writes do this via `postprocess_resource`; without the same step here a
+    // read that ran before the bundle would keep serving the pre-bundle version
+    // until the entry's TTL expired.
+    if let Some(cache) = &state.resource_cache {
+        for entry in &response_entries {
+            let Some(location) = entry["response"]["location"].as_str() else {
+                continue;
+            };
+            let mut segments = location.split('/');
+            if let (Some(resource_type), Some(id)) = (segments.next(), segments.next()) {
+                cache.invalidate(resource_type, id).await;
+            }
+        }
+    }
+
     let response_bundle = json!({
         "resourceType": "Bundle",
         "type": "transaction-response",
@@ -4223,12 +4748,108 @@ async fn process_transaction(
     Ok((StatusCode::OK, Json(response_bundle)))
 }
 
-/// Snapshot of an existing resource captured during conditional-create
-/// pre-scan, so we don't re-issue the same search inside the transaction.
+/// Snapshot of an existing resource captured during conditional pre-scan, so we
+/// don't re-issue the same search inside the transaction.
+#[derive(Clone)]
 struct MatchedExisting {
     id: String,
     version_id: String,
     resource: Value,
+}
+
+/// Outcome of resolving one `Type?query` condition against existing data.
+#[derive(Clone)]
+enum ConditionalMatch {
+    /// Nothing matched. Conditional create/update fall back to creating;
+    /// conditional delete is a no-op; a conditional reference is an error.
+    NoMatch,
+    /// Exactly one resource matched.
+    One(MatchedExisting),
+    /// More than one matched. Every conditional operation rejects ambiguity,
+    /// but each with its own message, so the caller raises the error.
+    Many,
+}
+
+/// The `Type?query` key an entry resolves against, if it is a conditional
+/// create (`ifNoneExist` or `POST Type?query`), update, or delete.
+///
+/// Conditional PUT/DELETE urls are already in `Type?query` form, so the url is
+/// the key — which also makes them share a lookup with an equivalent
+/// conditional create elsewhere in the same bundle.
+fn entry_conditional_query(entry: &Value) -> Option<String> {
+    let request = &entry["request"];
+    let method = request["method"].as_str()?.to_uppercase();
+    let url = request["url"].as_str()?;
+
+    match method.as_str() {
+        "POST" => {
+            let resource_type = url.split('?').next().unwrap_or(url);
+            transaction_post_condition(request, url)
+                .map(|condition| format!("{resource_type}?{condition}"))
+        }
+        "PUT" | "DELETE" => url
+            .split_once('?')
+            .filter(|(head, query)| !head.is_empty() && !query.is_empty())
+            .map(|_| url.to_string()),
+        _ => None,
+    }
+}
+
+/// Resolve the condition of a conditional update/delete to at most one match.
+///
+/// The batched pre-scan (`resolve_conditional_matches_batched`) has usually
+/// answered this already, in which case no search is issued. A pre-scan miss is
+/// re-checked inside the transaction, because entries earlier in the same bundle
+/// may have created a resource the pre-scan could not see.
+async fn resolve_entry_condition(
+    tx: &mut dyn octofhir_storage::Transaction,
+    resource_type: &str,
+    condition: &str,
+    pre_resolved: Option<&ConditionalMatch>,
+    ambiguous_message: &'static str,
+) -> Result<Option<MatchedExisting>, ApiError> {
+    match pre_resolved {
+        Some(ConditionalMatch::One(existing)) => return Ok(Some(existing.clone())),
+        Some(ConditionalMatch::Many) => {
+            return Err(ApiError::precondition_failed(ambiguous_message));
+        }
+        _ => {}
+    }
+
+    let search_params = octofhir_search::parse_query_string(condition, 2, 10);
+    let result = tx
+        .search(resource_type, &search_params)
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+    match result.entries.len() {
+        0 => Ok(None),
+        1 => {
+            let existing = &result.entries[0];
+            Ok(Some(MatchedExisting {
+                id: existing.id.clone(),
+                version_id: existing.version_id.clone(),
+                resource: existing.resource.clone(),
+            }))
+        }
+        _ => Err(ApiError::precondition_failed(ambiguous_message)),
+    }
+}
+
+/// Splits a `ResourceType/id` request url, which is the only shape a PUT or
+/// DELETE can take in a batch — the resource type picks the table and the id
+/// becomes one element of the statement's array parameter.
+///
+/// Returns `None` for conditional (`Type?query`) and any other url shape.
+fn batchable_target(url: &str) -> Option<(&str, &str)> {
+    if url.contains('?') {
+        return None;
+    }
+    let (resource_type, id) = url.split_once('/')?;
+    if resource_type.is_empty() || id.is_empty() || id.contains('/') {
+        return None;
+    }
+    Some((resource_type, id))
 }
 
 fn parse_bundle_if_match(request: &Value) -> Option<String> {
@@ -4257,6 +4878,7 @@ async fn process_transaction_entry_with_tx(
     state: &crate::server::AppState,
     entry: &Value,
     include_resource: bool,
+    pre_resolved: Option<&ConditionalMatch>,
 ) -> Result<Value, ApiError> {
     let request = &entry["request"];
     let method = request["method"]
@@ -4372,14 +4994,17 @@ async fn process_transaction_entry_with_tx(
                     ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
                 })?;
 
-                let search_params = octofhir_search::parse_query_string(condition, 2, 10);
-                let result = tx
-                    .search(resource_type, &search_params)
-                    .await
-                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                let matched = resolve_entry_condition(
+                    tx,
+                    resource_type,
+                    condition,
+                    pre_resolved,
+                    "Multiple matches for conditional update",
+                )
+                .await?;
 
-                match result.entries.len() {
-                    0 => {
+                match matched {
+                    None => {
                         resource["resourceType"] = json!(resource_type);
                         let stored = tx.create(&resource).await.map_err(map_storage_error)?;
 
@@ -4391,8 +5016,7 @@ async fn process_transaction_entry_with_tx(
                             Some(&stored.version_id),
                         ))
                     }
-                    1 => {
-                        let existing = &result.entries[0];
+                    Some(existing) => {
                         if resource_type == "AccessPolicy" && existing.id == ADMIN_ACCESS_POLICY_ID
                         {
                             return Err(ApiError::forbidden(
@@ -4416,9 +5040,6 @@ async fn process_transaction_entry_with_tx(
                             Some(&stored.version_id),
                         ))
                     }
-                    _ => Err(ApiError::precondition_failed(
-                        "Multiple matches for conditional update",
-                    )),
                 }
             } else {
                 Err(ApiError::bad_request(format!("Invalid PUT URL: {}", url)))
@@ -4461,22 +5082,25 @@ async fn process_transaction_entry_with_tx(
                     ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
                 })?;
 
-                let search_params = octofhir_search::parse_query_string(condition, 2, 10);
-                let result = tx
-                    .search(resource_type, &search_params)
-                    .await
-                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                let matched = resolve_entry_condition(
+                    tx,
+                    resource_type,
+                    condition,
+                    pre_resolved,
+                    "Multiple matches for conditional delete",
+                )
+                .await?;
 
-                match result.entries.len() {
-                    0 => Ok(build_transaction_response_entry(
+                match matched {
+                    None => Ok(build_transaction_response_entry(
                         None,
                         "204 No Content",
                         Some(resource_type),
                         None,
                         None,
                     )),
-                    1 => {
-                        let id = &result.entries[0].id;
+                    Some(existing) => {
+                        let id = &existing.id;
                         if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
                             return Err(ApiError::forbidden(
                                 "The default admin access policy cannot be deleted",
@@ -4495,9 +5119,6 @@ async fn process_transaction_entry_with_tx(
                             None,
                         ))
                     }
-                    _ => Err(ApiError::precondition_failed(
-                        "Multiple matches for conditional delete",
-                    )),
                 }
             } else {
                 Err(ApiError::bad_request(format!(
@@ -5573,27 +6194,67 @@ async fn resolve_conditional_references_batched(
     state: &crate::server::AppState,
     cond_refs: &std::collections::HashSet<String>,
 ) -> Result<std::collections::HashMap<String, String>, ApiError> {
+    let matches = resolve_conditional_matches_batched(state, cond_refs).await?;
+
+    let mut resolved = std::collections::HashMap::with_capacity(matches.len());
+    for (cref, matched) in matches {
+        match matched {
+            ConditionalMatch::One(existing) => {
+                let rtype = cref.split_once('?').map(|(t, _)| t).unwrap_or_default();
+                let target = format!("{rtype}/{}", existing.id);
+                resolved.insert(cref, target);
+            }
+            ConditionalMatch::NoMatch => {
+                return Err(ApiError::unprocessable_entity(
+                    format!("Conditional reference matched no resources: {cref}"),
+                    None,
+                ));
+            }
+            ConditionalMatch::Many => {
+                return Err(ApiError::precondition_failed(format!(
+                    "Conditional reference matched multiple resources: {cref}"
+                )));
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+/// Resolve a set of distinct `Type?query` conditions against existing data in
+/// as few searches as possible, without deciding what "no match" or "many
+/// matches" means — that is the caller's call, since conditional references,
+/// creates, updates and deletes each treat those cases differently.
+///
+/// Pure `identifier=` conditions are grouped by resource type and unioned into a
+/// single search per type (`identifier=v1,v2,...`), then mapped back by
+/// identifier token. Anything else falls back to one search per distinct query
+/// string (already deduplicated across the bundle).
+async fn resolve_conditional_matches_batched(
+    state: &crate::server::AppState,
+    conditions: &std::collections::HashSet<String>,
+) -> Result<std::collections::HashMap<String, ConditionalMatch>, ApiError> {
     use std::collections::HashMap;
 
-    // resource_type -> [(conditional_ref_string, identifier_token)]
+    // resource_type -> [(condition_string, identifier_token)]
     let mut by_type_idents: HashMap<String, Vec<(String, String)>> = HashMap::new();
     let mut other: Vec<String> = Vec::new();
 
-    for cref in cond_refs {
-        let Some((rtype, query)) = cref.split_once('?') else {
+    for cond in conditions {
+        let Some((rtype, query)) = cond.split_once('?') else {
             continue;
         };
         if let Some(ident) = single_identifier_condition(query) {
             by_type_idents
                 .entry(rtype.to_string())
                 .or_default()
-                .push((cref.clone(), ident));
+                .push((cond.clone(), ident));
         } else {
-            other.push(cref.clone());
+            other.push(cond.clone());
         }
     }
 
-    let mut resolved: HashMap<String, String> = HashMap::new();
+    let mut resolved: HashMap<String, ConditionalMatch> = HashMap::new();
 
     // Identifier fast path: one search per type over the union of identifiers.
     for (rtype, refs) in &by_type_idents {
@@ -5602,74 +6263,68 @@ async fn resolve_conditional_references_batched(
         tokens.dedup();
 
         // FHIR OR syntax joins alternatives with commas. Identifier tokens never
-        // contain a comma, so no escaping is required.
+        // contain a comma, so no escaping is required. Room for two rows per
+        // token so an ambiguous identifier is reported as such instead of being
+        // truncated down to a single "match".
         let joined = tokens.join(",");
-        let count = tokens.len() as u32 + 1;
+        let count = tokens.len() as u32 * 2 + 1;
         let query = format!("identifier={joined}&_count={count}");
         let params = octofhir_search::parse_query_string(&query, count, 100_000);
         let result = state.storage.search(rtype, &params).await.map_err(|e| {
-            ApiError::bad_request(format!(
-                "Conditional reference search failed for {rtype}: {e}"
-            ))
+            ApiError::bad_request(format!("Conditional search failed for {rtype}: {e}"))
         })?;
 
-        // token -> distinct resource ids matching it
-        let mut by_ident: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        // token -> matching resources, keyed by id so one resource carrying the
+        // same identifier twice does not read as an ambiguous match.
+        let mut by_ident: HashMap<String, HashMap<String, MatchedExisting>> = HashMap::new();
         for entry in &result.entries {
             for tok in identifier_tokens(&entry.resource) {
-                by_ident.entry(tok).or_default().insert(entry.id.clone());
+                by_ident.entry(tok).or_default().insert(
+                    entry.id.clone(),
+                    MatchedExisting {
+                        id: entry.id.clone(),
+                        version_id: entry.version_id.clone(),
+                        resource: entry.resource.clone(),
+                    },
+                );
             }
         }
 
-        for (cref, token) in refs {
-            let ids = by_ident.get(token).map(|s| s.len()).unwrap_or(0);
-            match ids {
-                1 => {
-                    let id = by_ident[token].iter().next().unwrap();
-                    resolved.insert(cref.clone(), format!("{rtype}/{id}"));
-                }
-                0 => {
-                    return Err(ApiError::unprocessable_entity(
-                        format!("Conditional reference matched no resources: {cref}"),
-                        None,
-                    ));
-                }
-                _ => {
-                    return Err(ApiError::precondition_failed(format!(
-                        "Conditional reference matched multiple resources: {cref}"
-                    )));
-                }
-            }
+        for (cond, token) in refs {
+            let matched = match by_ident.get(token) {
+                None => ConditionalMatch::NoMatch,
+                Some(found) => match found.len() {
+                    0 => ConditionalMatch::NoMatch,
+                    1 => ConditionalMatch::One(found.values().next().unwrap().clone()),
+                    _ => ConditionalMatch::Many,
+                },
+            };
+            resolved.insert(cond.clone(), matched);
         }
     }
 
-    // Fallback: one search per distinct non-identifier conditional query.
-    for cref in other {
-        let Some((rtype, query)) = cref.split_once('?') else {
+    // Fallback: one search per distinct non-identifier condition.
+    for cond in other {
+        let Some((rtype, query)) = cond.split_once('?') else {
             continue;
         };
         let params = octofhir_search::parse_query_string(query, 2, 10);
         let result = state.storage.search(rtype, &params).await.map_err(|e| {
-            ApiError::bad_request(format!(
-                "Conditional reference search failed for {cref}: {e}"
-            ))
+            ApiError::bad_request(format!("Conditional search failed for {cond}: {e}"))
         })?;
-        match result.entries.len() {
+        let matched = match result.entries.len() {
+            0 => ConditionalMatch::NoMatch,
             1 => {
-                resolved.insert(cref.clone(), format!("{rtype}/{}", result.entries[0].id));
+                let existing = &result.entries[0];
+                ConditionalMatch::One(MatchedExisting {
+                    id: existing.id.clone(),
+                    version_id: existing.version_id.clone(),
+                    resource: existing.resource.clone(),
+                })
             }
-            0 => {
-                return Err(ApiError::unprocessable_entity(
-                    format!("Conditional reference matched no resources: {cref}"),
-                    None,
-                ));
-            }
-            _ => {
-                return Err(ApiError::precondition_failed(format!(
-                    "Conditional reference matched multiple resources: {cref}"
-                )));
-            }
-        }
+            _ => ConditionalMatch::Many,
+        };
+        resolved.insert(cond, matched);
     }
 
     Ok(resolved)

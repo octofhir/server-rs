@@ -22,12 +22,20 @@ services:
       # WAL
       - "-c"
       - "wal_buffers=16MB"
+      # Resource tables run into the gigabytes and no update can be HOT, so
+      # every write dirties pages across several indexes. A small max_wal_size
+      # means frequent checkpoints, and each checkpoint makes the next touch of
+      # every page emit a full-page image — the write amplification dwarfs the
+      # actual change.
       - "-c"
-      - "max_wal_size=1GB"
+      - "max_wal_size=8GB"
       - "-c"
-      - "min_wal_size=80MB"
+      - "min_wal_size=1GB"
       - "-c"
       - "checkpoint_completion_target=0.9"
+      # Those full-page images are jsonb-heavy and compress well.
+      - "-c"
+      - "wal_compression=zstd"
       # Query planner (SSD-optimized)
       - "-c"
       - "random_page_cost=1.1"

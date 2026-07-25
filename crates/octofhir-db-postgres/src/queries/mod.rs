@@ -8,8 +8,8 @@ pub mod search;
 
 // Re-export CRUD operations
 pub use crud::{
-    create, create_raw, delete, exists, exists_many, exists_many_grouped, read, read_many,
-    read_raw, update, update_raw, vread, vread_raw,
+    create, create_raw, delete, exists, exists_many, exists_many_grouped,
+    exists_many_grouped_with_tx, read, read_many, read_raw, update, update_raw, vread, vread_raw,
 };
 
 // Re-export history operations

@@ -55,7 +55,8 @@ impl PostgresStorage {
             migrations::run(&pool, &config.url).await?;
         }
 
-        let schema_manager = SchemaManager::new(pool.clone());
+        let schema_manager = SchemaManager::new(pool.clone())
+            .with_document_gin_tables(config.document_gin_resource_types.as_deref());
 
         // Run the GIN pending-list flusher on exactly one pool. Small auxiliary
         // pools (e.g. the config pool) disable it so it isn't spawned twice,
@@ -318,7 +319,15 @@ impl FhirStorage for PostgresStorage {
             StorageError::transaction_error(format!("Failed to begin transaction: {}", e))
         })?;
 
-        let pg_tx = crate::transaction::PostgresTransaction::new(sqlx_tx, None);
+        // Hand the transaction the same search-parameter registry the pooled
+        // path uses. Without it `execute_search_with_tx` falls back to an empty
+        // registry, which silently drops every search parameter — an in-bundle
+        // `GET Type?query` or conditional update/delete would then match rows it
+        // never asked for.
+        let pg_tx = crate::transaction::PostgresTransaction::new(
+            sqlx_tx,
+            self.search_registry.get().cloned(),
+        );
 
         Ok(Box::new(pg_tx))
     }

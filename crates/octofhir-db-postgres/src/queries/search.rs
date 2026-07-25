@@ -191,6 +191,15 @@ pub async fn execute_search_with_tx(
     effective_params.count = Some(params.count.unwrap_or(10).saturating_add(1));
 
     let empty_registry = SearchParameterRegistry::new();
+    if registry.is_none() && !params.parameters.is_empty() {
+        // An empty registry resolves no search parameters, so the predicates are
+        // dropped and the query degenerates into "all rows of this type".
+        tracing::warn!(
+            resource_type,
+            "Transaction search running without a search-parameter registry; \
+             filters cannot be applied"
+        );
+    }
     let registry = registry.map(|r| r.as_ref()).unwrap_or(&empty_registry);
 
     let converted =

@@ -15,24 +15,21 @@ use crate::error::{PostgresError, Result};
 /// Created once via `ensure_archive_function()` so per-resource schema creation
 /// doesn't redefine the same server-wide function from many concurrent
 /// connections (which would serialize).
+///
+/// Archiving is statement-level: one set-based insert per statement, reading the
+/// old rows from a transition table. A Bundle updating 200 rows issues a single
+/// `UPDATE ... FROM UNNEST(...)`, so the whole batch archives in one insert.
 const ARCHIVE_FN_SQL: &str = r#"
     CREATE OR REPLACE FUNCTION archive_to_history()
     RETURNS TRIGGER AS $$
     BEGIN
         EXECUTE format(
             'INSERT INTO %I_history (id, txid, created_at, updated_at, resource, status)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (id, txid) DO UPDATE SET
-                 created_at = EXCLUDED.created_at,
-                 updated_at = EXCLUDED.updated_at,
-                 resource = EXCLUDED.resource,
-                 status = EXCLUDED.status',
+             SELECT id, txid, created_at, updated_at, resource, status FROM old_rows
+             ON CONFLICT (id, txid) DO NOTHING',
             TG_TABLE_NAME
-        ) USING OLD.id, OLD.txid, OLD.created_at, OLD.updated_at, OLD.resource, OLD.status;
-        -- NEW on UPDATE (apply it), OLD on DELETE (proceed with removal).
-        -- Returning NEW unconditionally would be NULL on DELETE and silently
-        -- cancel the row removal.
-        RETURN COALESCE(NEW, OLD);
+        );
+        RETURN NULL;
     END;
     $$ LANGUAGE plpgsql;
 "#;
@@ -54,13 +51,46 @@ const ARCHIVE_FN_SQL: &str = r#"
 #[derive(Debug, Clone)]
 pub struct SchemaManager {
     pool: PgPool,
+    /// Table names (lowercase) that get a whole-document GIN index on
+    /// `resource`. `None` means every table gets one — see
+    /// [`SchemaManager::with_document_gin_tables`].
+    document_gin_tables: Option<std::collections::HashSet<String>>,
 }
 
 impl SchemaManager {
-    /// Creates a new `SchemaManager` with the given connection pool.
+    /// Creates a new `SchemaManager` with the given connection pool, giving
+    /// every resource table a whole-document GIN index.
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            document_gin_tables: None,
+        }
+    }
+
+    /// Restricts the whole-document GIN index on `resource` to the given
+    /// resource types (matched case-insensitively).
+    ///
+    /// The document GIN answers a search on any element, which is what makes a
+    /// search on a parameter outside `search.indexed_params` viable at all. It
+    /// is also the largest index on a resource table and is maintained by every
+    /// write, so a deployment that knows exactly which types get searched
+    /// broadly can narrow it — or pass an empty set to drop it entirely.
+    ///
+    /// `None` keeps the default: one on every table.
+    #[must_use]
+    pub fn with_document_gin_tables<I, S>(mut self, resource_types: Option<I>) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.document_gin_tables = resource_types.map(|types| {
+            types
+                .into_iter()
+                .map(|rt| Self::table_name(rt.as_ref()))
+                .collect()
+        });
+        self
     }
 
     /// Returns a reference to the connection pool.
@@ -93,7 +123,7 @@ impl SchemaManager {
     /// Returns an error if any DDL statement fails.
     #[instrument(skip(self), fields(resource_type = %resource_type))]
     pub async fn create_resource_schema(&self, resource_type: &str) -> Result<()> {
-        let sql = Self::build_resource_schema_sql(resource_type);
+        let sql = self.build_resource_schema_sql(resource_type);
         sqlx_core::raw_sql::raw_sql(AssertSqlSafe(sql.to_string()))
             .execute(&self.pool)
             .await
@@ -111,7 +141,7 @@ impl SchemaManager {
     /// archive_to_history()` from many concurrent connections trips
     /// "tuple concurrently updated" on `pg_proc`, dropping schema
     /// creates on the floor.
-    fn build_resource_schema_sql(resource_type: &str) -> String {
+    fn build_resource_schema_sql(&self, resource_type: &str) -> String {
         let table = Self::table_name(resource_type);
         let history_table = format!("{}_history", table);
         let is_internal = Self::is_internal_resource(&table);
@@ -120,7 +150,13 @@ impl SchemaManager {
 
         let mut sql = String::with_capacity(2048);
 
-        // Main table
+        // Main table.
+        //
+        // Every UPDATE writes a new row version and none of them can be HOT
+        // (`resource` carries index entries), so `fillfactor` leaves room to
+        // keep the new version on the same page, and autovacuum runs far more
+        // eagerly than the stock 0.2 scale factor — at that setting a
+        // million-row table waits for 200k dead tuples.
         sql.push_str(&format!(
             "CREATE TABLE IF NOT EXISTS \"{table}\" (\n\
                 id TEXT PRIMARY KEY,\n\
@@ -129,6 +165,13 @@ impl SchemaManager {
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n\
                 resource JSONB NOT NULL,\n\
                 status resource_status NOT NULL DEFAULT 'created'\n\
+            );\n\
+            ALTER TABLE \"{table}\" SET (\n\
+                toast_tuple_target = 8160,\n\
+                fillfactor = 90,\n\
+                autovacuum_vacuum_scale_factor = 0.02,\n\
+                autovacuum_analyze_scale_factor = 0.01,\n\
+                autovacuum_vacuum_cost_limit = 2000\n\
             );\n"
         ));
 
@@ -140,7 +183,12 @@ impl SchemaManager {
              FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();\n"
         ));
 
-        // History table + trigger (skipped for internal resources)
+        // History table + triggers (skipped for internal resources).
+        //
+        // One statement-level trigger per event, each with a transition table,
+        // so a batched write archives in a single set-based insert. UPDATE and
+        // DELETE need separate triggers: a trigger declaring `REFERENCING` may
+        // only name one event.
         if !is_internal {
             sql.push_str(&format!(
                 "CREATE TABLE IF NOT EXISTS \"{history_table}\" (\n\
@@ -151,37 +199,42 @@ impl SchemaManager {
                     resource JSONB NOT NULL,\n\
                     status resource_status NOT NULL,\n\
                     PRIMARY KEY (id, txid)\n\
-                );\n"
+                );\n\
+                ALTER TABLE \"{history_table}\" SET (toast_tuple_target = 8160);\n"
             ));
-            let history_trigger = format!("{}_history_trigger", table);
+            let update_hist = format!("{}_history_update", table);
+            let delete_hist = format!("{}_history_delete", table);
             sql.push_str(&format!(
-                "DROP TRIGGER IF EXISTS \"{history_trigger}\" ON \"{table}\";\n\
-                 CREATE TRIGGER \"{history_trigger}\" BEFORE UPDATE OR DELETE ON \"{table}\" \
-                 FOR EACH ROW EXECUTE FUNCTION archive_to_history();\n"
+                "DROP TRIGGER IF EXISTS \"{update_hist}\" ON \"{table}\";\n\
+                 CREATE TRIGGER \"{update_hist}\" AFTER UPDATE ON \"{table}\" \
+                 REFERENCING OLD TABLE AS old_rows \
+                 FOR EACH STATEMENT EXECUTE FUNCTION archive_to_history();\n\
+                 DROP TRIGGER IF EXISTS \"{delete_hist}\" ON \"{table}\";\n\
+                 CREATE TRIGGER \"{delete_hist}\" AFTER DELETE ON \"{table}\" \
+                 REFERENCING OLD TABLE AS old_rows \
+                 FOR EACH STATEMENT EXECUTE FUNCTION archive_to_history();\n"
             ));
         }
 
-        // Indexes (main table)
-        sql.push_str(&format!(
-            "CREATE INDEX IF NOT EXISTS \"idx_{table}_gin\" ON \"{table}\" \
-             USING GIN (resource jsonb_path_ops) \
-             WITH (fastupdate=on);\n\
-             CREATE INDEX IF NOT EXISTS \"idx_{table}_txid\" ON \"{table}\"(txid);\n\
-             CREATE INDEX IF NOT EXISTS \"idx_{table}_created_at\" ON \"{table}\"(created_at);\n\
-             CREATE INDEX IF NOT EXISTS \"idx_{table}_updated_at\" ON \"{table}\"(updated_at);\n\
-             CREATE INDEX IF NOT EXISTS \"idx_{table}_status\" ON \"{table}\"(status);\n"
-        ));
+        // `updated_at`, `created_at`, `txid` and `status` stay unindexed: an
+        // index on `updated_at` alone costs every table its HOT updates, since
+        // the timestamp trigger touches the column on every write.
+        //
+        // History carries only its `(id, txid)` primary key, which also serves
+        // lookups by `id` as the leading column.
 
-        // History indexes. History rows are append-only and inserted in
-        // updated_at order, so a BRIN index on updated_at gives cheap range
-        // scans (type/system history time filters, retention pruning) at a
-        // fraction of a btree's size and write cost.
-        if !is_internal {
+        // Whole-document GIN — on every table unless the deployment narrowed the
+        // set. It is what keeps a search on a parameter outside
+        // `search.indexed_params` from becoming a sequential scan.
+        if self
+            .document_gin_tables
+            .as_ref()
+            .is_none_or(|tables| tables.contains(&table))
+        {
             sql.push_str(&format!(
-                "CREATE INDEX IF NOT EXISTS \"idx_{history_table}_updated_at_brin\" \
-                    ON \"{history_table}\" USING BRIN (updated_at);\n\
-                 CREATE INDEX IF NOT EXISTS \"idx_{history_table}_id\" \
-                    ON \"{history_table}\"(id);\n"
+                "CREATE INDEX IF NOT EXISTS \"idx_{table}_gin\" ON \"{table}\" \
+                 USING GIN (resource jsonb_path_ops) \
+                 WITH (fastupdate=on);\n"
             ));
         }
 
@@ -255,9 +308,12 @@ impl SchemaManager {
     #[instrument(skip(self))]
     pub async fn list_tables(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            // Both underscores are escaped — unescaped they are single-character
+            // wildcards, and `%_history` would drop `familymemberhistory` from
+            // the list of resource tables.
             "SELECT table_name FROM information_schema.tables
              WHERE table_schema = 'public'
-             AND table_name NOT LIKE '%_history'
+             AND table_name NOT LIKE '%\\_history' ESCAPE '\\'
              AND table_name NOT LIKE '\\_%' ESCAPE '\\'
              ORDER BY table_name",
         )

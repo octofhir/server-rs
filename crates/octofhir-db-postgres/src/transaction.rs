@@ -12,7 +12,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use octofhir_search::SearchParameterRegistry;
-use octofhir_storage::{SearchParams, SearchResult, StorageError, StoredResource, Transaction};
+use octofhir_storage::{
+    BatchUpdateOutcome, SearchParams, SearchResult, StorageError, StoredResource, Transaction,
+};
 
 use crate::queries;
 
@@ -154,6 +156,19 @@ impl Transaction for PostgresTransaction {
         queries::crud::read_with_tx(tx, resource_type, id).await
     }
 
+    async fn exists_many_grouped(
+        &mut self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        let mut tx_guard = self.tx.lock().await;
+        let tx = tx_guard.as_deref_mut().ok_or_else(|| {
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
+        })?;
+        queries::crud::exists_many_grouped_with_tx(tx, groups).await
+    }
+
     async fn search(
         &self,
         resource_type: &str,
@@ -196,6 +211,50 @@ impl Transaction for PostgresTransaction {
             queries::crud::create_batch_with_tx(tx, resource_type, txid, resources).await?;
 
         Ok(stored)
+    }
+
+    async fn update_batch(
+        &mut self,
+        resource_type: &str,
+        resources: &[Value],
+    ) -> Result<BatchUpdateOutcome, StorageError> {
+        if resources.is_empty() {
+            return Ok(BatchUpdateOutcome::default());
+        }
+        let mut tx_guard = self.tx.lock().await;
+        let tx = tx_guard.as_deref_mut().ok_or_else(|| {
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
+        })?;
+        let mut txid_guard = self.txid.lock().await;
+        let txid = ensure_txid(&mut txid_guard, tx).await?;
+        drop(txid_guard);
+
+        let (updated, missing) =
+            queries::crud::update_batch_with_tx(tx, resource_type, txid, resources).await?;
+
+        Ok(BatchUpdateOutcome { updated, missing })
+    }
+
+    async fn delete_batch(
+        &mut self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<(), StorageError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut tx_guard = self.tx.lock().await;
+        let tx = tx_guard.as_deref_mut().ok_or_else(|| {
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
+        })?;
+        // `delete_batch_with_tx` does not write to the live table, so no `txid`
+        // is allocated here — the archived rows keep their own version id.
+        queries::crud::delete_batch_with_tx(tx, resource_type, ids).await?;
+        Ok(())
     }
 }
 

@@ -326,6 +326,52 @@ pub async fn exists_many_grouped(
     }
 }
 
+/// Batch existence check on an already checked-out transaction.
+///
+/// The caller keeps this transaction for the following create/update, so
+/// reference validation and the write consume one pool checkout.
+pub async fn exists_many_grouped_with_tx(
+    tx: &mut PgTransaction<'_>,
+    groups: &[(String, Vec<String>)],
+) -> Result<std::collections::HashSet<String>, StorageError> {
+    let groups: Vec<&(String, Vec<String>)> =
+        groups.iter().filter(|(_, ids)| !ids.is_empty()).collect();
+    if groups.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+
+    let mut sql = String::new();
+    for (i, (resource_type, _ids)) in groups.iter().enumerate() {
+        let table = SchemaManager::table_name(resource_type);
+        if i > 0 {
+            sql.push_str(" UNION ALL ");
+        }
+        sql.push_str(&format!(
+            r#"SELECT {i}::int AS grp, id FROM "{table}" WHERE id = ANY(${n}) AND status != 'deleted'"#,
+            n = i + 1
+        ));
+    }
+
+    let mut query = query_as::<_, (i32, String)>(AssertSqlSafe(sql));
+    for (_, ids) in &groups {
+        query = query.bind(ids);
+    }
+
+    let rows = query
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to batch-check references: {e}")))?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(group, id)| {
+            groups
+                .get(group as usize)
+                .map(|(resource_type, _)| format!("{resource_type}/{id}"))
+        })
+        .collect())
+}
+
 /// Batch read of live (non-deleted) resources for `ids` in `{resource_type}`.
 /// One `id = ANY($1)` round-trip; missing/deleted ids are omitted. Meta
 /// (versionId/lastUpdated) is merged into each returned resource.
@@ -1206,6 +1252,125 @@ pub async fn create_batch_with_tx(
         .collect();
 
     Ok(out)
+}
+
+/// Bulk-updates many resources of the same type within a transaction.
+///
+/// One `UPDATE ... FROM UNNEST(...)` round-trip replaces N single-row updates.
+/// The caller must guarantee the ids are distinct: a set-based UPDATE touches
+/// each row once, so two revisions of the same id would silently collapse.
+///
+/// Ids that match no live row are returned in `missing` rather than raising
+/// `NotFound`, so the caller can apply FHIR update-as-create semantics with a
+/// follow-up `create_batch_with_tx`.
+///
+/// Optimistic locking is not supported here — entries carrying `If-Match` must
+/// go through [`update_with_tx_if_match`], which reports version conflicts
+/// per resource.
+pub async fn update_batch_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    txid: i64,
+    resources: &[Value],
+) -> Result<(Vec<StoredResource>, Vec<String>), StorageError> {
+    if resources.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let mut ids: Vec<String> = Vec::with_capacity(resources.len());
+    let mut payloads: Vec<Value> = Vec::with_capacity(resources.len());
+    for r in resources {
+        let id = r["id"]
+            .as_str()
+            .ok_or_else(|| StorageError::invalid_resource("Missing id field"))?;
+        ids.push(id.to_string());
+        payloads.push(r.clone());
+    }
+
+    let table = SchemaManager::table_name(resource_type);
+    let now = Utc::now();
+
+    // `updated_at` is maintained by the `{table}_update_timestamp` BEFORE UPDATE
+    // trigger; the same trigger chain archives the previous version to history.
+    let sql = format!(
+        r#"UPDATE "{table}" t
+           SET txid = {txid}::bigint,
+               resource = u.resource || jsonb_build_object(
+                   'meta', COALESCE(u.resource -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
+                       'versionId', '{txid}',
+                       'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                   )
+               ),
+               status = 'updated'
+           FROM UNNEST($1::text[], $2::jsonb[]) AS u(id, resource)
+           WHERE t.id = u.id
+           RETURNING t.id, t.created_at, t.updated_at, t.resource"#
+    );
+
+    let rows: Vec<(String, DateTime<Utc>, DateTime<Utc>, Value)> =
+        query_as(AssertSqlSafe(sql.to_string()))
+            .bind(&ids)
+            .bind(&payloads)
+            .bind(now)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| {
+                StorageError::internal(format!("Failed to batch-update resources: {e}"))
+            })?;
+
+    let matched: std::collections::HashSet<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    let missing: Vec<String> = ids
+        .iter()
+        .filter(|id| !matched.contains(id.as_str()))
+        .cloned()
+        .collect();
+
+    let version_id = txid.to_string();
+    let updated = rows
+        .into_iter()
+        .map(|(id, created_at, updated_at, resource)| StoredResource {
+            id,
+            version_id: version_id.clone(),
+            resource_type: resource_type.to_string(),
+            resource,
+            last_updated: chrono_to_time(updated_at),
+            created_at: chrono_to_time(created_at),
+        })
+        .collect();
+
+    Ok((updated, missing))
+}
+
+/// Bulk-deletes many resources of the same type within a transaction.
+///
+/// One `DELETE ... WHERE id = ANY(...)` round-trip replaces N single-row
+/// deletes. As with [`delete_with_tx`], the live row is physically removed and
+/// the BEFORE DELETE trigger archives the final version to history. Ids that
+/// do not exist are ignored — FHIR delete is idempotent.
+pub async fn delete_batch_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    ids: &[String],
+) -> Result<(), StorageError> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    let table = SchemaManager::table_name(resource_type);
+    let sql = format!(r#"DELETE FROM "{table}" WHERE id = ANY($1::text[])"#);
+
+    query(AssertSqlSafe(sql.to_string()))
+        .bind(ids)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!("Table does not exist: {e}"));
+            }
+            StorageError::internal(format!("Failed to batch-delete resources: {e}"))
+        })?;
+
+    Ok(())
 }
 
 /// Updates a resource within a transaction.

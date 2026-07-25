@@ -333,7 +333,13 @@ async fn bootstrap_conformance_if_postgres(
     // This includes all resource-kind and logical-kind StructureDefinitions.
     // Must complete BEFORE the auth bootstraps because they write into the
     // User / Client / AccessPolicy tables managed by this routine.
-    let fcm_storage = octofhir_db_postgres::PostgresPackageStore::new((*pool).clone());
+    let document_gin_types = cfg
+        .storage
+        .postgres
+        .as_ref()
+        .and_then(|pg| pg.document_gin_resource_types.clone());
+    let fcm_storage = octofhir_db_postgres::PostgresPackageStore::new((*pool).clone())
+        .with_document_gin_resource_types(document_gin_types);
     match fcm_storage.ensure_resource_tables().await {
         Ok(count) => {
             tracing::info!(
@@ -546,6 +552,7 @@ async fn create_storage(
         .with_pool_size(pg_cfg.pool_size)
         .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
         .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
+        .with_document_gin_resource_types(pg_cfg.document_gin_resource_types.clone())
         .with_run_migrations(true);
 
     let mut pg_storage = PostgresStorage::new(postgres_config)

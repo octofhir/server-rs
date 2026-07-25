@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use octofhir_core::fhir_reference::{parse_reference, FhirReference, UnresolvableReference};
+use octofhir_core::fhir_reference::{FhirReference, UnresolvableReference, parse_reference};
 use octofhir_fhirschema::reference::{
     ReferenceError, ReferenceResolutionResult, ReferenceResolver, ReferenceResult,
 };
@@ -204,9 +204,10 @@ impl ReferenceResolver for StorageReferenceResolver {
         &self,
         references: &[String],
     ) -> Vec<ReferenceResult<ReferenceResolutionResult>> {
-        // Parse once, group ids by resource type, then one existence query per
-        // type (`exists_many` → `id = ANY($1)`). A reference-heavy resource costs
-        // O(distinct types) checkouts instead of O(references) concurrent ones.
+        // Parse once and check every resource type in one grouped storage call.
+        // This keeps reference-heavy resources to one pool checkout without the
+        // handler pre-scanning the resource and then making the validator walk it
+        // a second time.
         let parsed: Vec<Option<FhirReference>> =
             references.iter().map(|r| self.parse_reference(r)).collect();
 
@@ -218,29 +219,41 @@ impl ReferenceResolver for StorageReferenceResolver {
                 .push(p.id.clone());
         }
 
-        // Existing ids per type. A failed lookup leaves the type absent, treated
-        // below as "skipped" (transient) rather than a false "not found".
-        let mut existing: HashMap<String, HashSet<String>> = HashMap::new();
-        for (rt, ids) in &ids_by_type {
-            if let Ok(found) = self.storage.exists_many(rt, ids).await {
-                existing.insert(rt.clone(), found);
+        let mut groups: Vec<(String, Vec<String>)> = ids_by_type
+            .into_iter()
+            .map(|(resource_type, mut ids)| {
+                ids.sort();
+                ids.dedup();
+                (resource_type, ids)
+            })
+            .collect();
+        groups.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let existing = match self.storage.exists_many_grouped(&groups).await {
+            Ok(found) => found,
+            // A transient storage failure must not turn into a false
+            // reference-not-found validation error.
+            Err(_) => {
+                return parsed
+                    .iter()
+                    .map(|_| Ok(ReferenceResolutionResult::skipped()))
+                    .collect();
             }
-        }
+        };
 
         parsed
             .iter()
             .map(|p| match p {
                 // Unparseable / contained / urn / external: skip (treated as existing).
                 None => Ok(ReferenceResolutionResult::skipped()),
-                Some(pr) => match existing.get(&pr.resource_type) {
-                    Some(found) => Ok(if found.contains(&pr.id) {
+                Some(pr) => {
+                    let key = format!("{}/{}", pr.resource_type, pr.id);
+                    Ok(if existing.contains(&key) {
                         ReferenceResolutionResult::found(pr.resource_type.clone(), pr.id.clone())
                     } else {
                         ReferenceResolutionResult::not_found()
-                    }),
-                    // exists_many failed for this type: transient — skip.
-                    None => Ok(ReferenceResolutionResult::skipped()),
-                },
+                    })
+                }
             })
             .collect()
     }

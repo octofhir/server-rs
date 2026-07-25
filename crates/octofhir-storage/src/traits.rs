@@ -396,6 +396,22 @@ pub trait Transaction: Send + Sync {
     /// See `FhirStorage::create` for details.
     async fn create(&mut self, resource: &Value) -> Result<StoredResource, StorageError>;
 
+    /// Creates a resource and returns its JSON representation without requiring
+    /// the caller to perform a second storage operation.
+    async fn create_raw(&mut self, resource: &Value) -> Result<RawStoredResource, StorageError> {
+        let stored = self.create(resource).await?;
+        let resource_json = serde_json::to_string(&stored.resource)
+            .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
+        Ok(RawStoredResource {
+            id: stored.id,
+            version_id: stored.version_id,
+            resource_type: stored.resource_type,
+            resource_json,
+            last_updated: stored.last_updated,
+            created_at: stored.created_at,
+        })
+    }
+
     /// Updates an existing resource within this transaction.
     ///
     /// See `FhirStorage::update` for details.
@@ -404,6 +420,25 @@ pub trait Transaction: Send + Sync {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError>;
+
+    /// Updates a resource and returns its JSON representation.
+    async fn update_raw(
+        &mut self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<RawStoredResource, StorageError> {
+        let stored = self.update(resource, if_match).await?;
+        let resource_json = serde_json::to_string(&stored.resource)
+            .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
+        Ok(RawStoredResource {
+            id: stored.id,
+            version_id: stored.version_id,
+            resource_type: stored.resource_type,
+            resource_json,
+            last_updated: stored.last_updated,
+            created_at: stored.created_at,
+        })
+    }
 
     /// Deletes a resource within this transaction.
     ///
@@ -418,6 +453,23 @@ pub trait Transaction: Send + Sync {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError>;
+
+    /// Batch existence check using the same checked-out connection as the
+    /// subsequent transactional write.
+    async fn exists_many_grouped(
+        &mut self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        let mut found = std::collections::HashSet::new();
+        for (resource_type, ids) in groups {
+            for id in ids {
+                if self.read(resource_type, id).await?.is_some() {
+                    found.insert(format!("{resource_type}/{id}"));
+                }
+            }
+        }
+        Ok(found)
+    }
 
     /// Searches for resources within this transaction.
     ///
@@ -447,6 +499,62 @@ pub trait Transaction: Send + Sync {
         }
         Ok(out)
     }
+
+    /// Bulk-updates many resources of the same `resource_type` within this
+    /// transaction.
+    ///
+    /// Every resource must carry an `id`, and the ids must be distinct — a
+    /// set-based UPDATE cannot apply two revisions of the same row in order.
+    /// Resources whose id does not exist are *not* an error: they are reported
+    /// back to the caller (via the missing-id list) so it can decide whether to
+    /// create them (FHIR update-as-create) or fail.
+    ///
+    /// Returns the updated resources plus the ids that matched no live row.
+    /// The default implementation falls back to `update()` per resource.
+    async fn update_batch(
+        &mut self,
+        resource_type: &str,
+        resources: &[Value],
+    ) -> Result<BatchUpdateOutcome, StorageError> {
+        let mut updated = Vec::with_capacity(resources.len());
+        let mut missing = Vec::new();
+        for r in resources {
+            match self.update(r, None).await {
+                Ok(stored) => updated.push(stored),
+                Err(StorageError::NotFound { .. }) => {
+                    missing.push(r["id"].as_str().unwrap_or_default().to_string());
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        let _ = resource_type;
+        Ok(BatchUpdateOutcome { updated, missing })
+    }
+
+    /// Bulk-deletes many resources of the same `resource_type` within this
+    /// transaction.
+    ///
+    /// Deletion is idempotent per FHIR, so ids that do not exist are silently
+    /// ignored. The default implementation falls back to `delete()` per id.
+    async fn delete_batch(
+        &mut self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<(), StorageError> {
+        for id in ids {
+            self.delete(resource_type, id).await?;
+        }
+        Ok(())
+    }
+}
+
+/// Result of [`Transaction::update_batch`].
+#[derive(Debug, Default)]
+pub struct BatchUpdateOutcome {
+    /// Resources that matched an existing row and were updated.
+    pub updated: Vec<StoredResource>,
+    /// Ids from the input that matched no live row.
+    pub missing: Vec<String>,
 }
 
 /// Extension trait for storage with capability queries.

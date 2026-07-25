@@ -61,8 +61,8 @@ mod types;
 pub use error::{ErrorCategory, StorageError};
 pub use evented::{EventedStorage, EventedTransaction};
 pub use traits::{
-    ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage, FhirStorage,
-    StorageCapabilities, Transaction,
+    BatchUpdateOutcome, ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage,
+    FhirStorage, StorageCapabilities, Transaction,
 };
 pub use types::{
     HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, RawHistoryEntry, RawHistoryResult,
@@ -85,8 +85,8 @@ pub mod prelude {
     pub use crate::error::{ErrorCategory, StorageError};
     pub use crate::evented::{EventedStorage, EventedTransaction};
     pub use crate::traits::{
-        ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage, FhirStorage,
-        StorageCapabilities, Transaction,
+        BatchUpdateOutcome, ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage,
+        FhirStorage, StorageCapabilities, Transaction,
     };
     pub use crate::types::{
         HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, RawSearchResult,

@@ -34,6 +34,9 @@ use crate::SchemaManager;
 #[derive(Debug, Clone)]
 pub struct PostgresPackageStore {
     pool: PgPool,
+    /// Resource types whose tables get a whole-document GIN index. Empty unless
+    /// configured — see `PostgresConfig::document_gin_resource_types`.
+    document_gin_resource_types: Option<Vec<String>>,
 }
 
 /// Helper struct for StructureDefinition fields
@@ -136,7 +139,18 @@ fn row_to_resource_index(row: &sqlx_postgres::PgRow) -> ResourceIndex {
 impl PostgresPackageStore {
     /// Creates a new PostgreSQL package store.
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            document_gin_resource_types: None,
+        }
+    }
+
+    /// Sets the resource types whose tables get a whole-document GIN index when
+    /// `ensure_resource_tables` creates them.
+    #[must_use]
+    pub fn with_document_gin_resource_types(mut self, types: Option<Vec<String>>) -> Self {
+        self.document_gin_resource_types = types;
+        self
     }
 
     /// Returns a reference to the connection pool.
@@ -531,11 +545,7 @@ impl PostgresPackageStore {
 
         let need_create: Vec<String> = resource_types
             .into_iter()
-            .filter(|rt| {
-                let table = rt.to_lowercase();
-                let main_present = existing_main.contains(&table);
-                !main_present
-            })
+            .filter(|rt| !existing_main.contains(&rt.to_lowercase()))
             .collect();
 
         info!(
@@ -548,6 +558,9 @@ impl PostgresPackageStore {
             return Ok(0);
         }
 
+        let schema_manager = SchemaManager::new(self.pool.clone())
+            .with_document_gin_tables(self.document_gin_resource_types.as_deref());
+
         // Parallelize schema creation. Each call now issues one round-trip
         // (multi-statement DDL via raw_sql). Concurrency is bounded so we
         // don't exhaust the pool — leave headroom for the rest of bootstrap.
@@ -556,11 +569,10 @@ impl PostgresPackageStore {
         let mut set = tokio::task::JoinSet::new();
 
         for resource_type in need_create {
-            let pool = self.pool.clone();
             let sem = semaphore.clone();
+            let schema_manager = schema_manager.clone();
             set.spawn(async move {
                 let _permit = sem.acquire_owned().await.ok();
-                let schema_manager = SchemaManager::new(pool);
                 let result = schema_manager.create_resource_schema(&resource_type).await;
                 (resource_type, result)
             });

@@ -437,7 +437,8 @@ CREATE TABLE IF NOT EXISTS fcm.resources (
 CREATE INDEX IF NOT EXISTS idx_fcm_package_name_version ON fcm.packages(name, version);
 CREATE INDEX IF NOT EXISTS idx_fcm_package_priority ON fcm.packages(priority DESC);
 CREATE INDEX IF NOT EXISTS idx_fcm_package_fhir_version ON fcm.packages(fhir_version);
-CREATE INDEX IF NOT EXISTS idx_fcm_resource_url ON fcm.resources(url);
+-- Equality on `url` is served by idx_fcm_resource_url_pattern below:
+-- text_pattern_ops supports `=` as well as prefix matching.
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_url_lower ON fcm.resources(url_lower);
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_id_type ON fcm.resources(id_lower, resource_type);
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_name_type ON fcm.resources(name_lower, resource_type);

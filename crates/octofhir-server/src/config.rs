@@ -283,6 +283,17 @@ pub struct PostgresStorageConfig {
     /// to this replica pool while writes stay on the primary.
     #[serde(default)]
     pub read_replica: Option<ReadReplicaConfig>,
+
+    /// Resource types that get a whole-document GIN index on `resource`.
+    ///
+    /// Omit the key and every type gets one. The document GIN answers a search
+    /// on any element, so it is what keeps a search on a parameter outside
+    /// `search.indexed_params` from turning into a sequential scan. It is also
+    /// the largest index on a resource table and every write maintains it, so a
+    /// deployment that knows its query mix can narrow the list — or set it to an
+    /// empty list to drop the index entirely.
+    #[serde(default)]
+    pub document_gin_resource_types: Option<Vec<String>>,
 }
 
 /// Read replica configuration. Only `url` is required;
@@ -360,6 +371,7 @@ impl Default for PostgresStorageConfig {
             connect_timeout_ms: default_postgres_connect_timeout(),
             idle_timeout_ms: Some(300_000), // 5 minutes
             read_replica: None,
+            document_gin_resource_types: None,
         }
     }
 }

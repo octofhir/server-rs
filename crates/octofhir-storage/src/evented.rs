@@ -377,6 +377,20 @@ impl Transaction for EventedTransaction {
         Ok(result)
     }
 
+    async fn create_raw(&mut self, resource: &Value) -> Result<RawStoredResource, StorageError> {
+        let result = self.inner.create_raw(resource).await?;
+        if self.broadcaster.subscriber_count() > 0
+            && let Ok(value) = serde_json::from_str::<Value>(&result.resource_json)
+        {
+            self.queue_event(ResourceEvent::created(
+                &result.resource_type,
+                &result.id,
+                value,
+            ));
+        }
+        Ok(result)
+    }
+
     async fn update(
         &mut self,
         resource: &Value,
@@ -400,6 +414,24 @@ impl Transaction for EventedTransaction {
         Ok(result)
     }
 
+    async fn update_raw(
+        &mut self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<RawStoredResource, StorageError> {
+        let result = self.inner.update_raw(resource, if_match).await?;
+        if self.broadcaster.subscriber_count() > 0
+            && let Ok(value) = serde_json::from_str::<Value>(&result.resource_json)
+        {
+            self.queue_event(ResourceEvent::updated(
+                &result.resource_type,
+                &result.id,
+                value,
+            ));
+        }
+        Ok(result)
+    }
+
     async fn delete(&mut self, resource_type: &str, id: &str) -> Result<(), StorageError> {
         self.inner.delete(resource_type, id).await?;
 
@@ -415,6 +447,13 @@ impl Transaction for EventedTransaction {
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
         self.inner.read(resource_type, id).await
+    }
+
+    async fn exists_many_grouped(
+        &mut self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        self.inner.exists_many_grouped(groups).await
     }
 
     async fn search(
@@ -441,6 +480,36 @@ impl Transaction for EventedTransaction {
             self.queue_event(ResourceEvent::created(rt, &s.id, s.resource.clone()));
         }
         Ok(stored)
+    }
+
+    async fn update_batch(
+        &mut self,
+        resource_type: &str,
+        resources: &[Value],
+    ) -> Result<crate::traits::BatchUpdateOutcome, StorageError> {
+        let outcome = self.inner.update_batch(resource_type, resources).await?;
+        for s in &outcome.updated {
+            let rt = s
+                .resource
+                .get("resourceType")
+                .and_then(|v| v.as_str())
+                .unwrap_or(resource_type)
+                .to_string();
+            self.queue_event(ResourceEvent::updated(rt, &s.id, s.resource.clone()));
+        }
+        Ok(outcome)
+    }
+
+    async fn delete_batch(
+        &mut self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<(), StorageError> {
+        self.inner.delete_batch(resource_type, ids).await?;
+        for id in ids {
+            self.queue_event(ResourceEvent::deleted(resource_type, id));
+        }
+        Ok(())
     }
 }
 
