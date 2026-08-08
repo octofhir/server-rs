@@ -148,7 +148,7 @@ pub async fn create_identity_provider(
     }
 
     // Generate ID and set it
-    let id = Uuid::new_v4();
+    let id = Uuid::now_v7();
     provider.id = Some(id.to_string());
 
     // Convert to JSON for storage

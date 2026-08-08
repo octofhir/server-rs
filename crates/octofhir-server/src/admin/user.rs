@@ -370,7 +370,7 @@ pub async fn create_user(
     }
 
     // Generate ID and set it
-    let id = Uuid::new_v4();
+    let id = Uuid::now_v7();
     user.id = Some(id.to_string());
     user.resource_type = "User".to_string();
 

@@ -130,7 +130,7 @@ impl AutomationExecutor {
         trigger: Option<&AutomationTrigger>,
         event: AutomationEvent,
     ) -> ExecutionResult {
-        let execution_id = Uuid::new_v4();
+        let execution_id = Uuid::now_v7();
         let start = Instant::now();
         let started_at = OffsetDateTime::now_utc();
 

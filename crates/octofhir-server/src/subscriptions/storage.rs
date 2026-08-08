@@ -51,7 +51,7 @@ impl SubscriptionEventStorage {
         focus_event: Option<TriggerInteraction>,
         notification_bundle: serde_json::Value,
     ) -> SubscriptionResult<String> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let event_type_str = event_type.as_str();
         let focus_event_str = focus_event.map(|e| match e {
             TriggerInteraction::Create => "create",
@@ -290,7 +290,7 @@ impl SubscriptionEventStorage {
         response_time_ms: i32,
         error_message: Option<&str>,
     ) -> SubscriptionResult<()> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let event_uuid =
             Uuid::parse_str(event_id).map_err(|e| SubscriptionError::ParseError(e.to_string()))?;
 

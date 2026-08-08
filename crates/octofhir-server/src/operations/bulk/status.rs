@@ -176,7 +176,7 @@ impl BulkExportJob {
     pub fn new(level: BulkExportLevel, params: BulkExportParams, retention_hours: u64) -> Self {
         let now = Utc::now();
         Self {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             level,
             status: BulkExportStatus::Queued,
             params,

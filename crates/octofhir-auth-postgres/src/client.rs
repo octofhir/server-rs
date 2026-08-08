@@ -402,7 +402,7 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
             )));
         }
 
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let resource = serde_json::to_value(client)
             .map_err(|e| AuthError::storage(format!("Failed to serialize client: {}", e)))?;
 

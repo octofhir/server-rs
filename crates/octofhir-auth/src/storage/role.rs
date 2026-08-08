@@ -115,7 +115,7 @@ impl Role {
     pub fn new(name: impl Into<String>) -> Self {
         let now = OffsetDateTime::now_utc();
         Self {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             name: name.into(),
             description: None,
             permissions: HashSet::new(),

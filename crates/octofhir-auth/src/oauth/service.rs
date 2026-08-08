@@ -289,7 +289,7 @@ impl AuthorizationService {
         // 12. Create authorization session
         let now = OffsetDateTime::now_utc();
         let session = AuthorizationSession {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             code: AuthorizationSession::generate_code(),
             client_id: request.client_id.clone(),
             redirect_uri: request.redirect_uri.clone(),

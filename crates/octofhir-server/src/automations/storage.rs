@@ -166,7 +166,7 @@ impl AutomationStorage for PostgresAutomationStorage {
         &self,
         create: CreateAutomation,
     ) -> Result<Automation, AutomationStorageError> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = OffsetDateTime::now_utc();
 
         let row = query(
@@ -338,7 +338,7 @@ impl AutomationStorage for PostgresAutomationStorage {
         automation_id: Uuid,
         trigger: CreateAutomationTrigger,
     ) -> Result<AutomationTrigger, AutomationStorageError> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = OffsetDateTime::now_utc();
 
         // Validate trigger configuration

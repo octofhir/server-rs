@@ -217,7 +217,7 @@ pub async fn create_role(
     }
 
     // Generate ID and set it
-    let id = Uuid::new_v4();
+    let id = Uuid::now_v7();
     role.id = Some(id.to_string());
     role.resource_type = "Role".to_string();
 

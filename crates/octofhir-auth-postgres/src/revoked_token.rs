@@ -43,7 +43,7 @@ impl<'a> RevokedTokenStorage<'a> {
     ///
     /// Returns an error if the database insert fails.
     pub async fn revoke(&self, jti: &str, expires_at: OffsetDateTime) -> StorageResult<()> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = OffsetDateTime::now_utc();
         let resource = serde_json::json!({
             "resourceType": "RevokedToken",

@@ -1137,11 +1137,12 @@ pub async fn create_with_tx(
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
 
-    // Generate ID if not provided
+    // Generate ID if not provided. v7 keeps the TEXT primary key time-ordered
+    // so inserts stay at the right edge of the btree.
     let id = resource["id"]
         .as_str()
         .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
 
     let now = Utc::now();
 
@@ -1247,7 +1248,7 @@ pub async fn create_batch_with_tx(
         let id = r["id"]
             .as_str()
             .map(String::from)
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+            .unwrap_or_else(|| Uuid::now_v7().to_string());
         let mut owned = r.clone();
         owned["id"] = Value::String(id.clone());
         // Merge server-managed meta into any client-supplied meta so

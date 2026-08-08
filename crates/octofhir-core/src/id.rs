@@ -16,8 +16,14 @@ pub enum IdError {
 /// Generates a new UUID-based ID for a FHIR resource.
 ///
 /// This is the default ID generation strategy when users don't provide an ID.
+///
+/// Uses UUID v7 (time-ordered). Resource tables store `id` as `TEXT PRIMARY KEY`,
+/// and the v7 timestamp lives in the leading 48 bits — i.e. the first 12 hex
+/// characters — so the canonical string sorts in creation order. Inserts land at
+/// the right edge of the btree instead of scattering across it, which keeps page
+/// splits and WAL churn down on bulk/bundle writes.
 pub fn generate_id() -> String {
-    uuid::Uuid::new_v4().to_string()
+    uuid::Uuid::now_v7().to_string()
 }
 
 /// Validates a FHIR resource ID according to the FHIR specification.
@@ -63,4 +69,36 @@ pub fn validate_id(id: &str) -> Result<(), IdError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_ids_are_uuid_v7() {
+        let id = generate_id();
+        let parsed = uuid::Uuid::parse_str(&id).expect("generated id must be a valid UUID");
+        assert_eq!(
+            parsed.get_version_num(),
+            7,
+            "id must be UUID v7, got {}",
+            id
+        );
+        validate_id(&id).expect("generated id must be a valid FHIR id");
+    }
+
+    #[test]
+    fn generated_ids_sort_in_creation_order() {
+        // The btree locality win depends on the canonical string being
+        // lexicographically ordered by creation time, since resource ids are
+        // stored as TEXT. Sleep past the v7 millisecond tick between samples.
+        let mut prev = generate_id();
+        for _ in 0..5 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            let next = generate_id();
+            assert!(next > prev, "{next} should sort after {prev}");
+            prev = next;
+        }
+    }
 }

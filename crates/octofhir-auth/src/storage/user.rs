@@ -166,7 +166,7 @@ impl User {
     pub fn new(username: impl Into<String>) -> Self {
         let now = OffsetDateTime::now_utc();
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: uuid::Uuid::now_v7().to_string(),
             username: username.into(),
             email: None,
             name: None,

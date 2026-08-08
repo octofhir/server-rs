@@ -61,7 +61,7 @@ impl AuthorizeSession {
     pub fn new(authorization_request: AuthorizationRequest) -> Self {
         let now = OffsetDateTime::now_utc();
         Self {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             user_id: None,
             authorization_request,
             created_at: now,
@@ -74,7 +74,7 @@ impl AuthorizeSession {
     pub fn with_expiry(authorization_request: AuthorizationRequest, expiry_secs: i64) -> Self {
         let now = OffsetDateTime::now_utc();
         Self {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             user_id: None,
             authorization_request,
             created_at: now,

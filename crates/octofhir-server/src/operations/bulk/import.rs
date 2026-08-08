@@ -388,7 +388,7 @@ async fn prepare_import_line(
         .get("id")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
 
     Ok(PreparedImportResource {
         line_number,

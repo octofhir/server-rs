@@ -75,7 +75,7 @@ hyper = { version = "1", features = ["full"] }
 # Storage and concurrency
 dashmap = "6.2"  # For some auxiliary maps if needed
 arc-swap = "1.9"  # Lock-free atomic pointer swapping
-uuid = { version = "1.23", features = ["v4", "serde"] }
+uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
 
 # Time handling
 time = { version = "0.3", features = ["serde", "macros", "parsing", "formatting"] }

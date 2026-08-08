@@ -418,7 +418,7 @@ impl TokenService {
 
         // Create refresh token record
         let refresh_token = RefreshToken {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             token_hash,
             client_id: client.client_id.clone(),
             user_id: session.user_id.clone(),
@@ -703,7 +703,7 @@ impl TokenService {
             let new_token_hash = RefreshToken::hash_token(&new_token_value);
 
             let new_token = RefreshToken {
-                id: Uuid::new_v4(),
+                id: Uuid::now_v7(),
                 token_hash: new_token_hash,
                 client_id: client.client_id.clone(),
                 user_id: stored_token.user_id,
@@ -1246,7 +1246,7 @@ impl TokenService {
 
         // Create refresh token record
         let refresh_token = RefreshToken {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             token_hash,
             client_id: client.client_id.clone(),
             user_id: Some(user_id.to_string()),

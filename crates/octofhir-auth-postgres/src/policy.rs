@@ -480,7 +480,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             .id
             .as_ref()
             .and_then(|s| Uuid::parse_str(s).ok())
-            .unwrap_or_else(Uuid::new_v4);
+            .unwrap_or_else(Uuid::now_v7);
 
         let resource = serde_json::to_value(policy).map_err(|e| {
             octofhir_auth::AuthError::internal(format!("Failed to serialize policy: {}", e))
@@ -691,7 +691,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             .id
             .as_ref()
             .and_then(|s| Uuid::parse_str(s).ok())
-            .unwrap_or_else(Uuid::new_v4);
+            .unwrap_or_else(Uuid::now_v7);
 
         let resource = serde_json::to_value(policy).map_err(|e| {
             octofhir_auth::AuthError::internal(format!("Failed to serialize policy: {}", e))

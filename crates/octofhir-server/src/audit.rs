@@ -307,7 +307,7 @@ impl AuditEventBuilder {
     /// Build the FHIR AuditEvent resource
     pub fn build(self) -> Value {
         let now = OffsetDateTime::now_utc();
-        let id = Uuid::new_v4().to_string();
+        let id = Uuid::now_v7().to_string();
 
         // Build the agent (actor) array
         let mut agents = Vec::new();
