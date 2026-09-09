@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && CARGO_PROFILE_RELEASE_LTO=thin \
        CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
        CARGO_PROFILE_RELEASE_DEBUG=0 \
-       cargo build --release --bin octofhir-server \
+       cargo build --release --locked --bin octofhir-server \
     && cp /work/server-rs/target/release/octofhir-server /usr/local/bin/octofhir-server
 
 # -----------------------------------------------------------------------------
