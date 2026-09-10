@@ -15,7 +15,7 @@
 use std::fmt;
 use thiserror::Error;
 
-use crate::parameters::ElementTypeHint;
+use crate::parameters::{ElementTypeHint, SearchParameterType};
 
 /// Errors that can occur during SQL building.
 #[derive(Debug, Error)]
@@ -325,6 +325,8 @@ pub struct SortSpec {
     pub column: Option<String>,
     pub order: SortOrder,
     pub nulls_last: bool,
+    pub value_type: Option<SearchParameterType>,
+    pub element_type_hint: ElementTypeHint,
 }
 
 impl SortSpec {
@@ -334,6 +336,8 @@ impl SortSpec {
             column: None,
             order,
             nulls_last: true,
+            value_type: None,
+            element_type_hint: ElementTypeHint::Unknown,
         }
     }
 
@@ -353,7 +357,65 @@ impl SortSpec {
             column: Some(column),
             order,
             nulls_last: true,
+            value_type: None,
+            element_type_hint: ElementTypeHint::Unknown,
         })
+    }
+
+    fn accessor(&self, resource_col: &str, alias: &str) -> Result<String, SqlBuilderError> {
+        if let Some(column) = &self.column {
+            return Ok(format!(
+                "{}.{}",
+                escape_identifier(alias)?,
+                escape_identifier(column)?
+            ));
+        }
+        let path = self.path.as_ref().ok_or_else(|| {
+            SqlBuilderError::InvalidPath("SortSpec has neither column nor JSONB path".into())
+        })?;
+        let aggregate = if self.order == SortOrder::Asc {
+            "min"
+        } else {
+            "max"
+        };
+        match self.value_type {
+            Some(SearchParameterType::Date) => {
+                let paths = if self.order == SortOrder::Asc {
+                    date_lower_paths(path.segments())
+                } else {
+                    date_upper_paths(path.segments())
+                };
+                Ok(format!(
+                    "fhir_extract_date_{aggregate}({resource_col}, {})",
+                    paths_to_jsonpath_array(&paths)
+                ))
+            }
+            Some(SearchParameterType::Number | SearchParameterType::Quantity) => {
+                let mut segments = path.segments().to_vec();
+                if self.value_type == Some(SearchParameterType::Quantity) {
+                    segments.push("value".into());
+                }
+                let paths = paths_to_jsonpath_array(&[segments]);
+                Ok(format!(
+                    "(SELECT {aggregate}((v #>> '{{}}')::numeric) FROM unnest(fhir_extract_jsonb({resource_col}, {paths})) AS v WHERE jsonb_typeof(v) = 'number')"
+                ))
+            }
+            Some(SearchParameterType::String | SearchParameterType::Uri) => {
+                let paths = paths_to_jsonpath_array(&extraction_paths(
+                    path.segments(),
+                    &self.element_type_hint,
+                ));
+                let value = if self.value_type == Some(SearchParameterType::String) {
+                    "f_unaccent_lower(v)"
+                } else {
+                    "v"
+                };
+                Ok(format!(
+                    "(SELECT {aggregate}({value}) FROM unnest(fhir_extract_text({resource_col}, {paths})) AS v)"
+                ))
+            }
+            _ => Ok(path.to_accessor(resource_col, true)),
+        }
     }
 }
 
@@ -715,6 +777,89 @@ impl FhirQueryBuilder {
         Ok(BuiltQuery { sql, params })
     }
 
+    /// Combine resource-type searches before sorting and applying pagination.
+    /// Branches share one bind sequence; count-only never selects resources.
+    pub fn build_system(
+        builders: &[Self],
+        count: usize,
+        offset: usize,
+        count_only: bool,
+    ) -> Result<BuiltQuery, SqlBuilderError> {
+        let first = builders.first().ok_or_else(|| {
+            SqlBuilderError::InvalidSearchValue("System search requires resource types".into())
+        })?;
+        let mut params = Vec::new();
+        let mut branches = Vec::new();
+        for builder in builders {
+            builder.validate()?;
+            if builder.sort.len() != first.sort.len() {
+                return Err(SqlBuilderError::InvalidSearchValue(
+                    "Sort parameters must be supported by every resource type".into(),
+                ));
+            }
+            if builder
+                .sort
+                .iter()
+                .zip(&first.sort)
+                .any(|(a, b)| a.value_type != b.value_type || a.order != b.order)
+            {
+                return Err(SqlBuilderError::InvalidSearchValue(
+                    "System sort parameters must have compatible types and directions".into(),
+                ));
+            }
+            let alias = builder.table_alias.as_deref().unwrap_or("r");
+            let col = format!("{alias}.resource");
+            let table = format!(
+                "{}.{}",
+                escape_identifier(&builder.schema)?,
+                escape_identifier(&builder.resource_type.to_lowercase())?
+            );
+            let from = builder.build_from_clause(&table, alias)?;
+            let select = if count_only {
+                "COUNT(*) AS total".to_string()
+            } else {
+                let resource_type = builder.resource_type.replace('\'', "''");
+                let mut select = format!(
+                    "{col}::text AS resource_json, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at, '{resource_type}'::text AS resource_type"
+                );
+                for (index, sort) in builder.sort.iter().enumerate() {
+                    select.push_str(&format!(
+                        ", {} AS sort_{index}",
+                        sort.accessor(&col, alias)?
+                    ));
+                }
+                select
+            };
+            let mut branch = format!("SELECT {select} FROM {from}");
+            if let Some(condition) = builder.build_where_clause(&col, &mut params)? {
+                branch.push_str(&format!(" WHERE {condition}"));
+            }
+            branches.push(branch);
+        }
+        let union = branches.join(" UNION ALL ");
+        let sql = if count_only {
+            format!("SELECT SUM(total)::bigint FROM ({union}) AS matches")
+        } else {
+            let mut order: Vec<_> = first
+                .sort
+                .iter()
+                .enumerate()
+                .map(|(index, sort)| format!("sort_{index} {} NULLS LAST", sort.order.as_sql()))
+                .collect();
+            // A deterministic tie-breaker also makes the unsorted system path
+            // independent of the order or repetition of _type values.
+            order.extend(["resource_type ASC".into(), "id ASC".into()]);
+            let limit = count
+                .checked_add(1)
+                .ok_or_else(|| SqlBuilderError::InvalidSearchValue("Count overflow".into()))?;
+            format!(
+                "SELECT resource_json, id, txid, created_at, updated_at, resource_type FROM ({union}) AS matches ORDER BY {} LIMIT {limit} OFFSET {offset}",
+                order.join(", ")
+            )
+        };
+        Ok(BuiltQuery { sql, params })
+    }
+
     /// Build COUNT query for _total=accurate.
     pub fn build_count(&self) -> Result<BuiltQuery, SqlBuilderError> {
         self.validate()?;
@@ -854,6 +999,11 @@ impl FhirQueryBuilder {
             SearchCondition::Raw { sql, params: p } => {
                 let start_param = params.len();
                 params.extend(p.clone());
+                // The normal single-type builder starts at zero: its local
+                // bind numbering is already final, so no SQL scan is needed.
+                if start_param == 0 {
+                    return Ok(sql.clone());
+                }
 
                 // Renumber the Raw block's local placeholders ($1, $2, …) by the
                 // current offset. A naive string-replace is unsafe here: replacing
@@ -861,10 +1011,16 @@ impl FhirQueryBuilder {
                 // "$12" can be re-corrupted by a later "$1" pass. Match every
                 // `$<digits>` once, in a single regression-free pass.
                 static PLACEHOLDER_RE: std::sync::LazyLock<regex::Regex> =
-                    std::sync::LazyLock::new(|| regex::Regex::new(r"\$(\d+)").unwrap());
+                    std::sync::LazyLock::new(|| {
+                        regex::Regex::new(r#"(?s)'(?:''|[^'])*'|"(?:""|[^"])*"|\$(\d+)"#).unwrap()
+                    });
                 let result = PLACEHOLDER_RE.replace_all(sql, |caps: &regex::Captures| {
-                    let n: usize = caps[1].parse().unwrap_or(0);
-                    format!("${}", start_param + n)
+                    if let Some(number) = caps.get(1) {
+                        let n: usize = number.as_str().parse().unwrap_or(0);
+                        format!("${}", start_param + n)
+                    } else {
+                        caps[0].to_string()
+                    }
                 });
                 Ok(result.into_owned())
             }
@@ -931,27 +1087,23 @@ impl FhirQueryBuilder {
             return Ok(String::new());
         }
 
-        let parts = self
+        let mut parts = self
             .sort
             .iter()
             .map(|s| {
-                let accessor = if let Some(column) = &s.column {
-                    format!(
-                        "{}.{}",
-                        escape_identifier(alias)?,
-                        escape_identifier(column)?
-                    )
-                } else if let Some(path) = &s.path {
-                    path.to_accessor(resource_col, true)
-                } else {
-                    return Err(SqlBuilderError::InvalidPath(
-                        "SortSpec has neither column nor JSONB path".to_string(),
-                    ));
-                };
+                let accessor = s.accessor(resource_col, alias)?;
                 let nulls = if s.nulls_last { " NULLS LAST" } else { "" };
                 Ok(format!("{accessor} {}{nulls}", s.order.as_sql()))
             })
             .collect::<Result<Vec<_>, SqlBuilderError>>()?;
+
+        if !self
+            .sort
+            .iter()
+            .any(|sort| sort.column.as_deref() == Some("id"))
+        {
+            parts.push(format!("{}.\"id\" ASC", escape_identifier(alias)?));
+        }
 
         Ok(parts.join(", "))
     }
@@ -1785,6 +1937,30 @@ pub fn build_jsonb_accessor(resource_col: &str, path: &[String], as_text: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_bind_offsets_preserve_quoted_dollar_text() {
+        let branch = |rt: &str| {
+            FhirQueryBuilder::new(rt, "public").where_condition(SearchCondition::Raw {
+                sql: "r.id = $1 AND '$1' = '$1' AND 'it''s $12' = 'it''s $12'".into(),
+                params: vec![SqlValue::Text("value".into())],
+            })
+        };
+        let query = FhirQueryBuilder::build_system(
+            &[branch("Patient"), branch("Observation")],
+            2,
+            1,
+            false,
+        )
+        .unwrap();
+        assert!(query.sql.contains("r.id = $1"));
+        assert!(query.sql.contains("r.id = $2"));
+        assert_eq!(query.sql.matches("'$1' = '$1'").count(), 2);
+        assert_eq!(query.sql.matches("'it''s $12' = 'it''s $12'").count(), 2);
+        assert_eq!(query.params.len(), 2);
+        assert_eq!(query.sql.matches("LIMIT ").count(), 1);
+        assert!(query.sql.ends_with("LIMIT 3 OFFSET 1"));
+    }
 
     #[test]
     fn test_fhirpath_to_jsonb_path() {

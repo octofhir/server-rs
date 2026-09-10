@@ -1391,9 +1391,9 @@ fn date_inplace_clause_expr(
     //          and only rechecks the hull's candidate rows.
     // `single_guard` is a cheap `jsonb_typeof` test that is TRUE when the row's date
     // element holds a single occurrence (scalar string or a lone Period object). For
-    // those rows the hull IS exact, so the recheck is skipped via `(guard OR recheck)`
-    // — short-circuiting the per-row multirange for the overwhelmingly common
-    // single-valued case while staying exact for repeating/Timing elements.
+    // those rows the hull IS exact. Overlap predicates can skip their identical
+    // multirange recheck via `(guard OR recheck)`; equality must still check
+    // containment of the hull rather than merely its overlap with the query.
     let hull = || SqlTerm::Raw(hull_expr.to_string());
     let guarded = |recheck: SqlExpr| -> SqlExpr {
         SqlExpr::Or(vec![SqlExpr::Raw(single_guard.to_string()), recheck])
@@ -1425,9 +1425,13 @@ fn date_inplace_clause_expr(
                     op: RangeOp::Overlaps,
                     rhs: qterm,
                 },
-                guarded(SqlExpr::Raw(format!(
-                    "EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})"
-                ))),
+                // A single occurrence makes the hull exact, but overlap is
+                // still insufficient: a year must not equal one day in it.
+                // CASE also avoids the multirange cost for scalar dates and
+                // single Periods while retaining the indexable hull prefilter.
+                SqlExpr::Raw(format!(
+                    "CASE WHEN {single_guard} THEN {hull_expr} <@ {qsql} ELSE EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql}) END"
+                )),
             ])
         }
         DatePredicate::NotContains { q } => {
@@ -1710,7 +1714,7 @@ fn render_token_quantity_composite_indexed(
     paths: &[Vec<Vec<String>>],
 ) -> Option<SqlExpr> {
     use crate::parameters::{SearchParameterType, SearchPrefix};
-    if components.len() != 2 {
+    if components.len() != 2 || components.iter().any(|c| c.value.contains('\\')) {
         return None;
     }
     let token_idx = components
@@ -1893,7 +1897,10 @@ fn render_composite_component_at_path_expr(
             render_composite_token_component_expr(builder, &component.value, json_path)
         }
         SearchParameterType::String => {
-            let p = builder.add_text_param(format!("{}%", component.value));
+            let p = builder.add_text_param(format!(
+                "{}%",
+                escape_like_pattern(&crate::parser::unescape_search_value(&component.value)?)
+            ));
             Ok(SqlExpr::Compare {
                 lhs: SqlTerm::Ident(json_path.to_string()),
                 op: SqlOp::ILike,
@@ -1917,7 +1924,7 @@ fn render_composite_component_at_path_expr(
         }
         SearchParameterType::Reference => {
             let base = to_object_path(json_path);
-            let p = builder.add_text_param(&component.value);
+            let p = builder.add_text_param(crate::parser::unescape_search_value(&component.value)?);
             Ok(SqlExpr::Compare {
                 lhs: SqlTerm::Ident(format!("{base}->>'reference'")),
                 op: SqlOp::Eq,
@@ -1988,6 +1995,9 @@ fn component_jsonpath_clause(
     component: &CompositeComponentPredicate,
     in_elem_segments: &[String],
 ) -> Option<String> {
+    if component.value.contains('\\') {
+        return None;
+    }
     let base = jp_member(in_elem_segments);
     match component.spec.search_type {
         SearchParameterType::Token => {
@@ -2100,8 +2110,10 @@ fn render_composite_quantity_component_expr(
     json_path: &str,
 ) -> Result<SqlExpr, SqlBuilderError> {
     let base = to_object_path(json_path);
-    let parts: Vec<&str> = value.split('|').collect();
-    let (prefix, num_str) = extract_prefix(parts[0]);
+    let parts = crate::parser::split_escaped(value, '|')
+        .map(crate::parser::unescape_search_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let (prefix, num_str) = extract_prefix(&parts[0]);
 
     let p = builder.add_text_param(num_str);
     let value_cond = SqlExpr::Compare {
@@ -2116,7 +2128,7 @@ fn render_composite_quantity_component_expr(
     if parts.len() >= 3 {
         let mut conds = vec![value_cond];
         if !parts[1].is_empty() {
-            let ps = builder.add_text_param(parts[1]);
+            let ps = builder.add_text_param(&parts[1]);
             conds.push(SqlExpr::Compare {
                 lhs: SqlTerm::Ident(format!("{base}->>'system'")),
                 op: SqlOp::Eq,
@@ -2124,7 +2136,7 @@ fn render_composite_quantity_component_expr(
             });
         }
         if !parts[2].is_empty() {
-            let pc = builder.add_text_param(parts[2]);
+            let pc = builder.add_text_param(&parts[2]);
             conds.push(SqlExpr::Or(vec![
                 SqlExpr::Compare {
                     lhs: SqlTerm::Ident(format!("{base}->>'code'")),
@@ -3160,18 +3172,28 @@ fn indexed_string_clause_expr(
     arr_expr: &str,
 ) -> SqlExpr {
     match &clause.predicate {
-        // Default FHIR string search: token starts-with (case/accent-insensitive).
+        // The indexed blob is only a prefilter. Prefix matching applies to an
+        // individual value, not to every word in its concatenated representation.
         StringPredicate::Prefix { value } => {
             let pat = format!("% {}%", escape_like_pattern(&normalize_string(value)));
             let p = builder.add_text_param(pat);
-            SqlExpr::Compare {
-                lhs: SqlTerm::Raw(blob_expr.to_string()),
-                op: SqlOp::Like,
-                rhs: SqlTerm::Param(p),
-            }
+            let exact = builder.add_text_param(format!(
+                "{}%",
+                escape_like_pattern(&normalize_string(value))
+            ));
+            SqlExpr::Raw(format!(
+                "({blob_expr} LIKE ${p} AND EXISTS (SELECT 1 FROM unnest({arr_expr}) AS v WHERE f_unaccent_lower(v) LIKE ${exact}))"
+            ))
         }
-        // `:contains` and (approximated) `:text`: substring, case/accent-insensitive.
-        StringPredicate::Contains { value } | StringPredicate::Text { value } => {
+        StringPredicate::Contains { value } => {
+            let pat = format!("%{}%", escape_like_pattern(&normalize_string(value)));
+            let p = builder.add_text_param(pat);
+            SqlExpr::Raw(format!(
+                "({blob_expr} LIKE ${p} AND EXISTS (SELECT 1 FROM unnest({arr_expr}) AS v WHERE f_unaccent_lower(v) LIKE ${p}))"
+            ))
+        }
+        // :text retains the server's full-text approximation.
+        StringPredicate::Text { value } => {
             let pat = format!("%{}%", escape_like_pattern(&normalize_string(value)));
             let p = builder.add_text_param(pat);
             SqlExpr::Compare {

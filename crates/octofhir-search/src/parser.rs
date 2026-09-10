@@ -24,6 +24,44 @@ pub struct ParsedParameters {
 
 pub struct SearchParameterParser;
 
+/// Split one FHIR delimiter layer while retaining escapes for inner layers.
+pub(crate) fn split_escaped(value: &str, delimiter: char) -> impl Iterator<Item = &str> {
+    let mut escaped = false;
+    value.split(move |c| {
+        if escaped {
+            escaped = false;
+            false
+        } else if c == '\\' {
+            escaped = true;
+            false
+        } else {
+            c == delimiter
+        }
+    })
+}
+
+pub(crate) fn unescape_search_value(
+    value: &str,
+) -> Result<String, crate::sql_builder::SqlBuilderError> {
+    let mut result = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            result.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(c @ ('\\' | ',' | '|' | '$')) => result.push(c),
+            _ => {
+                return Err(crate::sql_builder::SqlBuilderError::InvalidSearchValue(
+                    "Invalid FHIR search escape".into(),
+                ));
+            }
+        }
+    }
+    Ok(result)
+}
+
 impl SearchParameterParser {
     /// Parse an application/x-www-form-urlencoded query string into ParsedParameters
     /// Example: "name:exact=John&_lastUpdated=ge2020-01-01"
@@ -65,26 +103,24 @@ impl SearchParameterParser {
     }
 
     fn extract_prefix(value: &str) -> (Option<SearchPrefix>, &str) {
-        // The longest valid prefixes are two chars, check two, then one
-        if value.len() >= 2 {
-            let p2 = &value[..2];
-            if let Some(prefix) = SearchPrefix::parse(p2) {
-                return (Some(prefix), &value[2..]);
-            }
+        // Prefixes are ASCII; query text may begin with a multibyte character.
+        // Only slice the remainder after a valid character boundary was found.
+        if let Some(p2) = value.get(..2)
+            && let Some(prefix) = SearchPrefix::parse(p2)
+        {
+            return (Some(prefix), &value[2..]);
         }
-        if !value.is_empty() {
-            let p1 = &value[..1];
-            if let Some(prefix) = SearchPrefix::parse(p1) {
-                return (Some(prefix), &value[1..]);
-            }
+        if let Some(p1) = value.get(..1)
+            && let Some(prefix) = SearchPrefix::parse(p1)
+        {
+            return (Some(prefix), &value[1..]);
         }
         (None, value)
     }
 
     /// Parse one raw query value into FHIR comma-OR values with prefixes.
     pub fn parse_values(value: &str) -> Vec<ParsedValue> {
-        value
-            .split(',')
+        split_escaped(value, ',')
             .filter_map(|raw_val| {
                 let raw_val = raw_val.trim();
                 if raw_val.is_empty() {
@@ -266,6 +302,61 @@ mod tests {
 mod tests_parsing {
     use super::*;
     use crate::parameters::SearchModifier;
+
+    #[test]
+    fn escapes_survive_outer_delimiters_and_decode_once() {
+        assert_eq!(
+            split_escaped(r"a\,b,c\\,d\|e,f\$g", ',').collect::<Vec<_>>(),
+            vec![r"a\,b", r"c\\", r"d\|e", r"f\$g"]
+        );
+        assert_eq!(unescape_search_value(r"a\,b\|c\$d\\").unwrap(), "a,b|c$d\\");
+        for value in ["tail\\", r"bad\q"] {
+            assert!(unescape_search_value(value).is_err());
+        }
+    }
+
+    #[test]
+    fn unicode_values_preserve_text_and_typed_prefixes() {
+        for value in ["李", "é", "Иван", "😀", "a李", "e\u{301}", "ge李"] {
+            let values =
+                SearchParameterParser::parse_values_for_type(value, &SearchParameterType::String);
+            assert_eq!(
+                values,
+                vec![ParsedValue {
+                    prefix: None,
+                    raw: value.into()
+                }]
+            );
+            let query = form_urlencoded::Serializer::new(String::new())
+                .append_pair("subject:Patient.family", value)
+                .finish();
+            let parsed = SearchParameterParser::parse_query(&query);
+            let expected_prefix = value.starts_with("ge").then_some(SearchPrefix::Ge);
+            assert_eq!(
+                parsed.params[0].values,
+                vec![ParsedValue {
+                    prefix: expected_prefix,
+                    raw: value.strip_prefix("ge").unwrap_or(value).into(),
+                }]
+            );
+        }
+        assert_eq!(
+            SearchParameterParser::parse_values_for_type(
+                "ge100,lt200",
+                &SearchParameterType::Quantity
+            ),
+            vec![
+                ParsedValue {
+                    prefix: Some(SearchPrefix::Ge),
+                    raw: "100".into()
+                },
+                ParsedValue {
+                    prefix: Some(SearchPrefix::Lt),
+                    raw: "200".into()
+                },
+            ]
+        );
+    }
 
     #[test]
     fn parses_contains_modifier_for_name() {

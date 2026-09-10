@@ -30,7 +30,9 @@ pub struct CompositeValue {
 /// Parse a composite search value (values separated by '$').
 pub fn parse_composite_value(value: &str) -> CompositeValue {
     CompositeValue {
-        components: value.split('$').map(String::from).collect(),
+        components: crate::parser::split_escaped(value, '$')
+            .map(String::from)
+            .collect(),
     }
 }
 

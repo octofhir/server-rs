@@ -44,6 +44,12 @@ max_count = 100
 # the request is rejected (each code becomes an OR branch). Env: OCTOFHIR__SEARCH__MAX_VALUESET_EXPANSION
 max_valueset_expansion = 500
 
+[search.include_limits]
+# Exceeding a budget rejects the search instead of returning a partial Bundle.
+max_resources = 1000
+max_bytes = 16777216
+max_depth = 100
+
 [logging]
 level = "info"  # trace, debug, info, warn, error, off
 

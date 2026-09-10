@@ -37,11 +37,72 @@ pub use octofhir_search::UnknownParamHandling as SearchUnknownParamHandling;
 use crate::error::is_undefined_table;
 use crate::schema::SchemaManager;
 
-const INCLUDE_ITERATE_MAX_DEPTH: usize = 100;
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct IncludeLimits {
+    pub max_resources: usize,
+    pub max_bytes: usize,
+    pub max_depth: usize,
+}
+
+impl Default for IncludeLimits {
+    fn default() -> Self {
+        Self {
+            max_resources: 1000,
+            max_bytes: 16 * 1024 * 1024,
+            max_depth: 100,
+        }
+    }
+}
+
+impl IncludeLimits {
+    fn check(self, resources: usize, bytes: usize) -> Result<(), StorageError> {
+        if resources > self.max_resources || bytes > self.max_bytes {
+            return Err(StorageError::invalid_resource(
+                "Include expansion exceeds configured resource or byte budget",
+            ));
+        }
+        Ok(())
+    }
+}
+
+trait IncludeRowSize {
+    fn resource_bytes(&self) -> usize;
+}
+impl IncludeRowSize for (String, String, i64, DateTime<Utc>, DateTime<Utc>) {
+    fn resource_bytes(&self) -> usize {
+        self.0.len()
+    }
+}
+impl IncludeRowSize for (Value, String, i64, DateTime<Utc>, DateTime<Utc>) {
+    fn resource_bytes(&self) -> usize {
+        self.0.to_string().len()
+    }
+}
+
+async fn collect_include_rows<R: IncludeRowSize>(
+    mut stream: impl futures_util::Stream<Item = Result<R, sqlx_core::Error>> + Unpin,
+    limits: IncludeLimits,
+) -> Result<Vec<R>, StorageError> {
+    use futures_util::TryStreamExt;
+    let mut rows = Vec::new();
+    let mut bytes = 0usize;
+    while let Some(row) = stream
+        .try_next()
+        .await
+        .map_err(|e| StorageError::internal(format!("Include query failed: {e}")))?
+    {
+        bytes = bytes.saturating_add(row.resource_bytes());
+        limits.check(rows.len() + 1, bytes)?;
+        rows.push(row);
+    }
+    Ok(rows)
+}
 
 /// Per-request raw search execution options.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RawSearchOptions {
+    pub include_limits: IncludeLimits,
     pub unknown_param_handling: Option<UnknownParamHandling>,
     pub collect_debug_plan: bool,
     pub collect_explain_plan: bool,
@@ -173,6 +234,7 @@ pub async fn execute_search(
             &converted.includes,
             &converted.revincludes,
             registry,
+            IncludeLimits::default(),
         )
         .await?;
         all_entries.extend(included);
@@ -309,6 +371,7 @@ pub async fn execute_search_raw_with_config(
             collect_explain_plan: false,
             collect_explain_analyze: false,
             max_valueset_expansion: None,
+            include_limits: IncludeLimits::default(),
         },
     )
     .await
@@ -367,6 +430,7 @@ pub async fn execute_search_raw_with_terminology(
             collect_explain_plan: false,
             collect_explain_analyze: false,
             max_valueset_expansion: None,
+            include_limits: IncludeLimits::default(),
         },
     )
     .await
@@ -394,23 +458,125 @@ pub async fn execute_search_raw_with_terminology_options(
     .await
 }
 
-async fn execute_search_raw_with_config_inner(
+/// Execute one globally sorted and paginated system search across resource types.
+pub async fn execute_system_search_raw(
     pool: &PgPool,
-    resource_type: &str,
+    resource_types: &[&str],
     params: &SearchParams,
-    registry: Option<&Arc<SearchParameterRegistry>>,
-    _query_cache: Option<&QueryCache>,
+    registry: &Arc<SearchParameterRegistry>,
     terminology: Option<&Arc<HybridTerminologyProvider>>,
     options: RawSearchOptions,
 ) -> Result<RawSearchResult, StorageError> {
-    let requested_limit = params.count.unwrap_or(10) as usize;
+    let started = Instant::now();
+    let mut types = resource_types.to_vec();
+    types.sort_unstable();
+    types.dedup();
+    let mut builders = Vec::new();
+    let mut plans = Vec::new();
+    let mut includes = Vec::new();
+    let mut revincludes = Vec::new();
+    let mut warnings = Vec::new();
+    for resource_type in types {
+        let (converted, _) =
+            prepare_raw_query(resource_type, params, registry, terminology, options).await?;
+        builders.push(converted.builder);
+        plans.extend(converted.debug_plan);
+        if builders.len() == 1 {
+            includes = converted.includes;
+            revincludes = converted.revincludes;
+        }
+        warnings.extend(converted.unknown_params.into_iter().map(|p| {
+            format!(
+                "Unknown search parameter '{}' was ignored for {resource_type}",
+                p.name
+            )
+        }));
+    }
+    let count = params.count.unwrap_or(10) as usize;
+    let offset = params.offset.unwrap_or(0) as usize;
+    let count_only = params.is_count_only();
+    let build = |count_only| {
+        octofhir_search::FhirQueryBuilder::build_system(&builders, count, offset, count_only)
+            .map_err(|e| StorageError::invalid_resource(format!("Invalid system search: {e}")))
+    };
+    let query = build(count_only)?;
+    let count_query = if !count_only && params.total == Some(TotalMode::Accurate) {
+        Some(build(true)?)
+    } else {
+        None
+    };
+    let build_elapsed = started.elapsed();
+    let explain = if options.collect_explain_plan || options.collect_explain_analyze {
+        Some(explain_built_search_query_json(pool, &query, options.collect_explain_analyze).await?)
+    } else {
+        None
+    };
+    let execute_started = Instant::now();
+    let mut result = RawSearchResult {
+        warnings,
+        ..Default::default()
+    };
+    if count_only {
+        result.total = Some(execute_count_query(pool, &query).await?);
+    } else {
+        let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
+            query_as(AssertSqlSafe(query.sql.clone()))
+                .bind_all_params_raw(&query.params)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| StorageError::internal(format!("System search query failed: {e}")))?;
+        result.has_more = rows.len() > count;
+        result.entries = rows
+            .into_iter()
+            .take(count)
+            .map(
+                |(resource_json, id, txid, created_at, updated_at, resource_type)| {
+                    RawStoredResource {
+                        resource_json,
+                        id,
+                        version_id: txid.to_string(),
+                        resource_type,
+                        created_at: chrono_to_time(created_at),
+                        last_updated: chrono_to_time(updated_at),
+                    }
+                },
+            )
+            .collect();
+        if let Some(query) = count_query {
+            result.total = Some(execute_count_query(pool, &query).await?);
+        }
+        if !includes.is_empty() || !revincludes.is_empty() {
+            result.included = resolve_includes_revincludes_raw(
+                pool,
+                "",
+                &result.entries,
+                &includes,
+                &revincludes,
+                registry,
+                options.include_limits,
+            )
+            .await?;
+        }
+    }
+    result.debug = options.collect_debug_plan.then(|| RawSearchDebug {
+        sql_shape: Some(redact_sql_shape(&query.sql)),
+        plan: Some(serde_json::json!({"resource_type":"Resource", "branches":plans})),
+        explain,
+        analyze: options.collect_explain_analyze,
+        build_elapsed_ms: Some(build_elapsed.as_secs_f64() * 1000.0),
+        db_execute_elapsed_ms: Some(execute_started.elapsed().as_secs_f64() * 1000.0),
+    });
+    Ok(result)
+}
+
+async fn prepare_raw_query(
+    resource_type: &str,
+    params: &SearchParams,
+    registry: &SearchParameterRegistry,
+    terminology: Option<&Arc<HybridTerminologyProvider>>,
+    options: RawSearchOptions,
+) -> Result<(octofhir_search::params_converter::ConvertedQuery, Instant), StorageError> {
     let mut effective_params = params.clone();
-
-    // Use default registry if none provided
-    let empty_registry = Arc::new(SearchParameterRegistry::new());
-    let registry_arc = registry.unwrap_or(&empty_registry);
-    let registry = registry_arc.as_ref();
-
     // Pre-expand FHIR token search modifiers that require a terminology
     // service so the sync SQL builder can treat them as ordinary Token OR
     // searches (`:in`/`:not-in` against a ValueSet, `:above`/`:below`
@@ -466,6 +632,28 @@ async fn execute_search_raw_with_config_inner(
         tracing::warn!(error = %e, "Failed to build search query");
         StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
     })?;
+
+    Ok((converted, build_started))
+}
+
+async fn execute_search_raw_with_config_inner(
+    pool: &PgPool,
+    resource_type: &str,
+    params: &SearchParams,
+    registry: Option<&Arc<SearchParameterRegistry>>,
+    _query_cache: Option<&QueryCache>,
+    terminology: Option<&Arc<HybridTerminologyProvider>>,
+    options: RawSearchOptions,
+) -> Result<RawSearchResult, StorageError> {
+    let requested_limit = params.count.unwrap_or(10) as usize;
+
+    // Use default registry if none provided
+    let empty_registry = Arc::new(SearchParameterRegistry::new());
+    let registry_arc = registry.unwrap_or(&empty_registry);
+    let registry = registry_arc.as_ref();
+
+    let (converted, build_started) =
+        prepare_raw_query(resource_type, params, registry, terminology, options).await?;
 
     if let Some(debug_plan) = &converted.debug_plan {
         let plan_json = serde_json::to_string(debug_plan).unwrap_or_else(|_| "null".to_string());
@@ -635,6 +823,7 @@ async fn execute_search_raw_with_config_inner(
             &converted.includes,
             &converted.revincludes,
             registry,
+            options.include_limits,
         )
         .await?
     } else {
@@ -824,6 +1013,11 @@ async fn execute_query_raw(
 }
 
 /// Execute a count query and return the total.
+fn checked_search_count(count: i64) -> Result<u32, StorageError> {
+    u32::try_from(count)
+        .map_err(|_| StorageError::internal("Search total exceeds the storage API range"))
+}
+
 async fn execute_count_query(pool: &PgPool, query: &BuiltQuery) -> Result<u32, StorageError> {
     let count: i64 = query_scalar(AssertSqlSafe(query.sql.to_string()))
         .bind_all_params(&query.params)
@@ -834,7 +1028,7 @@ async fn execute_count_query(pool: &PgPool, query: &BuiltQuery) -> Result<u32, S
             StorageError::internal(format!("Count query failed: {e}"))
         })?;
 
-    Ok(count as u32)
+    checked_search_count(count)
 }
 
 /// Execute PostgreSQL EXPLAIN for an already-built search query and return FORMAT JSON output.
@@ -884,7 +1078,7 @@ async fn execute_count_query_with_tx(
             StorageError::internal(format!("Count query failed: {e}"))
         })?;
 
-    Ok(count as u32)
+    checked_search_count(count)
 }
 
 /// Build the array-or-singleton JSONB expression locating a reference search
@@ -950,84 +1144,78 @@ async fn resolve_includes_revincludes(
     includes: &[octofhir_search::IncludeSpec],
     revincludes: &[octofhir_search::RevIncludeSpec],
     registry: &SearchParameterRegistry,
+    limits: IncludeLimits,
 ) -> Result<Vec<StoredResource>, StorageError> {
-    use futures_util::future::try_join_all;
-
-    // Build futures for all include queries
-    let include_futures: Vec<_> = includes
-        .iter()
-        .map(|include| resolve_include(pool, main_results, include, registry))
-        .collect();
-
-    // Build futures for all revinclude queries
-    let revinclude_futures: Vec<_> = revincludes
-        .iter()
-        .map(|revinclude| resolve_revinclude(pool, main_results, revinclude, registry))
-        .collect();
-
-    // Execute all queries in parallel
-    let (include_results, revinclude_results) = tokio::try_join!(
-        try_join_all(include_futures),
-        try_join_all(revinclude_futures)
-    )?;
-
-    // Flatten results
-    let mut included: Vec<StoredResource> = include_results.into_iter().flatten().collect();
-    included.extend(revinclude_results.into_iter().flatten());
-
-    Ok(included)
-}
-
-/// Resolve a single _include specification by matching references in place over
-/// the source resource JSONB (no sidecar index table).
-async fn resolve_include(
-    pool: &PgPool,
-    main_results: &[StoredResource],
-    include: &octofhir_search::IncludeSpec,
-    registry: &SearchParameterRegistry,
-) -> Result<Vec<StoredResource>, StorageError> {
-    if include.iterate {
-        return resolve_include_iterate(pool, main_results, include, registry).await;
-    }
-
-    resolve_include_once(pool, main_results, include, registry).await
-}
-
-async fn resolve_include_iterate(
-    pool: &PgPool,
-    main_results: &[StoredResource],
-    include: &octofhir_search::IncludeSpec,
-    registry: &SearchParameterRegistry,
-) -> Result<Vec<StoredResource>, StorageError> {
-    let mut visited: HashSet<(String, String)> = main_results
+    use futures_util::{FutureExt, StreamExt, TryStreamExt, stream};
+    let mut seen: HashSet<_> = main_results
         .iter()
         .map(|r| (r.resource_type.clone(), r.id.clone()))
         .collect();
-    let mut current: Vec<StoredResource> = main_results
-        .iter()
-        .filter(|r| r.resource_type == include.source_type)
-        .cloned()
-        .collect();
+    let mut current = main_results.to_vec();
     let mut included = Vec::new();
-
-    for _ in 0..INCLUDE_ITERATE_MAX_DEPTH {
+    let mut bytes = 0usize;
+    let iterative =
+        includes.iter().any(|spec| spec.iterate) || revincludes.iter().any(|spec| spec.iterate);
+    for depth in 0..limits.max_depth {
         if current.is_empty() {
-            break;
+            return Ok(included);
         }
-
-        let next = resolve_include_once(pool, &current, include, registry).await?;
-        current = Vec::new();
-        for entry in next {
-            let key = (entry.resource_type.clone(), entry.id.clone());
-            if visited.insert(key) {
-                if entry.resource_type == include.source_type {
-                    current.push(entry.clone());
+        let include_futures: Vec<
+            futures_util::future::BoxFuture<'_, Result<Vec<StoredResource>, StorageError>>,
+        > = includes
+            .iter()
+            .filter(|spec| depth == 0 || spec.iterate)
+            .map(|spec| resolve_include_once(pool, &current, spec, registry, limits).boxed())
+            .collect();
+        let mut groups: HashMap<&str, Vec<StoredResource>> = HashMap::new();
+        for entry in &current {
+            groups
+                .entry(&entry.resource_type)
+                .or_default()
+                .push(entry.clone());
+        }
+        let reverse_futures: Vec<
+            futures_util::future::BoxFuture<'_, Result<Vec<StoredResource>, StorageError>>,
+        > = groups
+            .iter()
+            .flat_map(|(target_type, targets)| {
+                revincludes
+                    .iter()
+                    .filter(move |spec| depth == 0 || spec.iterate)
+                    .map(move |spec| {
+                        resolve_revinclude_once(pool, target_type, targets, spec, registry, limits)
+                            .boxed()
+                    })
+            })
+            .collect();
+        // Bound both in-flight SQL and buffered results, not just the final Bundle.
+        let mut pending = stream::iter(include_futures.into_iter().chain(reverse_futures))
+            .buffered(4)
+            .boxed();
+        let mut next = Vec::new();
+        while let Some(batch) = pending.try_next().await? {
+            for entry in batch {
+                if seen.insert((entry.resource_type.clone(), entry.id.clone())) {
+                    bytes = bytes.saturating_add(entry.resource.to_string().len());
+                    limits.check(included.len() + 1, bytes)?;
+                    if iterative {
+                        next.push(entry.clone());
+                    }
+                    included.push(entry);
                 }
-                included.push(entry);
             }
         }
+        drop(pending);
+        if !iterative {
+            return Ok(included);
+        }
+        current = next;
     }
-
+    if !current.is_empty() {
+        return Err(StorageError::invalid_resource(
+            "Include expansion exceeds configured depth budget",
+        ));
+    }
     Ok(included)
 }
 
@@ -1036,6 +1224,7 @@ async fn resolve_include_once(
     main_results: &[StoredResource],
     include: &octofhir_search::IncludeSpec,
     registry: &SearchParameterRegistry,
+    limits: IncludeLimits,
 ) -> Result<Vec<StoredResource>, StorageError> {
     if main_results.is_empty() {
         return Ok(Vec::new());
@@ -1074,9 +1263,17 @@ async fn resolve_include_once(
             &source_ids,
             &target_type,
             registry,
+            limits,
         )
         .await?;
         entries.append(&mut matched);
+        limits.check(
+            entries.len(),
+            entries
+                .iter()
+                .map(|entry| entry.resource.to_string().len())
+                .sum(),
+        )?;
     }
 
     Ok(entries)
@@ -1089,6 +1286,7 @@ async fn query_include_for_target(
     source_ids: &[&str],
     target_type: &str,
     registry: &SearchParameterRegistry,
+    limits: IncludeLimits,
 ) -> Result<Vec<StoredResource>, StorageError> {
     let Some(ref_array) = reference_array_sql(registry, source_type, param_name, "s.resource")
     else {
@@ -1106,21 +1304,16 @@ async fn query_include_for_target(
            WHERE s.id = ANY($1::text[]) AND s.status != 'deleted' AND x.m[1] = $2"#
     );
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+    let sql = format!("{sql} LIMIT {}", limits.max_resources.saturating_add(1));
+
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = collect_include_rows(
         query_as(AssertSqlSafe(sql.to_string()))
             .bind(source_ids)
             .bind(target_type)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!(
-                        "Include target table {} not found",
-                        target_type
-                    ));
-                }
-                StorageError::internal(format!("Include query failed: {e}"))
-            })?;
+            .fetch(pool),
+        limits,
+    )
+    .await?;
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
@@ -1143,77 +1336,13 @@ async fn query_include_for_target(
 
 /// Resolve a single _revinclude specification by matching references in place
 /// over the source resource JSONB (no sidecar index table).
-async fn resolve_revinclude(
-    pool: &PgPool,
-    main_results: &[StoredResource],
-    revinclude: &octofhir_search::RevIncludeSpec,
-    registry: &SearchParameterRegistry,
-) -> Result<Vec<StoredResource>, StorageError> {
-    if revinclude.iterate {
-        return resolve_revinclude_iterate(pool, main_results, revinclude, registry).await;
-    }
-
-    if main_results.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let main_type = main_results
-        .first()
-        .map(|r| r.resource_type.as_str())
-        .unwrap_or("");
-
-    resolve_revinclude_once(pool, main_type, main_results, revinclude, registry).await
-}
-
-async fn resolve_revinclude_iterate(
-    pool: &PgPool,
-    main_results: &[StoredResource],
-    revinclude: &octofhir_search::RevIncludeSpec,
-    registry: &SearchParameterRegistry,
-) -> Result<Vec<StoredResource>, StorageError> {
-    let mut visited: HashSet<(String, String)> = main_results
-        .iter()
-        .map(|r| (r.resource_type.clone(), r.id.clone()))
-        .collect();
-    let mut current = main_results.to_vec();
-    let mut included = Vec::new();
-
-    for _ in 0..INCLUDE_ITERATE_MAX_DEPTH {
-        if current.is_empty() {
-            break;
-        }
-
-        let mut groups: HashMap<String, Vec<StoredResource>> = HashMap::new();
-        for entry in current {
-            groups
-                .entry(entry.resource_type.clone())
-                .or_default()
-                .push(entry);
-        }
-
-        current = Vec::new();
-        for (target_type, targets) in groups {
-            let next =
-                resolve_revinclude_once(pool, &target_type, &targets, revinclude, registry).await?;
-            for entry in next {
-                let key = (entry.resource_type.clone(), entry.id.clone());
-                if visited.insert(key) {
-                    current.push(entry.clone());
-                    included.push(entry);
-                }
-            }
-        }
-    }
-
-    Ok(included)
-}
-
 async fn resolve_revinclude_once(
     pool: &PgPool,
     target_type: &str,
     target_results: &[StoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
     registry: &SearchParameterRegistry,
+    limits: IncludeLimits,
 ) -> Result<Vec<StoredResource>, StorageError> {
     if revinclude
         .target_type
@@ -1239,21 +1368,16 @@ async fn resolve_revinclude_once(
 
     let sql = build_revinclude_sql(&table, &ref_array, false);
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+    let sql = format!("{sql} LIMIT {}", limits.max_resources.saturating_add(1));
+
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = collect_include_rows(
         query_as(AssertSqlSafe(sql.to_string()))
             .bind(target_type)
             .bind(&target_ids)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!(
-                        "RevInclude source table {} not found",
-                        source_type
-                    ));
-                }
-                StorageError::internal(format!("RevInclude query failed: {e}"))
-            })?;
+            .fetch(pool),
+        limits,
+    )
+    .await?;
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
@@ -1279,87 +1403,90 @@ async fn resolve_revinclude_once(
 /// Uses `resource::text` to avoid JSONB -> Value -> String round-trip.
 async fn resolve_includes_revincludes_raw(
     pool: &PgPool,
-    main_resource_type: &str,
+    _main_resource_type: &str,
     main_results: &[RawStoredResource],
     includes: &[octofhir_search::IncludeSpec],
     revincludes: &[octofhir_search::RevIncludeSpec],
     registry: &SearchParameterRegistry,
+    limits: IncludeLimits,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
-    use futures_util::future::try_join_all;
-
-    let include_futures: Vec<_> = includes
-        .iter()
-        .map(|include| resolve_include_raw(pool, main_results, include, registry))
-        .collect();
-
-    let revinclude_futures: Vec<_> = revincludes
-        .iter()
-        .map(|revinclude| {
-            resolve_revinclude_raw(pool, main_resource_type, main_results, revinclude, registry)
-        })
-        .collect();
-
-    let (include_results, revinclude_results) = tokio::try_join!(
-        try_join_all(include_futures),
-        try_join_all(revinclude_futures)
-    )?;
-
-    let mut included: Vec<RawStoredResource> = include_results.into_iter().flatten().collect();
-    included.extend(revinclude_results.into_iter().flatten());
-
-    Ok(included)
-}
-
-/// Resolve a single _include specification using raw JSON, matching references
-/// in place over the source resource JSONB (no sidecar index table).
-async fn resolve_include_raw(
-    pool: &PgPool,
-    main_results: &[RawStoredResource],
-    include: &octofhir_search::IncludeSpec,
-    registry: &SearchParameterRegistry,
-) -> Result<Vec<RawStoredResource>, StorageError> {
-    if include.iterate {
-        return resolve_include_iterate_raw(pool, main_results, include, registry).await;
-    }
-
-    resolve_include_once_raw(pool, main_results, include, registry).await
-}
-
-async fn resolve_include_iterate_raw(
-    pool: &PgPool,
-    main_results: &[RawStoredResource],
-    include: &octofhir_search::IncludeSpec,
-    registry: &SearchParameterRegistry,
-) -> Result<Vec<RawStoredResource>, StorageError> {
-    let mut visited: HashSet<(String, String)> = main_results
+    use futures_util::{FutureExt, StreamExt, TryStreamExt, stream};
+    let mut seen: HashSet<_> = main_results
         .iter()
         .map(|r| (r.resource_type.clone(), r.id.clone()))
         .collect();
-    let mut current: Vec<RawStoredResource> = main_results
-        .iter()
-        .filter(|r| r.resource_type == include.source_type)
-        .cloned()
-        .collect();
+    let mut current = main_results.to_vec();
     let mut included = Vec::new();
-
-    for _ in 0..INCLUDE_ITERATE_MAX_DEPTH {
+    let mut bytes = 0usize;
+    let iterative =
+        includes.iter().any(|spec| spec.iterate) || revincludes.iter().any(|spec| spec.iterate);
+    for depth in 0..limits.max_depth {
         if current.is_empty() {
-            break;
+            return Ok(included);
         }
-
-        let next = resolve_include_once_raw(pool, &current, include, registry).await?;
-        current = Vec::new();
-        for entry in next {
-            let key = (entry.resource_type.clone(), entry.id.clone());
-            if visited.insert(key) {
-                if entry.resource_type == include.source_type {
-                    current.push(entry.clone());
+        let include_futures: Vec<
+            futures_util::future::BoxFuture<'_, Result<Vec<RawStoredResource>, StorageError>>,
+        > = includes
+            .iter()
+            .filter(|spec| depth == 0 || spec.iterate)
+            .map(|spec| resolve_include_once_raw(pool, &current, spec, registry, limits).boxed())
+            .collect();
+        let mut groups: HashMap<&str, Vec<RawStoredResource>> = HashMap::new();
+        for entry in &current {
+            groups
+                .entry(&entry.resource_type)
+                .or_default()
+                .push(entry.clone());
+        }
+        let reverse_futures: Vec<
+            futures_util::future::BoxFuture<'_, Result<Vec<RawStoredResource>, StorageError>>,
+        > = groups
+            .iter()
+            .flat_map(|(target_type, targets)| {
+                revincludes
+                    .iter()
+                    .filter(move |spec| depth == 0 || spec.iterate)
+                    .map(move |spec| {
+                        resolve_revinclude_once_raw(
+                            pool,
+                            target_type,
+                            targets,
+                            spec,
+                            registry,
+                            limits,
+                        )
+                        .boxed()
+                    })
+            })
+            .collect();
+        // Bound both in-flight SQL and buffered results, not just the final Bundle.
+        let mut pending = stream::iter(include_futures.into_iter().chain(reverse_futures))
+            .buffered(4)
+            .boxed();
+        let mut next = Vec::new();
+        while let Some(batch) = pending.try_next().await? {
+            for entry in batch {
+                if seen.insert((entry.resource_type.clone(), entry.id.clone())) {
+                    bytes = bytes.saturating_add(entry.resource_json.len());
+                    limits.check(included.len() + 1, bytes)?;
+                    if iterative {
+                        next.push(entry.clone());
+                    }
+                    included.push(entry);
                 }
-                included.push(entry);
             }
         }
+        drop(pending);
+        if !iterative {
+            return Ok(included);
+        }
+        current = next;
     }
-
+    if !current.is_empty() {
+        return Err(StorageError::invalid_resource(
+            "Include expansion exceeds configured depth budget",
+        ));
+    }
     Ok(included)
 }
 
@@ -1368,6 +1495,7 @@ async fn resolve_include_once_raw(
     main_results: &[RawStoredResource],
     include: &octofhir_search::IncludeSpec,
     registry: &SearchParameterRegistry,
+    limits: IncludeLimits,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     if main_results.is_empty() {
         return Ok(Vec::new());
@@ -1404,9 +1532,14 @@ async fn resolve_include_once_raw(
             &source_ids,
             &target_type,
             registry,
+            limits,
         )
         .await?;
         entries.append(&mut matched);
+        limits.check(
+            entries.len(),
+            entries.iter().map(|entry| entry.resource_json.len()).sum(),
+        )?;
     }
 
     Ok(entries)
@@ -1419,6 +1552,7 @@ async fn query_include_for_target_raw(
     source_ids: &[&str],
     target_type: &str,
     registry: &SearchParameterRegistry,
+    limits: IncludeLimits,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     let Some(ref_array) = reference_array_sql(registry, source_type, param_name, "s.resource")
     else {
@@ -1436,22 +1570,16 @@ async fn query_include_for_target_raw(
            WHERE s.id = ANY($1::text[]) AND s.status != 'deleted' AND x.m[1] = $2"#
     );
 
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+    let sql = format!("{sql} LIMIT {}", limits.max_resources.saturating_add(1));
+
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = collect_include_rows(
         query_as(AssertSqlSafe(sql.to_string()))
             .bind(source_ids)
             .bind(target_type)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, sql = %sql, "Include query failed");
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!(
-                        "Include target table {} not found",
-                        target_type
-                    ));
-                }
-                StorageError::internal(format!("Include query failed: {e}"))
-            })?;
+            .fetch(pool),
+        limits,
+    )
+    .await?;
 
     let entries: Vec<RawStoredResource> = rows
         .into_iter()
@@ -1474,74 +1602,13 @@ async fn query_include_for_target_raw(
 
 /// Resolve a single _revinclude specification using raw JSON, matching
 /// references in place over the source resource JSONB (no sidecar index table).
-async fn resolve_revinclude_raw(
-    pool: &PgPool,
-    main_resource_type: &str,
-    main_results: &[RawStoredResource],
-    revinclude: &octofhir_search::RevIncludeSpec,
-    registry: &SearchParameterRegistry,
-) -> Result<Vec<RawStoredResource>, StorageError> {
-    if revinclude.iterate {
-        return resolve_revinclude_iterate_raw(pool, main_results, revinclude, registry).await;
-    }
-
-    if main_results.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    resolve_revinclude_once_raw(pool, main_resource_type, main_results, revinclude, registry).await
-}
-
-async fn resolve_revinclude_iterate_raw(
-    pool: &PgPool,
-    main_results: &[RawStoredResource],
-    revinclude: &octofhir_search::RevIncludeSpec,
-    registry: &SearchParameterRegistry,
-) -> Result<Vec<RawStoredResource>, StorageError> {
-    let mut visited: HashSet<(String, String)> = main_results
-        .iter()
-        .map(|r| (r.resource_type.clone(), r.id.clone()))
-        .collect();
-    let mut current = main_results.to_vec();
-    let mut included = Vec::new();
-
-    for _ in 0..INCLUDE_ITERATE_MAX_DEPTH {
-        if current.is_empty() {
-            break;
-        }
-
-        let mut groups: HashMap<String, Vec<RawStoredResource>> = HashMap::new();
-        for entry in current {
-            groups
-                .entry(entry.resource_type.clone())
-                .or_default()
-                .push(entry);
-        }
-
-        current = Vec::new();
-        for (target_type, targets) in groups {
-            let next =
-                resolve_revinclude_once_raw(pool, &target_type, &targets, revinclude, registry)
-                    .await?;
-            for entry in next {
-                let key = (entry.resource_type.clone(), entry.id.clone());
-                if visited.insert(key) {
-                    current.push(entry.clone());
-                    included.push(entry);
-                }
-            }
-        }
-    }
-
-    Ok(included)
-}
-
 async fn resolve_revinclude_once_raw(
     pool: &PgPool,
     target_type: &str,
     target_results: &[RawStoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
     registry: &SearchParameterRegistry,
+    limits: IncludeLimits,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     if revinclude
         .target_type
@@ -1567,21 +1634,16 @@ async fn resolve_revinclude_once_raw(
 
     let sql = build_revinclude_sql(&table, &ref_array, true);
 
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+    let sql = format!("{sql} LIMIT {}", limits.max_resources.saturating_add(1));
+
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = collect_include_rows(
         query_as(AssertSqlSafe(sql.to_string()))
             .bind(target_type)
             .bind(&target_ids)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!(
-                        "RevInclude source table {} not found",
-                        source_type
-                    ));
-                }
-                StorageError::internal(format!("RevInclude query failed: {e}"))
-            })?;
+            .fetch(pool),
+        limits,
+    )
+    .await?;
 
     let entries: Vec<RawStoredResource> = rows
         .into_iter()
@@ -1736,13 +1798,8 @@ trait BindAllParamsRaw<'q> {
     fn bind_all_params_raw(self, params: &'q [SqlValue]) -> Self;
 }
 
-impl<'q> BindAllParamsRaw<'q>
-    for sqlx_core::query_as::QueryAs<
-        'q,
-        sqlx_postgres::Postgres,
-        (String, String, i64, DateTime<Utc>, DateTime<Utc>),
-        sqlx_postgres::PgArguments,
-    >
+impl<'q, O> BindAllParamsRaw<'q>
+    for sqlx_core::query_as::QueryAs<'q, sqlx_postgres::Postgres, O, sqlx_postgres::PgArguments>
 {
     fn bind_all_params_raw(mut self, params: &'q [SqlValue]) -> Self {
         for param in params {
@@ -1763,6 +1820,14 @@ impl<'q> BindAllParamsRaw<'q>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_totals_do_not_wrap() {
+        assert_eq!(checked_search_count(0).unwrap(), 0);
+        assert_eq!(checked_search_count(u32::MAX as i64).unwrap(), u32::MAX);
+        assert!(checked_search_count(u32::MAX as i64 + 1).is_err());
+        assert!(checked_search_count(-1).is_err());
+    }
 
     #[test]
     fn test_chrono_to_time_conversion() {

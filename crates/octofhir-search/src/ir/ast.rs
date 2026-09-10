@@ -171,16 +171,16 @@ impl StringClause {
 
             let predicate = match &param.modifier {
                 None => StringPredicate::Prefix {
-                    value: value.raw.clone(),
+                    value: crate::parser::unescape_search_value(&value.raw)?,
                 },
                 Some(SearchModifier::Contains) => StringPredicate::Contains {
-                    value: value.raw.clone(),
+                    value: crate::parser::unescape_search_value(&value.raw)?,
                 },
                 Some(SearchModifier::Exact) => StringPredicate::Exact {
-                    value: value.raw.clone(),
+                    value: crate::parser::unescape_search_value(&value.raw)?,
                 },
                 Some(SearchModifier::Text) => StringPredicate::Text {
-                    value: value.raw.clone(),
+                    value: crate::parser::unescape_search_value(&value.raw)?,
                 },
                 Some(other) => {
                     return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
@@ -247,16 +247,16 @@ impl UriClause {
 
             let predicate = match &param.modifier {
                 None => UriPredicate::Exact {
-                    value: value.raw.clone(),
+                    value: crate::parser::unescape_search_value(&value.raw)?,
                 },
                 Some(SearchModifier::Below) => UriPredicate::Below {
-                    value: value.raw.clone(),
+                    value: crate::parser::unescape_search_value(&value.raw)?,
                 },
                 Some(SearchModifier::Above) => UriPredicate::Above {
-                    value: value.raw.clone(),
+                    value: crate::parser::unescape_search_value(&value.raw)?,
                 },
                 Some(SearchModifier::Contains) => UriPredicate::Contains {
-                    value: value.raw.clone(),
+                    value: crate::parser::unescape_search_value(&value.raw)?,
                 },
                 Some(other) => {
                     return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
@@ -391,15 +391,15 @@ impl QuantityClause {
                 continue;
             }
 
-            let (quantity_value, system, code) = parse_quantity_predicate_value(&value.raw);
+            let (quantity_value, system, code) = parse_quantity_predicate_value(&value.raw)?;
             clauses.push(Self {
                 resource_type: resource_type.to_string(),
                 param_code: param.name.clone(),
                 predicate: QuantityPredicate::Comparison {
                     prefix: value.prefix.unwrap_or(SearchPrefix::Eq),
                     value: quantity_value.to_string(),
-                    system: system.map(str::to_string),
-                    code: code.map(str::to_string),
+                    system,
+                    code,
                 },
             });
         }
@@ -408,12 +408,22 @@ impl QuantityClause {
     }
 }
 
-fn parse_quantity_predicate_value(value: &str) -> (&str, Option<&str>, Option<&str>) {
-    let parts: Vec<&str> = value.splitn(3, '|').collect();
-    let quantity_value = parts[0];
-    let system = parts.get(1).copied().filter(|s| !s.is_empty());
-    let code = parts.get(2).copied().filter(|s| !s.is_empty());
-    (quantity_value, system, code)
+fn parse_quantity_predicate_value(
+    value: &str,
+) -> Result<(String, Option<String>, Option<String>), SqlBuilderError> {
+    let parts = crate::parser::split_escaped(value, '|')
+        .map(crate::parser::unescape_search_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    if parts.len() > 3 {
+        return Err(SqlBuilderError::InvalidSearchValue(
+            "Quantity requires value|system|code".into(),
+        ));
+    }
+    Ok((
+        parts[0].clone(),
+        parts.get(1).filter(|s| !s.is_empty()).cloned(),
+        parts.get(2).filter(|s| !s.is_empty()).cloned(),
+    ))
 }
 
 /// Component metadata for a composite SearchParameter tuple.
@@ -496,7 +506,7 @@ impl CompositeClause {
                 continue;
             }
 
-            let values = value.raw.split('$').collect::<Vec<_>>();
+            let values = crate::parser::split_escaped(&value.raw, '$').collect::<Vec<_>>();
             if values.len() != components.len() {
                 return Err(SqlBuilderError::InvalidSearchValue(format!(
                     "Composite parameter expects {} components, got {}",
@@ -632,7 +642,7 @@ impl TokenClause {
 
             let (predicate, negated) = match &param.modifier {
                 None | Some(SearchModifier::Not) => {
-                    let predicate = parse_token_predicate(&value.raw);
+                    let predicate = parse_token_predicate(&value.raw)?;
                     (
                         predicate,
                         matches!(param.modifier, Some(SearchModifier::Not)),
@@ -640,7 +650,7 @@ impl TokenClause {
                 }
                 Some(SearchModifier::Text) => (
                     TokenPredicate::DisplayText {
-                        text: value.raw.clone(),
+                        text: crate::parser::unescape_search_value(&value.raw)?,
                     },
                     false,
                 ),
@@ -648,28 +658,28 @@ impl TokenClause {
                 Some(SearchModifier::In) => (
                     TokenPredicate::TerminologySet {
                         modifier: TokenSetModifier::In,
-                        value: value.raw.clone(),
+                        value: crate::parser::unescape_search_value(&value.raw)?,
                     },
                     false,
                 ),
                 Some(SearchModifier::NotIn) => (
                     TokenPredicate::TerminologySet {
                         modifier: TokenSetModifier::NotIn,
-                        value: value.raw.clone(),
+                        value: crate::parser::unescape_search_value(&value.raw)?,
                     },
                     false,
                 ),
                 Some(SearchModifier::Below) => (
                     TokenPredicate::TerminologySet {
                         modifier: TokenSetModifier::Below,
-                        value: value.raw.clone(),
+                        value: crate::parser::unescape_search_value(&value.raw)?,
                     },
                     false,
                 ),
                 Some(SearchModifier::Above) => (
                     TokenPredicate::TerminologySet {
                         modifier: TokenSetModifier::Above,
-                        value: value.raw.clone(),
+                        value: crate::parser::unescape_search_value(&value.raw)?,
                     },
                     false,
                 ),
@@ -691,31 +701,32 @@ impl TokenClause {
     }
 }
 
-fn parse_token_predicate(raw: &str) -> TokenPredicate {
-    if let Some(pos) = raw.find('|') {
-        let system = &raw[..pos];
-        let code = &raw[pos + 1..];
-        match (system.is_empty(), code.is_empty()) {
-            (true, _) => TokenPredicate::NoSystemCode {
-                code: code.to_string(),
-            },
-            (false, true) => TokenPredicate::SystemAnyCode {
-                system: system.to_string(),
-            },
-            (false, false) => TokenPredicate::SystemCode {
-                system: system.to_string(),
-                code: code.to_string(),
-            },
+fn parse_token_predicate(raw: &str) -> Result<TokenPredicate, SqlBuilderError> {
+    let parts = crate::parser::split_escaped(raw, '|')
+        .map(crate::parser::unescape_search_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(match parts.as_slice() {
+        [code] => TokenPredicate::AnySystemCode { code: code.clone() },
+        [system, code] if system.is_empty() => TokenPredicate::NoSystemCode { code: code.clone() },
+        [system, code] if code.is_empty() => TokenPredicate::SystemAnyCode {
+            system: system.clone(),
+        },
+        [system, code] => TokenPredicate::SystemCode {
+            system: system.clone(),
+            code: code.clone(),
+        },
+        _ => {
+            return Err(SqlBuilderError::InvalidSearchValue(
+                "Token requires code or system|code".into(),
+            ));
         }
-    } else {
-        TokenPredicate::AnySystemCode {
-            code: raw.to_string(),
-        }
-    }
+    })
 }
 
 fn parse_identifier_of_type(raw: &str) -> Result<TokenPredicate, SqlBuilderError> {
-    let parts: Vec<&str> = raw.splitn(3, '|').collect();
+    let parts = crate::parser::split_escaped(raw, '|')
+        .map(crate::parser::unescape_search_value)
+        .collect::<Result<Vec<_>, _>>()?;
     if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
         return Err(SqlBuilderError::InvalidSearchValue(
             "of-type modifier requires non-empty system|code|value format".to_string(),
@@ -777,12 +788,15 @@ impl ReferenceClause {
             }
 
             let predicate = match &param.modifier {
-                None => parse_reference_predicate(&value.raw, target_types),
+                None => parse_reference_predicate(
+                    &crate::parser::unescape_search_value(&value.raw)?,
+                    target_types,
+                ),
                 Some(SearchModifier::Type(type_name)) => ReferencePredicate::Local {
                     target_type: Some(type_name.clone()),
-                    target_id: value.raw.clone(),
+                    target_id: crate::parser::unescape_search_value(&value.raw)?,
                 },
-                Some(SearchModifier::Identifier) => parse_reference_identifier(&value.raw),
+                Some(SearchModifier::Identifier) => parse_reference_identifier(&value.raw)?,
                 Some(SearchModifier::Missing) => ReferencePredicate::Missing {
                     is_missing: value.raw.eq_ignore_ascii_case("true"),
                 },
@@ -823,20 +837,28 @@ fn parse_reference_predicate(raw: &str, target_types: &[String]) -> ReferencePre
     }
 }
 
-fn parse_reference_identifier(raw: &str) -> ReferencePredicate {
-    if let Some((system, value)) = raw.split_once('|') {
-        ReferencePredicate::Identifier {
-            system: (!system.is_empty()).then(|| system.to_string()),
-            require_no_system: system.is_empty(),
-            value: value.to_string(),
+fn parse_reference_identifier(raw: &str) -> Result<ReferencePredicate, SqlBuilderError> {
+    let parts = crate::parser::split_escaped(raw, '|')
+        .map(crate::parser::unescape_search_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let (system, require_no_system, value) = match parts.as_slice() {
+        [value] => (None, false, value.clone()),
+        [system, value] => (
+            (!system.is_empty()).then(|| system.clone()),
+            system.is_empty(),
+            value.clone(),
+        ),
+        _ => {
+            return Err(SqlBuilderError::InvalidSearchValue(
+                "Identifier requires value or system|value".into(),
+            ));
         }
-    } else {
-        ReferencePredicate::Identifier {
-            system: None,
-            require_no_system: false,
-            value: raw.to_string(),
-        }
-    }
+    };
+    Ok(ReferencePredicate::Identifier {
+        system,
+        require_no_system,
+        value,
+    })
 }
 
 #[cfg(test)]

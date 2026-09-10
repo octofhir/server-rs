@@ -10,9 +10,8 @@ use crate::ir::{
     TokenIndexShape, build_composite_debug_plan, build_date_debug_plan, build_number_debug_plan,
     build_quantity_debug_plan, build_reference_debug_plan, build_string_debug_plan,
     build_string_text_debug_predicate, build_token_debug_plan, is_chained_parameter,
-    is_reverse_chain_parameter, render_chain_clause, render_date_inplace_clauses_as_or,
-    render_has_clause, render_id_clauses_as_or, resolve_composite_component_specs,
-    resolve_resource_column_param, rewrite_date_clauses,
+    is_reverse_chain_parameter, render_chain_clause, render_has_clause, render_id_clauses_as_or,
+    resolve_composite_component_specs, resolve_resource_column_param,
 };
 use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
 use crate::parser::{ParsedParam, ParsedValue};
@@ -21,7 +20,7 @@ use crate::sql_builder::{
     FhirQueryBuilder, IncludeSpec, JsonbPath, RevIncludeSpec, SearchCondition, SortOrder, SortSpec,
     SqlBuilder, SqlBuilderError, SqlValue, fhirpath_to_jsonb_path,
 };
-use crate::types::date_ast::{DateClause, DatePredicate};
+use crate::types::date_ast::DateClause;
 use crate::types::dispatch_search_with_registry;
 use octofhir_storage::{SearchParams, TotalMode};
 use url::form_urlencoded;
@@ -206,20 +205,9 @@ pub fn build_native_ir_query_from_params_with_config(
             continue;
         }
 
-        // Fold repeated date-param occurrences with `{ge,gt}` and `{le,lt}`
-        // bounds into one combined `&&` predicate over the functional
-        // date-range expression on the resource JSONB.
-        if try_fold_repeated_date_window(
-            &mut sql_builder,
-            debug_plan.as_mut(),
-            key,
-            value_entries,
-            registry,
-            resource_type,
-        )? {
-            continue;
-        }
-
+        // Each repeated parameter is an independent existential condition.
+        // Different date occurrences may satisfy its bounds; intersecting those
+        // bounds first would discard valid matches (and can invert the range).
         for value_entry in value_entries {
             // Convert one `&`-occurrence to ParsedParam (single-value entry,
             // possibly comma-split into multiple ParsedValue for OR).
@@ -374,14 +362,19 @@ pub fn build_native_ir_query_from_params_with_config(
     // `_sort=-_lastUpdated`.
     if let Some(sort_params) = &params.sort {
         for sort_param in sort_params {
-            if let Some(sort_spec) = build_sort_spec(
+            let sort_spec = build_sort_spec(
                 &sort_param.field,
                 sort_param.descending,
                 registry,
                 resource_type,
-            ) {
-                builder = builder.sort_by(sort_spec);
-            }
+            )
+            .ok_or_else(|| {
+                SqlBuilderError::InvalidSearchValue(format!(
+                    "Unsupported sort parameter '{}' for {resource_type}",
+                    sort_param.field
+                ))
+            })?;
+            builder = builder.sort_by(sort_spec);
         }
     }
 
@@ -404,118 +397,6 @@ pub fn build_native_ir_query_from_params_with_config(
 /// Check if a parameter is a control parameter.
 fn is_control_param(name: &str) -> bool {
     CONTROL_PARAMS.contains(&name) || is_include_parameter(name) || is_revinclude_parameter(name)
-}
-
-/// Fold repeated date-param occurrences for the same key into one combined
-/// `sid.rng && tstzrange(lo, hi, bounds)` EXISTS clause.
-///
-/// Triggers only for plain date-typed params (no `_lastUpdated`, no modifier,
-/// no comma-OR lists, only `{ge, gt, le, lt}` prefixes). Returns `Ok(true)`
-/// when the merged clause is emitted; caller must then skip the per-entry
-/// dispatch loop. Returns `Ok(false)` to fall through.
-fn try_fold_repeated_date_window(
-    sql_builder: &mut SqlBuilder,
-    debug_plan: Option<&mut SearchDebugPlan>,
-    key: &str,
-    value_entries: &[String],
-    registry: &SearchParameterRegistry,
-    resource_type: &str,
-) -> Result<bool, SqlBuilderError> {
-    if value_entries.len() < 2 {
-        return Ok(false);
-    }
-    if key.contains(':') {
-        return Ok(false); // any modifier blocks fold
-    }
-    let Some(param_def) = registry.get(resource_type, key) else {
-        return Ok(false);
-    };
-    if param_def.param_type != SearchParameterType::Date {
-        return Ok(false);
-    }
-    if matches!(
-        resolve_resource_column_param(&param_def),
-        Some(ResourceColumnParam::LastUpdated)
-    ) {
-        return Ok(false);
-    }
-
-    // Quick syntactic gate before any allocation: every occurrence must be
-    // a single prefixed value with no comma-OR and no modifier baggage.
-    for entry in value_entries {
-        if entry.contains(',') || entry.is_empty() {
-            return Ok(false);
-        }
-        let prefix_chars = entry.chars().take(2).collect::<String>();
-        if !matches!(prefix_chars.as_str(), "ge" | "gt" | "le" | "lt") {
-            return Ok(false);
-        }
-    }
-
-    // Parse to AST. Every entry must produce one Overlap clause.
-    let mut clauses: Vec<DateClause> = Vec::with_capacity(value_entries.len());
-    for entry in value_entries {
-        let parsed = convert_to_parsed_param(key, entry);
-        if parsed.modifier.is_some() || parsed.values.len() != 1 {
-            return Ok(false);
-        }
-        let mut produced = DateClause::from_parsed_param(&parsed, resource_type)?;
-        if produced.len() != 1 || !matches!(produced[0].predicate, DatePredicate::Overlap { .. }) {
-            return Ok(false);
-        }
-        clauses.push(produced.remove(0));
-    }
-
-    // Tree rewrite — collapse all Overlap clauses on the same key into one.
-    let merged = rewrite_date_clauses(clauses);
-    if merged.len() != 1 {
-        return Ok(false);
-    }
-    let DatePredicate::Overlap { lo, hi } = &merged[0].predicate else {
-        return Ok(false);
-    };
-    // Fold only when *both* bounds are present. A single-side window is
-    // already handled efficiently by the per-occurrence path (the rewrite
-    // is structurally identical to one Overlap clause).
-    if lo.is_none() || hi.is_none() {
-        return Ok(false);
-    }
-
-    let expression = param_def.expression.as_deref().unwrap_or_default();
-    let segments = fhirpath_to_jsonb_path(expression, resource_type);
-    // Precompiled jsonpath[] literals (compiled once, not per row) — built via the
-    // same helper as the index DDL so the functional GiST index still matches.
-    let lower_jpa = crate::sql_builder::paths_to_jsonpath_array(
-        &crate::sql_builder::date_lower_paths(&segments),
-    );
-    let upper_jpa = crate::sql_builder::paths_to_jsonpath_array(
-        &crate::sql_builder::date_upper_paths(&segments),
-    );
-    let scalar_jpa = crate::sql_builder::paths_to_jsonpath_array(
-        &crate::sql_builder::date_scalar_paths(&segments),
-    );
-    let period_jpa = crate::sql_builder::paths_to_jsonpath_array(
-        &crate::sql_builder::date_period_object_paths(&segments),
-    );
-    let col = sql_builder.resource_column();
-    let min_expr = format!("fhir_extract_date_min({col}, {lower_jpa})");
-    let max_expr = format!("fhir_extract_date_max({col}, {upper_jpa})");
-    let hull_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
-    let mr_expr = format!("fhir_extract_date_multirange({col}, {scalar_jpa}, {period_jpa})");
-    let single_guard = crate::types::date::single_occurrence_guard(col, &segments);
-
-    if let Some(sql) = render_date_inplace_clauses_as_or(
-        sql_builder,
-        &merged,
-        &hull_expr,
-        &mr_expr,
-        &min_expr,
-        &single_guard,
-    ) {
-        sql_builder.add_condition(sql);
-    }
-    append_date_debug_plan(debug_plan, resource_type, &merged);
-    Ok(true)
 }
 
 fn collect_date_debug_plan(
@@ -781,8 +662,7 @@ fn convert_to_parsed_param(key: &str, value_entry: &str) -> ParsedParam {
     };
 
     // Parse comma-separated values (OR semantics within this occurrence).
-    let parsed_values: Vec<ParsedValue> = value_entry
-        .split(',')
+    let parsed_values: Vec<ParsedValue> = crate::parser::split_escaped(value_entry, ',')
         .map(|part| {
             let part = part.trim();
             let (prefix, raw) = extract_prefix(part);
@@ -932,7 +812,10 @@ fn build_sort_spec(
     let path_segments = fhirpath_to_jsonb_path(expr, resource_type);
     let path = JsonbPath::new(path_segments).ok()?;
 
-    Some(SortSpec::new(path, order))
+    let mut spec = SortSpec::new(path, order);
+    spec.value_type = Some(param_def.param_type);
+    spec.element_type_hint = param_def.element_type_hint.clone();
+    Some(spec)
 }
 
 /// Extract _include specifications from params.
@@ -1642,26 +1525,6 @@ mod tests {
         );
     }
 
-    // try_fold_repeated_date_window — `{ge,gt}+{le,lt}` → single `&&` EXISTS.
-
-    fn date_registry() -> SearchParameterRegistry {
-        use crate::parameters::SearchParameter;
-        let registry = SearchParameterRegistry::new();
-        registry.register(SearchParameter::new(
-            "birthdate",
-            "http://hl7.org/fhir/SearchParameter/Patient-birthdate",
-            SearchParameterType::Date,
-            vec!["Patient".to_string()],
-        ));
-        registry.register(SearchParameter::new(
-            "date",
-            "http://hl7.org/fhir/SearchParameter/Encounter-date",
-            SearchParameterType::Date,
-            vec!["Encounter".to_string()],
-        ));
-        registry
-    }
-
     fn date_registry_with_expression() -> SearchParameterRegistry {
         use crate::parameters::SearchParameter;
         let registry = SearchParameterRegistry::new();
@@ -1873,8 +1736,8 @@ mod tests {
         );
         assert_eq!(
             built.sql.matches("<@ tstzrange(").count(),
-            2,
-            "two comma values should produce two OR'd in-place range predicates: {}",
+            4,
+            "two OR'd values each check scalar and repeating containment: {}",
             built.sql
         );
     }
@@ -1976,8 +1839,8 @@ mod tests {
         );
         assert_eq!(
             built.sql.matches("<@ tstzrange(").count(),
-            2,
-            "each eq value rechecks containment of some occurrence range: {}",
+            4,
+            "each eq value checks both scalar and repeating range containment: {}",
             built.sql
         );
     }
@@ -2008,8 +1871,8 @@ mod tests {
         assert_eq!(plan.resource_type, "Patient");
         assert_eq!(
             plan.predicates.len(),
-            1,
-            "folded date window = one predicate"
+            2,
+            "repeated date bounds remain independent predicates"
         );
         assert_eq!(plan.predicates[0].param_code, "birthdate");
         assert!(plan.predicates[0].index_backed);
@@ -2645,242 +2508,62 @@ mod tests {
     }
 
     #[test]
-    fn fold_gt_lt_emits_single_overlap() {
-        // Only plain `Overlap` predicates participate in window folding;
-        // `Ge`/`Le` carry containment as well and are skipped.
-        let registry = date_registry();
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "birthdate",
-            &["gt1980-01-01".to_string(), "lt2000-01-01".to_string()],
-            &registry,
-            "Patient",
-        )
-        .unwrap();
-        assert!(folded, "gt+lt must fold");
-        let clause = builder.build_where_clause().unwrap();
-        assert!(
-            clause.contains("fhir_extract_date_min(r.resource")
-                && clause.contains("fhir_extract_date_multirange(r.resource")
-                && clause.contains("'[)')")
-                // one hull && prefilter + one multirange && recheck
-                && clause.matches("&& tstzrange(").count() == 2,
-            "folded clause must have hull prefilter + multirange recheck overlaps: {clause}"
-        );
-        assert!(
-            !clause.contains(" AND tstzrange("),
-            "no second range predicate allowed in folded form: {clause}"
-        );
-    }
-
-    #[test]
-    fn fold_gt_lt_uses_upper_q_for_lo() {
-        // gt q ↔ r && [upper(q), +∞)  — inclusive at upper(q)
-        // lt q ↔ r && (-∞, lower(q))  — exclusive at lower(q)
-        // → combined window `[upper(gt_val), lower(lt_val))` = bounds `[)`.
-        let registry = date_registry();
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "date",
-            &["gt2024-01-01".to_string(), "lt2025-01-01".to_string()],
-            &registry,
-            "Encounter",
-        )
-        .unwrap();
-        assert!(folded, "gt+lt must fold");
-        let clause = builder.build_where_clause().unwrap();
-        assert!(
-            clause.contains("'[)'"),
-            "gt + lt → `'[)'` (inclusive lo, exclusive hi): {clause}"
-        );
-        // gt2024-01-01 → lo at upper(q) = 2024-01-02. Verify via bound param.
-        let params = builder.params();
-        assert!(
-            params.iter().any(|p| matches!(
-                p,
-                crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("2024-01-02")
-            )),
-            "gt2024-01-01 must bind lo at upper(q)=2024-01-02, params: {params:?}"
-        );
-        // lt2025-01-01 → hi at lower(q) = 2025-01-01.
-        assert!(
-            params.iter().any(|p| matches!(
-                p,
-                crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("2025-01-01")
-            )),
-            "lt2025-01-01 must bind hi at lower(q)=2025-01-01, params: {params:?}"
-        );
-    }
-
-    #[test]
-    fn fold_takes_strictest_lo_when_gt_repeated() {
-        let registry = date_registry();
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "birthdate",
-            &[
-                "gt1980-01-01".to_string(),
-                "gt1990-06-15".to_string(),
-                "lt2010-01-01".to_string(),
-            ],
-            &registry,
-            "Patient",
-        )
-        .unwrap();
-        assert!(folded, "gt+gt+lt must fold");
-        let clause = builder.build_where_clause().unwrap();
-        let params = builder.params();
-        // The lo param must be the *later* of the two gt values (strictest).
-        // gt q ↔ r && [upper(q), …), so gt1990-06-15 → lo = upper(q) = 1990-06-16.
-        let lo_param = params
-            .iter()
-            .find_map(|p| match p {
-                crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("1990-06-16") => {
-                    Some(s.clone())
-                }
-                _ => None,
-            })
-            .expect("strictest lo (1990-06-16) must be bound");
-        assert!(
-            !clause.is_empty() && !lo_param.is_empty(),
-            "expected lo param 1990-06-16 to be present"
-        );
-        // The looser 1980-01-02 must NOT be a parameter.
-        assert!(
-            !params.iter().any(|p| matches!(
-                p,
-                crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("1980-01-02")
-            )),
-            "looser lo 1980-01-02 should not survive the fold"
-        );
-    }
-
-    #[test]
-    fn fold_refuses_single_value() {
-        let registry = date_registry();
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "birthdate",
-            &["ge1980-01-01".to_string()],
-            &registry,
-            "Patient",
-        )
-        .unwrap();
-        assert!(!folded, "single value must fall through to per-entry path");
-    }
-
-    #[test]
-    fn fold_refuses_when_only_one_side_present() {
-        let registry = date_registry();
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "birthdate",
-            &["ge1980-01-01".to_string(), "ge1990-01-01".to_string()],
-            &registry,
-            "Patient",
-        )
-        .unwrap();
-        assert!(!folded, "two ge with no upper bound must not fold");
-    }
-
-    #[test]
-    fn fold_refuses_eq_or_ne_mixed_in() {
-        let registry = date_registry();
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "birthdate",
-            &["ge1980-01-01".to_string(), "ne1995".to_string()],
-            &registry,
-            "Patient",
-        )
-        .unwrap();
-        assert!(!folded, "eq/ne not foldable with prefix bounds");
-    }
-
-    #[test]
-    fn fold_refuses_modifier_in_key() {
-        let registry = date_registry();
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "birthdate:missing",
-            &["true".to_string(), "false".to_string()],
-            &registry,
-            "Patient",
-        )
-        .unwrap();
-        assert!(!folded, ":modifier blocks fold");
-    }
-
-    #[test]
-    fn fold_refuses_comma_or_list() {
-        let registry = date_registry();
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "birthdate",
-            &[
-                "ge1980-01-01,ge1990-01-01".to_string(),
-                "le2000-01-01".to_string(),
-            ],
-            &registry,
-            "Patient",
-        )
-        .unwrap();
-        assert!(!folded, "comma-OR list blocks fold");
-    }
-
-    #[test]
-    fn fold_refuses_last_updated() {
-        let registry = SearchParameterRegistry::new();
-        crate::common::register_common_parameters(&registry);
-        // `_lastUpdated` is a common param; it maps to `r.updated_at`, not the
-        // JSONB date-range expression, so the fold MUST refuse it even if both
-        // bounds match.
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "_lastUpdated",
-            &["ge2024-01-01".to_string(), "le2024-12-31".to_string()],
-            &registry,
-            "Patient",
-        )
-        .unwrap();
-        assert!(
-            !folded,
-            "_lastUpdated must never fold to the JSONB date window"
-        );
-    }
-
-    #[test]
-    fn fold_refuses_non_date_param() {
-        let registry = SearchParameterRegistry::new();
-        // No date registration for `value-quantity` → fold refuses.
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let folded = try_fold_repeated_date_window(
-            &mut builder,
-            None,
-            "value-quantity",
-            &["ge1.0".to_string(), "le2.0".to_string()],
-            &registry,
-            "Observation",
-        )
-        .unwrap();
-        assert!(!folded, "non-date params must not fold");
+    fn repeated_date_bounds_keep_each_occurrence_and_bind() {
+        let registry = date_registry_with_expression();
+        for (query, expected_dates) in [
+            (
+                "birthdate=gt1980-01-01&birthdate=lt2000-01-01",
+                vec!["1980-01-02", "2000-01-01"],
+            ),
+            (
+                "birthdate=lt2000-01-01&birthdate=gt1980-01-01",
+                vec!["2000-01-01", "1980-01-02"],
+            ),
+            (
+                "birthdate=gt1980-01-01&birthdate=gt1990-06-15&birthdate=lt2010-01-01",
+                vec!["1980-01-02", "1990-06-16", "2010-01-01"],
+            ),
+            (
+                "birthdate=gt2030-01-01&birthdate=lt2020-01-01",
+                vec!["2030-01-02", "2020-01-01"],
+            ),
+        ] {
+            let params = parse_query_string(query, 10, 100);
+            let converted = build_native_ir_query_from_params_with_config(
+                "Patient",
+                &params,
+                &registry,
+                "public",
+                &SearchConfig {
+                    collect_debug_plan: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                converted.debug_plan.as_ref().unwrap().predicates.len(),
+                expected_dates.len(),
+                "{query}"
+            );
+            let built = converted.builder.build().unwrap();
+            assert_eq!(
+                built
+                    .sql
+                    .matches("fhir_extract_date_multirange(r.resource")
+                    .count(),
+                expected_dates.len(),
+                "{query}: {}",
+                built.sql
+            );
+            for date in expected_dates {
+                assert!(
+                    built.params.iter().any(
+                        |p| matches!(p, SqlValue::Timestamp(value) if value.starts_with(date))
+                    ),
+                    "{query}: missing {date}: {:?}",
+                    built.params
+                );
+            }
+        }
     }
 }

@@ -2838,6 +2838,7 @@ pub async fn search_resource(
         state.query_cache.as_deref(),
         state.terminology_provider.as_ref(),
         octofhir_db_postgres::queries::RawSearchOptions {
+            include_limits: state.config.search.include_limits,
             unknown_param_handling,
             collect_debug_plan: debug_request.collect_plan(),
             collect_explain_plan: debug_request.collect_explain_plan(),
@@ -2973,6 +2974,7 @@ pub async fn search_resource_post(
         state.query_cache.as_deref(),
         state.terminology_provider.as_ref(),
         octofhir_db_postgres::queries::RawSearchOptions {
+            include_limits: state.config.search.include_limits,
             unknown_param_handling,
             collect_debug_plan: debug_request.collect_plan(),
             collect_explain_plan: debug_request.collect_explain_plan(),
@@ -3089,120 +3091,100 @@ pub async fn system_search(
         .and_then(|h| h.to_str().ok())
         .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
-    // Collect raw entries: (resource_json, id, resource_type)
-    let mut all_entries: Vec<(String, String, String)> = Vec::new();
-    let mut total_count: usize = 0;
-    let mut debug_entries: Vec<(String, octofhir_storage::RawSearchDebug)> = Vec::new();
-
-    // Parse search params once
+    if types
+        .iter()
+        .any(|name| name.parse::<ResourceType>().is_err())
+    {
+        return Err(ApiError::bad_request(
+            "_type contains an invalid resource type",
+        ));
+    }
     let search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
-
-    // Search each resource type using raw path (skips JSONB → Value round-trip)
-    for type_name in &types {
-        if type_name.parse::<ResourceType>().is_err() {
-            tracing::warn!("Skipping unknown resource type: {}", type_name);
-            continue;
-        }
-
-        match octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
-            &state.read_db_pool,
-            type_name,
-            &search_params,
-            Some(&cfg.registry),
-            state.query_cache.as_deref(),
-            state.terminology_provider.as_ref(),
-            octofhir_db_postgres::queries::RawSearchOptions {
-                unknown_param_handling,
-                collect_debug_plan: debug_request.collect_plan(),
-                collect_explain_plan: debug_request.collect_explain_plan(),
-                collect_explain_analyze: debug_request.collect_explain_analyze(),
-                max_valueset_expansion: Some(state.config.search.max_valueset_expansion),
-            },
-        )
-        .await
-        {
-            Ok(result) => {
-                total_count += result.total.unwrap_or(result.entries.len() as u32) as usize;
-                if let Some(debug) = result.debug {
-                    debug_entries.push(((*type_name).to_string(), debug));
-                }
-                for entry in result.entries {
-                    all_entries.push((entry.resource_json, entry.id, entry.resource_type));
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Search failed for type {}: {}", type_name, e);
-                // Continue with other types
-            }
-        }
-    }
-
+    let result = octofhir_db_postgres::queries::search::execute_system_search_raw(
+        &state.read_db_pool,
+        &types,
+        &search_params,
+        &cfg.registry,
+        state.terminology_provider.as_ref(),
+        octofhir_db_postgres::queries::RawSearchOptions {
+            include_limits: state.config.search.include_limits,
+            unknown_param_handling,
+            collect_debug_plan: debug_request.collect_plan(),
+            collect_explain_plan: debug_request.collect_explain_plan(),
+            collect_explain_analyze: debug_request.collect_explain_analyze(),
+            max_valueset_expansion: Some(state.config.search.max_valueset_expansion),
+        },
+    )
+    .await
+    .map_err(map_storage_error)?;
     if debug_request.collect_plan() {
-        let debug = debug_entries
-            .iter()
-            .map(|(resource_type, debug)| (Some(resource_type.as_str()), debug))
-            .collect::<Vec<_>>();
+        let debug = result
+            .debug
+            .as_ref()
+            .map(|debug| (None, debug))
+            .into_iter()
+            .collect();
         return Ok((
             StatusCode::OK,
             Json(search_debug_parameters_resource(debug)),
         )
             .into_response());
     }
-
-    // The parser normalizes _summary=count to a zero-size resource page.
-    let count = if search_params.is_count_only() {
-        0
-    } else {
-        params
-            .get("_count")
-            .and_then(|c| c.parse::<usize>().ok())
-            .unwrap_or(cfg.default_count)
-            .min(cfg.max_count)
-    };
-
-    let offset = params
-        .get("_offset")
-        .and_then(|o| o.parse::<usize>().ok())
-        .unwrap_or(0);
-
-    // Paginate combined results and build bundle entries
-    let paginated: Vec<octofhir_api::BundleEntry> = all_entries
-        .into_iter()
-        .skip(offset)
-        .take(count)
-        .map(|(resource_json, id, rt)| {
-            let full_url = Some(format!(
-                "{}/{}/{}",
-                state.base_url.trim_end_matches('/'),
-                rt,
-                id
-            ));
-            octofhir_api::BundleEntry {
-                full_url,
-                resource: Some(octofhir_api::RawJson::from_string(resource_json)),
-                search: Some(octofhir_api::BundleEntrySearch {
-                    mode: "match".to_string(),
-                    score: None,
-                }),
-                request: None,
-                response: None,
-            }
-        })
-        .collect();
-
-    // Build system search bundle
-    let primary_type = types.first().unwrap_or(&"Resource");
+    let count = search_params.count.unwrap_or(cfg.default_count as u32) as usize;
+    let offset = search_params.offset.unwrap_or(0) as usize;
+    let (total, exact) =
+        resolved_search_total(result.total, result.has_more, offset, result.entries.len());
     let suffix = build_query_suffix_for_links(&raw_q);
-    let links = octofhir_api::build_search_links(
-        total_count,
+    let links = octofhir_api::build_search_links_with_total_mode(
+        total,
+        exact,
+        result.has_more,
         &state.base_url,
-        primary_type,
+        "",
         offset,
         count,
         suffix.as_deref(),
     );
-    let bundle = octofhir_api::Bundle::searchset(total_count as u64, paginated, links);
+    let mut entries: Vec<octofhir_api::BundleEntry> = result
+        .entries
+        .into_iter()
+        .map(|r| (r, "match"))
+        .chain(result.included.into_iter().map(|r| (r, "include")))
+        .map(|(entry, mode)| octofhir_api::BundleEntry {
+            full_url: Some(format!(
+                "{}/{}/{}",
+                state.base_url.trim_end_matches('/'),
+                entry.resource_type,
+                entry.id
+            )),
+            resource: Some(octofhir_api::RawJson::from_string(entry.resource_json)),
+            search: Some(octofhir_api::BundleEntrySearch {
+                mode: mode.into(),
+                score: None,
+            }),
+            request: None,
+            response: None,
+        })
+        .collect();
+    if count > 0 && !result.warnings.is_empty() {
+        entries.push(octofhir_api::BundleEntry {
+            full_url: None,
+            resource: Some(
+                serde_json::to_value(octofhir_api::OperationOutcome::warnings(result.warnings))
+                    .expect("OperationOutcome serializes")
+                    .into(),
+            ),
+            search: Some(octofhir_api::BundleEntrySearch {
+                mode: "outcome".into(),
+                score: None,
+            }),
+            request: None,
+            response: None,
+        });
+    }
+    let bundle =
+        octofhir_api::Bundle::searchset_with_total(total.map(|n| n as u64), entries, links);
 
     if params.contains_key("_summary") || params.contains_key("_elements") {
         let bundle_value = apply_result_params(bundle, &params)?;

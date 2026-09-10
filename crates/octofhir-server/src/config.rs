@@ -391,6 +391,9 @@ impl Default for PostgresStorageConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchSettings {
+    /// Maximum include expansion by resources, serialized bytes, and depth.
+    #[serde(default)]
+    pub include_limits: octofhir_db_postgres::queries::search::IncludeLimits,
     #[serde(default = "default_search_default")]
     pub default_count: usize,
     #[serde(default = "default_search_max")]
@@ -523,6 +526,7 @@ fn default_search_cache_capacity() -> usize {
 impl Default for SearchSettings {
     fn default() -> Self {
         Self {
+            include_limits: Default::default(),
             default_count: default_search_default(),
             max_count: default_search_max(),
             cache_capacity: default_search_cache_capacity(),

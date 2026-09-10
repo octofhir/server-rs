@@ -159,6 +159,327 @@ async fn assert_search(
 }
 
 #[tokio::test]
+async fn search_escaping_preserves_literal_delimiters() {
+    let (_container, pool, registry) = setup().await;
+    let storage = PostgresStorage::from_pool(pool.clone());
+    storage
+        .create(
+            &json!({"resourceType":"Patient", "id":"comma", "name":[{"family":"Smith, Jones"}]}),
+        )
+        .await
+        .unwrap();
+    for (id, code) in [
+        ("pipe", "a|b"),
+        ("comma", "a,b"),
+        ("slash", "a\\b"),
+        ("dollar", "a$b"),
+    ] {
+        storage
+            .create(
+                &json!({"resourceType":"Observation", "id":id, "code":{"coding":[{"code":code}]}}),
+            )
+            .await
+            .unwrap();
+    }
+    assert_search(
+        &pool,
+        &registry,
+        "Patient",
+        "family:exact=Smith%5C%2C%20Jones",
+        &["comma"],
+    )
+    .await;
+    for (query, expected) in [
+        ("code=a%5C%7Cb", "pipe"),
+        ("code=a%5C%2Cb", "comma"),
+        ("code=a%5C%5Cb", "slash"),
+        ("code=a%5C%24b", "dollar"),
+    ] {
+        assert_search(&pool, &registry, "Observation", query, &[expected]).await;
+    }
+    assert_search(
+        &pool,
+        &registry,
+        "Observation",
+        "code=a%5C%7Cb,a%5C%2Cb",
+        &["pipe", "comma"],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn string_search_matches_individual_values() {
+    let (_container, pool, registry) = setup().await;
+    let storage = PostgresStorage::from_pool(pool.clone());
+    for (id, families) in [
+        ("whole", vec!["Alice Smith"]),
+        ("split", vec!["Alice", "Smith"]),
+        ("prefix", vec!["Smithson"]),
+        ("accent", vec!["Smíth"]),
+    ] {
+        let names: Vec<_> = families
+            .into_iter()
+            .map(|family| json!({"family":family}))
+            .collect();
+        storage
+            .create(&json!({"resourceType":"Patient", "id":id, "name":names}))
+            .await
+            .unwrap();
+    }
+    assert_search(
+        &pool,
+        &registry,
+        "Patient",
+        "family=Smith",
+        &["split", "prefix", "accent"],
+    )
+    .await;
+    assert_search(
+        &pool,
+        &registry,
+        "Patient",
+        "family:contains=Alice%20Smith",
+        &["whole"],
+    )
+    .await;
+    assert_search(
+        &pool,
+        &registry,
+        "Patient",
+        "family:exact=Smith",
+        &["split"],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn include_iterate_follows_resources_from_other_specs() {
+    let (_container, pool, registry) = setup().await;
+    let storage = PostgresStorage::from_pool(pool.clone());
+    for resource in [
+        json!({"resourceType":"Organization", "id":"org"}),
+        json!({"resourceType":"Patient", "id":"patient", "managingOrganization":{"reference":"Organization/org"}}),
+        json!({"resourceType":"Observation", "id":"obs", "subject":{"reference":"Patient/patient"}}),
+    ] {
+        storage.create(&resource).await.unwrap();
+    }
+    let iterative_query =
+        "_id=obs&_include=Observation:subject:Patient&_include:iterate=Patient:organization";
+    for limits in [
+        octofhir_db_postgres::queries::search::IncludeLimits {
+            max_resources: 1,
+            ..Default::default()
+        },
+        octofhir_db_postgres::queries::search::IncludeLimits {
+            max_bytes: 1,
+            ..Default::default()
+        },
+        octofhir_db_postgres::queries::search::IncludeLimits {
+            max_depth: 1,
+            ..Default::default()
+        },
+    ] {
+        let params = parse_query_string(iterative_query, 10, 100);
+        let error = octofhir_db_postgres::queries::search::execute_search_raw_with_options(
+            &pool,
+            "Observation",
+            &params,
+            Some(&registry),
+            None,
+            octofhir_db_postgres::queries::search::RawSearchOptions {
+                include_limits: limits,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            octofhir_storage::StorageError::InvalidResource { .. }
+        ));
+        assert!(error.to_string().contains("budget"), "{error}");
+        let params = parse_query_string(&format!("{iterative_query}&_count=0"), 10, 100);
+        let count = octofhir_db_postgres::queries::search::execute_search_raw_with_options(
+            &pool,
+            "Observation",
+            &params,
+            Some(&registry),
+            None,
+            octofhir_db_postgres::queries::search::RawSearchOptions {
+                include_limits: limits,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(count.total, Some(1));
+        assert!(count.included.is_empty());
+    }
+    for (specs, expected) in [
+        (
+            "_include=Observation:subject:Patient&_include:iterate=Patient:organization",
+            vec![("Patient", "patient"), ("Organization", "org")],
+        ),
+        (
+            "_include:iterate=Patient:organization&_include=Observation:subject:Patient",
+            vec![("Patient", "patient"), ("Organization", "org")],
+        ),
+        (
+            "_include=Observation:subject:Patient&_include=Patient:organization",
+            vec![("Patient", "patient")],
+        ),
+    ] {
+        let params = parse_query_string(&format!("_id=obs&_total=accurate&{specs}"), 10, 100);
+        let raw = octofhir_db_postgres::queries::search::execute_search_raw_with_config(
+            &pool,
+            "Observation",
+            &params,
+            Some(&registry),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let parsed = octofhir_db_postgres::queries::search::execute_search(
+            &pool,
+            "Observation",
+            &params,
+            Some(&registry),
+        )
+        .await
+        .unwrap();
+        let expected: BTreeSet<_> = expected.into_iter().collect();
+        assert_eq!(
+            raw.included
+                .iter()
+                .map(|r| (r.resource_type.as_str(), r.id.as_str()))
+                .collect::<BTreeSet<_>>(),
+            expected,
+            "{specs}"
+        );
+        assert_eq!(
+            parsed
+                .entries
+                .iter()
+                .skip(1)
+                .map(|r| (r.resource_type.as_str(), r.id.as_str()))
+                .collect::<BTreeSet<_>>(),
+            expected,
+            "{specs}"
+        );
+        assert_eq!(raw.included.len(), expected.len());
+        assert_eq!(parsed.entries.len(), expected.len() + 1);
+        assert_eq!(raw.total, Some(1));
+        assert_eq!(parsed.total, Some(1));
+    }
+}
+
+#[tokio::test]
+async fn includes_deduplicate_across_specs_and_exclude_matches() {
+    let (_container, pool, registry) = setup().await;
+    registry.register(
+        SearchParameter::new(
+            "derived",
+            "urn:test:derived",
+            SearchParameterType::Reference,
+            vec!["Observation".into()],
+        )
+        .with_expression("Observation.derivedFrom")
+        .with_targets(vec!["Observation".into()]),
+    );
+    let storage = PostgresStorage::from_pool(pool.clone());
+    storage
+        .create(&json!({"resourceType":"Patient", "id":"main"}))
+        .await
+        .unwrap();
+    storage.create(&json!({"resourceType":"Observation", "id":"main", "subject":{"reference":"Patient/main"}, "derivedFrom":[{"reference":"Observation/main"},{"reference":"Observation/peer"}]})).await.unwrap();
+    storage.create(&json!({"resourceType":"Observation", "id":"peer", "derivedFrom":[{"reference":"Observation/main"}]})).await.unwrap();
+    for specs in [
+        "_include=Observation:derived&_include=Observation:derived:Observation&_revinclude=Observation:derived&_include=Observation:subject:Patient",
+        "_include=Observation:subject:Patient&_revinclude=Observation:derived&_include=Observation:derived:Observation&_include=Observation:derived",
+    ] {
+        let params = parse_query_string(&format!("_id=main&_total=accurate&{specs}"), 10, 100);
+        let raw = octofhir_db_postgres::queries::search::execute_search_raw_with_config(
+            &pool,
+            "Observation",
+            &params,
+            Some(&registry),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let parsed = octofhir_db_postgres::queries::search::execute_search(
+            &pool,
+            "Observation",
+            &params,
+            Some(&registry),
+        )
+        .await
+        .unwrap();
+        for (entries, included, total, has_more) in [
+            (
+                raw.entries.len(),
+                raw.included
+                    .iter()
+                    .map(|r| (r.resource_type.as_str(), r.id.as_str()))
+                    .collect::<Vec<_>>(),
+                raw.total,
+                raw.has_more,
+            ),
+            (
+                1,
+                parsed
+                    .entries
+                    .iter()
+                    .skip(1)
+                    .map(|r| (r.resource_type.as_str(), r.id.as_str()))
+                    .collect::<Vec<_>>(),
+                parsed.total,
+                parsed.has_more,
+            ),
+        ] {
+            assert_eq!(entries, 1);
+            assert_eq!(total, Some(1));
+            assert!(!has_more);
+            assert_eq!(
+                included.iter().copied().collect::<BTreeSet<_>>(),
+                BTreeSet::from([("Observation", "peer"), ("Patient", "main")])
+            );
+            assert_eq!(included.len(), 2, "duplicate includes: {included:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn chained_search_preserves_unicode_and_prefix_looking_names() {
+    let (_container, pool, registry) = setup().await;
+    let storage = PostgresStorage::from_pool(pool.clone());
+    for (id, family) in [
+        ("chinese", "李"),
+        ("french", "Émile"),
+        ("russian", "Иванов"),
+        ("prefix", "ge李"),
+    ] {
+        storage
+            .create(&json!({"resourceType":"Patient", "id":id, "name":[{"family":family}]}))
+            .await
+            .unwrap();
+        storage.create(&json!({"resourceType":"Observation", "id":id, "subject":{"reference":format!("Patient/{id}")}})).await.unwrap();
+    }
+    for (family, expected) in [
+        ("李", vec!["chinese"]),
+        ("Émile", vec!["french"]),
+        ("Иванов", vec!["russian"]),
+        ("ge李", vec!["prefix"]),
+        ("王", vec![]),
+    ] {
+        let query = format!("subject:Patient.family={family}");
+        assert_search(&pool, &registry, "Observation", &query, &expected).await;
+    }
+}
+
+#[tokio::test]
 async fn traversal_preserves_reference_forms_types_deletion_and_duplicates() {
     let (_container, pool, registry) = setup().await;
     let storage = PostgresStorage::from_pool(pool.clone());
