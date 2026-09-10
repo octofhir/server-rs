@@ -106,22 +106,32 @@ pub async fn execute_search(
     registry: Option<&Arc<SearchParameterRegistry>>,
 ) -> Result<SearchResult, StorageError> {
     let requested_limit = params.count.unwrap_or(10) as usize;
-    let mut effective_params = params.clone();
-    effective_params.count = Some(params.count.unwrap_or(10).saturating_add(1));
 
     // Use default registry if none provided
     let empty_registry = SearchParameterRegistry::new();
     let registry = registry.map(|r| r.as_ref()).unwrap_or(&empty_registry);
 
     // Convert SearchParams to SQL query through the native-IR search path.
-    let converted =
-        build_native_ir_query_from_params(resource_type, &effective_params, registry, "public")
-            .map_err(|e| {
-                tracing::warn!(error = %e, "Failed to build search query");
-                StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
-            })?;
+    let converted = build_native_ir_query_from_params(resource_type, params, registry, "public")
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Failed to build search query");
+            StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
+        })?;
 
     // Build the SQL query
+    if params.is_count_only() {
+        let count_query = converted
+            .builder
+            .build_count()
+            .map_err(|e| StorageError::internal(format!("Failed to build count SQL: {e}")))?;
+        let total = execute_count_query(pool, &count_query).await?;
+        return Ok(SearchResult {
+            entries: Vec::new(),
+            total: Some(total),
+            has_more: false,
+        });
+    }
+
     let built_query = converted.builder.build().map_err(|e| {
         tracing::warn!(error = %e, "Failed to build SQL");
         StorageError::internal(format!("Failed to build search SQL: {e}"))
@@ -186,8 +196,6 @@ pub async fn execute_search_with_tx(
     registry: Option<&Arc<SearchParameterRegistry>>,
 ) -> Result<SearchResult, StorageError> {
     let requested_limit = params.count.unwrap_or(10) as usize;
-    let mut effective_params = params.clone();
-    effective_params.count = Some(params.count.unwrap_or(10).saturating_add(1));
 
     let empty_registry = SearchParameterRegistry::new();
     if registry.is_none() && !params.parameters.is_empty() {
@@ -201,12 +209,24 @@ pub async fn execute_search_with_tx(
     }
     let registry = registry.map(|r| r.as_ref()).unwrap_or(&empty_registry);
 
-    let converted =
-        build_native_ir_query_from_params(resource_type, &effective_params, registry, "public")
-            .map_err(|e| {
-                tracing::warn!(error = %e, "Failed to build transaction search query");
-                StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
-            })?;
+    let converted = build_native_ir_query_from_params(resource_type, params, registry, "public")
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Failed to build transaction search query");
+            StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
+        })?;
+
+    if params.is_count_only() {
+        let count_query = converted
+            .builder
+            .build_count()
+            .map_err(|e| StorageError::internal(format!("Failed to build count SQL: {e}")))?;
+        let total = execute_count_query_with_tx(tx, &count_query).await?;
+        return Ok(SearchResult {
+            entries: Vec::new(),
+            total: Some(total),
+            has_more: false,
+        });
+    }
 
     let built_query = converted.builder.build().map_err(|e| {
         tracing::warn!(error = %e, "Failed to build transaction search SQL");
@@ -385,7 +405,6 @@ async fn execute_search_raw_with_config_inner(
 ) -> Result<RawSearchResult, StorageError> {
     let requested_limit = params.count.unwrap_or(10) as usize;
     let mut effective_params = params.clone();
-    effective_params.count = Some(params.count.unwrap_or(10).saturating_add(1));
 
     // Use default registry if none provided
     let empty_registry = Arc::new(SearchParameterRegistry::new());
@@ -470,6 +489,47 @@ async fn execute_search_raw_with_config_inner(
             unknown_params = ?converted.unknown_params.iter().map(|p| &p.name).collect::<Vec<_>>(),
             "Search ignored unknown parameters (lenient mode)"
         );
+    }
+
+    if params.is_count_only() {
+        let count_query = converted
+            .builder
+            .build_count()
+            .map_err(|e| StorageError::internal(format!("Failed to build count SQL: {e}")))?;
+        let build_elapsed = build_started.elapsed();
+        let explain = if options.collect_explain_plan || options.collect_explain_analyze {
+            Some(
+                explain_built_search_query_json(
+                    pool,
+                    &count_query,
+                    options.collect_explain_analyze,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        let execute_started = Instant::now();
+        let total = execute_count_query(pool, &count_query).await?;
+        let debug = options.collect_debug_plan.then(|| RawSearchDebug {
+            sql_shape: Some(redact_sql_shape(&count_query.sql)),
+            plan: converted
+                .debug_plan
+                .as_ref()
+                .and_then(|plan| serde_json::to_value(plan).ok()),
+            explain,
+            analyze: options.collect_explain_analyze,
+            build_elapsed_ms: Some(build_elapsed.as_secs_f64() * 1000.0),
+            db_execute_elapsed_ms: Some(execute_started.elapsed().as_secs_f64() * 1000.0),
+        });
+        return Ok(RawSearchResult {
+            entries: Vec::new(),
+            included: Vec::new(),
+            total: Some(total),
+            has_more: false,
+            warnings,
+            debug,
+        });
     }
 
     // Build count query first (before consuming builder with with_raw_resource)

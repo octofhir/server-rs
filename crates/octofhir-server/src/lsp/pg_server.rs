@@ -867,20 +867,15 @@ impl ModelSchemaSnapshot {
                     continue;
                 }
 
-                if let Some(field) = current_fields
+                // Unknown path segments return None.
+                let field = current_fields
                     .iter()
-                    .find(|f| f.name.eq_ignore_ascii_case(segment))
-                {
-                    if let Some(ref nested) = field.nested {
-                        current_fields = &nested.fields;
-                    } else {
-                        // Field exists but has no nested schema
-                        // Return empty vec to indicate "path exists, no nested fields known"
-                        return Some(Vec::new());
-                    }
+                    .find(|f| f.name.eq_ignore_ascii_case(segment))?;
+                if let Some(ref nested) = field.nested {
+                    current_fields = &nested.fields;
                 } else {
-                    // Path segment doesn't exist - return None to indicate unknown
-                    return None;
+                    // Field exists but has no nested schema.
+                    return Some(Vec::new());
                 }
             }
             Some(current_fields.iter().map(|f| f.name.clone()).collect())
@@ -915,17 +910,12 @@ impl ModelSchemaSnapshot {
                 continue;
             }
 
-            if let Some(field) = current_fields
+            let field = current_fields
                 .iter()
-                .find(|f| f.name.eq_ignore_ascii_case(segment))
-            {
-                last_field = Some(field);
-                if let Some(ref nested) = field.nested {
-                    current_fields = &nested.fields;
-                }
-            } else {
-                // Path segment doesn't exist
-                return None;
+                .find(|f| f.name.eq_ignore_ascii_case(segment))?;
+            last_field = Some(field);
+            if let Some(ref nested) = field.nested {
+                current_fields = &nested.fields;
             }
         }
 

@@ -737,6 +737,33 @@ mod bundle_tests {
     use super::*;
 
     #[test]
+    fn count_only_bundle_has_total_without_entries_or_paging_links() {
+        for offset in [0, 100] {
+            let bundle = bundle_from_search_raw_with_warnings_and_pagination(
+                Some(42),
+                true,
+                false,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                "http://example.org",
+                "Patient",
+                offset,
+                0,
+                None,
+                Some(OperationOutcome::warnings(vec![
+                    "unknown parameter ignored".into(),
+                ])),
+            );
+            assert_eq!(bundle.total, Some(42));
+            assert!(bundle.entry.is_empty());
+            assert_eq!(bundle.link.len(), 1);
+            assert_eq!(bundle.link[0].relation, "self");
+            assert!(bundle.link[0].url.contains("_count=0"));
+        }
+    }
+
+    #[test]
     fn serialize_searchset_bundle() {
         let entry = BundleEntry {
             full_url: Some("http://example.org/Patient/1".into()),
@@ -1051,6 +1078,23 @@ pub fn bundle_from_search_raw_with_warnings_and_pagination(
     query_suffix: Option<&str>,
     warnings: Option<OperationOutcome>,
 ) -> Bundle {
+    if count == 0 {
+        return Bundle::searchset_with_total(
+            total.map(|value| value as u64),
+            Vec::new(),
+            build_search_links_with_total_mode(
+                total,
+                total_is_exact,
+                false,
+                base_url,
+                resource_type,
+                offset,
+                count,
+                query_suffix,
+            ),
+        );
+    }
+
     let mut entries = Vec::with_capacity(resources.len() + included.len() + 1);
 
     // Add OperationOutcome as first entry if there are warnings
@@ -1301,6 +1345,11 @@ pub fn build_search_links_with_total_mode(
         relation: "self".to_string(),
         url: build_page_url(base_url, resource_type, offset, count, query_suffix),
     });
+
+    // FHIR count-only bundles have no paging links.
+    if count == 0 {
+        return links;
+    }
 
     // first
     links.push(BundleLink {

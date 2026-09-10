@@ -358,7 +358,8 @@ pub fn build_native_ir_query_from_params_with_config(
     // Handle pagination
     let limit = params.count.unwrap_or(10) as usize;
     let offset = params.offset.unwrap_or(0) as usize;
-    // Request limit + 1 to determine if there are more results
+    // Sole owner of lookahead: executors pass the requested count unchanged
+    // and trim the extra row after determining has_more.
     builder = builder.paginate(limit + 1, offset);
 
     // Handle sorting.
@@ -1038,7 +1039,7 @@ pub fn parse_query_string(query: &str, default_count: u32, max_count: u32) -> Se
         match key.as_str() {
             "_count" => {
                 if let Ok(n) = value.parse::<u32>() {
-                    let count = n.min(max_count).max(1);
+                    let count = n.min(max_count);
                     params = params.with_count(count);
                 }
             }
@@ -1069,6 +1070,12 @@ pub fn parse_query_string(query: &str, default_count: u32, max_count: u32) -> Se
                 params = params.with_param(&key, &value);
             }
         }
+    }
+
+    // Count-only has no resource page, including when _summary=count is combined
+    // with an explicit positive _count. Normalize for downstream Bundle links.
+    if params.is_count_only() {
+        params.count = Some(0);
     }
 
     // Apply default count if not specified
@@ -1109,6 +1116,25 @@ mod tests {
             }
             other => panic!("expected NotImplemented fallback rejection, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn count_only_parser_preserves_zero_and_normalizes_summary() {
+        for query in [
+            "_count=0",
+            "_summary=count",
+            "_count=10&_summary=count",
+            "_summary=count&_count=10",
+        ] {
+            let params = parse_query_string(query, 10, 100);
+            assert_eq!(params.count, Some(0), "{query}");
+            assert!(params.is_count_only());
+        }
+        assert_eq!(parse_query_string("_count=200", 10, 100).count, Some(100));
+        assert_eq!(
+            parse_query_string("_summary=false", 10, 100).count,
+            Some(10)
+        );
     }
 
     #[test]

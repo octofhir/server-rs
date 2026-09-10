@@ -382,6 +382,17 @@ impl SearchParams {
         Self::default()
     }
 
+    /// Whether only the total is requested, without resources or pagination.
+    #[must_use]
+    pub fn is_count_only(&self) -> bool {
+        self.count == Some(0)
+            || self
+                .parameters
+                .get("_summary")
+                .and_then(|values| values.first())
+                .is_some_and(|value| value == "count")
+    }
+
     /// Adds a search parameter.
     #[must_use]
     pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {

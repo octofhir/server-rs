@@ -620,10 +620,7 @@ fn collect_reference_strings(value: &Value, out: &mut Vec<String>) {
     }
 }
 
-fn local_reference_set(
-    payload: &Value,
-    state: &crate::server::AppState,
-) -> LocalReferenceSet {
+fn local_reference_set(payload: &Value, state: &crate::server::AppState) -> LocalReferenceSet {
     if state.config.validation.skip_reference_validation {
         return LocalReferenceSet::default();
     }
@@ -656,17 +653,13 @@ fn local_reference_set(
 
     let all = groups
         .iter()
-        .flat_map(|(resource_type, ids)| {
-            ids.iter().map(move |id| format!("{resource_type}/{id}"))
-        })
+        .flat_map(|(resource_type, ids)| ids.iter().map(move |id| format!("{resource_type}/{id}")))
         .collect();
 
     LocalReferenceSet { groups, all }
 }
 
-fn validation_error(
-    validation_outcome: crate::validation::ValidationOutcome,
-) -> ApiError {
+fn validation_error(validation_outcome: crate::validation::ValidationOutcome) -> ApiError {
     ApiError::UnprocessableEntity {
         message: "Resource validation failed".to_string(),
         operation_outcome: Some(validation_outcome.to_operation_outcome()),
@@ -735,12 +728,9 @@ async fn existing_references_on_connection(
         query = query.bind(ids);
     }
 
-    let rows = query
-        .fetch_all(&mut **connection)
-        .await
-        .map_err(|error| {
-            StorageError::internal(format!("Failed to batch-check references: {error}"))
-        })?;
+    let rows = query.fetch_all(&mut **connection).await.map_err(|error| {
+        StorageError::internal(format!("Failed to batch-check references: {error}"))
+    })?;
 
     Ok(rows
         .into_iter()
@@ -809,20 +799,25 @@ async fn postgres_create_raw_checked(
            RETURNING id, txid, created_at, updated_at, resource::text"#
     );
 
-    let row: (String, i64, chrono::DateTime<Utc>, chrono::DateTime<Utc>, String) =
-        query_as(AssertSqlSafe(sql))
-            .bind(&id)
-            .bind(now)
-            .bind(resource)
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(|error| {
-                if error.to_string().contains("duplicate key") {
-                    StorageError::already_exists(resource_type, &id)
-                } else {
-                    StorageError::internal(format!("Failed to create resource: {error}"))
-                }
-            })?;
+    let row: (
+        String,
+        i64,
+        chrono::DateTime<Utc>,
+        chrono::DateTime<Utc>,
+        String,
+    ) = query_as(AssertSqlSafe(sql))
+        .bind(&id)
+        .bind(now)
+        .bind(resource)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|error| {
+            if error.to_string().contains("duplicate key") {
+                StorageError::already_exists(resource_type, &id)
+            } else {
+                StorageError::internal(format!("Failed to create resource: {error}"))
+            }
+        })?;
 
     Ok(CheckedRawWrite::Written(
         octofhir_storage::RawStoredResource {
@@ -1841,28 +1836,24 @@ pub async fn update_resource(
     }
 
     // Try update first using raw path (avoids serde round-trip).
-    let update_result =
-        if !local_references.groups.is_empty() && state.storage.backend_name() == "postgres" {
-            match postgres_update_raw_checked(
-                &state,
-                &payload,
-                if_match.as_deref(),
-                &local_references,
-            )
+    let update_result = if !local_references.groups.is_empty()
+        && state.storage.backend_name() == "postgres"
+    {
+        match postgres_update_raw_checked(&state, &payload, if_match.as_deref(), &local_references)
             .await
-            {
-                Ok(CheckedRawWrite::Written(stored)) => Ok(stored),
-                Ok(CheckedRawWrite::Missing(found)) => {
-                    return Err(validate_missing_references(&payload, &state, &found).await);
-                }
-                Err(error) => Err(error),
+        {
+            Ok(CheckedRawWrite::Written(stored)) => Ok(stored),
+            Ok(CheckedRawWrite::Missing(found)) => {
+                return Err(validate_missing_references(&payload, &state, &found).await);
             }
-        } else {
-            state
-                .storage
-                .update_raw(&payload, if_match.as_deref())
-                .await
-        };
+            Err(error) => Err(error),
+        }
+    } else {
+        state
+            .storage
+            .update_raw(&payload, if_match.as_deref())
+            .await
+    };
 
     match update_result {
         Ok(stored) => {
@@ -3159,12 +3150,16 @@ pub async fn system_search(
             .into_response());
     }
 
-    // Apply _count limit to combined results
-    let count = params
-        .get("_count")
-        .and_then(|c| c.parse::<usize>().ok())
-        .unwrap_or(cfg.default_count)
-        .min(cfg.max_count);
+    // The parser normalizes _summary=count to a zero-size resource page.
+    let count = if search_params.is_count_only() {
+        0
+    } else {
+        params
+            .get("_count")
+            .and_then(|c| c.parse::<usize>().ok())
+            .unwrap_or(cfg.default_count)
+            .min(cfg.max_count)
+    };
 
     let offset = params
         .get("_offset")
@@ -3245,10 +3240,15 @@ fn resolved_search_total(
         return (Some(total as usize), true);
     }
 
-    if has_more {
-        (None, false)
-    } else {
-        (Some(offset + page_len), true)
+    // An empty page beyond offset zero only establishes an upper bound.
+    // It cannot distinguish an exhausted result set from an oversized offset.
+    if has_more || (page_len == 0 && offset > 0) {
+        return (None, false);
+    }
+
+    match offset.checked_add(page_len) {
+        Some(total) => (Some(total), true),
+        None => (None, false),
     }
 }
 
@@ -8466,6 +8466,38 @@ mod tests {
         assert_eq!(
             resolved_search_total(Some(42), true, 20, 10),
             (Some(42), true)
+        );
+    }
+
+    #[test]
+    fn test_empty_page_does_not_invent_total_or_last_link() {
+        for offset in [1, 20, 1000] {
+            let (total, exact) = resolved_search_total(None, false, offset, 0);
+            assert_eq!((total, exact), (None, false));
+            let links = octofhir_api::build_search_links_with_total_mode(
+                total,
+                exact,
+                false,
+                "http://localhost/fhir",
+                "Patient",
+                offset,
+                10,
+                None,
+            );
+            assert!(
+                !links
+                    .iter()
+                    .any(|link| matches!(link.relation.as_str(), "last" | "next"))
+            );
+        }
+        assert_eq!(resolved_search_total(None, false, 0, 0), (Some(0), true));
+        assert_eq!(
+            resolved_search_total(None, false, usize::MAX, 1),
+            (None, false)
+        );
+        assert_eq!(
+            resolved_search_total(Some(5), false, 1000, 0),
+            (Some(5), true)
         );
     }
 
