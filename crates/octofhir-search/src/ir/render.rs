@@ -2147,7 +2147,7 @@ fn render_composite_quantity_component_expr(
 fn to_object_path(path: &str) -> String {
     if let Some(idx) = path.rfind("->>") {
         let last_part = path[idx + 3..].trim_matches('\'');
-        format!("{}->'{}'", &path[..idx].trim_end_matches("->"), last_part)
+        format!("{}->'{}'", path[..idx].trim_end_matches("->"), last_part)
     } else {
         path.to_string()
     }

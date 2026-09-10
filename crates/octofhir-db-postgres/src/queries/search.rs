@@ -22,10 +22,9 @@ use octofhir_search::terminology_preprocess::{
     DEFAULT_MAX_EXPANSION_SIZE, pre_expand_subsumption_modifiers, pre_expand_terminology_modifiers,
 };
 use octofhir_search::{
-    BuiltQuery, ParamsSearchConfig, PreparedQuery, QueryCache, QueryCacheKey, QueryParamKey,
-    SearchParameterRegistry, SqlValue, UnknownParamHandling, build_jsonb_accessor,
-    build_native_ir_query_from_params, build_native_ir_query_from_params_with_config,
-    fhirpath_to_jsonb_path,
+    BuiltQuery, ParamsSearchConfig, QueryCache, SearchParameterRegistry, SqlValue,
+    UnknownParamHandling, build_jsonb_accessor, build_native_ir_query_from_params,
+    build_native_ir_query_from_params_with_config, fhirpath_to_jsonb_path,
 };
 use octofhir_storage::{
     RawSearchDebug, RawSearchResult, RawStoredResource, SearchParams, SearchResult, StorageError,
@@ -380,7 +379,7 @@ async fn execute_search_raw_with_config_inner(
     resource_type: &str,
     params: &SearchParams,
     registry: Option<&Arc<SearchParameterRegistry>>,
-    query_cache: Option<&QueryCache>,
+    _query_cache: Option<&QueryCache>,
     terminology: Option<&Arc<HybridTerminologyProvider>>,
     options: RawSearchOptions,
 ) -> Result<RawSearchResult, StorageError> {
@@ -473,149 +472,6 @@ async fn execute_search_raw_with_config_inner(
         );
     }
 
-    // Build cache key for query template reuse
-    let cache_key = query_cache.map(|_| {
-        let param_keys: Vec<QueryParamKey> = params
-            .parameters
-            .iter()
-            .map(|(key, values)| {
-                let (name, modifier) = key
-                    .split_once(':')
-                    .map(|(n, m)| (n.to_string(), Some(m.to_string())))
-                    .unwrap_or_else(|| (key.clone(), None));
-
-                // SQL shape for token-like params can depend on raw value format
-                // (e.g. identifier=value vs identifier=system|value vs identifier=system|).
-                // Encode this in the cache key to avoid binding a text param to a cached
-                // JSON template (or vice versa).
-                //
-                // Distinguish four shapes:
-                //   - "system|value" → JSON containment (@>) with system+value
-                //   - "system|"      → EXISTS with system-only text match
-                //   - "|value"       → EXISTS with empty-system text match
-                //   - "value"        → EXISTS with value-only text match
-                let token_shape = {
-                    let has_no_pipe = values.iter().any(|v| !v.contains('|'));
-                    let has_system_with_value = values.iter().any(|v| {
-                        v.split_once('|')
-                            .map(|(left, right)| !left.is_empty() && !right.is_empty())
-                            .unwrap_or(false)
-                    });
-                    let has_system_only = values.iter().any(|v| {
-                        v.split_once('|')
-                            .map(|(left, right)| !left.is_empty() && right.is_empty())
-                            .unwrap_or(false)
-                    });
-                    let has_empty_system = values.iter().any(|v| {
-                        v.split_once('|')
-                            .map(|(left, right)| left.is_empty() && !right.is_empty())
-                            .unwrap_or(false)
-                    });
-
-                    // Compose a tag that varies whenever any of the shape signals differ.
-                    // Each signal contributes a distinct letter so different combinations
-                    // (e.g. system|value alone vs alongside system|) produce different keys.
-                    let mut tag = String::with_capacity(8);
-                    tag.push_str("tok-");
-                    if has_system_with_value {
-                        tag.push_str("sv");
-                    }
-                    if has_system_only {
-                        tag.push('s');
-                    }
-                    if has_empty_system {
-                        tag.push_str("es");
-                    }
-                    if has_no_pipe {
-                        tag.push('p');
-                    }
-                    tag
-                };
-
-                // `:missing` selects between structurally different SQL
-                // templates (`IS NULL` vs `IS NOT NULL`, `NOT EXISTS` vs
-                // `EXISTS`) based on the boolean value, which is NOT bound
-                // as a parameter. Two requests `gender:missing=true` and
-                // `gender:missing=false` must therefore not share a cache
-                // entry — encode the polarity into the cache name.
-                let missing_tag = if modifier.as_deref() == Some("missing") {
-                    let is_true = values.iter().any(|v| v.eq_ignore_ascii_case("true"));
-                    let is_false = values.iter().any(|v| !v.eq_ignore_ascii_case("true"));
-                    match (is_true, is_false) {
-                        (true, false) => "#miss-t",
-                        (false, true) => "#miss-f",
-                        (true, true) => "#miss-tf",
-                        _ => "#miss-x",
-                    }
-                } else {
-                    ""
-                };
-
-                let cache_name = format!("{name}#{token_shape}{missing_tag}");
-
-                // Distinguish prefixes per value — date / number / quantity SQL
-                // shape depends on `eq`/`gt`/`lt`/`ne`/`ge`/`le`/`sa`/`eb`/`ap`
-                // so two queries with the same name+modifier but different
-                // prefixes must NOT share a cached query template.
-                let prefixes: Vec<Option<String>> = values
-                    .iter()
-                    .map(|v| {
-                        // Detect the same prefix the parser would extract.
-                        let lower = v.to_ascii_lowercase();
-                        for p in ["eq", "ne", "gt", "lt", "ge", "le", "sa", "eb", "ap"] {
-                            if lower.starts_with(p) && v.len() > 2 {
-                                let rest = &v[2..];
-                                let next = rest.chars().next();
-                                if next.is_some_and(|c| c.is_ascii_digit() || c == '-') {
-                                    return Some(p.to_string());
-                                }
-                            }
-                        }
-                        None
-                    })
-                    .collect();
-
-                QueryParamKey {
-                    name: cache_name,
-                    modifier,
-                    param_type: QueryCacheKey::infer_param_type(key),
-                    value_count: values.len(),
-                    prefixes,
-                }
-            })
-            .collect();
-        // Encode sort direction into the cache key — otherwise `_sort=birthdate`
-        // and `_sort=-birthdate` collide on the same template and the second
-        // query reuses the wrong ORDER BY clause.
-        let sort_fields: Vec<String> = params
-            .sort
-            .as_ref()
-            .map(|s| {
-                s.iter()
-                    .map(|f| {
-                        if f.descending {
-                            format!("-{}", f.field)
-                        } else {
-                            f.field.clone()
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        QueryCacheKey::from_typed_params(
-            resource_type,
-            param_keys,
-            params.count.is_some() || params.offset.is_some(),
-            sort_fields,
-        )
-        .with_pagination(effective_params.count, effective_params.offset)
-    });
-
-    // Try cache hit for main query SQL template
-    let cached_main = cache_key
-        .as_ref()
-        .and_then(|key| query_cache.and_then(|c| c.get(key)));
-
     // Build count query first (before consuming builder with with_raw_resource)
     let count_query = if matches!(converted.total_mode, Some(TotalMode::Accurate)) {
         Some(converted.builder.build_count().map_err(|e| {
@@ -626,40 +482,19 @@ async fn execute_search_raw_with_config_inner(
         None
     };
 
-    // Build or reuse the main SQL query
-    let built_query = if let Some(cached) = cached_main {
-        // Cache hit: reuse SQL template, extract fresh params from builder
-        let fresh_params = converted.builder.extract_params();
-        match cached.bind(fresh_params) {
-            Ok(bq) => bq,
-            Err(_) => {
-                // Param count mismatch — fall back to full build
-                converted
-                    .builder
-                    .with_raw_resource(true)
-                    .build()
-                    .map_err(|e| {
-                        StorageError::internal(format!("Failed to build search SQL: {e}"))
-                    })?
-            }
-        }
-    } else {
-        // Cache miss: build SQL and cache the template
-        let bq = converted
-            .builder
-            .with_raw_resource(true)
-            .build()
-            .map_err(|e| {
-                tracing::warn!(error = %e, "Failed to build SQL");
-                StorageError::internal(format!("Failed to build search SQL: {e}"))
-            })?;
-
-        if let (Some(cache), Some(key)) = (query_cache, cache_key) {
-            cache.insert(key, PreparedQuery::simple(bq.sql.clone(), bq.params.len()));
-        }
-
-        bq
-    };
+    // Always execute SQL and binds from the same fresh builder. Renderers can embed
+    // values in SQL (e.g. quantity bounds and JSONPath literals), so a structural
+    // cache key and matching bind count do not establish template compatibility.
+    // Keep the cache argument for API compatibility until template identity and
+    // typed bind slots can be established after preprocessing and IR conversion.
+    let built_query = converted
+        .builder
+        .with_raw_resource(true)
+        .build()
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Failed to build SQL");
+            StorageError::internal(format!("Failed to build search SQL: {e}"))
+        })?;
 
     let build_elapsed = build_started.elapsed();
 
@@ -1017,6 +852,35 @@ fn reference_array_sql(
 /// references match. Capture 1 = type, capture 2 = id.
 const REFERENCE_TYPE_ID_RE: &str = r"([A-Za-z]+)/([A-Za-z0-9.-]{1,64})$";
 
+/// $1 is the target type; $2 is its ID array. Both raw and parsed executors use
+/// this predicate so reference resolution cannot drift between the two paths.
+fn build_revinclude_sql(table: &str, ref_array: &str, raw: bool) -> String {
+    let resource = if raw {
+        "s.resource::text"
+    } else {
+        "s.resource"
+    };
+    // A matching regexp's second capture is necessarily the last path segment.
+    // CASE guarantees we only run the more expensive regexp for candidate IDs,
+    // while retaining its exact type/ID syntax and absolute-reference behavior.
+    // EXISTS cannot multiply source rows, so SELECT DISTINCT is unnecessary.
+    format!(
+        r#"SELECT {resource}, s.id, s.txid, s.created_at, s.updated_at
+           FROM "{table}" s
+           WHERE s.status != 'deleted'
+           AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements({ref_array}) AS ref
+             WHERE CASE WHEN split_part(ref->>'reference', '/', -1) = ANY($2::text[])
+               THEN (regexp_match(ref->>'reference', '{REFERENCE_TYPE_ID_RE}'))[1] = $1
+               ELSE false END
+           )"#
+    )
+}
+
+#[cfg(test)]
+#[path = "search/revinclude_tests.rs"]
+mod revinclude_tests;
+
 /// Resolve _include and _revinclude specifications.
 ///
 /// Executes all include and revinclude queries in parallel for better latency.
@@ -1313,17 +1177,7 @@ async fn resolve_revinclude_once(
         return Ok(Vec::new());
     };
 
-    // Find source resources whose reference (in place) points at any target id.
-    let sql = format!(
-        r#"SELECT DISTINCT s.resource, s.id, s.txid, s.created_at, s.updated_at
-           FROM "{table}" s
-           WHERE s.status != 'deleted'
-           AND EXISTS (
-             SELECT 1 FROM jsonb_array_elements({ref_array}) AS ref
-             CROSS JOIN LATERAL (SELECT regexp_match(ref->>'reference', '{REFERENCE_TYPE_ID_RE}') AS m) x
-             WHERE x.m[1] = $1 AND x.m[2] = ANY($2::text[])
-           )"#
-    );
+    let sql = build_revinclude_sql(&table, &ref_array, false);
 
     let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
         query_as(AssertSqlSafe(sql.to_string()))
@@ -1651,17 +1505,7 @@ async fn resolve_revinclude_once_raw(
         return Ok(Vec::new());
     };
 
-    // Find source resources whose reference (in place) points at any target id.
-    let sql = format!(
-        r#"SELECT DISTINCT s.resource::text, s.id, s.txid, s.created_at, s.updated_at
-           FROM "{table}" s
-           WHERE s.status != 'deleted'
-           AND EXISTS (
-             SELECT 1 FROM jsonb_array_elements({ref_array}) AS ref
-             CROSS JOIN LATERAL (SELECT regexp_match(ref->>'reference', '{REFERENCE_TYPE_ID_RE}') AS m) x
-             WHERE x.m[1] = $1 AND x.m[2] = ANY($2::text[])
-           )"#
-    );
+    let sql = build_revinclude_sql(&table, &ref_array, true);
 
     let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
         query_as(AssertSqlSafe(sql.to_string()))

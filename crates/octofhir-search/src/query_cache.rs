@@ -316,7 +316,12 @@ impl PreparedQuery {
         }
     }
 
-    /// Bind values to produce a final query.
+    /// Bind values to a caller-verified compatible SQL template.
+    ///
+    /// This only checks arity, not SQL compatibility. Callers must establish that
+    /// embedded literals, bind order/types, and resolved query structure match.
+    /// A `QueryCacheKey` alone does not prove this for native IR renderers; the
+    /// PostgreSQL raw executor therefore uses a fresh builder instead.
     pub fn bind(&self, values: Vec<SqlValue>) -> Result<BuiltQuery, CacheError> {
         if values.len() != self.param_count {
             return Err(CacheError::ParameterMismatch {

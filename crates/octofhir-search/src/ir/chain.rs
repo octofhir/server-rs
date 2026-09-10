@@ -11,8 +11,7 @@ use crate::parameters::{SearchModifier, SearchParameter, SearchParameterType};
 use crate::parser::{ParsedParam, SearchParameterParser};
 use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::{
-    SqlBuilder, SqlBuilderError, SqlParam, fhirpath_to_jsonb_path,
-    jsonb_reference_match_exists_expr,
+    SqlBuilder, SqlBuilderError, SqlParam, build_jsonb_accessor, fhirpath_to_jsonb_path,
 };
 use std::sync::Arc;
 
@@ -195,12 +194,10 @@ fn render_nested_chain(
     };
 
     let segments = fhirpath_to_jsonb_path(&link.expression, current_type);
-    let ref_predicate = format!(
-        "(ref->>'reference' = '{target_type}/' || {alias}.id \
-          OR ref->>'reference' LIKE '%/{target_type}/' || {alias}.id)"
-    );
-    let ref_exists =
-        jsonb_reference_match_exists_expr(&outer_resource_col, &segments, &ref_predicate);
+    // Extract reference IDs once per source row, then probe the target PK. The
+    // old nested EXISTS compared every reference against every target candidate.
+    let ids = reference_target_ids_sql(&outer_resource_col, &segments, target_type);
+    let ref_exists = SqlExpr::Raw(format!("{alias}.id = ANY(ARRAY({ids}))"));
 
     let inner_condition = if depth + 1 < clause.chain.len() {
         render_nested_chain(builder, clause, target_type, registry, depth + 1)?
@@ -363,15 +360,6 @@ fn render_has_level(
             .unwrap_or_default(),
         &clause.source_type,
     );
-    let ref_predicate = format!(
-        "(ref->>'reference' = '{base_type}/' || {outer_id_expr} \
-          OR ref->>'reference' LIKE '%/{base_type}/' || {outer_id_expr})"
-    );
-    let ref_exists = jsonb_reference_match_exists_expr(
-        &format!("{src_alias}.resource"),
-        &segments,
-        &ref_predicate,
-    );
 
     let inner = match &clause.tail {
         HasTail::Final {
@@ -401,18 +389,30 @@ fn render_has_level(
         }
     };
 
-    Ok(SqlExpr::Exists(Box::new(SelectStmt {
-        projection: vec![SqlTerm::Integer(1)],
-        from: SqlFrom {
-            table: format!("\"{source_table}\""),
-            alias: Some(src_alias.clone()),
-        },
-        where_clause: Some(SqlExpr::And(vec![
-            SqlExpr::Raw(format!("{src_alias}.status != 'deleted'")),
-            ref_exists,
-            inner,
-        ])),
-    })))
+    // An uncorrelated IN subquery lets PostgreSQL start with matching source
+    // rows and semijoin their target IDs to the outer PK. Duplicate references
+    // and sources retain existential semantics without DISTINCT over resources.
+    let ids = reference_target_ids_sql(&format!("{src_alias}.resource"), &segments, base_type);
+    let inner_sql = crate::ir::render::render_sql_expr(&inner);
+    Ok(SqlExpr::Raw(format!(
+        "{outer_id_expr} IN (SELECT linked.id FROM \"{source_table}\" {src_alias} \
+         CROSS JOIN LATERAL ({ids}) AS linked(id) \
+         WHERE {src_alias}.status != 'deleted' AND ({inner_sql}))"
+    )))
+}
+
+/// Extract IDs using the existing chain suffix contract. In particular, absolute
+/// and remote bases are accepted, while history URLs are not normalized here.
+/// Keep the type boundary: `NotPatient/id` must not resolve as `Patient/id`.
+fn reference_target_ids_sql(resource_col: &str, segments: &[String], target_type: &str) -> String {
+    let object = build_jsonb_accessor(resource_col, segments, false);
+    let target_type = target_type.replace('\'', "''");
+    format!(
+        "SELECT split_part(ref->>'reference', '/', -1) \
+         FROM jsonb_array_elements(CASE WHEN jsonb_typeof({object}) = 'array' THEN {object} \
+         WHEN {object} IS NULL THEN '[]'::jsonb ELSE jsonb_build_array({object}) END) AS ref \
+         WHERE split_part(ref->>'reference', '/', -2) = '{target_type}'"
+    )
 }
 
 // ============================================================================
@@ -443,13 +443,27 @@ fn render_final_condition(
         values,
     };
 
-    crate::types::dispatch_search_with_registry(
-        &mut inner,
-        &parsed,
-        param_def,
-        target_type,
-        registry,
-    )?;
+    if matches!(
+        crate::ir::resolve_resource_column_param(param_def),
+        Some(crate::ir::ResourceColumnParam::Id)
+    ) {
+        // Built-in _id is a scalar row key, not a CodeableConcept. Use the
+        // same typed ID renderer as top-level search, against this link's alias.
+        let clauses = crate::ir::IdClause::from_parsed_param(&parsed, target_type)?;
+        if let Some(condition) =
+            crate::ir::render_id_clauses_as_or(&mut inner, &clauses, &format!("{alias}.id"))
+        {
+            inner.add_condition(condition);
+        }
+    } else {
+        crate::types::dispatch_search_with_registry(
+            &mut inner,
+            &parsed,
+            param_def,
+            target_type,
+            registry,
+        )?;
+    }
 
     for p in inner.params() {
         match p {
@@ -589,6 +603,8 @@ mod tests {
         assert!(sql.contains("\"patient\""));
         assert!(sql.contains("jsonb_array_elements"));
         assert!(sql.contains("chain0.resource"));
+        assert!(sql.contains("chain0.id = ANY(ARRAY(SELECT split_part"));
+        assert!(!sql.contains("LIKE '%/Patient/'"));
     }
 
     #[test]
@@ -632,10 +648,13 @@ mod tests {
         let mut builder = SqlBuilder::with_resource_column("r.resource");
         render_has_clause(&mut builder, &clause, "Patient", &reg).unwrap();
         let sql = builder.build_where_clause().unwrap();
-        assert!(sql.contains("EXISTS"));
+        assert!(sql.contains("WHERE has0.status != 'deleted' AND"));
         assert!(!sql.contains("search_idx_reference"));
         assert!(sql.contains("\"observation\""));
         assert!(sql.contains("has0.resource"));
+        assert!(sql.contains("r.id IN (SELECT linked.id"));
+        assert!(sql.contains("CROSS JOIN LATERAL"));
+        assert!(!sql.contains("LIKE '%/Patient/'"));
     }
 
     #[test]
