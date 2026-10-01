@@ -1,0 +1,83 @@
+{
+  "explain": [
+    {
+      "Execution Time": 0.124,
+      "Plan": {
+        "Actual Loops": 1,
+        "Actual Rows": 12.0,
+        "Actual Startup Time": 0.09,
+        "Actual Total Time": 0.109,
+        "Async Capable": false,
+        "Disabled": false,
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Plan Rows": 12,
+        "Plan Width": 63,
+        "Plans": [
+          {
+            "Actual Loops": 1,
+            "Actual Rows": 12.0,
+            "Actual Startup Time": 0.09,
+            "Actual Total Time": 0.108,
+            "Alias": "r",
+            "Async Capable": false,
+            "Disabled": false,
+            "Filter": "((status <> 'deleted'::resource_status) AND ((jsonb_typeof((resource -> 'birthDate'::text)) = 'string'::text) OR (jsonb_typeof((resource -> 'birthDateDateTime'::text)) = 'string'::text) OR (jsonb_typeof((resource -> 'birthDateDate'::text)) = 'string'::text) OR (jsonb_typeof((resource -> 'birthDateInstant'::text)) = 'string'::text) OR ((jsonb_typeof((resource -> 'birthDate'::text)) = 'object'::text) AND (NOT ((resource -> 'birthDate'::text) ? 'event'::text))) OR ((jsonb_typeof((resource -> 'birthDatePeriod'::text)) = 'object'::text) AND (NOT ((resource -> 'birthDatePeriod'::text) ? 'event'::text))) OR (fhir_extract_date_multirange(resource, '{\"$.\\\"birthDate\\\"[*]\",\"$.\\\"birthDateDateTime\\\"[*]\",\"$.\\\"birthDateDate\\\"[*]\",\"$.\\\"birthDateInstant\\\"[*]\",\"$.\\\"birthDate\\\".\\\"event\\\"[*]\",\"$.\\\"birthDateTiming\\\".\\\"event\\\"[*]\"}'::jsonpath[], '{\"$.\\\"birthDate\\\"[*]\",\"$.\\\"birthDatePeriod\\\"[*]\"}'::jsonpath[]) && tstzrange(('1980-01-01T00:00:00Z'::cstring)::timestamp with time zone, NULL::timestamp with time zone, '[)'::text))) AND ((jsonb_typeof((resource -> 'birthDate'::text)) = 'string'::text) OR (jsonb_typeof((resource -> 'birthDateDateTime'::text)) = 'string'::text) OR (jsonb_typeof((resource -> 'birthDateDate'::text)) = 'string'::text) OR (jsonb_typeof((resource -> 'birthDateInstant'::text)) = 'string'::text) OR ((jsonb_typeof((resource -> 'birthDate'::text)) = 'object'::text) AND (NOT ((resource -> 'birthDate'::text) ? 'event'::text))) OR ((jsonb_typeof((resource -> 'birthDatePeriod'::text)) = 'object'::text) AND (NOT ((resource -> 'birthDatePeriod'::text) ? 'event'::text))) OR (fhir_extract_date_multirange(resource, '{\"$.\\\"birthDate\\\"[*]\",\"$.\\\"birthDateDateTime\\\"[*]\",\"$.\\\"birthDateDate\\\"[*]\",\"$.\\\"birthDateInstant\\\"[*]\",\"$.\\\"birthDate\\\".\\\"event\\\"[*]\",\"$.\\\"birthDateTiming\\\".\\\"event\\\"[*]\"}'::jsonpath[], '{\"$.\\\"birthDate\\\"[*]\",\"$.\\\"birthDatePeriod\\\"[*]\"}'::jsonpath[]) && tstzrange(NULL::timestamp with time zone, ('2001-01-01T00:00:00Z'::cstring)::timestamp with time zone, '[)'::text))))",
+            "Index Cond": "((tstzrange(fhir_extract_date_min(resource, '{\"$.\\\"birthDate\\\"[*]\",\"$.\\\"birthDateDateTime\\\"[*]\",\"$.\\\"birthDateDate\\\"[*]\",\"$.\\\"birthDateInstant\\\"[*]\",\"$.\\\"birthDate\\\".\\\"start\\\"[*]\",\"$.\\\"birthDatePeriod\\\".\\\"start\\\"[*]\",\"$.\\\"birthDate\\\".\\\"event\\\"[*]\",\"$.\\\"birthDateTiming\\\".\\\"event\\\"[*]\"}'::jsonpath[]), fhir_extract_date_max(resource, '{\"$.\\\"birthDate\\\"[*]\",\"$.\\\"birthDateDateTime\\\"[*]\",\"$.\\\"birthDateDate\\\"[*]\",\"$.\\\"birthDateInstant\\\"[*]\",\"$.\\\"birthDate\\\".\\\"end\\\"[*]\",\"$.\\\"birthDatePeriod\\\".\\\"end\\\"[*]\",\"$.\\\"birthDate\\\".\\\"event\\\"[*]\",\"$.\\\"birthDateTiming\\\".\\\"event\\\"[*]\"}'::jsonpath[]), '[]'::text) && tstzrange(('1980-01-01T00:00:00Z'::cstring)::timestamp with time zone, NULL::timestamp with time zone, '[)'::text)) AND (tstzrange(fhir_extract_date_min(resource, '{\"$.\\\"birthDate\\\"[*]\",\"$.\\\"birthDateDateTime\\\"[*]\",\"$.\\\"birthDateDate\\\"[*]\",\"$.\\\"birthDateInstant\\\"[*]\",\"$.\\\"birthDate\\\".\\\"start\\\"[*]\",\"$.\\\"birthDatePeriod\\\".\\\"start\\\"[*]\",\"$.\\\"birthDate\\\".\\\"event\\\"[*]\",\"$.\\\"birthDateTiming\\\".\\\"event\\\"[*]\"}'::jsonpath[]), fhir_extract_date_max(resource, '{\"$.\\\"birthDate\\\"[*]\",\"$.\\\"birthDateDateTime\\\"[*]\",\"$.\\\"birthDateDate\\\"[*]\",\"$.\\\"birthDateInstant\\\"[*]\",\"$.\\\"birthDate\\\".\\\"end\\\"[*]\",\"$.\\\"birthDatePeriod\\\".\\\"end\\\"[*]\",\"$.\\\"birthDate\\\".\\\"event\\\"[*]\",\"$.\\\"birthDateTiming\\\".\\\"event\\\"[*]\"}'::jsonpath[]), '[]'::text) && tstzrange(NULL::timestamp with time zone, ('2001-01-01T00:00:00Z'::cstring)::timestamp with time zone, '[)'::text)))",
+            "Index Name": "idx_patient_birthdate_date",
+            "Index Searches": 1,
+            "Local Dirtied Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Written Blocks": 0,
+            "Node Type": "Index Scan",
+            "Parallel Aware": false,
+            "Parent Relationship": "Outer",
+            "Plan Rows": 18,
+            "Plan Width": 63,
+            "Relation Name": "patient",
+            "Rows Removed by Filter": 0,
+            "Rows Removed by Index Recheck": 0,
+            "Scan Direction": "Forward",
+            "Shared Dirtied Blocks": 0,
+            "Shared Hit Blocks": 12,
+            "Shared Read Blocks": 2,
+            "Shared Written Blocks": 0,
+            "Startup Cost": 0.29,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Total Cost": 11314.8
+          }
+        ],
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 12,
+        "Shared Read Blocks": 2,
+        "Shared Written Blocks": 0,
+        "Startup Cost": 0.29,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0,
+        "Total Cost": 7543.3
+      },
+      "Planning": {
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 58,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "Planning Time": 0.311,
+      "Triggers": []
+    }
+  ],
+  "params": "[Timestamp(\"1980-01-01T00:00:00Z\"), Timestamp(\"2001-01-01T00:00:00Z\")]",
+  "sql": "SELECT r.resource::text, r.id, r.txid, r.created_at, r.updated_at FROM \"public\".\"patient\" AS r WHERE (tstzrange(fhir_extract_date_min(r.resource, ARRAY['$.\"birthDate\"[*]'::jsonpath, '$.\"birthDateDateTime\"[*]'::jsonpath, '$.\"birthDateDate\"[*]'::jsonpath, '$.\"birthDateInstant\"[*]'::jsonpath, '$.\"birthDate\".\"start\"[*]'::jsonpath, '$.\"birthDatePeriod\".\"start\"[*]'::jsonpath, '$.\"birthDate\".\"event\"[*]'::jsonpath, '$.\"birthDateTiming\".\"event\"[*]'::jsonpath]), fhir_extract_date_max(r.resource, ARRAY['$.\"birthDate\"[*]'::jsonpath, '$.\"birthDateDateTime\"[*]'::jsonpath, '$.\"birthDateDate\"[*]'::jsonpath, '$.\"birthDateInstant\"[*]'::jsonpath, '$.\"birthDate\".\"end\"[*]'::jsonpath, '$.\"birthDatePeriod\".\"end\"[*]'::jsonpath, '$.\"birthDate\".\"event\"[*]'::jsonpath, '$.\"birthDateTiming\".\"event\"[*]'::jsonpath]), '[]') && tstzrange($1::timestamptz, NULL, '[)') AND ((jsonb_typeof(r.resource->'birthDate') = 'string' OR jsonb_typeof(r.resource->'birthDateDateTime') = 'string' OR jsonb_typeof(r.resource->'birthDateDate') = 'string' OR jsonb_typeof(r.resource->'birthDateInstant') = 'string' OR (jsonb_typeof(r.resource->'birthDate') = 'object' AND NOT (r.resource->'birthDate' ? 'event')) OR (jsonb_typeof(r.resource->'birthDatePeriod') = 'object' AND NOT (r.resource->'birthDatePeriod' ? 'event'))) OR fhir_extract_date_multirange(r.resource, ARRAY['$.\"birthDate\"[*]'::jsonpath, '$.\"birthDateDateTime\"[*]'::jsonpath, '$.\"birthDateDate\"[*]'::jsonpath, '$.\"birthDateInstant\"[*]'::jsonpath, '$.\"birthDate\".\"event\"[*]'::jsonpath, '$.\"birthDateTiming\".\"event\"[*]'::jsonpath], ARRAY['$.\"birthDate\"[*]'::jsonpath, '$.\"birthDatePeriod\"[*]'::jsonpath]) && tstzrange($1::timestamptz, NULL, '[)'))) AND (tstzrange(fhir_extract_date_min(r.resource, ARRAY['$.\"birthDate\"[*]'::jsonpath, '$.\"birthDateDateTime\"[*]'::jsonpath, '$.\"birthDateDate\"[*]'::jsonpath, '$.\"birthDateInstant\"[*]'::jsonpath, '$.\"birthDate\".\"start\"[*]'::jsonpath, '$.\"birthDatePeriod\".\"start\"[*]'::jsonpath, '$.\"birthDate\".\"event\"[*]'::jsonpath, '$.\"birthDateTiming\".\"event\"[*]'::jsonpath]), fhir_extract_date_max(r.resource, ARRAY['$.\"birthDate\"[*]'::jsonpath, '$.\"birthDateDateTime\"[*]'::jsonpath, '$.\"birthDateDate\"[*]'::jsonpath, '$.\"birthDateInstant\"[*]'::jsonpath, '$.\"birthDate\".\"end\"[*]'::jsonpath, '$.\"birthDatePeriod\".\"end\"[*]'::jsonpath, '$.\"birthDate\".\"event\"[*]'::jsonpath, '$.\"birthDateTiming\".\"event\"[*]'::jsonpath]), '[]') && tstzrange(NULL, $2::timestamptz, '[)') AND ((jsonb_typeof(r.resource->'birthDate') = 'string' OR jsonb_typeof(r.resource->'birthDateDateTime') = 'string' OR jsonb_typeof(r.resource->'birthDateDate') = 'string' OR jsonb_typeof(r.resource->'birthDateInstant') = 'string' OR (jsonb_typeof(r.resource->'birthDate') = 'object' AND NOT (r.resource->'birthDate' ? 'event')) OR (jsonb_typeof(r.resource->'birthDatePeriod') = 'object' AND NOT (r.resource->'birthDatePeriod' ? 'event'))) OR fhir_extract_date_multirange(r.resource, ARRAY['$.\"birthDate\"[*]'::jsonpath, '$.\"birthDateDateTime\"[*]'::jsonpath, '$.\"birthDateDate\"[*]'::jsonpath, '$.\"birthDateInstant\"[*]'::jsonpath, '$.\"birthDate\".\"event\"[*]'::jsonpath, '$.\"birthDateTiming\".\"event\"[*]'::jsonpath], ARRAY['$.\"birthDate\"[*]'::jsonpath, '$.\"birthDatePeriod\"[*]'::jsonpath]) && tstzrange(NULL, $2::timestamptz, '[)'))) AND r.status != 'deleted' LIMIT 12"
+}

@@ -729,8 +729,14 @@ pub async fn build_app(
 
     // Launch all heavy init operations concurrently
     let parallel_start = std::time::Instant::now();
-    tracing::info!("Starting parallel initialization of 8 components...");
-    let bootstrap_fut = bootstrap_conformance_if_postgres(cfg, db_pool.clone());
+    tracing::info!("Starting parallel initialization of 7 component groups...");
+    // The initial policy snapshot depends on bootstrap writes. Loading them
+    // concurrently can cache an empty policy set for the entire cache TTL.
+    let bootstrap_and_policy_fut = async {
+        let bootstrap = bootstrap_conformance_if_postgres(cfg, db_pool.clone()).await;
+        let policies = policy_cache.refresh().await;
+        (bootstrap, policies)
+    };
     // SearchParameter registry build (was the slowest future at 2.7s cold).
     // Replaces `ReloadableSearchConfig::new(canonical_manager, …)` which
     // walked `canonical-manager`'s text-search engine: one `SELECT *` over
@@ -745,7 +751,6 @@ pub async fn build_app(
         search_options.clone(),
     );
     let auth_state_fut = initialize_auth_state(cfg, db_pool.clone());
-    let policy_refresh_fut = policy_cache.refresh();
     let operations_fut = crate::operations::load_operations();
     let compartment_fut =
         crate::compartments::CompartmentRegistry::from_canonical_manager(&canonical_manager);
@@ -753,19 +758,17 @@ pub async fn build_app(
     let resource_types_fut = model_provider.get_resource_types();
 
     let (
-        bootstrap_result,
+        (bootstrap_result, policy_refresh_result),
         search_config_result,
         auth_state_result,
-        policy_refresh_result,
         operations_result,
         compartment_result,
         gateway_routes_result,
         resource_types_result,
     ) = tokio::join!(
-        bootstrap_fut,
+        bootstrap_and_policy_fut,
         search_config_fut,
         auth_state_fut,
-        policy_refresh_fut,
         operations_fut,
         compartment_fut,
         gateway_routes_fut,
@@ -1345,11 +1348,11 @@ pub async fn build_app(
     });
     tracing::info!("Policy reload service started");
 
-    // Create policy evaluator with policies evaluated FIRST
+    // SMART scopes bound the delegated grant; policies may further restrict it.
     let policy_evaluator = Arc::new(PolicyEvaluator::new(
         policy_cache.clone(),
         PolicyEvaluatorConfig {
-            evaluate_scopes_first: false,
+            evaluate_scopes_first: true,
             quickjs_enabled: cfg.auth.policy.quickjs_enabled,
             quickjs_config: cfg.auth.policy.quickjs.clone(),
             ..PolicyEvaluatorConfig::default()

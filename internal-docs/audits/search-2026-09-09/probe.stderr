@@ -1,0 +1,4 @@
+
+thread 'main' (28404468) panicked at crates/octofhir-search/src/parser.rs:70:28:
+end byte index 2 is not a char boundary; it is inside '李' (bytes 0..3 of string)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

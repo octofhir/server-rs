@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 pub enum IdPolicy {
     /// Create: body `id` is optional; generate one if missing.
     Create,
-    /// Update: URL id is authoritative; if body `id` is present, it must match.
+    /// Update: the body must contain an id equal to the URL id (FHIR R4 HTTP).
     Update { path_id: String },
 }
 
@@ -48,9 +48,8 @@ pub fn envelope_from_json(
     let id = match policy {
         IdPolicy::Create => body_id.unwrap_or_else(generate_id),
         IdPolicy::Update { path_id } => {
-            if let Some(bid) = body_id
-                && bid != path_id
-            {
+            let bid = body_id.ok_or_else(|| "PUT body must contain id".to_string())?;
+            if bid != path_id {
                 return Err(format!(
                     "id in body '{bid}' does not match URL id '{path_id}'"
                 ));
@@ -107,7 +106,7 @@ pub fn envelope_from_json(
 /// This is a zero-allocation check that verifies:
 /// - body is a JSON object
 /// - `resourceType` is present and matches `expected_type`
-/// - For Update policy: body `id` (if present) matches the path id
+/// - For Update policy: body `id` is present and matches the path id
 ///
 /// Use this instead of `envelope_from_json` when you only need validation
 /// (the result ResourceEnvelope is discarded anyway).
@@ -136,13 +135,16 @@ pub fn validate_payload_structure(
         .map_err(|_| format!("invalid resourceType '{rt_str}'"))?;
 
     // Validate id policy (no allocation for common case)
-    if let IdPolicy::Update { path_id } = policy
-        && let Some(bid) = obj.get("id").and_then(|v| v.as_str())
-        && bid != path_id
-    {
-        return Err(format!(
-            "id in body '{bid}' does not match URL id '{path_id}'"
-        ));
+    if let IdPolicy::Update { path_id } = policy {
+        let bid = obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "PUT body must contain id".to_string())?;
+        if bid != path_id {
+            return Err(format!(
+                "id in body '{bid}' does not match URL id '{path_id}'"
+            ));
+        }
     }
 
     Ok(())

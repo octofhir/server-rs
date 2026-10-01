@@ -836,7 +836,9 @@ impl TokenService {
     /// - Access token revocation tracks JTI until natural expiration
     pub async fn revoke(&self, request: &RevocationRequest, client: &Client) -> AuthResult<()> {
         // Try to determine token type
-        let token_type = self.determine_token_type(&request.token, request.token_type_hint);
+        // A hint must not prevent revoking a token of another supported type
+        // (RFC 7009 section 2.1). Our token formats already identify the type.
+        let token_type = self.determine_token_type(&request.token, None);
 
         match token_type {
             Some(TokenTypeHint::AccessToken) => {

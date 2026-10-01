@@ -1,0 +1,78 @@
+{
+  "explain": [
+    {
+      "Execution Time": 0.029,
+      "Plan": {
+        "Actual Loops": 1,
+        "Actual Rows": 12.0,
+        "Actual Startup Time": 0.009,
+        "Actual Total Time": 0.021,
+        "Async Capable": false,
+        "Disabled": false,
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Plan Rows": 12,
+        "Plan Width": 63,
+        "Plans": [
+          {
+            "Actual Loops": 1,
+            "Actual Rows": 12.0,
+            "Actual Startup Time": 0.008,
+            "Actual Total Time": 0.019,
+            "Alias": "r",
+            "Async Capable": false,
+            "Disabled": false,
+            "Filter": "((resource @> '{\"gender\": \"female\"}'::jsonb) AND (status <> 'deleted'::resource_status))",
+            "Local Dirtied Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Written Blocks": 0,
+            "Node Type": "Seq Scan",
+            "Parallel Aware": false,
+            "Parent Relationship": "Outer",
+            "Plan Rows": 7273,
+            "Plan Width": 63,
+            "Relation Name": "patient",
+            "Rows Removed by Filter": 12,
+            "Shared Dirtied Blocks": 0,
+            "Shared Hit Blocks": 3,
+            "Shared Read Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Startup Cost": 0.0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Total Cost": 1204.39
+          }
+        ],
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 3,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Startup Cost": 0.0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0,
+        "Total Cost": 1.99
+      },
+      "Planning": {
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 1,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "Planning Time": 0.083,
+      "Triggers": []
+    }
+  ],
+  "params": "[Json(\"{\\\"gender\\\":\\\"female\\\"}\")]",
+  "sql": "SELECT r.resource::text, r.id, r.txid, r.created_at, r.updated_at FROM \"public\".\"patient\" AS r WHERE r.resource @> $1::jsonb AND r.status != 'deleted' LIMIT 12"
+}

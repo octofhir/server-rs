@@ -59,9 +59,10 @@ impl ValidationOutcome {
 
     /// Convert to FHIR OperationOutcome JSON
     pub fn to_operation_outcome(&self) -> JsonValue {
-        serde_json::json!({
-            "resourceType": "OperationOutcome",
-            "issue": self.issues.iter().map(|i| {
+        let mut issues = self
+            .issues
+            .iter()
+            .map(|i| {
                 let mut issue = serde_json::json!({
                     "severity": i.severity.as_str(),
                     "code": i.code,
@@ -89,7 +90,18 @@ impl ValidationOutcome {
                     });
                 }
                 issue
-            }).collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        if issues.is_empty() {
+            issues.push(serde_json::json!({
+                "severity": if self.valid { "information" } else { "error" },
+                "code": if self.valid { "informational" } else { "invalid" },
+                "diagnostics": if self.valid { "Validation completed successfully" } else { "Resource validation failed" }
+            }));
+        }
+        serde_json::json!({
+            "resourceType": "OperationOutcome",
+            "issue": issues
         })
     }
 }
@@ -220,7 +232,7 @@ impl ValidationService {
     /// declared canonicals are validated alongside the base type. Profiles the
     /// server cannot resolve are reported by the validator as warnings and do
     /// not fail the resource.
-    fn schemas_for(resource: &JsonValue, resource_type: &str) -> Vec<String> {
+    pub(crate) fn schemas_for(resource: &JsonValue, resource_type: &str) -> Vec<String> {
         let mut schemas = vec![resource_type.to_string()];
 
         if let Some(profiles) = resource
@@ -284,19 +296,15 @@ impl ValidationService {
 
     /// Convert ValidationResult to ValidationOutcome
     fn convert_result(result: ValidationResult) -> ValidationOutcome {
-        if result.valid {
-            ValidationOutcome::success()
-        } else {
-            let issues = result
-                .errors
-                .iter()
-                .map(Self::convert_validation_error)
-                .collect();
+        let issues = result
+            .errors
+            .iter()
+            .map(Self::convert_validation_error)
+            .collect();
 
-            ValidationOutcome {
-                valid: false,
-                issues,
-            }
+        ValidationOutcome {
+            valid: result.valid,
+            issues,
         }
     }
 
@@ -336,7 +344,11 @@ impl ValidationService {
         };
 
         ValidationIssue {
-            severity: IssueSeverity::Error,
+            severity: match error.constraint_severity.as_deref() {
+                Some("warning") => IssueSeverity::Warning,
+                Some("information") => IssueSeverity::Information,
+                _ => IssueSeverity::Error,
+            },
             code: "invalid".to_string(),
             diagnostics: detailed_diagnostics,
             location,
@@ -408,4 +420,22 @@ pub fn validate_resource(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn operation_outcome_always_has_at_least_one_issue() {
+        let success = ValidationOutcome::success().to_operation_outcome();
+        assert_eq!(success["issue"].as_array().unwrap().len(), 1);
+        assert_eq!(success["issue"][0]["severity"], "information");
+        let failure = ValidationOutcome {
+            valid: false,
+            issues: Vec::new(),
+        }
+        .to_operation_outcome();
+        assert_eq!(failure["issue"][0]["severity"], "error");
+    }
 }

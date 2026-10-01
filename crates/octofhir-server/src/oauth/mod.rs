@@ -20,6 +20,8 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
+use octofhir_auth::http::introspect::{IntrospectionState, introspect_handler};
+use octofhir_auth::http::revoke::{RevocationState, revoke_handler};
 use octofhir_auth::oauth::service::{AuthorizationConfig, AuthorizationService};
 use octofhir_auth::oauth::token::TokenRequest;
 use octofhir_auth::token::jwt::JwtService;
@@ -45,6 +47,8 @@ use crate::server::AppState;
 #[derive(Clone)]
 pub struct OAuthState {
     pub token_state: TokenState,
+    pub revocation_state: RevocationState,
+    pub introspection_state: IntrospectionState,
     pub logout_state: LogoutState,
     pub jwks_state: JwksState,
     pub smart_config_state: SmartConfigState,
@@ -99,6 +103,11 @@ impl OAuthState {
         .with_user_storage(user_storage.clone())
         .with_cookie_config(config.auth.cookie.clone())
         .with_fhir_storage(app_state.storage.clone());
+
+        let revocation_state =
+            RevocationState::new(token_state.token_service(), client_storage.clone());
+        let introspection_state =
+            IntrospectionState::new(token_state.token_service(), client_storage.clone());
 
         // Create PostgresSsoSessionStorage for SSO logout support
         // Uses FHIR storage for AuthSession resources
@@ -161,6 +170,8 @@ impl OAuthState {
 
         Some(Self {
             token_state,
+            revocation_state,
+            introspection_state,
             logout_state,
             jwks_state,
             smart_config_state,
@@ -185,6 +196,16 @@ pub fn oauth_routes(state: OAuthState) -> Router {
         // Token endpoint with audit logging - accepts x-www-form-urlencoded, returns JSON
         .route("/auth/token", post(auditing_token_handler))
         .with_state(auditing_state)
+        .merge(
+            Router::new()
+                .route("/auth/revoke", post(revoke_handler))
+                .with_state(state.revocation_state),
+        )
+        .merge(
+            Router::new()
+                .route("/auth/introspect", post(introspect_handler))
+                .with_state(state.introspection_state),
+        )
         .merge(logout_route(state.logout_state))
 }
 

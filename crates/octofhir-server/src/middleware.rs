@@ -374,7 +374,15 @@ async fn validate_token(
         return Err(octofhir_auth::AuthError::TokenExpired);
     }
 
-    // Check auth context cache (avoids DB queries)
+    // Revocation is authoritative across server instances. Check it even when
+    // JWT verification and identity are cached, including after logout.
+    if state.revoked_token_storage.is_revoked(&claims.jti).await? {
+        auth_cache.invalidate(&claims.jti).await;
+        jwt_cache.invalidate(token);
+        return Err(octofhir_auth::AuthError::TokenRevoked);
+    }
+
+    // Check auth context cache (avoids client/user DB queries)
     if let Some(cached_ctx) = auth_cache.get(&claims.jti).await {
         tracing::trace!(jti = %claims.jti, "Auth context cache hit");
         return Ok(cached_ctx);
@@ -382,11 +390,6 @@ async fn validate_token(
 
     // Cache miss - perform DB lookups
     tracing::trace!(jti = %claims.jti, "Auth context cache miss");
-
-    // Check revocation
-    if state.revoked_token_storage.is_revoked(&claims.jti).await? {
-        return Err(octofhir_auth::AuthError::TokenRevoked);
-    }
 
     // Load client
     let client = state
@@ -920,7 +923,7 @@ fn should_skip_authorization(req: &Request<Body>, registry: &OperationRegistrySe
 /// 3. Authorizes (evaluates access policies)
 /// 4. Inserts AuthContext + PolicyContext into request extensions
 pub async fn auth_middleware(
-    State(state): State<CombinedAuthState>,
+    State(state): State<crate::server::AppState>,
     mut req: Request<Body>,
     next: Next,
 ) -> Response {
@@ -935,9 +938,9 @@ pub async fn auth_middleware(
     }
 
     // Inject the shared anonymous AuthContext; Arc::clone is one atomic.
-    if state.anonymous_access {
+    if state.config.auth.policy.anonymous_access {
         req.extensions_mut()
-            .insert(Arc::clone(&state.anonymous_context));
+            .insert(Arc::clone(&state.anonymous_auth_context));
         return next.run(req).await;
     }
 
@@ -1058,7 +1061,7 @@ pub async fn auth_middleware(
         }
     };
 
-    let policy_context = match build_policy_context(&req, &auth_context) {
+    let mut policy_context = match build_policy_context(&req, &auth_context) {
         Ok(ctx) => ctx,
         Err(e) => {
             tracing::error!(error = %e, "Failed to build policy context");
@@ -1066,10 +1069,20 @@ pub async fn auth_middleware(
         }
     };
 
+    if let Err(error) =
+        crate::authorization::hydrate_scope_context(&state, &mut req, &mut policy_context).await
+    {
+        return (error.status_code(), Json(error.to_operation_outcome())).into_response();
+    }
     let decision = state.policy_evaluator.evaluate(&policy_context).await;
 
     match decision {
         AccessDecision::Allow => {
+            if let Err(error) =
+                crate::authorization::check_resource_scope(&policy_context, &state.base_url)
+            {
+                return (error.status_code(), Json(error.to_operation_outcome())).into_response();
+            }
             req.extensions_mut().insert(policy_context);
             next.run(req).await
         }
@@ -1307,11 +1320,37 @@ fn build_policy_context(
         .to_string();
 
     // Build the policy context
-    PolicyContextBuilder::new()
+    // Parse interactions relative to the FHIR base, preserving the external
+    // path for policy path matchers. POST has a body even before extraction.
+    let fhir_path = path.strip_prefix("/fhir/").map(|p| format!("/{p}"));
+    let relative_path = if path == "/fhir" {
+        "/"
+    } else {
+        fhir_path.as_deref().unwrap_or(path)
+    };
+    let mut context = PolicyContextBuilder::new()
         .with_auth_context(auth)
-        .with_request(method, path, query_params, None)
+        .with_request(
+            method,
+            relative_path,
+            query_params,
+            (method == "POST").then_some(Value::Null),
+        )
         .with_environment(request_id, None)
-        .build()
+        .with_launch_context(auth.patient.clone(), auth.encounter.clone())
+        .build()?;
+    context.request.body = None;
+    context.request.path = path.to_string();
+    // Administrative and application endpoints have policy-defined permissions,
+    // rather than being FHIR CRUD interactions.
+    if path == "/api"
+        || path.starts_with("/api/")
+        || path == "/admin"
+        || path.starts_with("/admin/")
+    {
+        context.request.operation = octofhir_auth::smart::scopes::FhirOperation::Operation;
+    }
+    Ok(context)
 }
 
 /// Create an unauthorized (401) response with FHIR OperationOutcome.

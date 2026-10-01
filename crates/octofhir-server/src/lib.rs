@@ -11,6 +11,7 @@ pub mod admin;
 pub mod app_platform;
 pub mod async_jobs;
 pub mod audit;
+mod authorization;
 pub mod bootstrap;
 // pub mod automations;
 pub mod cache;

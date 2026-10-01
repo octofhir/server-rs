@@ -510,7 +510,7 @@ fn detect_get_operation(path: &str, segments: &[&str]) -> FhirOperation {
     }
 
     // Check for history operations
-    if path.contains("/_history") {
+    if segments.contains(&"_history") {
         if segments.len() >= 4 && segments[2] == "_history" {
             // /ResourceType/id/_history/vid -> VRead
             return FhirOperation::VRead;
@@ -564,11 +564,11 @@ fn detect_get_operation(path: &str, segments: &[&str]) -> FhirOperation {
 
 fn detect_post_operation(path: &str, segments: &[&str], has_body: bool) -> FhirOperation {
     // Check for _search
-    if path.contains("/_search") {
-        return if segments.len() <= 2 {
-            FhirOperation::SearchType
-        } else {
+    if segments.last() == Some(&"_search") {
+        return if segments.len() == 1 {
             FhirOperation::SearchSystem
+        } else {
+            FhirOperation::SearchType
         };
     }
 

@@ -1,0 +1,83 @@
+{
+  "explain": [
+    {
+      "Execution Time": 417.905,
+      "Plan": {
+        "Actual Loops": 1,
+        "Actual Rows": 1.0,
+        "Actual Startup Time": 0.243,
+        "Actual Total Time": 417.889,
+        "Alias": "s",
+        "Async Capable": false,
+        "Disabled": false,
+        "Filter": "((status <> 'deleted'::resource_status) AND EXISTS(SubPlan 1))",
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Node Type": "Seq Scan",
+        "Parallel Aware": false,
+        "Plan Rows": 10000,
+        "Plan Width": 63,
+        "Plans": [
+          {
+            "Actual Loops": 20001,
+            "Actual Rows": 0.0,
+            "Actual Startup Time": 0.021,
+            "Actual Total Time": 0.021,
+            "Alias": "ref",
+            "Async Capable": false,
+            "Disabled": false,
+            "Filter": "(((regexp_match((value ->> 'reference'::text), '([A-Za-z]+)/([A-Za-z0-9.-]{1,64})$'::text))[1] = 'Patient'::text) AND ((regexp_match((value ->> 'reference'::text), '([A-Za-z]+)/([A-Za-z0-9.-]{1,64})$'::text))[2] = ANY (('{p-10}'::cstring)::text[])))",
+            "Function Name": "jsonb_array_elements",
+            "Local Dirtied Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Written Blocks": 0,
+            "Node Type": "Function Scan",
+            "Parallel Aware": false,
+            "Parent Relationship": "SubPlan",
+            "Plan Rows": 1,
+            "Plan Width": 0,
+            "Rows Removed by Filter": 1,
+            "Shared Dirtied Blocks": 0,
+            "Shared Hit Blocks": 0,
+            "Shared Read Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Startup Cost": 0.02,
+            "Subplan Name": "SubPlan 1",
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Total Cost": 4.03
+          }
+        ],
+        "Relation Name": "observation",
+        "Rows Removed by Filter": 20000,
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 1819,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Startup Cost": 0.0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0,
+        "Total Cost": 82623.04
+      },
+      "Planning": {
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 0,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "Planning Time": 0.086,
+      "Triggers": []
+    }
+  ],
+  "params": "[Text(\"Patient\"), Text(\"{p-10}\")]",
+  "sql": "SELECT s.resource::text,s.id,s.txid,s.created_at,s.updated_at FROM observation s WHERE s.status != 'deleted' AND EXISTS(SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.resource->'subject') = 'array' THEN s.resource->'subject' WHEN s.resource->'subject' IS NOT NULL AND s.resource->'subject' != 'null'::jsonb THEN jsonb_build_array(s.resource->'subject') ELSE '[]'::jsonb END) ref CROSS JOIN LATERAL (SELECT regexp_match(ref->>'reference', '([A-Za-z]+)/([A-Za-z0-9.-]{1,64})$') AS m) x WHERE x.m[1]=$1 AND x.m[2]=ANY($2::text[]))"
+}

@@ -5,11 +5,13 @@ use std::sync::Arc;
 use json_patch::{Patch, PatchOperation, patch};
 use octofhir_api::ApiError;
 use octofhir_fhir_model::provider::ModelProvider;
-use octofhir_fhirpath::{Collection, EvaluationContext, FhirPathEngine, FhirPathValue};
+use octofhir_fhirpath::FhirPathEngine;
 use serde_json::Value;
 
 /// Type alias for shared model provider
 pub type SharedModelProvider = Arc<dyn ModelProvider + Send + Sync>;
+
+mod locations;
 
 // ============================================================================
 // JSON Patch (RFC 6902)
@@ -44,6 +46,10 @@ pub fn apply_json_patch(resource: &Value, patch_bytes: &[u8]) -> Result<Value, A
 /// Validates that JSON Patch operations don't modify protected fields.
 fn validate_json_patch_operations(operations: &[PatchOperation]) -> Result<(), ApiError> {
     for op in operations {
+        // A test observes identity; it does not change it (RFC 6902).
+        if matches!(op, PatchOperation::Test(_)) {
+            continue;
+        }
         let path = json_patch_operation_path(op);
 
         // Prevent modifying resourceType
@@ -61,6 +67,40 @@ fn validate_json_patch_operations(operations: &[PatchOperation]) -> Result<(), A
         }
     }
     Ok(())
+}
+
+/// Decode a Bundle PATCH payload and use the same patch engines as HTTP PATCH.
+pub async fn apply_bundle_patch(
+    engine: &FhirPathEngine,
+    model_provider: &SharedModelProvider,
+    resource: &Value,
+    patch: &Value,
+) -> Result<Value, ApiError> {
+    match patch["resourceType"].as_str() {
+        Some("Binary") => {
+            use base64::{Engine, engine::general_purpose::STANDARD};
+            if patch["contentType"].as_str() != Some("application/json-patch+json") {
+                return Err(ApiError::unsupported_media_type(
+                    "Bundle Binary PATCH requires application/json-patch+json",
+                ));
+            }
+            let data = patch["data"]
+                .as_str()
+                .ok_or_else(|| ApiError::bad_request("Binary PATCH requires data"))?;
+            let bytes = STANDARD
+                .decode(data)
+                .map_err(|e| ApiError::bad_request(format!("Invalid Binary PATCH data: {e}")))?;
+            apply_json_patch(resource, &bytes)
+        }
+        Some("Parameters") => {
+            let bytes =
+                serde_json::to_vec(patch).map_err(|e| ApiError::bad_request(e.to_string()))?;
+            apply_fhirpath_patch(engine, model_provider, resource, &bytes).await
+        }
+        _ => Err(ApiError::bad_request(
+            "Bundle PATCH requires Binary or FHIRPath Parameters",
+        )),
+    }
 }
 
 /// Extracts the path from a JSON Patch operation.
@@ -163,7 +203,7 @@ pub async fn apply_fhirpath_patch(
                     model_provider,
                     &patched,
                     &path_expr,
-                    index as usize,
+                    nonnegative_index(index)?,
                     &value,
                 )
                 .await?;
@@ -185,9 +225,15 @@ pub async fn apply_fhirpath_patch(
                 let destination = find_part_integer(parts, "destination").ok_or_else(|| {
                     ApiError::bad_request("'move' operation requires 'destination' parameter")
                 })?;
-                patched =
-                    fhirpath_move(&patched, &path_expr, source as usize, destination as usize)
-                        .await?;
+                patched = fhirpath_move(
+                    engine,
+                    model_provider,
+                    &patched,
+                    &path_expr,
+                    nonnegative_index(source)?,
+                    nonnegative_index(destination)?,
+                )
+                .await?;
             }
             _ => {
                 return Err(ApiError::bad_request(format!(
@@ -198,7 +244,18 @@ pub async fn apply_fhirpath_patch(
         }
     }
 
+    if patched.get("id") != resource.get("id")
+        || patched.get("resourceType") != resource.get("resourceType")
+    {
+        return Err(ApiError::bad_request(
+            "Patch cannot change resource identity",
+        ));
+    }
     Ok(patched)
+}
+
+fn nonnegative_index(value: i64) -> Result<usize, ApiError> {
+    usize::try_from(value).map_err(|_| ApiError::bad_request("Patch indices must be nonnegative"))
 }
 
 /// Validates that the FHIRPath expression doesn't target protected fields.
@@ -263,263 +320,195 @@ fn find_part_value(parts: &[Value]) -> Option<Value> {
     })
 }
 
-/// Execute FHIRPath 'add' operation - adds a new element to an object.
+/// Require a single resource location, rather than matching by equal JSON values.
+async fn single_location(
+    engine: &FhirPathEngine,
+    provider: &SharedModelProvider,
+    resource: &Value,
+    path: &str,
+    allow_missing: bool,
+) -> Result<Option<locations::Location>, ApiError> {
+    let mut targets = locations::select(engine, provider, resource, path).await?;
+    if targets.len() > 1 || (targets.is_empty() && !allow_missing) {
+        return Err(ApiError::bad_request(format!(
+            "Patch path '{path}' must select exactly one element"
+        )));
+    }
+    Ok(targets.pop())
+}
+
 async fn fhirpath_add(
     engine: &FhirPathEngine,
-    model_provider: &SharedModelProvider,
+    provider: &SharedModelProvider,
     resource: &Value,
     path: &str,
     name: &str,
     value: &Value,
 ) -> Result<Value, ApiError> {
+    let target = single_location(engine, provider, resource, path, false)
+        .await?
+        .unwrap();
+    let element = provider
+        .get_element_type(target.value.type_info(), name)
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?
+        .ok_or_else(|| ApiError::bad_request(format!("Unknown patch element '{name}'")))?;
     let mut result = resource.clone();
-
-    // Evaluate the FHIRPath to find the target location
-    let targets = evaluate_fhirpath(engine, model_provider, resource, path).await?;
-
-    if targets.is_empty() {
-        return Err(ApiError::bad_request(format!(
-            "FHIRPath expression '{}' did not match any elements",
-            path
-        )));
-    }
-
-    // For simplicity, we handle the common case of adding to root or a direct child
-    // A full implementation would need to track JSON paths during evaluation
-    if path == "$this" || path.chars().all(|c| c.is_alphanumeric()) {
-        // Adding to root or simple field
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert(name.to_string(), value.clone());
-        }
+    let object = result
+        .pointer_mut(&target.pointer)
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| ApiError::bad_request("Patch add requires an object target"))?;
+    if element.singleton == Some(false) {
+        let array = object
+            .entry(name)
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| ApiError::bad_request("Repeating patch element must be an array"))?;
+        array.push(value.clone());
     } else {
-        // For complex paths, use a simplified approach
-        // This handles paths like "Patient.name" by navigating the JSON
-        let segments: Vec<&str> = path.split('.').collect();
-        if let Some(target) = navigate_to_parent(&mut result, &segments)
-            && let Some(obj) = target.as_object_mut()
-        {
-            obj.insert(name.to_string(), value.clone());
+        if object.contains_key(name) {
+            return Err(ApiError::bad_request(
+                "Patch add cannot replace an existing non-repeating element",
+            ));
         }
+        object.insert(name.to_owned(), value.clone());
     }
-
     Ok(result)
 }
 
-/// Execute FHIRPath 'insert' operation - inserts into an array at a specific index.
+/// A collection operation must select one physical JSON array, including an empty one.
+async fn collection_pointer(
+    engine: &FhirPathEngine,
+    provider: &SharedModelProvider,
+    resource: &Value,
+    path: &str,
+) -> Result<String, ApiError> {
+    use octofhir_fhirpath::ast::ExpressionNode;
+    let ast = engine
+        .compile_ast(path)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let (parent_path, name) = match ast.as_ref() {
+        ExpressionNode::PropertyAccess(node) => (node.object.to_string(), node.property.clone()),
+        ExpressionNode::Identifier(node) => (
+            resource["resourceType"].as_str().unwrap_or("").to_owned(),
+            node.name.clone(),
+        ),
+        _ => {
+            return Err(ApiError::bad_request(
+                "Collection patch path must select a repeating property",
+            ));
+        }
+    };
+    let parent = single_location(engine, provider, resource, &parent_path, false)
+        .await?
+        .unwrap();
+    let pointer = format!("{}/{}", parent.pointer, locations::escape(&name));
+    if !resource.pointer(&pointer).is_some_and(Value::is_array) {
+        return Err(ApiError::bad_request(
+            "Collection patch target must be an array",
+        ));
+    }
+    Ok(pointer)
+}
+
 async fn fhirpath_insert(
     engine: &FhirPathEngine,
-    model_provider: &SharedModelProvider,
+    provider: &SharedModelProvider,
     resource: &Value,
     path: &str,
     index: usize,
     value: &Value,
 ) -> Result<Value, ApiError> {
+    let pointer = collection_pointer(engine, provider, resource, path).await?;
     let mut result = resource.clone();
-
-    // Evaluate path to verify it exists
-    let _targets = evaluate_fhirpath(engine, model_provider, resource, path).await?;
-
-    // Navigate to the array and insert
-    let segments: Vec<&str> = path.split('.').collect();
-    if let Some(target) = navigate_to_path(&mut result, &segments) {
-        if let Some(arr) = target.as_array_mut() {
-            if index <= arr.len() {
-                arr.insert(index, value.clone());
-            } else {
-                return Err(ApiError::bad_request(format!(
-                    "Index {} out of bounds for array of length {}",
-                    index,
-                    arr.len()
-                )));
-            }
-        } else {
-            return Err(ApiError::bad_request(format!(
-                "Path '{}' does not point to an array",
-                path
-            )));
-        }
+    let array = result
+        .pointer_mut(&pointer)
+        .and_then(Value::as_array_mut)
+        .unwrap();
+    if index > array.len() {
+        return Err(ApiError::bad_request("Patch insert index is out of bounds"));
     }
-
+    array.insert(index, value.clone());
     Ok(result)
 }
 
-/// Execute FHIRPath 'delete' operation - removes an element.
 async fn fhirpath_delete(
     engine: &FhirPathEngine,
-    model_provider: &SharedModelProvider,
+    provider: &SharedModelProvider,
     resource: &Value,
     path: &str,
 ) -> Result<Value, ApiError> {
+    let Some(target) = single_location(engine, provider, resource, path, true).await? else {
+        return Ok(resource.clone());
+    };
+    let (parent, key) = target
+        .pointer
+        .rsplit_once('/')
+        .ok_or_else(|| ApiError::bad_request("Patch cannot delete the resource root"))?;
     let mut result = resource.clone();
-
-    // Evaluate path to verify it exists
-    let _targets = evaluate_fhirpath(engine, model_provider, resource, path).await?;
-
-    // Navigate to parent and remove the field
-    let segments: Vec<&str> = path.split('.').collect();
-    if segments.len() >= 2 {
-        let parent_segments = &segments[..segments.len() - 1];
-        let field_name = segments[segments.len() - 1];
-
-        if let Some(parent) = navigate_to_path(&mut result, parent_segments)
-            && let Some(obj) = parent.as_object_mut()
-        {
-            obj.remove(field_name);
+    match result.pointer_mut(parent) {
+        Some(Value::Array(array)) => {
+            let index = key
+                .parse::<usize>()
+                .map_err(|_| ApiError::bad_request("Invalid patch array index"))?;
+            array.remove(index);
         }
-    } else if segments.len() == 1 {
-        // Deleting from root
-        if let Some(obj) = result.as_object_mut() {
-            obj.remove(segments[0]);
+        Some(Value::Object(object)) => {
+            object.remove(&key.replace("~1", "/").replace("~0", "~"));
         }
+        _ => return Err(ApiError::bad_request("Patch delete target does not exist")),
     }
-
+    // FHIR JSON omits empty arrays, including arrays emptied by a delete.
+    if result
+        .pointer(parent)
+        .is_some_and(|v| v.as_array().is_some_and(Vec::is_empty))
+        && let Some((grandparent, field)) = parent.rsplit_once('/')
+        && let Some(object) = result
+            .pointer_mut(grandparent)
+            .and_then(Value::as_object_mut)
+    {
+        object.remove(&field.replace("~1", "/").replace("~0", "~"));
+    }
     Ok(result)
 }
 
-/// Execute FHIRPath 'replace' operation - replaces an element's value.
 async fn fhirpath_replace(
     engine: &FhirPathEngine,
-    model_provider: &SharedModelProvider,
+    provider: &SharedModelProvider,
     resource: &Value,
     path: &str,
     value: &Value,
 ) -> Result<Value, ApiError> {
+    let target = single_location(engine, provider, resource, path, false)
+        .await?
+        .unwrap();
     let mut result = resource.clone();
-
-    // Evaluate path to verify it exists
-    let targets = evaluate_fhirpath(engine, model_provider, resource, path).await?;
-
-    if targets.is_empty() {
-        return Err(ApiError::bad_request(format!(
-            "FHIRPath expression '{}' did not match any elements for replace",
-            path
-        )));
-    }
-
-    // Navigate to parent and replace the field
-    let segments: Vec<&str> = path.split('.').collect();
-    if segments.len() >= 2 {
-        let parent_segments = &segments[..segments.len() - 1];
-        let field_name = segments[segments.len() - 1];
-
-        if let Some(parent) = navigate_to_path(&mut result, parent_segments)
-            && let Some(obj) = parent.as_object_mut()
-        {
-            obj.insert(field_name.to_string(), value.clone());
-        }
-    } else if segments.len() == 1 {
-        // Replacing at root level
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert(segments[0].to_string(), value.clone());
-        }
-    }
-
+    *result
+        .pointer_mut(&target.pointer)
+        .ok_or_else(|| ApiError::bad_request("Patch target does not exist"))? = value.clone();
     Ok(result)
 }
 
-/// Execute FHIRPath 'move' operation - moves an element within an array.
 async fn fhirpath_move(
+    engine: &FhirPathEngine,
+    provider: &SharedModelProvider,
     resource: &Value,
     path: &str,
     source: usize,
     destination: usize,
 ) -> Result<Value, ApiError> {
+    let pointer = collection_pointer(engine, provider, resource, path).await?;
     let mut result = resource.clone();
-
-    let segments: Vec<&str> = path.split('.').collect();
-    if let Some(target) = navigate_to_path(&mut result, &segments) {
-        if let Some(arr) = target.as_array_mut() {
-            if source >= arr.len() {
-                return Err(ApiError::bad_request(format!(
-                    "Source index {} out of bounds for array of length {}",
-                    source,
-                    arr.len()
-                )));
-            }
-            let elem = arr.remove(source);
-            let dest = if destination > source {
-                destination - 1
-            } else {
-                destination
-            };
-            if dest > arr.len() {
-                arr.push(elem);
-            } else {
-                arr.insert(dest, elem);
-            }
-        } else {
-            return Err(ApiError::bad_request(format!(
-                "Path '{}' does not point to an array",
-                path
-            )));
-        }
+    let array = result
+        .pointer_mut(&pointer)
+        .and_then(Value::as_array_mut)
+        .unwrap();
+    if source >= array.len() || destination >= array.len() {
+        return Err(ApiError::bad_request("Patch move index is out of bounds"));
     }
-
+    let value = array.remove(source);
+    array.insert(destination, value);
     Ok(result)
-}
-
-/// Evaluate a FHIRPath expression against a resource.
-async fn evaluate_fhirpath(
-    engine: &FhirPathEngine,
-    model_provider: &SharedModelProvider,
-    resource: &Value,
-    path: &str,
-) -> Result<Vec<FhirPathValue>, ApiError> {
-    // Cast to the FHIRPath ModelProvider trait
-    let fhirpath_provider: Arc<dyn octofhir_fhirpath::ModelProvider + Send + Sync> =
-        model_provider.clone();
-    let input = Collection::from_json_resource(resource.clone(), Some(fhirpath_provider.clone()))
-        .await
-        .map_err(|e| ApiError::bad_request(format!("Failed to create FHIRPath input: {}", e)))?;
-    let context = EvaluationContext::new(input, fhirpath_provider, None, None, None);
-
-    engine
-        .evaluate(path, &context)
-        .await
-        .map(|r| r.value.into_vec())
-        .map_err(|e| ApiError::bad_request(format!("FHIRPath evaluation failed: {}", e)))
-}
-
-/// Navigate to a path in the JSON structure, returning a mutable reference.
-fn navigate_to_path<'a>(value: &'a mut Value, segments: &[&str]) -> Option<&'a mut Value> {
-    let mut current = value;
-    for segment in segments {
-        // Skip the resource type prefix (e.g., "Patient" in "Patient.name")
-        if current
-            .get("resourceType")
-            .and_then(|v| v.as_str())
-            .map(|rt| rt == *segment)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-
-        current = current.get_mut(*segment)?;
-    }
-    Some(current)
-}
-
-/// Navigate to the parent of the target path.
-fn navigate_to_parent<'a>(value: &'a mut Value, segments: &[&str]) -> Option<&'a mut Value> {
-    if segments.is_empty() {
-        return Some(value);
-    }
-
-    let mut current = value;
-    for segment in segments {
-        // Skip the resource type prefix
-        if current
-            .get("resourceType")
-            .and_then(|v| v.as_str())
-            .map(|rt| rt == *segment)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-
-        current = current.get_mut(*segment)?;
-    }
-    Some(current)
 }
 
 #[cfg(test)]

@@ -1,0 +1,111 @@
+{
+  "explain": [
+    {
+      "Execution Time": 17.261,
+      "Plan": {
+        "Actual Loops": 1,
+        "Actual Rows": 12.0,
+        "Actual Startup Time": 17.246,
+        "Actual Total Time": 17.248,
+        "Async Capable": false,
+        "Disabled": false,
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Plan Rows": 12,
+        "Plan Width": 95,
+        "Plans": [
+          {
+            "Actual Loops": 1,
+            "Actual Rows": 12.0,
+            "Actual Startup Time": 17.245,
+            "Actual Total Time": 17.246,
+            "Async Capable": false,
+            "Disabled": false,
+            "Local Dirtied Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Written Blocks": 0,
+            "Node Type": "Sort",
+            "Parallel Aware": false,
+            "Parent Relationship": "Outer",
+            "Plan Rows": 20002,
+            "Plan Width": 95,
+            "Plans": [
+              {
+                "Actual Loops": 1,
+                "Actual Rows": 20002.0,
+                "Actual Startup Time": 0.008,
+                "Actual Total Time": 15.012,
+                "Alias": "r",
+                "Async Capable": false,
+                "Disabled": false,
+                "Filter": "(status <> 'deleted'::resource_status)",
+                "Local Dirtied Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Written Blocks": 0,
+                "Node Type": "Seq Scan",
+                "Parallel Aware": false,
+                "Parent Relationship": "Outer",
+                "Plan Rows": 20002,
+                "Plan Width": 95,
+                "Relation Name": "patient",
+                "Rows Removed by Filter": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Hit Blocks": 868,
+                "Shared Read Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Startup Cost": 0.0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Total Cost": 1318.05
+              }
+            ],
+            "Shared Dirtied Blocks": 0,
+            "Shared Hit Blocks": 868,
+            "Shared Read Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Sort Key": [
+              "(((resource -> 'name'::text) ->> 'family'::text))"
+            ],
+            "Sort Method": "top-N heapsort",
+            "Sort Space Type": "Memory",
+            "Sort Space Used": 28,
+            "Startup Cost": 1776.59,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Total Cost": 1826.59
+          }
+        ],
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 868,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Startup Cost": 1776.59,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0,
+        "Total Cost": 1776.62
+      },
+      "Planning": {
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 0,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "Planning Time": 0.047,
+      "Triggers": []
+    }
+  ],
+  "params": "[]",
+  "sql": "SELECT r.resource::text, r.id, r.txid, r.created_at, r.updated_at FROM \"public\".\"patient\" AS r WHERE r.status != 'deleted' ORDER BY r.resource->'name'->>'family' ASC NULLS LAST LIMIT 12"
+}

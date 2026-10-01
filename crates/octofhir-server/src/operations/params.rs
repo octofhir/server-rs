@@ -28,6 +28,28 @@ pub enum OperationParams {
 }
 
 impl OperationParams {
+    /// POST operations may carry primitive parameters in the query, including
+    /// the standard $validate?profile=... form with a direct resource body.
+    pub fn post_with_query(value: Value, query: HashMap<String, String>) -> Self {
+        if query.is_empty() {
+            return Self::Post(value);
+        }
+        let mut parameters = Self::Post(value).to_value();
+        let entries = parameters
+            .as_object_mut()
+            .unwrap()
+            .entry("parameter")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(entries) = entries.as_array_mut() {
+            entries.extend(
+                query
+                    .into_iter()
+                    .map(|(name, value)| json!({"name":name,"valueString":value})),
+            );
+        }
+        Self::Post(parameters)
+    }
+
     /// Converts the operation parameters to a FHIR Parameters resource.
     ///
     /// For GET requests, query parameters are converted to Parameters.parameter
@@ -194,13 +216,21 @@ where
             Ok(OperationParams::Get(params))
         } else {
             // Extract JSON body for POST
+            let (mut parts, body) = req.into_parts();
+            let Query(query): Query<HashMap<String, String>> =
+                Query::from_request_parts(&mut parts, state)
+                    .await
+                    .map_err(|e| OperationParamsRejection {
+                        message: format!("Failed to parse query parameters: {e}"),
+                    })?;
+            let req = Request::from_parts(parts, body);
             let Json(value): Json<Value> =
                 Json::from_request(req, state)
                     .await
                     .map_err(|e| OperationParamsRejection {
                         message: format!("Failed to parse request body: {}", e),
                     })?;
-            Ok(OperationParams::Post(value))
+            Ok(OperationParams::post_with_query(value, query))
         }
     }
 }
@@ -208,6 +238,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn post_query_retains_body_and_requested_profile() {
+        let resource = json!({"resourceType":"Patient","active":true});
+        let params = OperationParams::post_with_query(
+            resource.clone(),
+            HashMap::from([("profile".into(), "http://example.org/profile".into())]),
+        )
+        .to_value();
+        assert_eq!(params["parameter"][0]["resource"], resource);
+        assert!(params["parameter"].as_array().unwrap().iter().any(|p| p["name"] == "profile" && p["valueString"] == "http://example.org/profile"));
+    }
 
     #[test]
     fn test_get_params_to_value() {

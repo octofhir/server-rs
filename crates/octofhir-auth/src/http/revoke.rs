@@ -228,15 +228,21 @@ pub async fn revoke_handler(
             StatusCode::OK.into_response()
         }
         Err(e) => {
-            // Per RFC 7009, we should still return 200 OK for most errors
-            // to avoid revealing information about token existence.
-            // Only return error for unexpected server errors.
+            // Invalid and unknown tokens are already successful no-ops in
+            // TokenService. A persistence failure must not claim revocation.
             tracing::warn!(
                 client_id = %client.client_id,
                 error = %e,
-                "Token revocation encountered error (returning 200 OK per RFC 7009)"
+                "Token revocation failed"
             );
-            StatusCode::OK.into_response()
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(serde_json::json!({
+                    "error": "temporarily_unavailable",
+                    "error_description": "Token revocation is temporarily unavailable"
+                })),
+            )
+                .into_response()
         }
     }
 }

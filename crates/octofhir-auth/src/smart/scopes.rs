@@ -169,8 +169,9 @@ impl FhirOperation {
             // Search operations require 's'
             Self::Search | Self::SearchType | Self::SearchSystem => Some('s'),
 
-            // History operations require 'r' (read access to see history)
-            Self::HistoryInstance | Self::HistoryType | Self::HistorySystem => Some('r'),
+            // SMART v2 distinguishes instance history from aggregate history.
+            Self::HistoryInstance => Some('r'),
+            Self::HistoryType | Self::HistorySystem => Some('s'),
 
             // Batch/Transaction - handled specially (check individual entries)
             // Return None here; actual permission checking happens per-entry
@@ -1247,6 +1248,25 @@ impl fmt::Display for SmartScopes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_permissions_follow_smart_v2_interaction_mapping() {
+        assert_eq!(
+            FhirOperation::HistoryInstance.required_permission(),
+            Some('r')
+        );
+        assert_eq!(FhirOperation::HistoryType.required_permission(), Some('s'));
+        assert_eq!(
+            FhirOperation::HistorySystem.required_permission(),
+            Some('s')
+        );
+        let read = SmartScopes::parse("system/Patient.r").unwrap();
+        assert!(read.permits("Patient", FhirOperation::HistoryInstance, None));
+        assert!(!read.permits("Patient", FhirOperation::HistoryType, None));
+        let search = SmartScopes::parse("system/Patient.s").unwrap();
+        assert!(search.permits("Patient", FhirOperation::HistoryType, None));
+        assert!(!search.permits("Patient", FhirOperation::HistoryInstance, None));
+    }
 
     // -------------------------------------------------------------------------
     // Permissions Tests

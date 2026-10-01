@@ -80,6 +80,11 @@ pub struct TokenState {
 }
 
 impl TokenState {
+    /// Share the configured service with revocation and introspection endpoints.
+    pub fn token_service(&self) -> Arc<TokenService> {
+        Arc::clone(&self.token_service)
+    }
+
     /// Creates a new token state.
     pub fn new(
         jwt_service: Arc<JwtService>,

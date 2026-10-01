@@ -1411,11 +1411,9 @@ impl CompartmentChecker {
         // Get the reference value(s) from the resource
         let references = self.references_for_param(resource, field_path);
 
-        references.iter().any(|r| {
-            r == &expected_ref
-                || r == compartment_id
-                || r.ends_with(&format!("/{}", compartment_id))
-        })
+        references
+            .iter()
+            .any(|r| r.split("/_history/").next() == Some(expected_ref.as_str()))
     }
 
     /// Collect all reference values for a given parameter.

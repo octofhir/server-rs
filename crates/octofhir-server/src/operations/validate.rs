@@ -105,6 +105,62 @@ impl ValidateOperation {
         }
     }
 
+    /// An explicitly requested profile must be resolvable; it is not an
+    /// optional declaration that may be ignored with a warning.
+    async fn validate_requested_profile(
+        &self,
+        state: &AppState,
+        params: &Value,
+        resource: &Value,
+    ) -> Result<Value, OperationError> {
+        let profiles: Vec<_> = params["parameter"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|parameter| parameter["name"].as_str() == Some("profile"))
+            .collect();
+        if profiles.len() > 1 {
+            return Err(OperationError::InvalidParameters(
+                "profile permits only one value".into(),
+            ));
+        }
+        let Some(parameter) = profiles.first() else {
+            return Ok(state
+                .validation_service
+                .validate(resource)
+                .await
+                .to_operation_outcome());
+        };
+        let profile = parameter["valueUri"]
+            .as_str()
+            .or_else(|| parameter["valueString"].as_str())
+            .filter(|profile| !profile.is_empty())
+            .ok_or_else(|| OperationError::InvalidParameters("profile requires a URI".into()))?;
+        if state
+            .model_provider
+            .get_schema_by_url(profile)
+            .await
+            .is_none()
+        {
+            return Err(OperationError::InvalidParameters(format!(
+                "Cannot validate against unavailable profile: {profile}"
+            )));
+        }
+        let resource_type = resource["resourceType"].as_str().ok_or_else(|| {
+            OperationError::InvalidParameters("Resource must have a resourceType".into())
+        })?;
+        let mut schemas =
+            crate::validation::ValidationService::schemas_for(resource, resource_type);
+        if !schemas.iter().any(|schema| schema == profile) {
+            schemas.push(profile.to_owned());
+        }
+        Ok(state
+            .validation_service
+            .validate_against_profiles(resource, &schemas)
+            .await
+            .to_operation_outcome())
+    }
+
     /// Extracts the resource from the Parameters input.
     fn extract_resource(&self, params: &Value) -> Option<Value> {
         params["parameter"]
@@ -296,8 +352,8 @@ impl OperationHandler for ValidateOperation {
         })?;
 
         // Use ValidationService for comprehensive validation
-        let outcome = state.validation_service.validate(&resource).await;
-        Ok(outcome.to_operation_outcome())
+        self.validate_requested_profile(state, params, &resource)
+            .await
     }
 
     async fn handle_type(
@@ -328,8 +384,8 @@ impl OperationHandler for ValidateOperation {
         }
 
         // Use ValidationService for comprehensive validation
-        let outcome = state.validation_service.validate(&resource).await;
-        Ok(outcome.to_operation_outcome())
+        self.validate_requested_profile(state, params, &resource)
+            .await
     }
 
     async fn handle_instance(
@@ -383,8 +439,8 @@ impl OperationHandler for ValidateOperation {
         }
 
         // Use ValidationService for comprehensive validation
-        let outcome = state.validation_service.validate(&resource).await;
-        Ok(outcome.to_operation_outcome())
+        self.validate_requested_profile(state, params, &resource)
+            .await
     }
 }
 

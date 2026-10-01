@@ -18,6 +18,411 @@ use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tokio::task::JoinHandle;
 
+fn path_patch(operation: &str, path: &str, extra: Vec<Value>) -> Value {
+    let mut parts = vec![
+        json!({"name":"type","valueCode":operation}),
+        json!({"name":"path","valueString":path}),
+    ];
+    parts.extend(extra);
+    json!({"resourceType":"Parameters","parameter":[{"name":"operation","part":parts}]})
+}
+
+#[tokio::test]
+async fn validate_honors_explicit_profiles_in_query_and_parameters() {
+    use reqwest::StatusCode;
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown, _server) = start_server(&config).await;
+    let client = reqwest::Client::new();
+    let resource = json!({"resourceType":"Patient","active":true});
+    let response = client
+        .post(format!("{base}/Patient/$validate"))
+        .json(&resource)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let outcome: Value = response.json().await.unwrap();
+    assert_eq!(outcome["resourceType"], "OperationOutcome");
+    assert!(!outcome["issue"].as_array().unwrap().is_empty());
+    assert_eq!(outcome["issue"][0]["severity"], "information");
+
+    for (profile, expected) in [
+        (
+            "http://hl7.org/fhir/StructureDefinition/Patient",
+            StatusCode::OK,
+        ),
+        (
+            "http://example.invalid/unavailable-profile",
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let response = client
+            .post(format!("{base}/Patient/$validate"))
+            .query(&[("profile", profile)])
+            .json(&resource)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "query profile {profile}");
+        let response = client
+            .post(format!("{base}/Patient/$validate"))
+            .json(&json!({"resourceType":"Parameters","parameter":[
+                {"name":"resource","resource":resource},
+                {"name":"profile","valueUri":profile}
+            ]}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "Parameters profile {profile}");
+    }
+    let response = client
+        .post(format!("{base}/Patient/$validate"))
+        .json(&json!({"resourceType":"Patient","active":"wrong"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let outcome: Value = response.json().await.unwrap();
+    assert!(
+        outcome["issue"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| issue["severity"] == "error")
+    );
+    let _ = shutdown.send(());
+}
+
+async fn send_bundle(
+    client: &reqwest::Client,
+    base: &str,
+    kind: &str,
+    entries: Value,
+) -> (reqwest::StatusCode, Value) {
+    let response = client
+        .post(base)
+        .json(&json!({"resourceType":"Bundle","type":kind,"entry":entries}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    (status, response.json().await.unwrap())
+}
+
+#[tokio::test]
+async fn conditional_match_cardinality_ignores_result_controls_and_decodes_identifiers() {
+    use reqwest::StatusCode;
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown, _server) = start_server(&config).await;
+    let client = reqwest::Client::new();
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let response = client.post(format!("{base}/Patient"))
+            .json(&json!({"resourceType":"Patient","identifier":[{"system":"urn:test","value":"duplicate"}]}))
+            .send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: Value = response.json().await.unwrap();
+        ids.push(body["id"].as_str().unwrap().to_owned());
+    }
+    for controls in [
+        "_count=1",
+        "_count=0",
+        "_offset=100",
+        "_summary=count",
+        "_elements=id&_count=1",
+    ] {
+        let url = format!("Patient?identifier=urn%3Atest%7Cduplicate&{controls}");
+        let response = client.delete(format!("{base}/{url}")).send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::PRECONDITION_FAILED,
+            "{controls}"
+        );
+        let response = client
+            .post(format!("{base}/Patient"))
+            .header(
+                "If-None-Exist",
+                format!("identifier=urn%3Atest%7Cduplicate&{controls}"),
+            )
+            .json(&json!({"resourceType":"Patient","active":true}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::PRECONDITION_FAILED,
+            "{controls}"
+        );
+        for kind in ["batch", "transaction"] {
+            let (status, body) = send_bundle(
+                &client,
+                &base,
+                kind,
+                json!([{"request":{"method":"DELETE","url":url}}]),
+            )
+            .await;
+            if kind == "batch" {
+                assert_eq!(
+                    body["entry"][0]["response"]["status"], "412 Precondition Failed",
+                    "{body}"
+                );
+            } else {
+                assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
+            }
+        }
+    }
+    for id in ids {
+        assert!(resource_exists(&client, &base, "Patient", &id).await);
+    }
+
+    let response = client.post(format!("{base}/Patient"))
+        .json(&json!({"resourceType":"Patient","active":true,"identifier":[{"system":"urn:test","value":"unique"}]}))
+        .send().await.unwrap();
+    let patient: Value = response.json().await.unwrap();
+    let id = patient["id"].as_str().unwrap();
+    let (_, body) = send_bundle(&client, &base, "transaction", json!([{
+        "request":{"method":"PUT","url":"Patient?identifier=urn%3Atest%7Cunique&_count=0&_offset=100"},
+        "resource":{"resourceType":"Patient","id":id,"active":false,"identifier":[{"system":"urn:test","value":"unique"}]}
+    }])).await;
+    assert_eq!(body["entry"][0]["response"]["status"], "200 OK", "{body}");
+    assert_eq!(body["entry"][0]["resource"]["id"], id, "{body}");
+    assert_eq!(
+        read_resource(&client, &base, "Patient", id).await.unwrap()["active"],
+        false
+    );
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn bundle_writes_follow_identity_validation_patch_and_version_contracts() {
+    use reqwest::StatusCode;
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown, _server) = start_server(&config).await;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap();
+    let created: Value = client
+        .post(format!("{base}/Patient"))
+        .json(&json!({"resourceType":"Patient","active":true,"name":[
+            {"use":"official","family":"One","given":["Same","Same","Third"]},
+            {"use":"usual","family":"Two"}
+        ]}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+    let version = created["meta"]["versionId"].as_str().unwrap();
+    let url = format!("Patient/{id}");
+
+    for resource in [
+        json!({"resourceType":"Patient","active":false}),
+        json!({"resourceType":"Patient","id":"different","active":false}),
+    ] {
+        let response = client
+            .put(format!("{base}/{url}"))
+            .json(&resource)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        for kind in ["batch", "transaction"] {
+            let (status, body) = send_bundle(
+                &client,
+                &base,
+                kind,
+                json!([{"resource":resource,"request":{"method":"PUT","url":url}}]),
+            )
+            .await;
+            if kind == "batch" {
+                assert_eq!(
+                    body["entry"][0]["response"]["status"], "400 Bad Request",
+                    "{body}"
+                );
+            } else {
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            }
+        }
+    }
+    let invalid = json!({"resourceType":"Patient","id":id,"active":"not-a-boolean"});
+    let response = client
+        .put(format!("{base}/{url}"))
+        .json(&invalid)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, body) = send_bundle(
+        &client,
+        &base,
+        "batch",
+        json!([{"resource":invalid,"request":{"method":"PUT","url":url}}]),
+    )
+    .await;
+    assert!(
+        body["entry"][0]["response"]["status"]
+            .as_str()
+            .unwrap()
+            .starts_with("422"),
+        "{body}"
+    );
+
+    // Two mutations of the same identity cannot share one history version.
+    let (_, body) = send_bundle(&client, &base, "transaction", json!([
+        {"resource":{"resourceType":"Patient","id":id,"active":false},"request":{"method":"PUT","url":url}},
+        {"resource":{"resourceType":"Patient","id":id,"active":true},"request":{"method":"PUT","url":url}}
+    ])).await;
+    assert_eq!(body["resourceType"], "OperationOutcome", "{body}");
+    assert_eq!(
+        read_resource(&client, &base, "Patient", id).await.unwrap()["meta"]["versionId"],
+        version
+    );
+
+    // Indices distinguish equal values; where selects the physical array member.
+    let patch = path_patch(
+        "replace",
+        "Patient.name.where(use = 'official').given[1]",
+        vec![json!({"name":"value","valueString":"Changed"})],
+    );
+    let (_, body) = send_bundle(
+        &client,
+        &base,
+        "batch",
+        json!([{"resource":patch,"request":{"method":"PATCH","url":url}}]),
+    )
+    .await;
+    assert_eq!(body["entry"][0]["response"]["status"], "200 OK", "{body}");
+    let current = read_resource(&client, &base, "Patient", id).await.unwrap();
+    assert_eq!(
+        current["name"][0]["given"],
+        json!(["Same", "Changed", "Third"])
+    );
+    let current_version = current["meta"]["versionId"].clone();
+
+    let invalid_patch = path_patch(
+        "replace",
+        "Patient.active",
+        vec![json!({"name":"value","valueString":"wrong"})],
+    );
+    for kind in ["batch", "transaction"] {
+        let (status, body) = send_bundle(
+            &client,
+            &base,
+            kind,
+            json!([{"resource":invalid_patch,"request":{"method":"PATCH","url":url}}]),
+        )
+        .await;
+        if kind == "batch" {
+            assert!(
+                body["entry"][0]["response"]["status"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("422"),
+                "{body}"
+            );
+        } else {
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        }
+    }
+    let valid_patch = path_patch(
+        "replace",
+        "Patient.active",
+        vec![json!({"name":"value","valueBoolean":false})],
+    );
+    for kind in ["batch", "transaction"] {
+        let (status, body) = send_bundle(&client, &base, kind, json!([{"resource":valid_patch,"request":{"method":"PATCH","url":url,"ifMatch":format!("W/\"{version}\"")}}])).await;
+        if kind == "batch" {
+            assert_eq!(
+                body["entry"][0]["response"]["status"], "412 Precondition Failed",
+                "{body}"
+            );
+        } else {
+            assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
+        }
+    }
+    assert_eq!(
+        read_resource(&client, &base, "Patient", id).await.unwrap()["meta"]["versionId"],
+        current_version
+    );
+
+    for patch in [
+        path_patch(
+            "replace",
+            "Patient.name.family",
+            vec![json!({"name":"value","valueString":"Ambiguous"})],
+        ),
+        path_patch(
+            "insert",
+            "Patient.name[0].given",
+            vec![
+                json!({"name":"index","valueInteger":-1}),
+                json!({"name":"value","valueString":"Negative"}),
+            ],
+        ),
+        path_patch(
+            "move",
+            "Patient.name[0].given",
+            vec![
+                json!({"name":"source","valueInteger":0}),
+                json!({"name":"destination","valueInteger":99}),
+            ],
+        ),
+        json!([{"op":"replace","path":"/active","value":false}]),
+    ] {
+        let (_, body) = send_bundle(
+            &client,
+            &base,
+            "batch",
+            json!([{"resource":patch,"request":{"method":"PATCH","url":url}}]),
+        )
+        .await;
+        assert_eq!(
+            body["entry"][0]["response"]["status"], "400 Bad Request",
+            "{body}"
+        );
+    }
+
+    let move_patch = path_patch(
+        "move",
+        "Patient.name[0].given",
+        vec![
+            json!({"name":"source","valueInteger":0}),
+            json!({"name":"destination","valueInteger":2}),
+        ],
+    );
+    let (_, body) = send_bundle(
+        &client,
+        &base,
+        "transaction",
+        json!([{"resource":move_patch,"request":{"method":"PATCH","url":url}}]),
+    )
+    .await;
+    assert_eq!(body["entry"][0]["response"]["status"], "200 OK", "{body}");
+    assert_eq!(
+        read_resource(&client, &base, "Patient", id).await.unwrap()["name"][0]["given"],
+        json!(["Changed", "Third", "Same"])
+    );
+
+    for kind in ["batch", "transaction"] {
+        let (_, body) = send_bundle(&client, &base, kind, json!([{"resource":{"resourceType":"Patient","id":"client-chosen-id","active":true},"request":{"method":"POST","url":"Patient"}}])).await;
+        assert_eq!(
+            body["entry"][0]["response"]["status"], "201 Created",
+            "{body}"
+        );
+        assert_ne!(
+            body["entry"][0]["resource"]["id"], "client-chosen-id",
+            "{body}"
+        );
+    }
+    let _ = shutdown.send(());
+}
+
 // =============================================================================
 // Test Infrastructure
 // =============================================================================
@@ -57,6 +462,21 @@ fn create_config(postgres_url: &str) -> AppConfig {
 async fn start_server(
     config: &AppConfig,
 ) -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
+    // Canonical packages are process-global. Every fixture uses a different DB;
+    // serialize fixture lifetimes and rebuild the registry for that database.
+    // Request concurrency inside an individual test is unaffected.
+    static FIXTURE_LOCK: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> =
+        std::sync::OnceLock::new();
+    let isolation = FIXTURE_LOCK
+        .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+        .lock_owned()
+        .await;
+    if octofhir_server::canonical::get_manager().is_some() {
+        octofhir_server::canonical::rebuild_from_config_async(config)
+            .await
+            .expect("rebuild canonical registry for fixture database");
+    }
     let config_manager = Arc::new(
         ConfigurationManager::builder()
             .build()
@@ -72,6 +492,7 @@ async fn start_server(
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     let server = tokio::spawn(async move {
+        let _isolation = isolation;
         let _ = axum::serve(listener, app)
             .with_graceful_shutdown(async move {
                 let _ = rx.await;
@@ -313,6 +734,7 @@ async fn test_transaction_rollback_on_invalid_reference() {
                     "resourceType": "Observation",
                     "status": "final",
                     "code": {"coding": [{"system": "http://loinc.org", "code": "8867-4"}]},
+                    "id": "nonexistent-obs-12345",
                     "subject": {"reference": "Patient/nonexistent-id-12345"}
                 },
                 "request": {
@@ -707,7 +1129,7 @@ async fn test_concurrent_transactions_isolation() {
         });
 
         client
-            .post(format!("{base1}/"))
+            .post(&base1)
             .header("content-type", "application/fhir+json")
             .json(&bundle)
             .send()
@@ -736,7 +1158,7 @@ async fn test_concurrent_transactions_isolation() {
         });
 
         client
-            .post(format!("{base2}/"))
+            .post(&base2)
             .header("content-type", "application/fhir+json")
             .json(&bundle)
             .send()
@@ -757,7 +1179,9 @@ async fn test_concurrent_transactions_isolation() {
 
     assert!(
         success_count >= 1,
-        "At least one concurrent transaction should succeed"
+        "At least one concurrent transaction should succeed: {}, {}",
+        resp1.status(),
+        resp2.status()
     );
 
     // Final state should be consistent (one of the two values)
@@ -1252,9 +1676,14 @@ async fn test_transaction_patch_entry() {
         "type": "transaction",
         "entry": [
             {
-                "resource": [
-                    {"op": "replace", "path": "/name/0/given/0", "value": "After"}
-                ],
+                "resource": {
+                    "resourceType": "Parameters",
+                    "parameter": [{"name": "operation", "part": [
+                        {"name": "type", "valueCode": "replace"},
+                        {"name": "path", "valueString": "Patient.name[0].given[0]"},
+                        {"name": "value", "valueString": "After"}
+                    ]}]
+                },
                 "request": {
                     "method": "PATCH",
                     "url": format!("Patient/{}", patient_id)

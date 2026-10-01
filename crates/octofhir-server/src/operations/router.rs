@@ -264,6 +264,7 @@ pub async fn merged_root_post_handler(
     state: State<AppState>,
     Path(param): Path<String>,
     headers: HeaderMap,
+    Query(query_params): Query<HashMap<String, String>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
@@ -274,7 +275,7 @@ pub async fn merged_root_post_handler(
             serde_json::from_slice(&body)
                 .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
         };
-        let params = OperationParams::Post(value);
+        let params = OperationParams::post_with_query(value, query_params);
         let result = system_operation_handler_internal(state, param, params).await?;
         Ok(result.into_response())
     } else {
@@ -320,6 +321,7 @@ pub async fn merged_type_get_handler(
 pub async fn merged_type_post_handler(
     state: State<AppState>,
     Path((resource_type, param)): Path<(String, String)>,
+    Query(query_params): Query<HashMap<String, String>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
@@ -330,7 +332,7 @@ pub async fn merged_type_post_handler(
             serde_json::from_slice(&body)
                 .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
         };
-        let params = OperationParams::Post(value);
+        let params = OperationParams::post_with_query(value, query_params);
         let result = type_operation_handler_internal(state, resource_type, param, params).await?;
         Ok(result.into_response())
     } else {
@@ -351,6 +353,7 @@ pub async fn compartment_post_handler(
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     State(state): State<AppState>,
     Path((id, param)): Path<(String, String)>,
+    Query(query_params): Query<HashMap<String, String>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
@@ -370,7 +373,7 @@ pub async fn compartment_post_handler(
             serde_json::from_slice(&body)
                 .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
         };
-        let params = OperationParams::Post(value);
+        let params = OperationParams::post_with_query(value, query_params);
         instance_operation_handler_internal(&state, &compartment_type, &id, &param, params).await
     } else {
         Err(ApiError::bad_request(

@@ -55,12 +55,12 @@ impl<'a> RevokedTokenStorage<'a> {
 
         query(
             r#"
-            INSERT INTO revokedtoken (id, txid, ts, resource, status)
-            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), $2, 'created')
+            INSERT INTO revokedtoken (id, txid, created_at, updated_at, resource, status)
+            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
             ON CONFLICT (id) DO NOTHING
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .bind(&resource)
         .execute(self.pool)
         .await?;

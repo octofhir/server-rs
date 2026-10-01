@@ -33,7 +33,6 @@ use crate::policy::context::PolicyContext;
 use crate::policy::matcher::PatternMatcher;
 use crate::policy::quickjs::QuickJsRuntime;
 use crate::policy::resources::{InternalPolicy, PolicyEngine as PolicyEngineType};
-use crate::smart::scopes::FhirOperation;
 
 // =============================================================================
 // Access Decision
@@ -498,24 +497,7 @@ impl PolicyEvaluator {
         }
 
         // Determine required permission based on operation
-        let required_permission = match operation {
-            FhirOperation::Read
-            | FhirOperation::VRead
-            | FhirOperation::Search
-            | FhirOperation::SearchType
-            | FhirOperation::SearchSystem
-            | FhirOperation::HistoryInstance
-            | FhirOperation::HistoryType
-            | FhirOperation::HistorySystem => "r",
-            FhirOperation::Create => "c",
-            FhirOperation::Update | FhirOperation::Patch => "u",
-            FhirOperation::Delete => "d",
-            // System operations don't require scope checking
-            FhirOperation::Capabilities
-            | FhirOperation::Batch
-            | FhirOperation::Transaction
-            | FhirOperation::Operation => return None,
-        };
+        let required_permission = operation.required_permission()?;
 
         // Check if any scope permits this operation
         let patient_context = context.environment.patient_context.as_deref();
@@ -609,6 +591,7 @@ mod tests {
     use crate::policy::resources::{
         AccessPolicy, EngineElement, MatcherElement, PolicyEngineType as ResourcePolicyEngineType,
     };
+    use crate::smart::scopes::FhirOperation;
     use crate::storage::PolicyStorage;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};

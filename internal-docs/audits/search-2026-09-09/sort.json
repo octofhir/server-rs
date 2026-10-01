@@ -1,0 +1,111 @@
+{
+  "explain": [
+    {
+      "Execution Time": 10.801,
+      "Plan": {
+        "Actual Loops": 1,
+        "Actual Rows": 12.0,
+        "Actual Startup Time": 10.787,
+        "Actual Total Time": 10.789,
+        "Async Capable": false,
+        "Disabled": false,
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Plan Rows": 12,
+        "Plan Width": 63,
+        "Plans": [
+          {
+            "Actual Loops": 1,
+            "Actual Rows": 12.0,
+            "Actual Startup Time": 10.786,
+            "Actual Total Time": 10.787,
+            "Async Capable": false,
+            "Disabled": false,
+            "Local Dirtied Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Written Blocks": 0,
+            "Node Type": "Sort",
+            "Parallel Aware": false,
+            "Parent Relationship": "Outer",
+            "Plan Rows": 7273,
+            "Plan Width": 63,
+            "Plans": [
+              {
+                "Actual Loops": 1,
+                "Actual Rows": 10001.0,
+                "Actual Startup Time": 0.007,
+                "Actual Total Time": 9.23,
+                "Alias": "r",
+                "Async Capable": false,
+                "Disabled": false,
+                "Filter": "((resource @> '{\"gender\": \"female\"}'::jsonb) AND (status <> 'deleted'::resource_status))",
+                "Local Dirtied Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Written Blocks": 0,
+                "Node Type": "Seq Scan",
+                "Parallel Aware": false,
+                "Parent Relationship": "Outer",
+                "Plan Rows": 7273,
+                "Plan Width": 63,
+                "Relation Name": "patient",
+                "Rows Removed by Filter": 10001,
+                "Shared Dirtied Blocks": 0,
+                "Shared Hit Blocks": 868,
+                "Shared Read Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Startup Cost": 0.0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Total Cost": 1204.39
+              }
+            ],
+            "Shared Dirtied Blocks": 0,
+            "Shared Hit Blocks": 868,
+            "Shared Read Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Sort Key": [
+              "updated_at DESC NULLS LAST"
+            ],
+            "Sort Method": "top-N heapsort",
+            "Sort Space Type": "Memory",
+            "Sort Space Used": 31,
+            "Startup Cost": 1371.13,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Total Cost": 1389.31
+          }
+        ],
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 868,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Startup Cost": 1371.13,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0,
+        "Total Cost": 1371.16
+      },
+      "Planning": {
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 18,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "Planning Time": 0.105,
+      "Triggers": []
+    }
+  ],
+  "params": "[Json(\"{\\\"gender\\\":\\\"female\\\"}\")]",
+  "sql": "SELECT r.resource::text, r.id, r.txid, r.created_at, r.updated_at FROM \"public\".\"patient\" AS r WHERE r.resource @> $1::jsonb AND r.status != 'deleted' ORDER BY \"r\".\"updated_at\" DESC NULLS LAST LIMIT 12"
+}

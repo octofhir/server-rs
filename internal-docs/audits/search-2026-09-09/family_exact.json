@@ -1,0 +1,78 @@
+{
+  "explain": [
+    {
+      "Execution Time": 0.469,
+      "Plan": {
+        "Actual Loops": 1,
+        "Actual Rows": 12.0,
+        "Actual Startup Time": 0.024,
+        "Actual Total Time": 0.462,
+        "Async Capable": false,
+        "Disabled": false,
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Plan Rows": 12,
+        "Plan Width": 63,
+        "Plans": [
+          {
+            "Actual Loops": 1,
+            "Actual Rows": 12.0,
+            "Actual Startup Time": 0.023,
+            "Actual Total Time": 0.461,
+            "Alias": "r",
+            "Async Capable": false,
+            "Disabled": false,
+            "Filter": "((status <> 'deleted'::resource_status) AND ('Smith'::text = ANY (fhir_s_patient_family(resource))))",
+            "Local Dirtied Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Written Blocks": 0,
+            "Node Type": "Seq Scan",
+            "Parallel Aware": false,
+            "Parent Relationship": "Outer",
+            "Plan Rows": 100,
+            "Plan Width": 63,
+            "Relation Name": "patient",
+            "Rows Removed by Filter": 100,
+            "Shared Dirtied Blocks": 0,
+            "Shared Hit Blocks": 6,
+            "Shared Read Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Startup Cost": 0.0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Total Cost": 6369.05
+          }
+        ],
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 6,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Startup Cost": 0.0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0,
+        "Total Cost": 764.29
+      },
+      "Planning": {
+        "Local Dirtied Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Written Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Hit Blocks": 0,
+        "Shared Read Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "Planning Time": 0.1,
+      "Triggers": []
+    }
+  ],
+  "params": "[Text(\"Smith\")]",
+  "sql": "SELECT r.resource::text, r.id, r.txid, r.created_at, r.updated_at FROM \"public\".\"patient\" AS r WHERE $1 = ANY(fhir_s_patient_family(r.resource)) AND r.status != 'deleted' LIMIT 12"
+}
