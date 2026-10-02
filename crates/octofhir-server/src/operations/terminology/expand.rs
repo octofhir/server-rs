@@ -919,6 +919,7 @@ impl OperationHandler for ExpandOperation {
     async fn handle_system(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         let (expand_params, inline_value_set) = Self::extract_params(params)?;
@@ -941,6 +942,7 @@ impl OperationHandler for ExpandOperation {
     async fn handle_type(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -970,6 +972,7 @@ impl OperationHandler for ExpandOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,

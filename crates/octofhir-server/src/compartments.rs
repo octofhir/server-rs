@@ -66,7 +66,7 @@ pub struct CompartmentResourceRule {
 /// Parsed CompartmentDefinition resource
 #[derive(Debug, Clone)]
 pub struct CompartmentDefinition {
-    /// Name of the compartment (e.g., "Patient", "Encounter")
+    /// Compartment code used in request URLs (e.g., "Patient", "Encounter").
     pub name: String,
 
     /// Canonical URL of the compartment definition
@@ -110,12 +110,46 @@ impl CompartmentDefinition {
         self.resource_rules.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Compile the union of links into one trusted predicate, before paging.
+    pub fn membership_constraint(
+        &self,
+        compartment_id: &str,
+        resource_type: &str,
+        base_url: &str,
+    ) -> octofhir_storage::SearchConstraint {
+        use octofhir_storage::SearchConstraint;
+        let mut alternatives = Vec::new();
+        if resource_type == self.name {
+            alternatives.push(SearchConstraint::Query(HashMap::from([(
+                "_id".into(),
+                vec![compartment_id.into()],
+            )])));
+        }
+        let escape = |value: &str| {
+            value
+                .replace('\\', "\\\\")
+                .replace(',', "\\,")
+                .replace('|', "\\|")
+                .replace('$', "\\$")
+        };
+        let relative = format!("{}/{compartment_id}", self.name);
+        let absolute = format!("{}/fhir/{relative}", base_url.trim_end_matches('/'));
+        let references = format!("{},{}", escape(&relative), escape(&absolute));
+        for parameter in self.get_inclusion_params(resource_type).unwrap_or_default() {
+            alternatives.push(SearchConstraint::Query(HashMap::from([(
+                parameter.clone(),
+                vec![references.clone()],
+            )])));
+        }
+        SearchConstraint::Or(alternatives)
+    }
+
     /// Parse a CompartmentDefinition from a FHIR resource
     pub fn from_fhir_resource(resource: &serde_json::Value) -> Result<Self, CompartmentError> {
         let name = resource
-            .get("name")
+            .get("code")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| CompartmentError::InvalidDefinition("Missing 'name' field".to_string()))?
+            .ok_or_else(|| CompartmentError::InvalidDefinition("Missing 'code' field".to_string()))?
             .to_string();
 
         let url = resource
@@ -269,7 +303,8 @@ mod tests {
     fn test_compartment_definition_parsing() {
         let resource = serde_json::json!({
             "resourceType": "CompartmentDefinition",
-            "name": "Patient",
+            "name": "BaseFhirCompartmentDefinitionForPatient",
+            "code": "Patient",
             "url": "http://hl7.org/fhir/CompartmentDefinition/patient",
             "status": "active",
             "resource": [

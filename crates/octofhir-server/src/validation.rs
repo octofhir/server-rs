@@ -13,12 +13,15 @@
 //!
 //! Schemas are loaded on-demand from the `OctoFhirModelProvider` which has
 //! an internal Moka LRU cache for efficient schema reuse.
+//! Named `$validate` calls with reference checks use an invocation-local
+//! validator/resolver, retaining the shared model caches but isolating caller
+//! identity and authorized reference snapshots.
 
 use std::sync::Arc;
 
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::{
-    reference::ReferenceResolver, terminology::TerminologyService,
+    SchemaProvider, reference::ReferenceResolver, terminology::TerminologyService,
     types::ValidationError as FhirSchemaValidationError, types::ValidationResult,
     validation::FhirValidator,
 };
@@ -152,6 +155,7 @@ impl IssueSeverity {
 pub struct ValidationService {
     /// Shared validator instance with pre-compiled schemas
     validator: Arc<FhirValidator>,
+    schema_provider: Arc<dyn SchemaProvider>,
 }
 
 impl ValidationService {
@@ -164,10 +168,11 @@ impl ValidationService {
         model_provider: Arc<OctoFhirModelProvider>,
         fhirpath_engine: Arc<FhirPathEngine>,
     ) -> Self {
-        let validator = FhirValidator::new_with_fhirpath(model_provider, fhirpath_engine);
+        let validator = FhirValidator::new_with_fhirpath(model_provider.clone(), fhirpath_engine);
 
         Self {
             validator: Arc::new(validator),
+            schema_provider: model_provider,
         }
     }
 
@@ -204,7 +209,8 @@ impl ValidationService {
         check_target_profile: bool,
         max_reference_depth: usize,
     ) -> Self {
-        let mut validator = FhirValidator::new_with_fhirpath(model_provider, fhirpath_engine);
+        let mut validator =
+            FhirValidator::new_with_fhirpath(model_provider.clone(), fhirpath_engine);
 
         if let Some(resolver) = reference_resolver {
             validator = validator.with_reference_resolver(resolver);
@@ -222,16 +228,16 @@ impl ValidationService {
 
         Self {
             validator: Arc::new(validator),
+            schema_provider: model_provider,
         }
     }
 
     /// Schemas to validate a resource against: its base type plus every profile
     /// declared in `meta.profile`.
     ///
-    /// A resource claiming conformance to a profile SHALL conform to it, so the
-    /// declared canonicals are validated alongside the base type. Profiles the
-    /// server cannot resolve are reported by the validator as warnings and do
-    /// not fail the resource.
+    /// Server write policy verifies available declared profiles alongside the
+    /// base type. FHIR leaves verification of these claims to the server;
+    /// unavailable profiles produce warnings and do not fail the resource.
     pub(crate) fn schemas_for(resource: &JsonValue, resource_type: &str) -> Vec<String> {
         let mut schemas = vec![resource_type.to_string()];
 
@@ -256,13 +262,8 @@ impl ValidationService {
             }
         };
 
-        // Validate using shared validator (schemas loaded lazily via SchemaProvider)
-        let validation_result = self
-            .validator
-            .validate(resource, Self::schemas_for(resource, resource_type))
-            .await;
-
-        Self::convert_result(validation_result)
+        self.run_validation(resource, Self::schemas_for(resource, resource_type), None)
+            .await
     }
 
     /// Validate a resource, treating `known_refs` (`Type/id` strings) as existing.
@@ -282,16 +283,56 @@ impl ValidationService {
             }
         };
 
-        let validation_result = self
-            .validator
-            .validate_with_known_references(
-                resource,
-                Self::schemas_for(resource, resource_type),
-                Some(known_refs),
-            )
-            .await;
+        self.run_validation(
+            resource,
+            Self::schemas_for(resource, resource_type),
+            Some(known_refs),
+        )
+        .await
+    }
 
-        Self::convert_result(validation_result)
+    async fn run_validation(
+        &self,
+        resource: &JsonValue,
+        schemas: Vec<String>,
+        known_refs: Option<&std::collections::HashSet<String>>,
+    ) -> ValidationOutcome {
+        let base = resource.get("resourceType").and_then(JsonValue::as_str);
+        let mut available = Vec::new();
+        let mut unavailable = Vec::new();
+        for schema in schemas {
+            // Preserve hard errors for an unavailable base resource schema.
+            // Declared profiles are canonicals, including URNs and relative
+            // URIs; `contains("://")` cannot identify their role reliably.
+            if Some(schema.as_str()) == base
+                || self
+                    .schema_provider
+                    .get_schema_by_url(&schema)
+                    .await
+                    .is_some()
+            {
+                available.push(schema);
+            } else {
+                unavailable.push(ValidationIssue {
+                    severity: IssueSeverity::Warning,
+                    code: "not-supported".into(),
+                    diagnostics: format!("Could not resolve declared profile: {schema}"),
+                    location: Some("meta.profile".into()),
+                });
+            }
+        }
+        let result = self
+            .validator
+            .validate_with_known_references(resource, available, known_refs)
+            .await;
+        let mut outcome = Self::convert_result(result);
+        outcome.issues.extend(unavailable);
+        let constraints = resource_constraints(resource);
+        if !constraints.is_empty() {
+            outcome.valid = false;
+            outcome.issues.extend(constraints);
+        }
+        outcome
     }
 
     /// Convert ValidationResult to ValidationOutcome
@@ -300,6 +341,13 @@ impl ValidationService {
             .errors
             .iter()
             .map(Self::convert_validation_error)
+            .chain(result.warnings.iter().map(|warning| {
+                let mut issue = Self::convert_validation_error(warning);
+                if warning.constraint_severity.is_none() {
+                    issue.severity = IssueSeverity::Warning;
+                }
+                issue
+            }))
             .collect();
 
         ValidationOutcome {
@@ -379,15 +427,26 @@ impl ValidationService {
         resource: &JsonValue,
         profile_urls: &[String],
     ) -> ValidationOutcome {
-        // Validate using shared validator with all profile URLs
-        // The validator will lazily load all profile schemas via SchemaProvider
-        let validation_result = self
-            .validator
-            .validate(resource, profile_urls.to_vec())
-            .await;
-
-        Self::convert_result(validation_result)
+        self.run_validation(resource, profile_urls.to_vec(), None)
+            .await
     }
+}
+
+/// Resource rules that are not encoded as base-schema FHIRPath invariants.
+/// Check before writing, so registry installation cannot fail after commit.
+pub(crate) fn resource_constraints(resource: &JsonValue) -> Vec<ValidationIssue> {
+    if resource["resourceType"] == "SearchParameter"
+        && let Some(expression) = resource["expression"].as_str()
+        && !octofhir_fhirpath::parse(expression).success
+    {
+        return vec![ValidationIssue {
+            severity: IssueSeverity::Error,
+            code: "invalid".into(),
+            diagnostics: "SearchParameter.expression must be a valid FHIRPath expression".into(),
+            location: Some("SearchParameter.expression".into()),
+        }];
+    }
+    Vec::new()
 }
 
 /// Placeholder for resource validation using cached resource types.
@@ -437,5 +496,70 @@ mod outcome_tests {
         }
         .to_operation_outcome();
         assert_eq!(failure["issue"][0]["severity"], "error");
+    }
+
+    #[tokio::test]
+    async fn validator_warning_stream_is_preserved_in_outcome() {
+        let schemas = octofhir_fhirschema::embedded::get_schemas(
+            octofhir_fhirschema::embedded::FhirVersion::R4,
+        )
+        .clone();
+        let service = ValidationService {
+            validator: Arc::new(FhirValidator::from_schemas(schemas.clone(), None)),
+            schema_provider: Arc::new(
+                octofhir_fhirschema::validation::InMemorySchemaProvider::from_map(
+                    schemas
+                        .into_iter()
+                        .map(|(name, schema)| (name, Arc::new(schema)))
+                        .collect(),
+                ),
+            ),
+        };
+        let outcome = service.validate(&serde_json::json!({"resourceType":"Patient", "meta":{"profile":["urn:test:unavailable-profile", "https://example.test/unavailable-profile"]}})).await;
+        assert!(outcome.valid);
+        assert_eq!(
+            outcome
+                .issues
+                .iter()
+                .filter(|issue| issue.severity == IssueSeverity::Warning)
+                .count(),
+            2
+        );
+        let upstream = service
+            .validator
+            .validate(
+                &serde_json::json!({"resourceType":"Patient"}),
+                vec![
+                    "Patient".into(),
+                    "https://example.test/unavailable-profile".into(),
+                ],
+            )
+            .await;
+        assert!(!upstream.warnings.is_empty());
+        assert!(
+            ValidationService::convert_result(upstream)
+                .issues
+                .iter()
+                .any(|issue| issue.severity == IssueSeverity::Warning)
+        );
+        let json = outcome.to_operation_outcome();
+        assert!(
+            json["issue"].as_array().unwrap().iter().any(|issue| {
+                issue["severity"] == "warning"
+                    && issue["diagnostics"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("urn:test:unavailable-profile")
+            }),
+            "{json}"
+        );
+        assert!(
+            !json["issue"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|issue| issue["severity"] == "error"),
+            "{json}"
+        );
     }
 }

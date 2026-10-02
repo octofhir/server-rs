@@ -31,6 +31,7 @@
 //!     async fn handle_type(
 //!         &self,
 //!         state: &AppState,
+//!         context: &OperationContext,
 //!         resource_type: &str,
 //!         params: &serde_json::Value,
 //!     ) -> Result<serde_json::Value, OperationError> {
@@ -42,6 +43,7 @@
 
 pub mod auth_session;
 pub mod bulk;
+pub mod context;
 pub mod cql;
 pub mod db_console_api;
 pub mod definition;
@@ -60,12 +62,15 @@ pub mod sof;
 pub mod sql;
 pub mod terminology;
 pub mod validate;
+mod validation_reference;
+mod validation_write;
 
 // Re-export main types for convenience
 pub use bulk::{
     BulkExportJob, BulkExportLevel, BulkExportManifest, BulkExportStatus, ExportOperation,
     ImportOperation, cleanup_expired_exports, execute_bulk_export, execute_bulk_import,
 };
+pub use context::OperationContext;
 pub use cql::CqlOperation;
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
 pub use evaluate_measure::EvaluateMeasureOperation;

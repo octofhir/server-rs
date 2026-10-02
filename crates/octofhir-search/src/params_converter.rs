@@ -76,6 +76,8 @@ pub struct UnknownParamWarning {
 
 /// Control parameters that don't generate search conditions.
 const CONTROL_PARAMS: &[&str] = &[
+    "_type",
+    "_format",
     "_count",
     "_offset",
     "_sort",
@@ -150,173 +152,28 @@ pub fn build_native_ir_query_from_params_with_config(
         .collect_debug_plan
         .then(|| SearchDebugPlan::new(resource_type));
 
-    // Convert SearchParams.parameters to ParsedParam and process.
-    //
-    // FHIR R4 §3.1.1.5 (search.html#combining):
-    //   - Repeated parameter occurrences (a=v1&a=v2) → AND (each iteration must
-    //     match independently). Emit one ParsedParam per value entry.
-    //   - Comma-separated values within one occurrence (a=v1,v2) → OR. Emit one
-    //     ParsedParam with multiple ParsedValue.
-    //
-    // `params.parameters: HashMap<String, Vec<String>>` stores the Vec from
-    // `&`-repetition (one entry per occurrence). Each String can still contain
-    // a comma list. Iterate per entry so repeated occurrences AND naturally
-    // through SqlBuilder.add_condition (which AND's top-level conditions).
-    // Iterate in a deterministic (key-sorted) order. `params.parameters` is a
-    // HashMap, whose iteration order is randomized per process run. The order
-    // here fixes the order of conditions in the SqlBuilder, which in turn fixes
-    // both the generated placeholder numbering AND the order `extract_params()`
-    // re-binds values on a query-cache hit. If the two disagree (e.g. SQL built
-    // under one HashMap order, params re-extracted under another), bound values
-    // land in the wrong placeholder slots — surfacing as intermittent
-    // "invalid input syntax for type json / timestamp" DB errors.
-    let mut sorted_entries: Vec<_> = params.parameters.iter().collect();
-    sorted_entries.sort_by(|a, b| a.0.cmp(b.0));
-    for (key, value_entries) in sorted_entries {
-        // Skip control parameters
-        if is_control_param(key) {
-            continue;
-        }
-
-        // Reverse chaining (_has) — handled before chain detection because
-        // `_has:` keys can contain `.` in the inner search-parameter spec.
-        if is_reverse_chain_parameter(key) {
-            handle_has_param(
-                &mut sql_builder,
-                key,
-                value_entries,
-                registry,
-                resource_type,
-            )?;
-            continue;
-        }
-
-        // Handle chained parameters
-        if is_chained_parameter(key) {
-            handle_chained_param(
-                &mut builder,
-                &mut sql_builder,
-                key,
-                value_entries,
-                registry,
-                schema,
-                resource_type,
-            )?;
-            continue;
-        }
-
-        // Each repeated parameter is an independent existential condition.
-        // Different date occurrences may satisfy its bounds; intersecting those
-        // bounds first would discard valid matches (and can invert the range).
-        for value_entry in value_entries {
-            // Convert one `&`-occurrence to ParsedParam (single-value entry,
-            // possibly comma-split into multiple ParsedValue for OR).
-            let mut parsed = convert_to_parsed_param(key, value_entry);
-
-            // Look up parameter definition in registry
-            let Some(param_def) = registry.get(resource_type, &parsed.name) else {
-                // Unknown parameter - handle based on policy
-                match config.unknown_param_handling {
-                    UnknownParamHandling::Strict => {
-                        return Err(SqlBuilderError::InvalidSearchValue(format!(
-                            "Unknown search parameter: {}",
-                            key
-                        )));
-                    }
-                    UnknownParamHandling::Lenient => {
-                        tracing::debug!(param = %parsed.name, "Unknown search parameter, skipping");
-                        unknown_params.push(UnknownParamWarning {
-                            name: parsed.name.clone(),
-                            modifier: parsed.modifier.as_ref().map(|m| format!("{:?}", m)),
-                        });
-                        continue;
-                    }
-                }
-            };
-
-            // Validate modifier compatibility with parameter type
-            if let Some(ref modifier) = parsed.modifier
-                && !modifier.applicable_to(&param_def.param_type)
-            {
-                return Err(SqlBuilderError::InvalidSearchValue(format!(
-                    "Modifier ':{:?}' is not valid for {} parameter '{}' (type: {:?})",
-                    modifier, resource_type, parsed.name, param_def.param_type
-                )));
-            }
-
-            // Validate prefix compatibility with parameter type.
-            // If a prefix is not applicable (e.g., UUID starting with "eb" parsed as "ends before"
-            // for a reference param), revert it — treat the prefix chars as part of the value.
-            for value in &mut parsed.values {
-                if let Some(ref prefix) = value.prefix
-                    && !prefix.applicable_to(&param_def.param_type)
-                {
-                    // Restore the prefix as part of the raw value
-                    value.raw = format!("{}{}", prefix, value.raw);
-                    value.prefix = None;
-                }
-            }
-
-            // Resource.id maps to the database row id column, not JSONB.
-            if matches!(
-                resolve_resource_column_param(&param_def),
-                Some(crate::ir::ResourceColumnParam::Id)
-            ) {
-                let clauses = IdClause::from_parsed_param(&parsed, resource_type)?;
-                if let Some(sql) = render_id_clauses_as_or(&mut sql_builder, &clauses, "r.id") {
-                    sql_builder.add_condition(sql);
-                }
-                continue;
-            }
-
-            crate::types::reject_unsupported_production_path(&parsed, &param_def, resource_type)?;
-
-            if config.collect_debug_plan {
-                collect_date_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
-                collect_string_debug_plan(
-                    debug_plan.as_mut(),
-                    &parsed,
-                    param_def.param_type,
-                    param_def.typed_extract_fn.is_some(),
-                    resource_type,
-                )?;
-                collect_number_debug_plan(
-                    debug_plan.as_mut(),
-                    &parsed,
-                    param_def.param_type,
-                    resource_type,
-                )?;
-                collect_quantity_debug_plan(
-                    debug_plan.as_mut(),
-                    &parsed,
-                    param_def.param_type,
-                    resource_type,
-                )?;
-                collect_composite_debug_plan(
-                    debug_plan.as_mut(),
-                    &parsed,
-                    &param_def,
-                    registry,
-                    resource_type,
-                )?;
-                collect_token_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
-                collect_reference_debug_plan(
-                    debug_plan.as_mut(),
-                    &parsed,
-                    &param_def,
-                    resource_type,
-                )?;
-            }
-
-            // Use dispatch_search to build the condition
-            dispatch_search_with_registry(
-                &mut sql_builder,
-                &parsed,
-                &param_def,
-                resource_type,
-                registry,
-            )?;
-        }
+    append_parameter_conditions(
+        resource_type,
+        params,
+        registry,
+        schema,
+        config,
+        PredicateAccumulator {
+            builder: &mut builder,
+            sql_builder: &mut sql_builder,
+            unknown_params: &mut unknown_params,
+            debug_plan: &mut debug_plan,
+        },
+    )?;
+    if let Some(constraint) = &params.constraint {
+        append_constraint(
+            resource_type,
+            constraint,
+            registry,
+            schema,
+            &mut builder,
+            &mut sql_builder,
+        )?;
     }
 
     // Add status filter to exclude deleted resources
@@ -394,9 +251,296 @@ pub fn build_native_ir_query_from_params_with_config(
     })
 }
 
+/// Accumulate predicates into one binder so nested grant groups preserve
+/// placeholder ordering and reuse the native search implementation.
+struct PredicateAccumulator<'a> {
+    builder: &'a mut FhirQueryBuilder,
+    sql_builder: &'a mut SqlBuilder,
+    unknown_params: &'a mut Vec<UnknownParamWarning>,
+    debug_plan: &'a mut Option<SearchDebugPlan>,
+}
+
+fn append_parameter_conditions(
+    resource_type: &str,
+    params: &SearchParams,
+    registry: &SearchParameterRegistry,
+    schema: &str,
+    config: &SearchConfig,
+    accumulator: PredicateAccumulator<'_>,
+) -> Result<(), SqlBuilderError> {
+    let PredicateAccumulator {
+        builder,
+        sql_builder,
+        unknown_params,
+        debug_plan,
+    } = accumulator;
+    // Convert SearchParams.parameters to ParsedParam and process.
+    //
+    // FHIR R4 §3.1.1.5 (search.html#combining):
+    //   - Repeated parameter occurrences (a=v1&a=v2) → AND (each iteration must
+    //     match independently). Emit one ParsedParam per value entry.
+    //   - Comma-separated values within one occurrence (a=v1,v2) → OR. Emit one
+    //     ParsedParam with multiple ParsedValue.
+    //
+    // `params.parameters: HashMap<String, Vec<String>>` stores the Vec from
+    // `&`-repetition (one entry per occurrence). Each String can still contain
+    // a comma list. Iterate per entry so repeated occurrences AND naturally
+    // through SqlBuilder.add_condition (which AND's top-level conditions).
+    // Iterate in a deterministic (key-sorted) order. `params.parameters` is a
+    // HashMap, whose iteration order is randomized per process run. The order
+    // here fixes the order of conditions in the SqlBuilder, which in turn fixes
+    // both the generated placeholder numbering AND the order `extract_params()`
+    // re-binds values on a query-cache hit. If the two disagree (e.g. SQL built
+    // under one HashMap order, params re-extracted under another), bound values
+    // land in the wrong placeholder slots — surfacing as intermittent
+    // "invalid input syntax for type json / timestamp" DB errors.
+    let mut sorted_entries: Vec<_> = params.parameters.iter().collect();
+    sorted_entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (key, value_entries) in sorted_entries {
+        // Skip control parameters
+        if is_control_param(key) {
+            continue;
+        }
+
+        // Reverse chaining (_has) — handled before chain detection because
+        // `_has:` keys can contain `.` in the inner search-parameter spec.
+        if is_reverse_chain_parameter(key) {
+            handle_has_param(sql_builder, key, value_entries, registry, resource_type)?;
+            continue;
+        }
+
+        // Handle chained parameters
+        if is_chained_parameter(key) {
+            handle_chained_param(
+                builder,
+                sql_builder,
+                key,
+                value_entries,
+                registry,
+                schema,
+                resource_type,
+            )?;
+            continue;
+        }
+
+        // Each repeated parameter is an independent existential condition.
+        // Different date occurrences may satisfy its bounds; intersecting those
+        // bounds first would discard valid matches (and can invert the range).
+        for value_entry in value_entries {
+            // Convert one `&`-occurrence to ParsedParam (single-value entry,
+            // possibly comma-split into multiple ParsedValue for OR).
+            let mut parsed = convert_to_parsed_param(key, value_entry);
+
+            // Look up parameter definition in registry
+            let Some(param_def) = registry.get(resource_type, &parsed.name) else {
+                // Unknown parameter - handle based on policy
+                match config.unknown_param_handling {
+                    UnknownParamHandling::Strict => {
+                        return Err(SqlBuilderError::InvalidSearchValue(format!(
+                            "Unknown search parameter: {}",
+                            key
+                        )));
+                    }
+                    UnknownParamHandling::Lenient => {
+                        tracing::debug!(param = %parsed.name, "Unknown search parameter, skipping");
+                        unknown_params.push(UnknownParamWarning {
+                            name: parsed.name.clone(),
+                            modifier: parsed.modifier.as_ref().map(|m| format!("{:?}", m)),
+                        });
+                        continue;
+                    }
+                }
+            };
+
+            // Validate modifier compatibility with parameter type
+            if let Some(ref modifier) = parsed.modifier
+                && !modifier.applicable_to(&param_def.param_type)
+            {
+                return Err(SqlBuilderError::InvalidSearchValue(format!(
+                    "Modifier ':{:?}' is not valid for {} parameter '{}' (type: {:?})",
+                    modifier, resource_type, parsed.name, param_def.param_type
+                )));
+            }
+
+            // Validate prefix compatibility with parameter type.
+            // If a prefix is not applicable (e.g., UUID starting with "eb" parsed as "ends before"
+            // for a reference param), revert it — treat the prefix chars as part of the value.
+            for value in &mut parsed.values {
+                if let Some(ref prefix) = value.prefix
+                    && !prefix.applicable_to(&param_def.param_type)
+                {
+                    // Restore the prefix as part of the raw value
+                    value.raw = format!("{}{}", prefix, value.raw);
+                    value.prefix = None;
+                }
+            }
+
+            // Resource.id maps to the database row id column, not JSONB.
+            if matches!(
+                resolve_resource_column_param(&param_def),
+                Some(crate::ir::ResourceColumnParam::Id)
+            ) {
+                let clauses = IdClause::from_parsed_param(&parsed, resource_type)?;
+                if let Some(sql) = render_id_clauses_as_or(sql_builder, &clauses, "r.id") {
+                    sql_builder.add_condition(sql);
+                }
+                continue;
+            }
+
+            crate::types::reject_unsupported_production_path(&parsed, &param_def, resource_type)?;
+
+            if config.collect_debug_plan {
+                collect_date_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
+                collect_string_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    param_def.param_type,
+                    param_def.typed_extract_fn.is_some(),
+                    resource_type,
+                )?;
+                collect_number_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    param_def.param_type,
+                    resource_type,
+                )?;
+                collect_quantity_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    param_def.param_type,
+                    resource_type,
+                )?;
+                collect_composite_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    &param_def,
+                    registry,
+                    resource_type,
+                )?;
+                collect_token_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
+                collect_reference_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    &param_def,
+                    resource_type,
+                )?;
+            }
+
+            // Use dispatch_search to build the condition
+            dispatch_search_with_registry(
+                sql_builder,
+                &parsed,
+                &param_def,
+                resource_type,
+                registry,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn append_constraint(
+    resource_type: &str,
+    constraint: &octofhir_storage::SearchConstraint,
+    registry: &SearchParameterRegistry,
+    schema: &str,
+    builder: &mut FhirQueryBuilder,
+    sql_builder: &mut SqlBuilder,
+) -> Result<(), SqlBuilderError> {
+    use octofhir_storage::SearchConstraint;
+    let start = sql_builder.conditions().len();
+    let disjunction = match constraint {
+        SearchConstraint::And(children) | SearchConstraint::Or(children) => {
+            for child in children {
+                append_constraint(resource_type, child, registry, schema, builder, sql_builder)?;
+            }
+            matches!(constraint, SearchConstraint::Or(_))
+        }
+        SearchConstraint::Query(parameters) => {
+            if parameters.is_empty() || parameters.values().any(Vec::is_empty) {
+                return Err(SqlBuilderError::InvalidSearchValue(
+                    "Empty authorization predicate".into(),
+                ));
+            }
+            if let Some(name) = parameters.keys().find(|name| is_control_param(name)) {
+                return Err(SqlBuilderError::InvalidSearchValue(format!(
+                    "Result control '{name}' cannot constrain authorization"
+                )));
+            }
+            // Lenient handling of a client's query must never weaken a grant.
+            let mut entries: Vec<_> = parameters.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, values) in entries {
+                for value in values {
+                    let before = sql_builder.conditions().len();
+                    append_parameter_conditions(
+                        resource_type,
+                        &SearchParams::new().with_param(name, value),
+                        registry,
+                        schema,
+                        &SearchConfig {
+                            unknown_param_handling: UnknownParamHandling::Strict,
+                            collect_debug_plan: false,
+                        },
+                        PredicateAccumulator {
+                            builder,
+                            sql_builder,
+                            unknown_params: &mut Vec::new(),
+                            debug_plan: &mut None,
+                        },
+                    )?;
+                    if sql_builder.conditions().len() == before {
+                        return Err(SqlBuilderError::InvalidSearchValue(format!(
+                            "Authorization predicate '{name}' cannot be applied"
+                        )));
+                    }
+                }
+            }
+            false
+        }
+    };
+    sql_builder.group_conditions_since(start, disjunction);
+    Ok(())
+}
+
 /// Check if a parameter is a control parameter.
 fn is_control_param(name: &str) -> bool {
     CONTROL_PARAMS.contains(&name) || is_include_parameter(name) || is_revinclude_parameter(name)
+}
+
+/// System searches may only apply criteria supported by every requested type.
+/// Completely unknown criteria retain the caller's strict/lenient handling.
+pub fn validate_system_search_parameters(
+    resource_types: &[&str],
+    params: &SearchParams,
+    registry: &SearchParameterRegistry,
+) -> Result<(), SqlBuilderError> {
+    for key in params.parameters.keys() {
+        if is_control_param(key) || is_reverse_chain_parameter(key) {
+            continue;
+        }
+        let root = key.split('.').next().unwrap_or(key);
+        let name = root.split(':').next().unwrap_or(root);
+        let definitions: Vec<_> = resource_types
+            .iter()
+            .filter_map(|rtype| registry.get(rtype, name))
+            .collect();
+        let shared = definitions.len() == resource_types.len()
+            && definitions.iter().all(|definition| {
+                definition.base.iter().any(|base| matches!(base.as_str(), "Resource" | "DomainResource"))
+                    || resource_types.iter().all(|rtype| definition.base.iter().any(|base| base == rtype))
+                    // Equivalent definitions of these Resource fields retain
+                    // base semantics even when an IG narrows its declared base.
+                    || resolve_resource_column_param(definition).is_some()
+            });
+        if !definitions.is_empty() && !shared {
+            return Err(SqlBuilderError::InvalidSearchValue(format!(
+                "Search parameter '{key}' is not common to all requested resource types"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn collect_date_debug_plan(
@@ -591,6 +735,8 @@ fn token_index_shape(param_def: &SearchParameter) -> TokenIndexShape {
             && is_identifier_param(&param_def.code, param_def.expression.as_deref()))
     {
         TokenIndexShape::Identifier
+    } else if matches!(&param_def.element_type_hint, ElementTypeHint::Boolean) {
+        TokenIndexShape::Boolean
     } else if matches!(&param_def.element_type_hint, ElementTypeHint::SimpleCode) {
         TokenIndexShape::SimpleCode
     } else {
@@ -972,6 +1118,188 @@ pub fn parse_query_string(query: &str, default_count: u32, max_count: u32) -> Se
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn aggregate_criteria_must_be_shared_but_type_grants_need_not_be() {
+        use octofhir_storage::SearchConstraint;
+        let registry = representative_registry();
+        let types = ["Patient", "Observation"];
+        let control_params = SearchParams::new()
+            .with_param("_type", "Patient,Observation")
+            .with_param("_format", "json");
+        let converted = build_native_ir_query_from_params_with_config(
+            "Patient",
+            &control_params,
+            &registry,
+            "public",
+            &SearchConfig {
+                unknown_param_handling: UnknownParamHandling::Strict,
+                collect_debug_plan: false,
+            },
+        )
+        .unwrap();
+        assert!(converted.unknown_params.is_empty());
+        let mut params = SearchParams::new().with_param("family:exact", "Allowed");
+        assert!(validate_system_search_parameters(&types, &params, &registry).is_err());
+        params = SearchParams::new().with_param("_id", "requested");
+        params.type_constraints = Some(HashMap::from([(
+            "Patient".into(),
+            SearchConstraint::Query(HashMap::from([("family".into(), vec!["Allowed".into()])])),
+        )]));
+        assert!(validate_system_search_parameters(&types, &params, &registry).is_ok());
+        for resource_type in types {
+            registry.register(
+                SearchParameter::new(
+                    "same-code",
+                    format!("urn:test:{resource_type}:same-code"),
+                    SearchParameterType::String,
+                    vec![resource_type.into()],
+                )
+                .with_expression(format!("{resource_type}.name")),
+            );
+        }
+        let params = SearchParams::new().with_param("same-code", "value");
+        assert!(validate_system_search_parameters(&types, &params, &registry).is_err());
+        registry.register(
+            SearchParameter::new(
+                "same-code",
+                "urn:test:shared",
+                SearchParameterType::String,
+                types.iter().map(|rtype| (*rtype).into()).collect(),
+            )
+            .with_expression("name"),
+        );
+        assert!(validate_system_search_parameters(&types, &params, &registry).is_ok());
+        // Unknown criteria are still handled by the native strict/lenient converter.
+        let params = SearchParams::new().with_param("unknown-criterion", "value");
+        assert!(validate_system_search_parameters(&types, &params, &registry).is_ok());
+    }
+
+    #[test]
+    fn trusted_constraints_group_grants_and_bind_values_once() {
+        use octofhir_storage::SearchConstraint;
+        let registry = representative_registry();
+        let mut params = SearchParams::new().with_param("_id", "requested");
+        params.constraint = Some(SearchConstraint::Or(vec![
+            SearchConstraint::And(vec![
+                SearchConstraint::Query(HashMap::from([("_id".into(), vec!["grant-a".into()])])),
+                SearchConstraint::Query(HashMap::from([(
+                    "family:exact".into(),
+                    vec!["Allowed".into()],
+                )])),
+            ]),
+            SearchConstraint::Query(HashMap::from([("_id".into(), vec!["grant-b".into()])])),
+        ]));
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
+        for query in [
+            converted.builder.build().unwrap(),
+            converted.builder.build_count().unwrap(),
+        ] {
+            assert!(query.sql.contains(" OR "), "{}", query.sql);
+            assert!(query.sql.contains(" AND "), "{}", query.sql);
+            assert!(!query.sql.contains("grant-a"));
+            assert!(!query.sql.contains("grant-b"));
+            assert_eq!(query.params.len(), 4);
+            assert_eq!(query.params[0].as_display_str(), "requested");
+            assert_eq!(query.params[1].as_display_str(), "grant-a");
+            assert_eq!(query.params[3].as_display_str(), "grant-b");
+        }
+    }
+
+    #[test]
+    fn empty_grant_union_denies_rows_and_constraint_is_server_only() {
+        use octofhir_storage::SearchConstraint;
+        let mut params = SearchParams::new();
+        params.constraint = Some(SearchConstraint::Or(Vec::new()));
+        let query = build_native_ir_query_from_params(
+            "Patient",
+            &params,
+            &representative_registry(),
+            "public",
+        )
+        .unwrap()
+        .builder
+        .build()
+        .unwrap();
+        assert!(query.sql.contains("FALSE"), "{}", query.sql);
+        let mut serialized = serde_json::to_value(&params).unwrap();
+        assert!(serialized.get("constraint").is_none());
+        assert!(serialized.get("type_constraints").is_none());
+        assert!(serialized.get("included_visibility").is_none());
+        serialized["constraint"] = serde_json::json!({"Or": []});
+        serialized["type_constraints"] = serde_json::json!({"Patient": {"And": []}});
+        serialized["included_visibility"] =
+            serde_json::json!({"constraints": {}, "fhir_base_url": "https://foreign.test/fhir"});
+        let external: SearchParams = serde_json::from_value(serialized).unwrap();
+        assert!(external.constraint.is_none());
+        assert!(external.type_constraints.is_none());
+        assert!(external.included_visibility.is_none());
+    }
+
+    #[test]
+    fn lenient_client_handling_cannot_drop_unknown_grant_predicates() {
+        use octofhir_storage::SearchConstraint;
+        let mut params = SearchParams::new();
+        params.constraint = Some(SearchConstraint::Query(HashMap::from([(
+            "unsupported-grant-filter".into(),
+            vec!["value".into()],
+        )])));
+        let result = build_native_ir_query_from_params_with_config(
+            "Patient",
+            &params,
+            &representative_registry(),
+            "public",
+            &SearchConfig {
+                unknown_param_handling: UnknownParamHandling::Lenient,
+                collect_debug_plan: false,
+            },
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn result_controls_cannot_be_used_as_authorization_predicates() {
+        for control in ["_count", "_include", "_include:iterate", "_summary"] {
+            let mut params = SearchParams::new();
+            params.constraint = Some(octofhir_storage::SearchConstraint::Query(HashMap::from([
+                (control.into(), vec!["1".into()]),
+            ])));
+            assert!(
+                build_native_ir_query_from_params(
+                    "Patient",
+                    &params,
+                    &representative_registry(),
+                    "public"
+                )
+                .is_err(),
+                "{control}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_authorization_predicates_cannot_become_unrestricted_queries() {
+        for predicates in [
+            HashMap::new(),
+            HashMap::from([("_id".into(), Vec::new())]),
+            HashMap::from([("_id".into(), vec![String::new()])]),
+            HashMap::from([("_id".into(), vec!["allowed".into(), String::new()])]),
+        ] {
+            let mut params = SearchParams::new();
+            params.constraint = Some(octofhir_storage::SearchConstraint::Query(predicates));
+            assert!(
+                build_native_ir_query_from_params(
+                    "Patient",
+                    &params,
+                    &representative_registry(),
+                    "public"
+                )
+                .is_err()
+            );
+        }
+    }
 
     fn assert_fallback_disabled<T>(
         result: Result<T, SqlBuilderError>,

@@ -516,6 +516,7 @@ impl OperationHandler for SubsumesOperation {
     async fn handle_system(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         let subsumes_params = Self::extract_params(params)?;
@@ -537,6 +538,7 @@ impl OperationHandler for SubsumesOperation {
     async fn handle_type(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -566,6 +568,7 @@ impl OperationHandler for SubsumesOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,

@@ -618,6 +618,7 @@ fn token_uses_containment_shape(clause: &TokenClause) -> bool {
             | TokenPredicate::SystemCode { .. },
         ) => true,
         (TokenIndexShape::SimpleCode, _) => false,
+        (TokenIndexShape::Boolean, _) => false,
         (TokenIndexShape::Coding, TokenPredicate::AnySystemCode { .. })
         | (TokenIndexShape::Coding, TokenPredicate::SystemCode { .. }) => true,
         (TokenIndexShape::Coding, _) => false,
@@ -627,6 +628,7 @@ fn token_uses_containment_shape(clause: &TokenClause) -> bool {
 fn token_sql_shape(clause: &TokenClause) -> String {
     match &clause.predicate {
         TokenPredicate::AnySystemCode { .. } => match clause.index_shape {
+            TokenIndexShape::Boolean => "resource->>path = $code".to_string(),
             TokenIndexShape::SimpleCode => "resource @> {code: $code}".to_string(),
             TokenIndexShape::Identifier => {
                 "resource @> {identifier: [{value: $code}]}".to_string()
@@ -636,6 +638,7 @@ fn token_sql_shape(clause: &TokenClause) -> String {
             }
         },
         TokenPredicate::NoSystemCode { .. } => match clause.index_shape {
+            TokenIndexShape::Boolean => "resource->>path = $code".to_string(),
             TokenIndexShape::Identifier => {
                 "EXISTS identifier WHERE ident.system IS NULL AND ident.value = $code".to_string()
             }
@@ -648,10 +651,11 @@ fn token_sql_shape(clause: &TokenClause) -> String {
             TokenIndexShape::Identifier => {
                 "resource @> {identifier: [{system: $system}]}".to_string()
             }
-            TokenIndexShape::SimpleCode => "FALSE".to_string(),
+            TokenIndexShape::SimpleCode | TokenIndexShape::Boolean => "FALSE".to_string(),
             TokenIndexShape::Coding => "EXISTS coding WHERE coding.system = $system".to_string(),
         },
         TokenPredicate::SystemCode { .. } => match clause.index_shape {
+            TokenIndexShape::Boolean => "resource->>path = $code".to_string(),
             TokenIndexShape::Identifier => "resource @> {identifier: [{system: $system, value: $code}]}".to_string(),
             TokenIndexShape::SimpleCode => "resource @> {code: $code}".to_string(),
             TokenIndexShape::Coding => {

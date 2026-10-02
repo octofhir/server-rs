@@ -175,6 +175,7 @@ impl OperationHandler for ImportOperation {
     async fn handle_system(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         if !self.config.enabled {

@@ -209,13 +209,14 @@ fn collect_references_at_path(resource: &Value, path: &str, base_url: &str) -> V
 /// - Object value (inline POST): parsed directly
 async fn resolve_graph_definition(
     state: &AppState,
+    context: &crate::operations::OperationContext,
     params: &Value,
 ) -> Result<GraphDefinitionModel, OperationError> {
     // Extract the "graph" parameter from the Parameters resource
     let graph_value = extract_param_value(params, "graph");
 
     match graph_value {
-        Some(Value::String(ref s)) => resolve_graph_by_string(state, s).await,
+        Some(Value::String(ref s)) => resolve_graph_by_string(state, context, s).await,
         Some(Value::Object(_)) => {
             // Inline GraphDefinition (POST body)
             parse_graph_definition(graph_value.as_ref().unwrap())
@@ -230,12 +231,13 @@ async fn resolve_graph_definition(
 /// Look up a GraphDefinition by ID or canonical URL string.
 async fn resolve_graph_by_string(
     state: &AppState,
+    context: &crate::operations::OperationContext,
     value: &str,
 ) -> Result<GraphDefinitionModel, OperationError> {
     // First try as a direct ID
     if !value.contains('/')
         && !value.starts_with("http")
-        && let Ok(Some(stored)) = state.storage.read("GraphDefinition", value).await
+        && let Ok(Some(stored)) = context.read(state, "GraphDefinition", value).await
     {
         return parse_graph_definition(&stored.resource);
     }
@@ -243,9 +245,8 @@ async fn resolve_graph_by_string(
     // Try as a canonical URL
     if value.starts_with("http") {
         let search_params = SearchParams::new().with_count(1).with_param("url", value);
-        if let Ok(result) = state
-            .storage
-            .search("GraphDefinition", &search_params)
+        if let Ok(result) = context
+            .search(state, "GraphDefinition", &search_params)
             .await
             && let Some(entry) = result.entries.first()
         {
@@ -255,7 +256,7 @@ async fn resolve_graph_by_string(
 
     // Try stripping "GraphDefinition/" prefix
     if let Some(id) = value.strip_prefix("GraphDefinition/")
-        && let Ok(Some(stored)) = state.storage.read("GraphDefinition", id).await
+        && let Ok(Some(stored)) = context.read(state, "GraphDefinition", id).await
     {
         return parse_graph_definition(&stored.resource);
     }
@@ -303,6 +304,7 @@ struct WorkItem {
 /// Traverse the resource graph starting from the focal resource.
 async fn traverse(
     state: &AppState,
+    context: &crate::operations::OperationContext,
     focal: StoredResource,
     graph_def: &GraphDefinitionModel,
 ) -> Result<Vec<StoredResource>, OperationError> {
@@ -335,9 +337,16 @@ async fn traverse(
         for link in &work.links {
             for target in &link.targets {
                 let resolved = if let Some(ref path) = link.path {
-                    resolve_forward(state, &work.resource, path, target).await
+                    resolve_forward(state, context, &work.resource, path, target).await?
                 } else if let Some(ref params) = target.params {
-                    resolve_reverse(state, &work.resource, &target.resource_type, params).await
+                    resolve_reverse(
+                        state,
+                        context,
+                        &work.resource,
+                        &target.resource_type,
+                        params,
+                    )
+                    .await?
                 } else {
                     continue;
                 };
@@ -369,10 +378,11 @@ async fn traverse(
 /// Forward reference resolution: extract refs from the resource at the path.
 async fn resolve_forward(
     state: &AppState,
+    context: &crate::operations::OperationContext,
     resource: &StoredResource,
     path: &str,
     target: &TargetModel,
-) -> Vec<StoredResource> {
+) -> Result<Vec<StoredResource>, OperationError> {
     let refs = collect_references_at_path(&resource.resource, path, &state.base_url);
 
     let mut results = Vec::new();
@@ -380,9 +390,8 @@ async fn resolve_forward(
         if fhir_ref.resource_type != target.resource_type {
             continue;
         }
-        match state
-            .storage
-            .read(&fhir_ref.resource_type, &fhir_ref.id)
+        match context
+            .read(state, &fhir_ref.resource_type, &fhir_ref.id)
             .await
         {
             Ok(Some(stored)) => results.push(stored),
@@ -393,7 +402,10 @@ async fn resolve_forward(
                 );
             }
             Err(e) => {
-                tracing::warn!(
+                if !e.is_forbidden() {
+                    return Err(e);
+                }
+                tracing::debug!(
                     reference = %fhir_ref,
                     error = %e,
                     "Error reading resource during $graph traversal"
@@ -401,32 +413,43 @@ async fn resolve_forward(
             }
         }
     }
-    results
+    Ok(results)
 }
 
 /// Reverse reference resolution: search for resources that reference the current one.
 async fn resolve_reverse(
     state: &AppState,
+    context: &crate::operations::OperationContext,
     resource: &StoredResource,
     target_type: &str,
     params: &str,
-) -> Vec<StoredResource> {
+) -> Result<Vec<StoredResource>, OperationError> {
     let reference_value = format!("{}/{}", resource.resource_type, resource.id);
 
-    let search_params = SearchParams::new()
-        .with_count(1000)
-        .with_param(params, &reference_value);
+    let search_params = if params.contains('=') {
+        let encoded: String =
+            url::form_urlencoded::byte_serialize(reference_value.as_bytes()).collect();
+        let query = params.replace("{ref}", &encoded);
+        octofhir_search::parse_query_string(&query, 1000, 1000)
+    } else {
+        SearchParams::new()
+            .with_count(1000)
+            .with_param(params, &reference_value)
+    };
 
-    match state.storage.search(target_type, &search_params).await {
-        Ok(result) => result.entries,
+    match context.search(state, target_type, &search_params).await {
+        Ok(result) => Ok(result.entries),
         Err(e) => {
-            tracing::warn!(
+            if !e.is_forbidden() {
+                return Err(e);
+            }
+            tracing::debug!(
                 target_type,
                 params,
                 error = %e,
                 "Error searching reverse references during $graph traversal"
             );
-            Vec::new()
+            Ok(Vec::new())
         }
     }
 }
@@ -443,8 +466,10 @@ fn build_collection_bundle(
         .into_iter()
         .map(|stored| BundleEntry {
             full_url: Some(format!(
-                "{}/{}/{}",
-                base_url, stored.resource_type, stored.id
+                "{}/fhir/{}/{}",
+                base_url.trim_end_matches('/'),
+                stored.resource_type,
+                stored.id
             )),
             resource: Some(RawJson::from(stored.resource)),
             search: None,
@@ -486,12 +511,13 @@ impl OperationHandler for GraphOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
         // 1. Resolve GraphDefinition
-        let graph_def = resolve_graph_definition(state, params).await?;
+        let graph_def = resolve_graph_definition(state, context, params).await?;
 
         // 2. Validate resource type matches GraphDefinition.start
         if graph_def.start != resource_type {
@@ -502,17 +528,15 @@ impl OperationHandler for GraphOperation {
         }
 
         // 3. Read the focal resource
-        let focal = state
-            .storage
-            .read(resource_type, id)
-            .await
-            .map_err(|e| OperationError::Internal(e.to_string()))?
+        let focal = context
+            .read(state, resource_type, id)
+            .await?
             .ok_or_else(|| {
                 OperationError::NotFound(format!("{}/{} not found", resource_type, id))
             })?;
 
         // 4. Traverse the graph
-        let resources = traverse(state, focal, &graph_def).await?;
+        let resources = traverse(state, context, focal, &graph_def).await?;
 
         // 5. Build collection Bundle
         build_collection_bundle(resources, &state.base_url)

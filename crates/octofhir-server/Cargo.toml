@@ -155,6 +155,7 @@ flate2 = "1.1"
 tempfile = { workspace = true }
 
 [dev-dependencies]
+rsa = { version = "0.9", features = ["pem"] }
 tokio-test = { workspace = true }
 wiremock = { workspace = true }
 reqwest = { workspace = true }

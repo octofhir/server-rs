@@ -163,6 +163,11 @@ fn dispatch_search_inner(
                 // Also detect identifier params when element_type_hint is Unknown
                 // (e.g. schema resolver unavailable) by checking param code / expression.
                 build_gin_identifier_search(builder, param, &path_segments)
+            } else if matches!(&definition.element_type_hint, ElementTypeHint::Boolean) {
+                // JSON booleans cannot match string-valued containment literals.
+                let text_path =
+                    build_jsonb_accessor(builder.resource_column(), &path_segments, true);
+                build_code_search(builder, param, &text_path)
             } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
                 // GIN-optimized simple code search (e.g., Patient.gender)
                 build_gin_code_search(builder, param, &path_segments)
@@ -343,7 +348,10 @@ fn dispatch_user_defined_jsonb_search(
                         .is_some_and(|expr| is_identifier_param(&definition.code, expr)))
             {
                 build_identifier_search(builder, param, &object_path)
-            } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
+            } else if matches!(
+                &definition.element_type_hint,
+                ElementTypeHint::SimpleCode | ElementTypeHint::Boolean
+            ) {
                 build_code_search(builder, param, &text_path)
             } else if matches!(
                 &definition.element_type_hint,
@@ -856,6 +864,36 @@ mod tests {
 
         let clause = builder.build_where_clause();
         assert!(clause.is_some());
+    }
+
+    #[test]
+    fn boolean_tokens_use_text_extraction_instead_of_string_containment() {
+        for value in ["true", "false"] {
+            let mut builder = SqlBuilder::new();
+            let param = ParsedParam {
+                name: "active".into(),
+                modifier: None,
+                values: vec![ParsedValue {
+                    prefix: None,
+                    raw: value.into(),
+                }],
+            };
+            let definition = Arc::new(
+                SearchParameter::new(
+                    "active",
+                    "urn:test:Patient:active",
+                    SearchParameterType::Token,
+                    vec!["Patient".into()],
+                )
+                .with_expression("Patient.active")
+                .with_element_type_hint(ElementTypeHint::from_fhir_type("boolean", false)),
+            );
+            dispatch_search(&mut builder, &param, &definition, "Patient").unwrap();
+            let sql = builder.build_where_clause().unwrap();
+            assert!(sql.contains("->>'active'"), "{sql}");
+            assert!(!sql.contains("@>"), "{sql}");
+            assert_eq!(builder.params()[0].as_str(), value);
+        }
     }
 
     #[test]

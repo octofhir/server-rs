@@ -899,13 +899,12 @@ fn build_page_url(
     count: usize,
     query_suffix: Option<&str>,
 ) -> String {
-    let mut url = format!(
-        "{}/{}?_count={}&_offset={}",
-        base_url.trim_end_matches('/'),
-        resource_type,
-        count,
-        offset
-    );
+    let endpoint = if resource_type.is_empty() {
+        base_url.trim_end_matches('/').to_string()
+    } else {
+        join_url(base_url, resource_type)
+    };
+    let mut url = format!("{endpoint}?_count={count}&_offset={offset}");
     if let Some(q) = query_suffix {
         if !q.is_empty() {
             // ensure starts with '&' or '?', we append as additional params
@@ -1226,8 +1225,8 @@ pub fn bundle_from_search(
     }
 
     // next
-    if count > 0 && offset + count < total {
-        let next_offset = offset + count;
+    if count > 0 && offset.saturating_add(count) < total {
+        let next_offset = offset.saturating_add(count);
         links.push(BundleLink {
             relation: "next".to_string(),
             url: build_page_url(base_url, resource_type, next_offset, count, query_suffix),
@@ -1385,13 +1384,16 @@ pub fn build_search_links_with_total_mode(
 
     // next
     let should_include_next = if total_is_exact {
-        count > 0 && total.map(|value| offset + count < value).unwrap_or(false)
+        count > 0
+            && total
+                .map(|value| offset.saturating_add(count) < value)
+                .unwrap_or(false)
     } else {
         count > 0 && has_more
     };
 
     if should_include_next {
-        let next_offset = offset + count;
+        let next_offset = offset.saturating_add(count);
         links.push(BundleLink {
             relation: "next".to_string(),
             url: build_page_url(base_url, resource_type, next_offset, count, query_suffix),
@@ -1524,10 +1526,16 @@ pub fn bundle_from_history(
         }
 
         // next
-        if count > 0 && offset + count < total_usize {
+        if count > 0 && offset.saturating_add(count) < total_usize {
             links.push(BundleLink {
                 relation: "next".to_string(),
-                url: build_history_link(base_url, resource_type, id, offset + count, count),
+                url: build_history_link(
+                    base_url,
+                    resource_type,
+                    id,
+                    offset.saturating_add(count),
+                    count,
+                ),
             });
         }
 
@@ -1646,10 +1654,10 @@ pub fn bundle_from_system_history(
         }
 
         // next
-        if count > 0 && offset + count < total_usize {
+        if count > 0 && offset.saturating_add(count) < total_usize {
             links.push(BundleLink {
                 relation: "next".to_string(),
-                url: build_system_history_link(base_url, offset + count, count),
+                url: build_system_history_link(base_url, offset.saturating_add(count), count),
             });
         }
 
@@ -1674,6 +1682,21 @@ mod bundle_generation_tests {
 
     fn make_pat(id: &str) -> JsonValue {
         serde_json::json!({"resourceType":"Patient","id": id})
+    }
+
+    #[test]
+    fn system_search_pages_address_the_service_base() {
+        for base in ["https://example.org/fhir", "https://example.org/fhir/"] {
+            let links = build_search_links(2, base, "", 0, 1, Some("_type=Patient,Observation"));
+            for link in links {
+                assert!(
+                    link.url.starts_with("https://example.org/fhir?"),
+                    "{}",
+                    link.url
+                );
+                assert!(link.url.contains("_type=Patient,Observation"));
+            }
+        }
     }
 
     #[test]

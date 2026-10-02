@@ -4461,6 +4461,7 @@ dependencies = [
  "regex",
  "reqwest 0.13.4",
  "rmp-serde",
+ "rsa",
  "serde",
  "serde_json",
  "sqlx-core",

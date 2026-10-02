@@ -257,6 +257,7 @@ impl OperationHandler for ExportOperation {
     async fn handle_system(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         let export_params = self.parse_params(params)?;
@@ -270,6 +271,7 @@ impl OperationHandler for ExportOperation {
     async fn handle_type(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -299,6 +301,7 @@ impl OperationHandler for ExportOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         _params: &Value,

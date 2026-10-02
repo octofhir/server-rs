@@ -600,6 +600,7 @@ pub enum TokenSetModifier {
 pub enum TokenIndexShape {
     Identifier,
     SimpleCode,
+    Boolean,
     Coding,
 }
 

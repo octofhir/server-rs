@@ -126,30 +126,18 @@ pub async fn root() -> impl IntoResponse {
 
 /// GET /fhir or GET /fhir?_type=Patient,Observation - Combined root and system search handler
 ///
-/// If `_type` parameter is present, performs system-level search across specified resource types.
-/// Otherwise returns service info.
+/// Searches the specified `_type` values, or all supported FHIR types when omitted.
 #[tracing::instrument(name = "fhir.root", skip_all)]
 pub async fn fhir_root(
     state: State<crate::server::AppState>,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
     headers: HeaderMap,
     params: Query<HashMap<String, String>>,
     raw: RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
-    // If _type parameter is present, this is a system search
-    if params.contains_key("_type") {
-        return system_search(state, headers, params, raw)
-            .await
-            .map(|r| r.into_response());
-    }
-
-    // Otherwise return service info
-    let body = json!({
-        "service": "OctoFHIR Server",
-        "status": "ok",
-        "version": env!("CARGO_PKG_VERSION"),
-        "fhirVersion": state.fhir_version,
-    });
-    Ok((StatusCode::OK, Json(body)).into_response())
+    system_search(state, visibility, headers, params, raw)
+        .await
+        .map(|r| r.into_response())
 }
 
 pub async fn healthz() -> impl IntoResponse {
@@ -531,7 +519,25 @@ fn count_summary_capability_statement(cs: &Value) -> Value {
 }
 
 /// Preprocess resource payload before storage (e.g. hashing passwords).
-async fn preprocess_payload(resource_type: &str, payload: &mut Value) -> Result<(), ApiError> {
+pub(crate) async fn preprocess_payload(
+    resource_type: &str,
+    payload: &mut Value,
+) -> Result<(), ApiError> {
+    // Registry constraints remain mandatory even when general validation is
+    // skipped: a failed registry installation must not leave a committed row.
+    let issues = crate::validation::resource_constraints(payload);
+    if !issues.is_empty() {
+        return Err(ApiError::unprocessable_entity(
+            "Resource constraints failed",
+            Some(
+                crate::validation::ValidationOutcome {
+                    valid: false,
+                    issues,
+                }
+                .to_operation_outcome(),
+            ),
+        ));
+    }
     if resource_type == "User" {
         if let Some(obj) = payload.as_object_mut()
             && let Some(password) = obj.get("password").and_then(|v| v.as_str())
@@ -1018,8 +1024,12 @@ pub async fn create_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
     headers: HeaderMap,
-    Json(payload): Json<Value>,
+    Json(mut payload): Json<Value>,
 ) -> Result<Response, ApiError> {
+    // Create ignores client identity before content validation as well as storage.
+    if let Some(object) = payload.as_object_mut() {
+        object.remove("id");
+    }
     // Basic structural validation (resourceType match)
     let resource_types = state.resource_type_set.load();
     if let Err(e) =
@@ -1042,12 +1052,6 @@ pub async fn create_resource(
         );
     }
 
-    let mut payload = payload;
-    // FHIR R4 §3.1.0.1.3 (create): server SHALL ignore any id provided by the client
-    // and assign its own. PUT (update or create-with-id) uses the URL id instead.
-    if let Some(obj) = payload.as_object_mut() {
-        obj.remove("id");
-    }
     preprocess_payload(&resource_type, &mut payload).await?;
 
     // Handle conditional create (If-None-Exist)
@@ -2847,7 +2851,9 @@ pub struct SearchResultParams {
 
 #[tracing::instrument(name = "fhir.search", skip_all, fields(resource_type = %resource_type))]
 pub async fn search_resource(
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     State(state): State<crate::server::AppState>,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
     headers: HeaderMap,
     Path(resource_type): Path<String>,
     Query(params): Query<HashMap<String, String>>,
@@ -2872,8 +2878,9 @@ pub async fn search_resource(
     let cfg = state.search_config.config();
 
     // Parse query string to SearchParams
-    let search_params =
+    let mut search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
+    apply_search_visibility(&state, visibility, &mut search_params).await?;
 
     // Strip result params from query suffix for pagination links
     let suffix = build_query_suffix_for_links(&raw_q);
@@ -2948,7 +2955,7 @@ pub async fn search_resource(
         resources,
         ids,
         included,
-        &state.base_url,
+        &search_service_base(&state, uri.path()),
         &resource_type,
         offset,
         count,
@@ -2967,10 +2974,36 @@ pub async fn search_resource(
     Ok((StatusCode::OK, Json(bundle)).into_response())
 }
 
+fn search_service_base(state: &crate::server::AppState, path: &str) -> String {
+    if path == "/fhir" || path.starts_with("/fhir/") {
+        state.fhir_base_url()
+    } else {
+        state.base_url.trim_end_matches('/').to_string()
+    }
+}
+
+async fn apply_search_visibility(
+    state: &crate::server::AppState,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
+    params: &mut octofhir_storage::SearchParams,
+) -> Result<(), ApiError> {
+    if let Some(Extension(visibility)) = visibility {
+        visibility.apply(state, params).await
+    } else if state.config.auth.policy.anonymous_access {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "Search authorization context unavailable",
+        ))
+    }
+}
+
 /// POST /[type]/_search - Search via POST with form-encoded parameters
 #[tracing::instrument(name = "fhir.search.post", skip_all, fields(resource_type = %resource_type))]
 pub async fn search_resource_post(
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     State(state): State<crate::server::AppState>,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
     headers: HeaderMap,
     Path(resource_type): Path<String>,
     RawQuery(raw): RawQuery,
@@ -3008,8 +3041,9 @@ pub async fn search_resource_post(
         .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
     // Parse query string to SearchParams
-    let search_params =
+    let mut search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
+    apply_search_visibility(&state, visibility, &mut search_params).await?;
 
     // Strip result params from query suffix for pagination links
     let suffix = build_query_suffix_for_links(&raw_q);
@@ -3084,7 +3118,7 @@ pub async fn search_resource_post(
         resources,
         ids,
         included,
-        &state.base_url,
+        &search_service_base(&state, uri.path()),
         &resource_type,
         offset,
         count,
@@ -3116,16 +3150,94 @@ pub async fn search_resource_post(
 #[tracing::instrument(name = "fhir.search.system", skip_all)]
 pub async fn system_search(
     State(state): State<crate::server::AppState>,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     RawQuery(raw): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Get _type parameter - required for system search
-    let types_param = params.get("_type").ok_or_else(|| {
-        ApiError::bad_request("System search requires _type parameter to specify resource types")
-    })?;
+    let type_names = system_search_types(&state, params.get("_type").map(String::as_str));
+    execute_aggregate_search(
+        state,
+        visibility,
+        headers,
+        AggregateSearch {
+            types: type_names,
+            query: raw.unwrap_or_default(),
+            path: String::new(),
+            membership: None,
+        },
+    )
+    .await
+}
 
-    let types: Vec<&str> = types_param.split(',').map(|s| s.trim()).collect();
+fn system_search_types(state: &crate::server::AppState, requested: Option<&str>) -> Vec<String> {
+    if let Some(types_param) = requested {
+        types_param
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    } else {
+        state
+            .resource_type_set
+            .load()
+            .iter()
+            .filter(|name| name.parse::<ResourceType>().is_ok() && !is_internal_resource_type(name))
+            .cloned()
+            .collect()
+    }
+}
+
+struct AggregateSearch {
+    types: Vec<String>,
+    query: String,
+    path: String,
+    membership: Option<HashMap<String, octofhir_storage::SearchConstraint>>,
+}
+
+fn apply_compartment_membership(
+    params: &mut octofhir_storage::SearchParams,
+    types: &[String],
+    membership: &HashMap<String, octofhir_storage::SearchConstraint>,
+) {
+    let grants = params.type_constraints.take();
+    let mut constraints = HashMap::new();
+    for resource_type in types {
+        let grant = match &grants {
+            Some(grants) => grants
+                .get(resource_type)
+                .cloned()
+                .unwrap_or_else(|| octofhir_storage::SearchConstraint::Or(Vec::new())),
+            None => octofhir_storage::SearchConstraint::And(Vec::new()),
+        };
+        // A denied branch must not compile compartment parameters that
+        // are irrelevant to this caller (or unavailable for that type).
+        if matches!(&grant, octofhir_storage::SearchConstraint::Or(parts) if parts.is_empty()) {
+            constraints.insert(resource_type.clone(), grant);
+            continue;
+        }
+        let member = membership
+            .get(resource_type)
+            .cloned()
+            .unwrap_or_else(|| octofhir_storage::SearchConstraint::Or(Vec::new()));
+        constraints.insert(
+            resource_type.clone(),
+            octofhir_storage::SearchConstraint::And(vec![grant, member]),
+        );
+    }
+    params.type_constraints = Some(constraints);
+}
+
+async fn execute_aggregate_search(
+    state: crate::server::AppState,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
+    headers: HeaderMap,
+    request: AggregateSearch,
+) -> Result<Response, ApiError> {
+    let type_names = request.types;
+    let types: Vec<&str> = type_names.iter().map(String::as_str).collect();
+    let params: HashMap<String, String> = url::form_urlencoded::parse(request.query.as_bytes())
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
 
     if types.is_empty() {
         return Err(ApiError::bad_request(
@@ -3133,7 +3245,7 @@ pub async fn system_search(
         ));
     }
 
-    let raw_q = raw.unwrap_or_default();
+    let raw_q = request.query;
     let debug_request = search_debug_request(&state.config.search, &headers, &raw_q);
     let raw_q = strip_search_debug_params(&raw_q);
     let cfg = state.search_config.config();
@@ -3142,16 +3254,19 @@ pub async fn system_search(
         .and_then(|h| h.to_str().ok())
         .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
-    if types
-        .iter()
-        .any(|name| name.parse::<ResourceType>().is_err())
-    {
+    if types.iter().any(|name| {
+        name.parse::<ResourceType>().is_err() || !state.resource_type_set.load().contains(*name)
+    }) {
         return Err(ApiError::bad_request(
-            "_type contains an invalid resource type",
+            "_type contains an unsupported resource type",
         ));
     }
-    let search_params =
+    let mut search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
+    apply_aggregate_search_visibility(&state, visibility, &type_names, &mut search_params).await?;
+    if let Some(membership) = request.membership {
+        apply_compartment_membership(&mut search_params, &type_names, &membership);
+    }
     let result = octofhir_db_postgres::queries::search::execute_system_search_raw(
         &state.read_db_pool,
         &types,
@@ -3182,17 +3297,38 @@ pub async fn system_search(
         )
             .into_response());
     }
-    let count = search_params.count.unwrap_or(cfg.default_count as u32) as usize;
+    let bundle =
+        build_aggregate_search_bundle(&state, &search_params, &raw_q, &request.path, result);
+
+    if params.contains_key("_summary") || params.contains_key("_elements") {
+        let bundle_value = apply_result_params(bundle, &params)?;
+        return Ok((StatusCode::OK, Json(bundle_value)).into_response());
+    }
+
+    Ok((StatusCode::OK, Json(bundle)).into_response())
+}
+
+fn build_aggregate_search_bundle(
+    state: &crate::server::AppState,
+    search_params: &octofhir_storage::SearchParams,
+    raw_q: &str,
+    path: &str,
+    result: octofhir_storage::RawSearchResult,
+) -> octofhir_api::Bundle {
+    let fhir_base = state.fhir_base_url();
+    let count = search_params
+        .count
+        .unwrap_or(state.search_config.config().default_count as u32) as usize;
     let offset = search_params.offset.unwrap_or(0) as usize;
     let (total, exact) =
         resolved_search_total(result.total, result.has_more, offset, result.entries.len());
-    let suffix = build_query_suffix_for_links(&raw_q);
+    let suffix = build_query_suffix_for_links(raw_q);
     let links = octofhir_api::build_search_links_with_total_mode(
         total,
         exact,
         result.has_more,
-        &state.base_url,
-        "",
+        &fhir_base,
+        path,
         offset,
         count,
         suffix.as_deref(),
@@ -3205,9 +3341,7 @@ pub async fn system_search(
         .map(|(entry, mode)| octofhir_api::BundleEntry {
             full_url: Some(format!(
                 "{}/{}/{}",
-                state.base_url.trim_end_matches('/'),
-                entry.resource_type,
-                entry.id
+                fhir_base, entry.resource_type, entry.id
             )),
             resource: Some(octofhir_api::RawJson::from_string(entry.resource_json)),
             search: Some(octofhir_api::BundleEntrySearch {
@@ -3234,15 +3368,58 @@ pub async fn system_search(
             response: None,
         });
     }
-    let bundle =
-        octofhir_api::Bundle::searchset_with_total(total.map(|n| n as u64), entries, links);
+    octofhir_api::Bundle::searchset_with_total(total.map(|n| n as u64), entries, links)
+}
 
-    if params.contains_key("_summary") || params.contains_key("_elements") {
-        let bundle_value = apply_result_params(bundle, &params)?;
-        return Ok((StatusCode::OK, Json(bundle_value)).into_response());
+/// POST /_search uses the same system query path after merging URL and form criteria.
+pub async fn system_search_post(
+    state: State<crate::server::AppState>,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
+    headers: HeaderMap,
+    RawQuery(raw): RawQuery,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let query = merge_search_query(raw, &body)?;
+    let parameters = url::form_urlencoded::parse(query.as_bytes())
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    system_search(
+        state,
+        visibility,
+        headers,
+        Query(parameters),
+        RawQuery(Some(query)),
+    )
+    .await
+    .map(IntoResponse::into_response)
+}
+
+async fn apply_aggregate_search_visibility(
+    state: &crate::server::AppState,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
+    types: &[String],
+    params: &mut octofhir_storage::SearchParams,
+) -> Result<(), ApiError> {
+    if let Some(Extension(visibility)) = visibility {
+        visibility.apply_types(state, types, params).await
+    } else if state.config.auth.policy.anonymous_access {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "Search authorization context unavailable",
+        ))
     }
+}
 
-    Ok((StatusCode::OK, Json(bundle)).into_response())
+fn merge_search_query(raw: Option<String>, body: &[u8]) -> Result<String, ApiError> {
+    let body = std::str::from_utf8(body)
+        .map_err(|_| ApiError::bad_request("Search form body must be valid UTF-8"))?;
+    let query = raw.unwrap_or_default();
+    Ok(match (query.is_empty(), body.is_empty()) {
+        (_, true) => query,
+        (true, false) => body.to_string(),
+        (false, false) => format!("{query}&{body}"),
+    })
 }
 
 /// Build query suffix for pagination links, stripping result params
@@ -4104,7 +4281,7 @@ pub async fn api_operation_patch(
 }
 
 // ---- Error mapping helpers ----
-fn map_storage_error(e: StorageError) -> ApiError {
+pub(crate) fn map_storage_error(e: StorageError) -> ApiError {
     match e {
         StorageError::NotFound { resource_type, id } => {
             ApiError::not_found(format!("{resource_type} with id '{id}' not found"))
@@ -4182,6 +4359,192 @@ pub async fn ui_static(Path(path): Path<String>) -> Response {
 // Transaction/Batch Bundle Processing (Task 0020)
 // ============================================================================
 
+struct PreparedBundleSearch {
+    request: AggregateSearch,
+    params: octofhir_storage::SearchParams,
+    strict: bool,
+}
+
+async fn prepare_bundle_search(
+    state: &crate::server::AppState,
+    entry: &Value,
+    visibility: Option<crate::authorization::AuthorizedSearch>,
+    headers: &HeaderMap,
+) -> Result<Option<PreparedBundleSearch>, ApiError> {
+    if !entry["request"]["method"]
+        .as_str()
+        .is_some_and(|method| method.eq_ignore_ascii_case("GET"))
+    {
+        return Ok(None);
+    }
+    let url = entry["request"]["url"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing request.url"))?;
+    let (path, query) = url.split_once('?').unwrap_or((url, ""));
+    let path = path.trim_start_matches('/');
+    let parts: Vec<_> = path.split('/').filter(|part| !part.is_empty()).collect();
+    let request = match parts.as_slice() {
+        [] => {
+            let requested = url::form_urlencoded::parse(query.as_bytes())
+                .filter(|(key, _)| key == "_type")
+                .last()
+                .map(|(_, value)| value.into_owned());
+            AggregateSearch {
+                types: system_search_types(state, requested.as_deref()),
+                query: query.into(),
+                path: String::new(),
+                membership: None,
+            }
+        }
+        [resource_type] if !resource_type.starts_with('_') && !resource_type.starts_with('$') => {
+            AggregateSearch {
+                types: vec![(*resource_type).into()],
+                query: query.into(),
+                path: (*resource_type).into(),
+                membership: None,
+            }
+        }
+        [compartment_type, compartment_id, resource_type]
+            if !resource_type.starts_with('_') && !resource_type.starts_with('$') =>
+        {
+            compartment_search_request(
+                state,
+                CompartmentSearch {
+                    compartment_type: (*compartment_type).into(),
+                    compartment_id: (*compartment_id).into(),
+                    resource_type: (*resource_type).into(),
+                    query: query.into(),
+                },
+            )?
+        }
+        _ => return Ok(None),
+    };
+    if request.types.is_empty()
+        || request.types.iter().any(|resource_type| {
+            resource_type.parse::<ResourceType>().is_err()
+                || !state.resource_type_set.load().contains(resource_type)
+        })
+    {
+        return Err(ApiError::bad_request(
+            "Search contains an unsupported resource type",
+        ));
+    }
+    let cfg = state.search_config.config();
+    let mut params = octofhir_search::parse_query_string(
+        &request.query,
+        cfg.default_count as u32,
+        cfg.max_count as u32,
+    );
+    apply_aggregate_search_visibility(
+        state,
+        visibility.map(Extension),
+        &request.types,
+        &mut params,
+    )
+    .await?;
+    if let Some(membership) = &request.membership {
+        apply_compartment_membership(&mut params, &request.types, membership);
+    }
+    let types: Vec<_> = request.types.iter().map(String::as_str).collect();
+    let params = octofhir_db_postgres::queries::search::prepare_system_search_params(
+        &types,
+        &params,
+        &cfg.registry,
+        state.terminology_provider.as_ref(),
+        state.config.search.max_valueset_expansion,
+    )
+    .await
+    .map_err(map_storage_error)?;
+    let strict = headers
+        .get("Prefer")
+        .and_then(|value| value.to_str().ok())
+        .map(octofhir_search::UnknownParamHandling::from_prefer_header)
+        == Some(octofhir_search::UnknownParamHandling::Strict);
+    // Compile trusted predicates before a transaction's connection is acquired.
+    // Keep both the predicates and handling mode for execution on that connection.
+    for resource_type in &request.types {
+        let scoped = params.for_resource_type(resource_type);
+        octofhir_search::build_native_ir_query_from_params_with_config(
+            resource_type,
+            &scoped,
+            &cfg.registry,
+            "public",
+            &octofhir_search::ParamsSearchConfig {
+                unknown_param_handling: if strict {
+                    octofhir_search::UnknownParamHandling::Strict
+                } else {
+                    octofhir_search::UnknownParamHandling::Lenient
+                },
+                collect_debug_plan: false,
+            },
+        )
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
+    Ok(Some(PreparedBundleSearch {
+        request,
+        params,
+        strict,
+    }))
+}
+
+fn bundle_search_response(
+    state: &crate::server::AppState,
+    prepared: &PreparedBundleSearch,
+    result: octofhir_storage::RawSearchResult,
+) -> Result<Value, ApiError> {
+    let bundle = build_aggregate_search_bundle(
+        state,
+        &prepared.params,
+        &prepared.request.query,
+        &prepared.request.path,
+        result,
+    );
+    let projections: HashMap<String, String> = ["_summary", "_elements"]
+        .into_iter()
+        .filter_map(|key| {
+            prepared
+                .params
+                .parameters
+                .get(key)
+                .and_then(|values| values.last())
+                .map(|value| (key.into(), value.clone()))
+        })
+        .collect();
+    let resource = if projections.is_empty() {
+        serde_json::to_value(bundle).map_err(|error| ApiError::internal(error.to_string()))?
+    } else {
+        apply_result_params(bundle, &projections)?
+    };
+    Ok(json!({"response":{"status":"200 OK"}, "resource":resource}))
+}
+
+async fn execute_bundle_search(
+    state: &crate::server::AppState,
+    prepared: &PreparedBundleSearch,
+) -> Result<Value, ApiError> {
+    let types: Vec<_> = prepared.request.types.iter().map(String::as_str).collect();
+    let cfg = state.search_config.config();
+    let result = octofhir_db_postgres::queries::search::execute_system_search_raw(
+        &state.read_db_pool,
+        &types,
+        &prepared.params,
+        &cfg.registry,
+        None,
+        octofhir_db_postgres::queries::RawSearchOptions {
+            include_limits: state.config.search.include_limits,
+            unknown_param_handling: Some(if prepared.strict {
+                octofhir_search::UnknownParamHandling::Strict
+            } else {
+                octofhir_search::UnknownParamHandling::Lenient
+            }),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(map_storage_error)?;
+    bundle_search_response(state, prepared, result)
+}
+
 /// POST / - Process transaction or batch bundle
 #[tracing::instrument(name = "fhir.bundle", skip_all)]
 pub async fn transaction_handler(
@@ -4226,12 +4589,20 @@ pub async fn transaction_handler(
             "Expected transaction or batch Bundle",
         ));
     }
+    let mut prepared_searches = HashMap::new();
     if bundle_type == "transaction" || prefer_async {
-        for entry in bundle["entry"]
+        for (index, entry) in bundle["entry"]
             .as_array()
             .ok_or_else(|| ApiError::bad_request("Missing or invalid bundle entries"))?
+            .iter()
+            .enumerate()
         {
-            crate::authorization::authorize_entry(&state, &auth, entry).await?;
+            let visibility = crate::authorization::authorize_entry(&state, &auth, entry).await?;
+            if let Some(prepared) =
+                prepare_bundle_search(&state, entry, visibility, &headers).await?
+            {
+                prepared_searches.insert(index, prepared);
+            }
         }
     }
 
@@ -4262,9 +4633,14 @@ pub async fn transaction_handler(
     // Otherwise, process synchronously
     match bundle_type {
         "transaction" => {
-            let (status, json) =
-                process_transaction(&state, &bundle, bundle_include_resource, skip_validation)
-                    .await?;
+            let (status, json) = process_transaction(
+                &state,
+                &bundle,
+                bundle_include_resource,
+                skip_validation,
+                &prepared_searches,
+            )
+            .await?;
             Ok((status, HeaderMap::new(), json))
         }
         "batch" => {
@@ -4274,6 +4650,7 @@ pub async fn transaction_handler(
                 bundle_include_resource,
                 skip_validation,
                 &auth,
+                &headers,
             )
             .await?;
             Ok((status, HeaderMap::new(), json))
@@ -4296,6 +4673,7 @@ async fn process_transaction(
     bundle: &Value,
     include_resource: bool,
     skip_validation: bool,
+    prepared_searches: &HashMap<usize, PreparedBundleSearch>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let entries = bundle["entry"]
         .as_array()
@@ -4844,6 +5222,7 @@ async fn process_transaction(
             include_resource,
             pre_resolved,
             prepared_patches.get(original_idx),
+            prepared_searches.get(original_idx),
         )
         .await
         {
@@ -5029,6 +5408,7 @@ async fn process_transaction_entry_with_tx(
     include_resource: bool,
     pre_resolved: Option<&ConditionalMatch>,
     prepared_patch: Option<&(Value, String)>,
+    prepared_search: Option<&PreparedBundleSearch>,
 ) -> Result<Value, ApiError> {
     let request = &entry["request"];
     let method = request["method"]
@@ -5278,57 +5658,20 @@ async fn process_transaction_entry_with_tx(
             }
         }
         "GET" => {
-            if url.contains('?') {
-                let (resource_type, query) = url
-                    .find('?')
-                    .map(|idx| (&url[..idx], &url[idx + 1..]))
-                    .ok_or_else(|| ApiError::bad_request("Invalid search URL"))?;
-
-                let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
-                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
-                })?;
-
-                let cfg = state.search_config.config();
-                let search_params = octofhir_search::parse_query_string(
-                    query,
-                    cfg.default_count as u32,
-                    cfg.max_count as u32,
-                );
-
+            if let Some(prepared) = prepared_search {
+                let types: Vec<_> = prepared.request.types.iter().map(String::as_str).collect();
                 let result = tx
-                    .search(resource_type, &search_params)
+                    .search_system_raw(
+                        &types,
+                        &prepared.params,
+                        state.config.search.include_limits,
+                        prepared.strict,
+                    )
                     .await
-                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
-
-                let offset = search_params.offset.unwrap_or(0) as usize;
-                let count = search_params.count.unwrap_or(10) as usize;
-                let total = result.total.unwrap_or(result.entries.len() as u32) as usize;
-
-                let search_bundle = octofhir_api::bundle_from_search(
-                    total,
-                    result
-                        .entries
-                        .into_iter()
-                        .map(|entry| entry.resource)
-                        .collect(),
-                    &state.base_url,
-                    resource_type,
-                    offset,
-                    count,
-                    None,
-                );
-
-                let search_bundle_json = serde_json::to_value(search_bundle)
-                    .map_err(|e| ApiError::internal(e.to_string()))?;
-
-                return Ok(json!({
-                    "response": {
-                        "status": "200 OK"
-                    },
-                    "resource": search_bundle_json
-                }));
+                    .map_err(map_storage_error)?;
+                return bundle_search_response(state, prepared, result);
             }
-
+            let url = url.split('?').next().unwrap_or(url).trim_start_matches('/');
             let parts: Vec<&str> = url.split('/').collect();
             if parts.len() != 2 {
                 return Err(ApiError::bad_request(format!(
@@ -5438,6 +5781,7 @@ async fn process_batch(
     include_resource: bool,
     skip_validation: bool,
     auth: &octofhir_auth::middleware::AuthContext,
+    headers: &HeaderMap,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let entries = bundle["entry"]
         .as_array()
@@ -5463,13 +5807,21 @@ async fn process_batch(
             }}));
             continue;
         }
-        if let Err(error) = crate::authorization::authorize_entry(state, auth, entry).await {
-            response_entries.push(json!({"response": {
-                "status": format!("{} {}", error.status_code().as_u16(), error.status_code().canonical_reason().unwrap_or("Error")),
-                "outcome": error.to_operation_outcome()
-            }}));
-            continue;
+        let admission = async {
+            let visibility = crate::authorization::authorize_entry(state, auth, entry).await?;
+            prepare_bundle_search(state, entry, visibility, headers).await
         }
+        .await;
+        let prepared_search = match admission {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                response_entries.push(json!({"response": {
+                    "status": format!("{} {}", error.status_code().as_u16(), error.status_code().canonical_reason().unwrap_or("Error")),
+                    "outcome": error.to_operation_outcome()
+                }}));
+                continue;
+            }
+        };
         // Validate POST/PUT entries, mirroring single writes. Batch is
         // non-atomic: a failure becomes this entry's 422 response, siblings proceed.
         let method = entry["request"]["method"]
@@ -5500,6 +5852,7 @@ async fn process_batch(
             &mut reference_map,
             include_resource,
             skip_validation,
+            prepared_search.as_ref(),
         )
         .await;
 
@@ -5575,7 +5928,13 @@ async fn process_transaction_entry(
     reference_map: &mut std::collections::HashMap<String, String>,
     include_resource: bool,
     skip_validation: bool,
+    prepared_search: Option<&PreparedBundleSearch>,
 ) -> Result<(Value, Option<(String, String)>), ApiError> {
+    if let Some(prepared) = prepared_search {
+        return execute_bundle_search(state, prepared)
+            .await
+            .map(|response| (response, None));
+    }
     let request = &entry["request"];
     let method = request["method"]
         .as_str()
@@ -6026,11 +6385,7 @@ async fn process_get_entry(
     state: &crate::server::AppState,
     url: &str,
 ) -> Result<(Value, Option<(String, String)>), ApiError> {
-    // Check for search: Type?params
-    if url.contains('?') {
-        return process_get_search_entry(state, url).await;
-    }
-
+    let url = url.split('?').next().unwrap_or(url).trim_start_matches('/');
     let parts: Vec<&str> = url.split('/').collect();
 
     // Check for vread: Type/id/_history/version
@@ -6103,80 +6458,6 @@ async fn process_get_entry(
     } else {
         Err(ApiError::bad_request(format!("Invalid GET URL: {}", url)))
     }
-}
-
-/// Process GET with search params in batch: Type?params
-async fn process_get_search_entry(
-    state: &crate::server::AppState,
-    url: &str,
-) -> Result<(Value, Option<(String, String)>), ApiError> {
-    let (resource_type, query) = if let Some(idx) = url.find('?') {
-        (&url[..idx], &url[idx + 1..])
-    } else {
-        return Err(ApiError::bad_request("Invalid search URL"));
-    };
-
-    // Validate resource type
-    if resource_type.parse::<ResourceType>().is_err() {
-        return Err(ApiError::bad_request(format!(
-            "Unknown resource type: {}",
-            resource_type
-        )));
-    }
-
-    // Search using raw path (skips JSONB → Value round-trip)
-    let cfg = state.search_config.config();
-    let search_params =
-        octofhir_search::parse_query_string(query, cfg.default_count as u32, cfg.max_count as u32);
-
-    let result = octofhir_db_postgres::queries::execute_search_raw_with_config(
-        &state.read_db_pool,
-        resource_type,
-        &search_params,
-        Some(&cfg.registry),
-        None,
-        state.query_cache.as_deref(),
-    )
-    .await
-    .map_err(|e| ApiError::bad_request(e.to_string()))?;
-
-    let offset = search_params.offset.unwrap_or(0) as usize;
-    let count = search_params.count.unwrap_or(10) as usize;
-    let (total, total_is_exact) =
-        resolved_search_total(result.total, result.has_more, offset, result.entries.len());
-
-    let (resources, ids): (Vec<_>, Vec<_>) = result
-        .entries
-        .into_iter()
-        .map(|e| (octofhir_api::RawJson::from_string(e.resource_json), e.id))
-        .unzip();
-
-    let search_bundle = octofhir_api::bundle_from_search_raw_with_pagination(
-        total,
-        total_is_exact,
-        result.has_more,
-        resources,
-        ids,
-        vec![],
-        &state.base_url,
-        resource_type,
-        offset,
-        count,
-        None,
-    );
-
-    // Return the bundle as the response resource
-    let search_bundle_json =
-        serde_json::to_value(search_bundle).map_err(|e| ApiError::internal(e.to_string()))?;
-
-    let response_entry = json!({
-        "response": {
-            "status": "200 OK"
-        },
-        "resource": search_bundle_json
-    });
-
-    Ok((response_entry, None))
 }
 
 /// Process PATCH entry
@@ -6482,23 +6763,41 @@ fn build_transaction_response_entry(
 pub async fn compartment_search(
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     Path((compartment_id, resource_type)): Path<(String, String)>,
-    query: Query<HistoryQueryParams>,
     RawQuery(query_string): RawQuery,
-    State(state): State<crate::server::AppState>,
-) -> Result<impl IntoResponse, ApiError> {
-    // Extract compartment type from the original URI path
-    // e.g. /fhir/Patient/123/Observation → "Patient"
+    state_context: (
+        State<crate::server::AppState>,
+        crate::operations::OperationContext,
+    ),
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let (State(state), context) = state_context;
     let compartment_type = uri
         .path()
         .strip_prefix("/fhir/")
-        .unwrap_or(uri.path())
+        .unwrap_or(uri.path().trim_start_matches('/'))
         .split('/')
         .next()
         .unwrap_or("")
         .to_string();
-
-    // Dispatch _history requests — literal compartment routes (e.g. /Patient/{id}/{...})
-    // match before the generic /{resource_type}/{id}/{operation} route in matchit
+    if crate::operations::is_operation(&resource_type) {
+        let params = crate::operations::OperationParams::Get(
+            url::form_urlencoded::parse(query_string.as_deref().unwrap_or_default().as_bytes())
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect(),
+        );
+        return crate::operations::router::instance_operation_handler_internal(
+            &state,
+            &context,
+            &compartment_type,
+            &compartment_id,
+            &resource_type,
+            params,
+        )
+        .await;
+    }
+    let query = Query::<HistoryQueryParams>::try_from_uri(&uri)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     if resource_type == "_history" {
         return instance_history(
             State(state),
@@ -6506,295 +6805,140 @@ pub async fn compartment_search(
             query,
         )
         .await
-        .map(|r| r.into_response());
+        .map(IntoResponse::into_response);
     }
-
-    tracing::info!(
-        compartment_type = %compartment_type,
-        compartment_id = %compartment_id,
-        resource_type = %resource_type,
-        query = ?query_string,
-        "Compartment search request"
-    );
-
-    // Parse resource type
-    let _rt = resource_type
-        .parse::<ResourceType>()
-        .map_err(|_| ApiError::BadRequest(format!("Invalid resource type: {}", resource_type)))?;
-
-    // Get compartment definition
-    let compartment_def = state
-        .compartment_registry
-        .get(&compartment_type)
-        .map_err(|e| ApiError::NotFound(format!("Compartment not found: {}", e)))?;
-
-    // Get inclusion parameters for this resource type
-    let inclusion_params = compartment_def
-        .get_inclusion_params(&resource_type)
-        .ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "Resource type '{}' is not in {} compartment",
-                resource_type, compartment_type
-            ))
-        })?;
-
-    // Check if the compartment resource exists (raw path avoids Value parsing)
-    match state
-        .storage
-        .read_raw(&compartment_type, &compartment_id)
-        .await
-    {
-        Ok(Some(_)) => {} // Resource exists
-        Ok(None) => {
-            return Err(ApiError::NotFound(format!(
-                "Compartment resource {}/{} not found",
-                compartment_type, compartment_id
-            )));
-        }
-        Err(e) => {
-            return Err(ApiError::Internal(format!("Storage error: {}", e)));
-        }
-    }
-
-    // Build compartment constraint
-    // The compartment constraint is: (param1=CompartmentType/id OR param2=CompartmentType/id OR ...)
-    let compartment_ref = format!("{}/{}", compartment_type, compartment_id);
-
-    // FHIR spec requires OR semantics: match if ANY param references the compartment
-    // For multiple inclusion params, we need to execute searches for each param and merge results
-    let base_query: String = query_string.unwrap_or_default();
-
-    tracing::debug!(
-        resource_type = %resource_type,
-        compartment = %compartment_ref,
-        inclusion_params = ?inclusion_params,
-        base_query = %base_query,
-        "Executing compartment search with OR semantics"
-    );
-
-    // Execute searches for all inclusion parameters and collect unique resources (raw path)
-    let cfg = state.search_config.config();
-    let mut all_resources: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new(); // Deduplicate by ID → raw JSON
-    let mut total_count = 0usize;
-
-    for param in inclusion_params {
-        // Build query with this inclusion parameter
-        let mut query = base_query.clone();
-        if !query.is_empty() {
-            query.push('&');
-        }
-        query.push_str(&format!("{}={}", param, compartment_ref));
-
-        tracing::debug!(
-            param = %param,
-            query = %query,
-            "Searching with inclusion parameter"
-        );
-
-        let search_params = octofhir_search::parse_query_string(&query, 1000, 1000);
-        match octofhir_db_postgres::queries::execute_search_raw_with_config(
-            &state.read_db_pool,
-            &resource_type,
-            &search_params,
-            Some(&cfg.registry),
-            None,
-            state.query_cache.as_deref(),
-        )
-        .await
-        {
-            Ok(result) => {
-                total_count = total_count.max(result.total.unwrap_or(0) as usize);
-
-                // Add resources, deduplicating by ID
-                for entry in result.entries {
-                    all_resources.entry(entry.id).or_insert(entry.resource_json);
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    param = %param,
-                    error = %e,
-                    "Search failed for inclusion parameter, continuing with others"
-                );
-            }
-        }
-    }
-
-    let actual_count = all_resources.len();
-
-    tracing::info!(
-        compartment = %compartment_ref,
-        resource_type = %resource_type,
-        inclusion_params_count = inclusion_params.len(),
-        unique_resources = actual_count,
-        "Compartment search completed with OR semantics"
-    );
-
-    // Build Bundle entries from deduplicated raw resources
-    let (resources, ids): (Vec<_>, Vec<_>) = all_resources
-        .into_iter()
-        .map(|(id, json)| (octofhir_api::RawJson::from_string(json), id))
-        .unzip();
-
-    let bundle = octofhir_api::bundle_from_search_raw(
-        actual_count,
-        resources,
-        ids,
-        vec![],
-        &state.base_url,
-        &resource_type,
-        0,
-        actual_count,
-        None,
-    );
-
-    Ok((StatusCode::OK, Json(bundle)).into_response())
+    execute_compartment_search(
+        state,
+        visibility,
+        headers,
+        CompartmentSearch {
+            compartment_type,
+            compartment_id,
+            resource_type,
+            query: query_string.unwrap_or_default(),
+        },
+    )
+    .await
 }
 
-/// Handler for wildcard compartment search: GET /{CompartmentType}/{id}/*
-///
-/// Returns all resources in the specified compartment.
-///
-/// Examples:
-/// - GET /Patient/123/* - All resources in patient 123's compartment
-/// - GET /Encounter/456/* - All resources in encounter 456's compartment
+/// Search every linked type in a compartment, with one global page and total.
 pub async fn compartment_search_all(
     Path((compartment_type, compartment_id)): Path<(String, String)>,
     State(state): State<crate::server::AppState>,
-) -> Result<impl IntoResponse, ApiError> {
-    tracing::info!(
-        compartment_type = %compartment_type,
-        compartment_id = %compartment_id,
-        "Wildcard compartment search request"
-    );
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+) -> Result<Response, ApiError> {
+    execute_compartment_search(
+        state,
+        visibility,
+        headers,
+        CompartmentSearch {
+            compartment_type,
+            compartment_id,
+            resource_type: "*".into(),
+            query: query.unwrap_or_default(),
+        },
+    )
+    .await
+}
 
-    // Get compartment definition
-    let compartment_def = state
+/// POST /Compartment/id/type/_search accepts URL and form criteria together.
+pub async fn compartment_search_post(
+    Path((compartment_type, compartment_id, resource_type)): Path<(String, String, String)>,
+    State(state): State<crate::server::AppState>,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
+    headers: HeaderMap,
+    RawQuery(raw): RawQuery,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    execute_compartment_search(
+        state,
+        visibility,
+        headers,
+        CompartmentSearch {
+            compartment_type,
+            compartment_id,
+            resource_type,
+            query: merge_search_query(raw, &body)?,
+        },
+    )
+    .await
+}
+
+struct CompartmentSearch {
+    compartment_type: String,
+    compartment_id: String,
+    resource_type: String,
+    query: String,
+}
+
+async fn execute_compartment_search(
+    state: crate::server::AppState,
+    visibility: Option<Extension<crate::authorization::AuthorizedSearch>>,
+    headers: HeaderMap,
+    request: CompartmentSearch,
+) -> Result<Response, ApiError> {
+    let request = compartment_search_request(&state, request)?;
+    execute_aggregate_search(state, visibility, headers, request).await
+}
+
+fn compartment_search_request(
+    state: &crate::server::AppState,
+    request: CompartmentSearch,
+) -> Result<AggregateSearch, ApiError> {
+    octofhir_core::validate_id(&request.compartment_id)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let definition = state
         .compartment_registry
-        .get(&compartment_type)
-        .map_err(|e| ApiError::NotFound(format!("Compartment not found: {}", e)))?;
-
-    // Verify compartment resource exists (raw path avoids Value parsing)
-    match state
-        .storage
-        .read_raw(&compartment_type, &compartment_id)
-        .await
+        .get(&request.compartment_type)
+        .map_err(|e| ApiError::not_found(e.to_string()))?;
+    let types = if request.resource_type == "*" {
+        let mut types: Vec<String> = definition
+            .resource_types()
+            .into_iter()
+            .filter(|name| state.resource_type_set.load().contains(*name))
+            .map(str::to_string)
+            .collect();
+        types.push(request.compartment_type.clone());
+        types.sort_unstable();
+        types.dedup();
+        types
+    } else if request.resource_type == request.compartment_type
+        || definition
+            .get_inclusion_params(&request.resource_type)
+            .is_some()
     {
-        Ok(Some(_)) => {} // Resource exists
-        Ok(None) => {
-            return Err(ApiError::NotFound(format!(
-                "Compartment resource {}/{} not found",
-                compartment_type, compartment_id
-            )));
-        }
-        Err(e) => {
-            return Err(ApiError::Internal(format!("Storage error: {}", e)));
-        }
-    }
-
-    // Get all resource types in this compartment
-    let resource_types = compartment_def.resource_types();
-    let resource_types_count = resource_types.len();
-
-    tracing::info!(
-        compartment = %format!("{}/{}", compartment_type, compartment_id),
-        resource_types = ?resource_types,
-        count = resource_types_count,
-        "Searching all resource types in compartment"
+        vec![request.resource_type.clone()]
+    } else {
+        return Err(ApiError::bad_request(format!(
+            "Resource type '{}' is not linked to the {} compartment",
+            request.resource_type, request.compartment_type
+        )));
+    };
+    let membership = types
+        .iter()
+        .map(|resource_type| {
+            (
+                resource_type.clone(),
+                definition.membership_constraint(
+                    &request.compartment_id,
+                    resource_type,
+                    &state.base_url,
+                ),
+            )
+        })
+        .collect();
+    let path = format!(
+        "{}/{}/{}",
+        request.compartment_type, request.compartment_id, request.resource_type
     );
-
-    // Build searchset Bundle (raw path)
-    let cfg = state.search_config.config();
-    let mut all_bundle_entries = Vec::new();
-    let mut total = 0usize;
-
-    // Execute search for each resource type
-    for resource_type_str in resource_types {
-        if resource_type_str.parse::<ResourceType>().is_err() {
-            tracing::warn!(
-                resource_type = %resource_type_str,
-                "Skipping unknown resource type"
-            );
-            continue;
-        }
-
-        // Get inclusion parameters for this resource type
-        let inclusion_params = match compartment_def.get_inclusion_params(resource_type_str) {
-            Some(params) => params,
-            None => {
-                tracing::debug!(
-                    resource_type = %resource_type_str,
-                    "Resource type not in compartment definition"
-                );
-                continue;
-            }
-        };
-
-        // Build search query for this resource type
-        let compartment_ref = format!("{}/{}", compartment_type, compartment_id);
-        let mut query = String::new();
-
-        // Use the first (primary) inclusion parameter
-        if !inclusion_params.is_empty() {
-            let param = &inclusion_params[0];
-            query.push_str(&format!("{}={}", param, compartment_ref));
-        }
-
-        // Execute search using raw path (skips JSONB → Value round-trip)
-        let search_params = octofhir_search::parse_query_string(&query, 1000, 1000);
-        match octofhir_db_postgres::queries::execute_search_raw_with_config(
-            &state.read_db_pool,
-            resource_type_str,
-            &search_params,
-            Some(&cfg.registry),
-            None,
-            state.query_cache.as_deref(),
-        )
-        .await
-        {
-            Ok(result) => {
-                total += result.entries.len();
-
-                for entry in result.entries {
-                    let full_url = Some(format!(
-                        "{}/{}/{}",
-                        state.base_url.trim_end_matches('/'),
-                        entry.resource_type,
-                        entry.id
-                    ));
-                    all_bundle_entries.push(octofhir_api::BundleEntry {
-                        full_url,
-                        resource: Some(octofhir_api::RawJson::from_string(entry.resource_json)),
-                        search: Some(octofhir_api::BundleEntrySearch {
-                            mode: "match".to_string(),
-                            score: None,
-                        }),
-                        request: None,
-                        response: None,
-                    });
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    resource_type = %resource_type_str,
-                    error = %e,
-                    "Failed to search resource type in compartment"
-                );
-                // Continue with other resource types
-            }
-        }
-    }
-
-    let bundle = octofhir_api::Bundle::searchset(total as u64, all_bundle_entries, vec![]);
-
-    tracing::info!(
-        total = total,
-        resource_types_searched = resource_types_count,
-        "Wildcard compartment search completed"
-    );
-
-    Ok((StatusCode::OK, Json(bundle)))
+    Ok(AggregateSearch {
+        types,
+        query: request.query,
+        path,
+        membership: Some(membership),
+    })
 }
 
 // ============================================================================
@@ -8070,9 +8214,27 @@ pub async fn internal_search_resource(
     request: Request<Body>,
 ) -> Result<Response, ApiError> {
     if is_internal_resource_type(&resource_type) {
-        return search_resource(state, headers, Path(resource_type), query, raw)
-            .await
-            .map(IntoResponse::into_response);
+        let visibility = request
+            .extensions()
+            .get::<crate::authorization::AuthorizedSearch>()
+            .cloned()
+            .map(Extension);
+        let uri = request
+            .extensions()
+            .get::<axum::extract::OriginalUri>()
+            .cloned()
+            .unwrap_or_else(|| axum::extract::OriginalUri(request.uri().clone()));
+        return search_resource(
+            uri,
+            state,
+            visibility,
+            headers,
+            Path(resource_type),
+            query,
+            raw,
+        )
+        .await
+        .map(IntoResponse::into_response);
     }
 
     // Not an internal resource - try gateway

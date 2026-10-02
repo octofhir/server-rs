@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::error::StorageError;
 use crate::types::{
-    HistoryParams, HistoryResult, RawHistoryResult, RawStoredResource, SearchParams, SearchResult,
-    StoredResource,
+    HistoryParams, HistoryResult, IncludeLimits, RawHistoryResult, RawSearchResult,
+    RawStoredResource, SearchParams, SearchResult, StoredResource,
 };
 
 /// The main storage trait that all FHIR storage backends must implement.
@@ -491,6 +491,18 @@ pub trait Transaction: Send + Sync {
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError>;
 
+    /// Read and lock the live row until this transaction ends. Implementations
+    /// must not substitute an unlocked read when row locking is unavailable.
+    async fn read_for_update(
+        &self,
+        _resource_type: &str,
+        _id: &str,
+    ) -> Result<Option<StoredResource>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Row locking is not supported",
+        ))
+    }
+
     /// Batch existence check using the same checked-out connection as the
     /// subsequent transactional write.
     async fn exists_many_grouped(
@@ -516,6 +528,22 @@ pub trait Transaction: Send + Sync {
         resource_type: &str,
         params: &SearchParams,
     ) -> Result<SearchResult, StorageError>;
+
+    /// Search multiple types with one global page and separate inline results.
+    /// All primary rows, totals and inline hops must see this transaction's writes.
+    /// Server callers prepare authorization and terminology before checking out
+    /// the connection. Backends must not fall back to another pool connection.
+    async fn search_system_raw(
+        &self,
+        _resource_types: &[&str],
+        _params: &SearchParams,
+        _include_limits: IncludeLimits,
+        _strict: bool,
+    ) -> Result<RawSearchResult, StorageError> {
+        Err(StorageError::transaction_error(
+            "Backend does not support transactional aggregate search",
+        ))
+    }
 
     /// Bulk-creates many resources of the same `resource_type` within this
     /// transaction.

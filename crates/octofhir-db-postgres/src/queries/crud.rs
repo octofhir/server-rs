@@ -1675,13 +1675,32 @@ pub async fn read_with_tx(
     resource_type: &str,
     id: &str,
 ) -> Result<Option<StoredResource>, StorageError> {
+    read_with_tx_lock(tx, resource_type, id, false).await
+}
+
+/// Lock the selected live row for an authorization-aware mutation or dry run.
+pub async fn read_with_tx_for_update(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    id: &str,
+) -> Result<Option<StoredResource>, StorageError> {
+    read_with_tx_lock(tx, resource_type, id, true).await
+}
+
+async fn read_with_tx_lock(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    id: &str,
+    lock: bool,
+) -> Result<Option<StoredResource>, StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
     // Query including status to detect deleted resources
     let sql = format!(
         r#"SELECT id, txid, created_at, updated_at, resource, status::text
            FROM "{table}"
-           WHERE id = $1"#
+           WHERE id = $1{locking}"#,
+        locking = if lock { " FOR UPDATE" } else { "" }
     );
 
     let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> =

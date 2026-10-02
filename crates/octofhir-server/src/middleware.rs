@@ -1074,12 +1074,26 @@ pub async fn auth_middleware(
     {
         return (error.status_code(), Json(error.to_operation_outcome())).into_response();
     }
-    let decision = state.policy_evaluator.evaluate(&policy_context).await;
+    let decision = if req
+        .extensions()
+        .get::<crate::authorization::AuthorizedSearch>()
+        .is_some_and(|search| search.is_deferred())
+    {
+        // Aggregate handlers evaluate scopes and policies for every concrete
+        // type before SQL. A wildcard check here would lose narrow grants.
+        AccessDecision::Allow
+    } else {
+        state.policy_evaluator.evaluate(&policy_context).await
+    };
 
     match decision {
         AccessDecision::Allow => {
-            if let Err(error) =
-                crate::authorization::check_resource_scope(&policy_context, &state.base_url)
+            if req
+                .extensions()
+                .get::<crate::authorization::AuthorizedSearch>()
+                .is_none()
+                && let Err(error) =
+                    crate::authorization::check_resource_scope(&policy_context, &state.base_url)
             {
                 return (error.status_code(), Json(error.to_operation_outcome())).into_response();
             }

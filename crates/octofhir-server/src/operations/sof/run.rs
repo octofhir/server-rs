@@ -294,6 +294,7 @@ impl OperationHandler for ViewDefinitionRunOperation {
     async fn handle_type(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -321,6 +322,7 @@ impl OperationHandler for ViewDefinitionRunOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,

@@ -67,6 +67,12 @@ pub type SharedModelProvider = Arc<dyn ModelProvider + Send + Sync>;
 #[derive(Clone)]
 pub struct AppState(pub Arc<AppStateInner>);
 
+impl AppState {
+    pub fn fhir_base_url(&self) -> String {
+        format!("{}/fhir", self.base_url.trim_end_matches('/'))
+    }
+}
+
 impl std::ops::Deref for AppState {
     type Target = AppStateInner;
 
@@ -2049,7 +2055,14 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             get(handlers::bulk_export_file),
         )
         // System search: GET /?_type=... or POST /_search
-        .route("/_search", axum::routing::post(handlers::system_search))
+        .route(
+            "/_search",
+            axum::routing::post(handlers::system_search_post),
+        )
+        .route(
+            "/{compartment_type}/{compartment_id}/{resource_type}/_search",
+            axum::routing::post(handlers::compartment_search_post),
+        )
         // System history: GET /_history
         .route("/_history", get(handlers::system_history))
         // Type history: GET /{type}/_history (before CRUD route)
@@ -2124,8 +2137,8 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         // Metadata endpoint scoped to /fhir base
         .route("/metadata", get(handlers::metadata))
         // Combined root/system-search at base /fhir
-        // GET /fhir - returns service info
-        // GET /fhir?_type=Patient,Observation - system-level search
+        // GET /fhir - system-level search of supported public resource types
+        // GET /fhir?_type=Patient,Observation - selected resource types
         // POST /fhir - transaction/batch
         .route(
             "/",

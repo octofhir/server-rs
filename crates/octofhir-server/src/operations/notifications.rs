@@ -24,6 +24,7 @@ impl OperationHandler for ResendOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         _params: &Value,
@@ -75,6 +76,7 @@ impl OperationHandler for ResendAllOperation {
     async fn handle_type(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         _params: &Value,
     ) -> Result<Value, OperationError> {
@@ -118,6 +120,7 @@ impl OperationHandler for StatsOperation {
     async fn handle_type(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         _params: &Value,
     ) -> Result<Value, OperationError> {
@@ -164,6 +167,7 @@ impl OperationHandler for CancelOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         _params: &Value,

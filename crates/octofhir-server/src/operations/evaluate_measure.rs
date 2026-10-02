@@ -144,6 +144,7 @@ impl OperationHandler for EvaluateMeasureOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,
@@ -162,11 +163,9 @@ impl OperationHandler for EvaluateMeasureOperation {
             .ok_or_else(|| OperationError::NotSupported("CQL service not enabled".to_string()))?;
 
         // Retrieve Measure resource
-        let measure = state
-            .storage
-            .read("Measure", id)
-            .await
-            .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
+        let measure = context
+            .read(state, "Measure", id)
+            .await?
             .ok_or_else(|| OperationError::NotFound(format!("Measure/{} not found", id)))?;
 
         // Extract parameters

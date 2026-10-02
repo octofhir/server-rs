@@ -12,6 +12,9 @@ use crate::server::AppState;
 /// Error type for FHIR operation failures.
 #[derive(Debug, thiserror::Error)]
 pub enum OperationError {
+    /// Preserve authorization, conflict and storage HTTP status codes.
+    #[error(transparent)]
+    Api(#[from] octofhir_api::ApiError),
     /// Invalid or missing parameters
     #[error("Invalid parameters: {0}")]
     InvalidParameters(String),
@@ -33,6 +36,12 @@ pub enum OperationError {
     ValidationFailed(Value),
 }
 
+impl OperationError {
+    pub(crate) fn is_forbidden(&self) -> bool {
+        matches!(self, Self::Api(octofhir_api::ApiError::Forbidden(_)))
+    }
+}
+
 /// Trait for implementing FHIR operations.
 ///
 /// Each operation handler implements this trait to provide the logic for
@@ -43,6 +52,8 @@ pub enum OperationError {
 /// - Implement only the methods that are relevant for your operation's level(s)
 /// - Default implementations return `NotSupported` errors
 /// - The `code` method returns the operation code without the `$` prefix
+/// - Resource access uses the caller's `OperationContext`; an outer operation
+///   policy does not substitute for authorization of resources it reads/writes.
 #[async_trait]
 pub trait OperationHandler: Send + Sync {
     /// Returns the operation code (without the `$` prefix).
@@ -54,6 +65,7 @@ pub trait OperationHandler: Send + Sync {
     async fn handle_system(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         _params: &Value,
     ) -> Result<Value, OperationError> {
         Err(OperationError::NotSupported(format!(
@@ -68,6 +80,7 @@ pub trait OperationHandler: Send + Sync {
     async fn handle_type(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         _resource_type: &str,
         _params: &Value,
     ) -> Result<Value, OperationError> {
@@ -83,6 +96,7 @@ pub trait OperationHandler: Send + Sync {
     async fn handle_instance(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         _resource_type: &str,
         _id: &str,
         _params: &Value,
@@ -100,6 +114,7 @@ pub type DynOperationHandler = Arc<dyn OperationHandler>;
 impl From<OperationError> for octofhir_api::ApiError {
     fn from(err: OperationError) -> Self {
         match err {
+            OperationError::Api(error) => error,
             OperationError::InvalidParameters(msg) => octofhir_api::ApiError::bad_request(msg),
             OperationError::NotFound(msg) => octofhir_api::ApiError::not_found(msg),
             OperationError::NotSupported(msg) => octofhir_api::ApiError::bad_request(msg),

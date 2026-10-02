@@ -10,10 +10,6 @@ use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::SqlBuilderError;
 use std::sync::Arc;
 
-const RESOURCE_ID_URL: &str = "http://hl7.org/fhir/SearchParameter/Resource-id";
-const RESOURCE_LAST_UPDATED_URL: &str = "http://hl7.org/fhir/SearchParameter/Resource-lastUpdated";
-const RESOURCE_PROFILE_URL: &str = "http://hl7.org/fhir/SearchParameter/Resource-profile";
-
 /// Resource-level SearchParameter backed by a physical resource table column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceColumnParam {
@@ -37,20 +33,29 @@ impl ResourceColumnParam {
 
 /// Resolve common FHIR Resource SearchParameters that are stored as row columns.
 pub fn resolve_resource_column_param(param_def: &SearchParameter) -> Option<ResourceColumnParam> {
-    match (
-        param_def.url.as_str(),
-        param_def.param_type,
-        param_def.expression.as_deref(),
-    ) {
-        (RESOURCE_ID_URL, SearchParameterType::Token, Some("Resource.id")) => {
-            Some(ResourceColumnParam::Id)
+    // IGs may publish the standard parameter under their own canonical URL.
+    // Preserve its semantics using code, type and expression together; URL
+    // equality alone misclassifies those definitions as generic Coding tokens.
+    let expression = param_def.expression.as_deref()?;
+    let path = match expression {
+        "id" | "meta.lastUpdated" | "meta.profile" => expression,
+        _ => {
+            let (owner, path) = expression.split_once('.')?;
+            if owner != "Resource"
+                && owner != "DomainResource"
+                && !param_def.base.iter().any(|base| base == owner)
+            {
+                return None;
+            }
+            path
         }
-        (
-            RESOURCE_LAST_UPDATED_URL,
-            SearchParameterType::Date,
-            Some("Resource.meta.lastUpdated"),
-        ) => Some(ResourceColumnParam::LastUpdated),
-        (RESOURCE_PROFILE_URL, SearchParameterType::Uri, Some("Resource.meta.profile")) => {
+    };
+    match (param_def.code.as_str(), param_def.param_type, path) {
+        ("_id", SearchParameterType::Token, "id") => Some(ResourceColumnParam::Id),
+        ("_lastUpdated", SearchParameterType::Date, "meta.lastUpdated") => {
+            Some(ResourceColumnParam::LastUpdated)
+        }
+        ("_profile", SearchParameterType::Uri, "meta.profile") => {
             Some(ResourceColumnParam::Profile)
         }
         _ => None,
@@ -172,14 +177,14 @@ mod tests {
     fn resolves_common_resource_columns_from_search_parameter_metadata() {
         let id = SearchParameter::new(
             "_id",
-            RESOURCE_ID_URL,
+            "http://hl7.org/fhir/SearchParameter/Resource-id",
             SearchParameterType::Token,
             vec!["Resource".to_string()],
         )
         .with_expression("Resource.id");
         let last_updated = SearchParameter::new(
             "_lastUpdated",
-            RESOURCE_LAST_UPDATED_URL,
+            "http://hl7.org/fhir/SearchParameter/Resource-lastUpdated",
             SearchParameterType::Date,
             vec!["Resource".to_string()],
         )
@@ -201,5 +206,54 @@ mod tests {
             Some(ResourceColumnParam::LastUpdated)
         );
         assert_eq!(resolve_resource_column_param(&json_backed), None);
+    }
+
+    #[test]
+    fn standard_resource_parameters_keep_column_semantics_with_ig_canonicals() {
+        for (code, param_type, expression, expected) in [
+            (
+                "_id",
+                SearchParameterType::Token,
+                "Resource.id",
+                ResourceColumnParam::Id,
+            ),
+            (
+                "_lastUpdated",
+                SearchParameterType::Date,
+                "Resource.meta.lastUpdated",
+                ResourceColumnParam::LastUpdated,
+            ),
+            (
+                "_profile",
+                SearchParameterType::Uri,
+                "Resource.meta.profile",
+                ResourceColumnParam::Profile,
+            ),
+        ] {
+            let param = SearchParameter::new(
+                code,
+                format!("https://ig.example/SearchParameter/Patient-{code}"),
+                param_type,
+                vec!["Patient".into()],
+            )
+            .with_expression(expression);
+            assert_eq!(resolve_resource_column_param(&param), Some(expected));
+            let unqualified = param
+                .clone()
+                .with_expression(expression.trim_start_matches("Resource."));
+            assert_eq!(resolve_resource_column_param(&unqualified), Some(expected));
+            let concrete = param
+                .clone()
+                .with_expression(expression.replace("Resource.", "Patient."));
+            assert_eq!(resolve_resource_column_param(&concrete), Some(expected));
+            let unrelated = param
+                .clone()
+                .with_expression(expression.replace("Resource.", "Practitioner."));
+            assert_eq!(resolve_resource_column_param(&unrelated), None);
+            assert_eq!(
+                resolve_resource_column_param(&param.with_expression("Patient.identifier")),
+                None
+            );
+        }
     }
 }

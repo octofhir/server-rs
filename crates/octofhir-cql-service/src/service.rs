@@ -22,6 +22,7 @@ pub struct ValidationIssue {
     pub column: Option<usize>,
 }
 
+#[derive(Clone)]
 pub struct CqlService {
     engine: Arc<CqlEngine>,
     data_provider: Arc<FhirServerDataProvider>,
@@ -47,6 +48,14 @@ impl CqlService {
             storage,
             config,
         }
+    }
+
+    /// Clone the service with an evaluation-local data provider. Never mutate
+    /// the shared service or place a caller's identity in a global cache.
+    pub fn with_data_provider(&self, provider: Arc<FhirServerDataProvider>) -> Self {
+        let mut service = self.clone();
+        service.data_provider = provider;
+        service
     }
 
     pub async fn evaluate_expression(
@@ -115,52 +124,73 @@ define Result:
         context_value: Option<Value>,
         parameters: HashMap<String, Value>,
     ) -> CqlResult<IndexMap<String, Value>> {
-        // Parse CQL source to AST
-        let ast_library = parse(cql_source).map_err(|e| CqlError::ParseError(format!("{}", e)))?;
+        let timeout = Duration::from_millis(self.config.evaluation_timeout_ms);
+        let deadline = std::time::Instant::now() + timeout;
+        let data_provider = Arc::new(self.data_provider.for_evaluation(deadline));
+        let engine = self.engine.clone();
+        let terminology_provider = self.terminology_provider.clone();
+        let cql_source = cql_source.to_owned();
+        let context_type = context_type.map(str::to_owned);
+        let runtime = tokio::runtime::Handle::current();
+        let job = tokio::task::spawn_blocking(move || -> CqlResult<IndexMap<String, Value>> {
+            // The evaluator has synchronous callbacks. Enter the runtime on a
+            // blocking thread so callbacks can await SQL/FHIRPath safely even
+            // when the caller runs on Tokio's single-thread runtime.
+            let _entered = runtime.enter();
+            // Parse CQL source to AST
+            let ast_library =
+                parse(&cql_source).map_err(|e| CqlError::ParseError(format!("{}", e)))?;
 
-        // Convert AST to ELM
-        let elm_library = {
-            use octofhir_cql::elm::AstToElmConverter;
-            let mut converter = AstToElmConverter::new();
-            converter.convert_library(&ast_library)
-        };
+            // Convert AST to ELM
+            let elm_library = {
+                use octofhir_cql::elm::AstToElmConverter;
+                let mut converter = AstToElmConverter::new();
+                converter.convert_library(&ast_library)
+            };
 
-        // Build evaluation context using builder pattern
-        let mut ctx_builder = octofhir_cql_eval::EvaluationContextBuilder::new()
-            .data_provider(self.data_provider.clone())
-            .terminology_provider(self.terminology_provider.clone());
+            // Build evaluation context using builder pattern
+            let mut ctx_builder = octofhir_cql_eval::EvaluationContextBuilder::new()
+                .data_provider(data_provider.clone())
+                .terminology_provider(terminology_provider);
 
-        // Set context
-        if let Some(ct) = context_type
-            && let Some(cv) = context_value
-            && let Some(cql_val) = super::data_provider::json_to_cql_value(&cv)
-        {
-            ctx_builder = ctx_builder.context(ct, cql_val);
-        }
-
-        // Set parameters
-        for (name, value) in parameters {
-            if let Some(cql_val) = super::data_provider::json_to_cql_value(&value) {
-                ctx_builder = ctx_builder.parameter(name, cql_val);
+            // Set context
+            if let Some(ct) = context_type
+                && let Some(cv) = context_value
+                && let Some(cql_val) = super::data_provider::json_to_cql_value(&cv)
+            {
+                ctx_builder = ctx_builder.context(ct, cql_val);
             }
-        }
 
-        let mut ctx = ctx_builder.build();
+            // Set parameters
+            for (name, value) in parameters {
+                if let Some(cql_val) = super::data_provider::json_to_cql_value(&value) {
+                    ctx_builder = ctx_builder.parameter(name, cql_val);
+                }
+            }
 
-        // Evaluate the ELM library — returns every define's value
-        let results = self
-            .engine
-            .evaluate_library(&elm_library, &mut ctx)
-            .map_err(|e| CqlError::EvaluationError(format!("{:?}", e)))?;
+            let mut ctx = ctx_builder.build();
 
-        // Convert every definition to JSON, preserving source (define) order
-        let mut json_results = IndexMap::new();
-        for (name, value) in results {
-            let json = super::data_provider::cql_value_to_json(&value).unwrap_or(Value::Null);
-            json_results.insert(name, json);
-        }
+            // Evaluate the ELM library — returns every define's value
+            let result = engine.evaluate_library(&elm_library, &mut ctx);
+            if let Some(error) = data_provider.take_error() {
+                return Err(error);
+            }
+            let results =
+                result.map_err(|error| CqlError::EvaluationError(format!("{error:?}")))?;
 
-        Ok(json_results)
+            // Convert every definition to JSON, preserving source (define) order
+            let mut json_results = IndexMap::new();
+            for (name, value) in results {
+                let json = super::data_provider::cql_value_to_json(&value).unwrap_or(Value::Null);
+                json_results.insert(name, json);
+            }
+
+            Ok(json_results)
+        });
+        tokio::time::timeout(timeout, job)
+            .await
+            .map_err(|_| CqlError::Timeout("CQL evaluation timed out".into()))?
+            .map_err(|error| CqlError::Other(format!("CQL evaluation task failed: {error}")))?
     }
 
     /// Evaluate an inline CQL library (full source with one or more `define`
@@ -220,52 +250,16 @@ define Result:
             .get_or_compile(library_url, version, &self.storage)
             .await?;
 
-        // Parse library CQL source to AST
-        let cql_source = &_library.cql_source;
-        let ast_library = parse(cql_source).map_err(|e| CqlError::ParseError(format!("{}", e)))?;
-
-        // Convert AST to ELM
-        let elm_library = {
-            use octofhir_cql::elm::AstToElmConverter;
-            let mut converter = AstToElmConverter::new();
-            converter.convert_library(&ast_library)
-        };
-
-        // Build evaluation context using builder pattern
-        let mut ctx_builder = octofhir_cql_eval::EvaluationContextBuilder::new()
-            .data_provider(self.data_provider.clone())
-            .terminology_provider(self.terminology_provider.clone());
-
-        if let Some(ct) = context_type
-            && let Some(cv) = context_value
-            && let Some(cql_val) = super::data_provider::json_to_cql_value(&cv)
-        {
-            ctx_builder = ctx_builder.context(ct, cql_val);
-        }
-
-        for (name, value) in parameters {
-            if let Some(cql_val) = super::data_provider::json_to_cql_value(&value) {
-                ctx_builder = ctx_builder.parameter(name, cql_val);
-            }
-        }
-
-        let mut ctx = ctx_builder.build();
-
-        // Evaluate all definitions
-        let results = self
-            .engine
-            .evaluate_library(&elm_library, &mut ctx)
-            .map_err(|e| CqlError::EvaluationError(format!("{:?}", e)))?;
-
-        // Convert to JSON
-        let mut json_results = HashMap::new();
-        for (name, value) in results {
-            if let Some(json) = super::data_provider::cql_value_to_json(&value) {
-                json_results.insert(name, json);
-            }
-        }
-
-        Ok(json_results)
+        Ok(self
+            .eval_source(
+                &_library.cql_source,
+                context_type,
+                context_value,
+                parameters,
+            )
+            .await?
+            .into_iter()
+            .collect())
     }
 
     /// Parse-only validation — no ELM conversion, no evaluation, no data

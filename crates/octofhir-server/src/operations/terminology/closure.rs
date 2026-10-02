@@ -308,6 +308,7 @@ impl OperationHandler for ClosureOperation {
     async fn handle_system(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         let closure_params = Self::extract_params(params)?;
@@ -330,6 +331,7 @@ impl OperationHandler for ClosureOperation {
     async fn handle_type(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         _params: &Value,
     ) -> Result<Value, OperationError> {
@@ -343,6 +345,7 @@ impl OperationHandler for ClosureOperation {
     async fn handle_instance(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         _id: &str,
         _params: &Value,

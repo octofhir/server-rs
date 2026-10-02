@@ -26,6 +26,7 @@ impl OperationHandler for StatusOperation {
     async fn handle_system(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         _params: &Value,
     ) -> Result<Value, OperationError> {
         Err(OperationError::NotSupported(
@@ -36,6 +37,7 @@ impl OperationHandler for StatusOperation {
     async fn handle_type(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         _params: &Value,
     ) -> Result<Value, OperationError> {
@@ -55,6 +57,7 @@ impl OperationHandler for StatusOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         _params: &Value,

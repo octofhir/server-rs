@@ -265,7 +265,9 @@ pub struct SearchParameterComponent {
 /// instead of hardcoded path-based heuristics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ElementTypeHint {
-    /// Simple scalar: code, id, boolean, string, etc. — use text extraction (->>) and equality
+    /// JSON boolean scalar; token comparison uses its textual true/false value.
+    Boolean,
+    /// String-valued scalar such as code or id; token searches use JSON containment.
     SimpleCode,
     /// Identifier type — use identifier-specific search (system|value)
     Identifier,
@@ -325,6 +327,7 @@ impl ElementTypeHint {
             return Self::Array(type_name.to_string());
         }
         match type_name {
+            "boolean" => Self::Boolean,
             "Identifier" => Self::Identifier,
             "HumanName" => Self::HumanName,
             "CodeableConcept" | "Coding" => Self::Token,

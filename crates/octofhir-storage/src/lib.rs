@@ -65,9 +65,9 @@ pub use traits::{
     FhirStorage, StorageCapabilities, Transaction,
 };
 pub use types::{
-    HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, RawHistoryEntry, RawHistoryResult,
-    RawSearchDebug, RawSearchResult, RawStoredResource, SearchParams, SearchResult, SortParam,
-    StoredResource, TotalMode,
+    HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, IncludeLimits, IncludeVisibility,
+    RawHistoryEntry, RawHistoryResult, RawSearchDebug, RawSearchResult, RawStoredResource,
+    SearchConstraint, SearchParams, SearchResult, SortParam, StoredResource, TotalMode,
 };
 
 /// Type alias for a storage result.

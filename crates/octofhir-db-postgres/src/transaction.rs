@@ -13,7 +13,8 @@ use tokio::sync::Mutex;
 
 use octofhir_search::SearchParameterRegistry;
 use octofhir_storage::{
-    BatchUpdateOutcome, SearchParams, SearchResult, StorageError, StoredResource, Transaction,
+    BatchUpdateOutcome, IncludeLimits, RawSearchResult, SearchParams, SearchResult, StorageError,
+    StoredResource, Transaction,
 };
 
 use crate::queries;
@@ -169,6 +170,18 @@ impl Transaction for PostgresTransaction {
         queries::crud::exists_many_grouped_with_tx(tx, groups).await
     }
 
+    async fn read_for_update(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<StoredResource>, StorageError> {
+        let mut guard = self.tx.lock().await;
+        let tx = guard
+            .as_deref_mut()
+            .ok_or_else(|| StorageError::transaction_error("Transaction already completed"))?;
+        queries::crud::read_with_tx_for_update(tx, resource_type, id).await
+    }
+
     async fn search(
         &self,
         resource_type: &str,
@@ -185,6 +198,32 @@ impl Transaction for PostgresTransaction {
             resource_type,
             params,
             self.search_registry.as_ref(),
+        )
+        .await
+    }
+
+    async fn search_system_raw(
+        &self,
+        resource_types: &[&str],
+        params: &SearchParams,
+        include_limits: IncludeLimits,
+        strict: bool,
+    ) -> Result<RawSearchResult, StorageError> {
+        let registry = self
+            .search_registry
+            .as_ref()
+            .ok_or_else(|| StorageError::internal("Transaction search registry unavailable"))?;
+        let mut guard = self.tx.lock().await;
+        let tx = guard
+            .as_deref_mut()
+            .ok_or_else(|| StorageError::transaction_error("Transaction already completed"))?;
+        queries::search::execute_system_search_raw_with_tx(
+            tx,
+            resource_types,
+            params,
+            registry,
+            include_limits,
+            strict,
         )
         .await
     }

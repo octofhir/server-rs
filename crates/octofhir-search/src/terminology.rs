@@ -88,6 +88,9 @@ pub enum TerminologyError {
 
     #[error("CodeSystem not found: {0}")]
     CodeSystemNotFound(String),
+
+    #[error("Hierarchy expansion is not supported for CodeSystem '{0}'")]
+    UnsupportedHierarchy(String),
 }
 
 /// Hybrid terminology provider with two-tier lookup.
@@ -522,8 +525,8 @@ impl HybridTerminologyProvider {
     ///
     /// # Returns
     ///
-    /// A vector of codes in the hierarchy. If hierarchy expansion is not supported,
-    /// returns just the original code as a fallback.
+    /// A vector of codes in the hierarchy. Unsupported CodeSystems return
+    /// [`TerminologyError::UnsupportedHierarchy`] instead of incomplete matches.
     ///
     /// # SNOMED CT Support
     ///
@@ -552,8 +555,9 @@ impl HybridTerminologyProvider {
             return self.expand_snomed_hierarchy(system, code, direction).await;
         }
 
-        // For other systems, use remote terminology server
-        self.expand_remote_hierarchy(system, code, direction).await
+        // Exact matching on the seed is not equivalent to a hierarchy search.
+        // Reject unsupported systems instead of returning incomplete results.
+        Err(TerminologyError::UnsupportedHierarchy(system.into()))
     }
 
     /// Expand SNOMED CT hierarchy using Expression Constraint Language (ECL).
@@ -609,37 +613,6 @@ impl HybridTerminologyProvider {
         );
 
         Ok(codes)
-    }
-
-    /// Expand hierarchy using remote terminology server.
-    ///
-    /// This is a generic implementation that attempts to use the $subsumes operation
-    /// or falls back to returning just the code.
-    async fn expand_remote_hierarchy(
-        &self,
-        system: &str,
-        code: &str,
-        direction: HierarchyDirection,
-    ) -> Result<Vec<String>, TerminologyError> {
-        // Note: Full implementation would require:
-        // 1. $subsumes operation to check parent/child relationships
-        // 2. Recursive traversal to build complete hierarchy
-        // 3. Or use of system-specific hierarchy extensions
-        //
-        // For now, we implement a simplified version that returns the code itself
-        // and logs a warning about limited support.
-
-        tracing::warn!(
-            system = system,
-            code = code,
-            direction = ?direction,
-            "Generic hierarchy expansion not fully implemented, returning code only"
-        );
-
-        // Future enhancement: Could try to use $subsumes operation
-        // See: https://www.hl7.org/fhir/codesystem-operation-subsumes.html
-
-        Ok(vec![code.to_string()])
     }
 }
 

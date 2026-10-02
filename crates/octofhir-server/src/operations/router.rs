@@ -14,13 +14,14 @@
 //! we provide merged handlers that dispatch based on the `$` prefix.
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, Query, RawQuery, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use std::collections::HashMap;
 
+use super::OperationContext;
 use super::params::OperationParams;
 use crate::handlers;
 use crate::server::AppState;
@@ -37,6 +38,7 @@ pub fn is_operation(segment: &str) -> bool {
 /// Routes operations like `/$meta`, `/$convert`, etc.
 pub async fn system_operation_handler(
     State(state): State<AppState>,
+    context: OperationContext,
     Path(operation): Path<String>,
     params: OperationParams,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -60,7 +62,7 @@ pub async fn system_operation_handler(
         Some(h) => {
             let params_value = params.to_value();
             let result = h
-                .handle_system(&state, &params_value)
+                .handle_system(&state, &context, &params_value)
                 .await
                 .map_err(ApiError::from)?;
 
@@ -78,6 +80,7 @@ pub async fn system_operation_handler(
 /// Routes operations like `/Patient/$validate`, `/ValueSet/$expand`, etc.
 pub async fn type_operation_handler(
     State(state): State<AppState>,
+    context: OperationContext,
     Path((resource_type, operation)): Path<(String, String)>,
     params: OperationParams,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -102,7 +105,7 @@ pub async fn type_operation_handler(
         Some(h) => {
             let params_value = params.to_value();
             let result = h
-                .handle_type(&state, &resource_type, &params_value)
+                .handle_type(&state, &context, &resource_type, &params_value)
                 .await
                 .map_err(ApiError::from)?;
 
@@ -129,11 +132,16 @@ pub async fn type_operation_handler(
 /// both `/{a}/{b}/_history` and `/{a}/{b}/{c}` as separate routes.
 pub async fn instance_operation_or_history_handler(
     state: State<AppState>,
+    context: OperationContext,
     Path((resource_type, id, operation)): Path<(String, String, String)>,
     Query(query_params): Query<HashMap<String, String>>,
-    query: Query<crate::handlers::HistoryQueryParams>,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
 ) -> Response {
     if operation == "_history" {
+        let query = match Query::<crate::handlers::HistoryQueryParams>::try_from_uri(&uri) {
+            Ok(query) => query,
+            Err(error) => return ApiError::bad_request(error.to_string()).into_response(),
+        };
         let path = Path((resource_type, id));
         match crate::handlers::instance_history(state, path, query).await {
             Ok(resp) => resp.into_response(),
@@ -157,7 +165,7 @@ pub async fn instance_operation_or_history_handler(
                 let params = OperationParams::Get(query_params);
                 let params_value = params.to_value();
                 match h
-                    .handle_instance(&app_state, &resource_type, &id, &params_value)
+                    .handle_instance(&app_state, &context, &resource_type, &id, &params_value)
                     .await
                 {
                     Ok(result) => (StatusCode::OK, Json(result)).into_response(),
@@ -177,6 +185,7 @@ pub async fn instance_operation_or_history_handler(
 
 pub async fn instance_operation_handler(
     State(state): State<AppState>,
+    context: OperationContext,
     Path((resource_type, id, operation)): Path<(String, String, String)>,
     params: OperationParams,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -209,7 +218,7 @@ pub async fn instance_operation_handler(
         Some(h) => {
             let params_value = params.to_value();
             let result = h
-                .handle_instance(&state, &resource_type, &id, &params_value)
+                .handle_instance(&state, &context, &resource_type, &id, &params_value)
                 .await
                 .map_err(ApiError::from)?;
 
@@ -232,21 +241,29 @@ pub async fn instance_operation_handler(
 ///
 /// This allows a single route to handle both `/$meta` and `/Patient`.
 pub async fn merged_root_get_handler(
+    uri: axum::extract::OriginalUri,
     state: State<AppState>,
+    authorization: (
+        OperationContext,
+        Option<Extension<crate::authorization::AuthorizedSearch>>,
+    ),
     headers: HeaderMap,
     Path(param): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
     RawQuery(raw): RawQuery,
 ) -> Result<Response, ApiError> {
+    let (context, visibility) = authorization;
     if is_operation(&param) {
         // Dispatch to system operation handler
         let params = OperationParams::Get(query_params.clone());
-        let result = system_operation_handler_internal(state, param, params).await?;
+        let result = system_operation_handler_internal(state, context, param, params).await?;
         Ok(result.into_response())
     } else {
         // Dispatch to resource search handler
         let result = handlers::search_resource(
+            uri,
             state,
+            visibility,
             headers,
             Path(param),
             Query(query_params),
@@ -262,6 +279,7 @@ pub async fn merged_root_get_handler(
 /// - Resource create handler otherwise
 pub async fn merged_root_post_handler(
     state: State<AppState>,
+    context: OperationContext,
     Path(param): Path<String>,
     headers: HeaderMap,
     Query(query_params): Query<HashMap<String, String>>,
@@ -276,7 +294,7 @@ pub async fn merged_root_post_handler(
                 .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
         };
         let params = OperationParams::post_with_query(value, query_params);
-        let result = system_operation_handler_internal(state, param, params).await?;
+        let result = system_operation_handler_internal(state, context, param, params).await?;
         Ok(result.into_response())
     } else {
         // Dispatch to resource create handler - need to reconstruct JSON
@@ -293,6 +311,7 @@ pub async fn merged_root_post_handler(
 /// - Resource read handler otherwise
 pub async fn merged_type_get_handler(
     state: State<AppState>,
+    context: OperationContext,
     Path((resource_type, param)): Path<(String, String)>,
     Query(query_params): Query<HashMap<String, String>>,
     headers: HeaderMap,
@@ -300,7 +319,8 @@ pub async fn merged_type_get_handler(
     if is_operation(&param) {
         // Dispatch to type operation handler
         let params = OperationParams::Get(query_params);
-        let result = type_operation_handler_internal(state, resource_type, param, params).await?;
+        let result =
+            type_operation_handler_internal(state, context, resource_type, param, params).await?;
         Ok(result.into_response())
     } else {
         // Dispatch to resource read handler (param is the resource id)
@@ -320,6 +340,7 @@ pub async fn merged_type_get_handler(
 /// - Returns 405 Method Not Allowed otherwise (POST to /{type}/{id} is not valid)
 pub async fn merged_type_post_handler(
     state: State<AppState>,
+    context: OperationContext,
     Path((resource_type, param)): Path<(String, String)>,
     Query(query_params): Query<HashMap<String, String>>,
     body: axum::body::Bytes,
@@ -333,7 +354,8 @@ pub async fn merged_type_post_handler(
                 .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
         };
         let params = OperationParams::post_with_query(value, query_params);
-        let result = type_operation_handler_internal(state, resource_type, param, params).await?;
+        let result =
+            type_operation_handler_internal(state, context, resource_type, param, params).await?;
         Ok(result.into_response())
     } else {
         // POST to /{type}/{id} is not a valid FHIR operation
@@ -352,6 +374,7 @@ pub async fn merged_type_post_handler(
 pub async fn compartment_post_handler(
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     State(state): State<AppState>,
+    context: OperationContext,
     Path((id, param)): Path<(String, String)>,
     Query(query_params): Query<HashMap<String, String>>,
     body: axum::body::Bytes,
@@ -374,7 +397,15 @@ pub async fn compartment_post_handler(
                 .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
         };
         let params = OperationParams::post_with_query(value, query_params);
-        instance_operation_handler_internal(&state, &compartment_type, &id, &param, params).await
+        instance_operation_handler_internal(
+            &state,
+            &context,
+            &compartment_type,
+            &id,
+            &param,
+            params,
+        )
+        .await
     } else {
         Err(ApiError::bad_request(
             "POST to this compartment path is not supported.".to_string(),
@@ -389,6 +420,7 @@ pub async fn compartment_post_handler(
 /// Internal system operation handler that takes pre-parsed parameters.
 async fn system_operation_handler_internal(
     State(state): State<AppState>,
+    context: OperationContext,
     operation: String,
     params: OperationParams,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -407,7 +439,7 @@ async fn system_operation_handler_internal(
         Some(h) => {
             let params_value = params.to_value();
             let result = h
-                .handle_system(&state, &params_value)
+                .handle_system(&state, &context, &params_value)
                 .await
                 .map_err(ApiError::from)?;
             Ok((StatusCode::OK, Json(result)))
@@ -420,8 +452,9 @@ async fn system_operation_handler_internal(
 }
 
 /// Internal instance operation handler that takes pre-parsed parameters.
-async fn instance_operation_handler_internal(
+pub(crate) async fn instance_operation_handler_internal(
     state: &AppState,
+    context: &OperationContext,
     resource_type: &str,
     id: &str,
     operation: &str,
@@ -443,7 +476,7 @@ async fn instance_operation_handler_internal(
         Some(h) => {
             let params_value = params.to_value();
             let result = h
-                .handle_instance(state, resource_type, id, &params_value)
+                .handle_instance(state, context, resource_type, id, &params_value)
                 .await
                 .map_err(ApiError::from)?;
             Ok((StatusCode::OK, Json(result)).into_response())
@@ -457,6 +490,7 @@ async fn instance_operation_handler_internal(
 /// Internal type operation handler that takes pre-parsed parameters.
 async fn type_operation_handler_internal(
     State(state): State<AppState>,
+    context: OperationContext,
     resource_type: String,
     operation: String,
     params: OperationParams,
@@ -478,7 +512,7 @@ async fn type_operation_handler_internal(
         Some(h) => {
             let params_value = params.to_value();
             let result = h
-                .handle_type(&state, &resource_type, &params_value)
+                .handle_type(&state, &context, &resource_type, &params_value)
                 .await
                 .map_err(ApiError::from)?;
             Ok((StatusCode::OK, Json(result)))

@@ -340,6 +340,7 @@ impl OperationHandler for FhirPathOperation {
     async fn handle_system(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         let expression = self.extract_expression(params)?;
@@ -350,6 +351,7 @@ impl OperationHandler for FhirPathOperation {
     async fn handle_type(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -363,6 +365,7 @@ impl OperationHandler for FhirPathOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,
@@ -372,11 +375,9 @@ impl OperationHandler for FhirPathOperation {
         let resource = match self.extract_resource(params) {
             Some(res) => res,
             None => {
-                let stored = state
-                    .storage
-                    .read(resource_type, id)
-                    .await
-                    .map_err(|e| OperationError::Internal(e.to_string()))?
+                let stored = context
+                    .read(state, resource_type, id)
+                    .await?
                     .ok_or_else(|| {
                         OperationError::NotFound(format!("{}/{} not found", resource_type, id))
                     })?;

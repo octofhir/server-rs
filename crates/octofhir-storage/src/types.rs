@@ -2,6 +2,7 @@
 //!
 //! This module defines all data types used by the storage traits.
 
+use crate::StorageError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -356,10 +357,14 @@ impl HistoryParams {
 }
 
 /// Parameters for a search query.
+///
+/// Trusted server-side constraints are applied before pagination and counts.
+/// They cannot be supplied through serialized HTTP search parameters.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchParams {
     /// Search parameters as key-value pairs.
-    /// Multiple values for the same key represent OR conditions.
+    /// Repeated values for the same key are AND conditions; comma-separated
+    /// alternatives within one value are OR conditions.
     pub parameters: HashMap<String, Vec<String>>,
     /// Maximum number of results to return.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -373,6 +378,66 @@ pub struct SearchParams {
     /// How to calculate the total count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total: Option<TotalMode>,
+    /// Additional row visibility constraints supplied by the authorization layer.
+    #[serde(skip)]
+    pub constraint: Option<SearchConstraint>,
+    /// Trusted constraints for each primary type in an aggregate search.
+    /// When present, types missing from this map are denied.
+    #[serde(skip)]
+    pub type_constraints: Option<HashMap<String, SearchConstraint>>,
+    /// Per-type visibility for inline search requests; absent types are denied.
+    #[serde(skip)]
+    pub included_visibility: Option<IncludeVisibility>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct IncludeLimits {
+    pub max_resources: usize,
+    pub max_bytes: usize,
+    pub max_depth: usize,
+}
+
+impl Default for IncludeLimits {
+    fn default() -> Self {
+        Self {
+            max_resources: 1000,
+            max_bytes: 16 * 1024 * 1024,
+            max_depth: 100,
+        }
+    }
+}
+
+impl IncludeLimits {
+    pub fn check(self, resources: usize, bytes: usize) -> Result<(), StorageError> {
+        if resources > self.max_resources || bytes > self.max_bytes {
+            return Err(StorageError::invalid_resource(
+                "Include expansion exceeds configured resource or byte budget",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Trusted authorization of inline searches. It is never deserialized from a client query.
+#[derive(Debug, Clone, Default)]
+pub struct IncludeVisibility {
+    pub constraints: HashMap<String, SearchConstraint>,
+    /// Local FHIR base for resolving references without aliasing foreign servers.
+    pub fhir_base_url: Option<String>,
+}
+
+/// Logical composition of trusted FHIR search predicates.
+/// Each Query uses normal search semantics; alternatives represent the union
+/// of grants, while conjunctions combine a grant's compartment and filters.
+#[derive(Debug, Clone)]
+pub enum SearchConstraint {
+    /// Every child must match; an empty conjunction is true.
+    And(Vec<SearchConstraint>),
+    /// At least one child must match; an empty union denies all rows.
+    Or(Vec<SearchConstraint>),
+    /// Search criteria only. Unknown, empty or ignored predicates are rejected.
+    Query(HashMap<String, Vec<String>>),
 }
 
 impl SearchParams {
@@ -380,6 +445,24 @@ impl SearchParams {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Select this type's trusted visibility, intersecting any global predicate.
+    /// A missing entry in an aggregate visibility map denies this branch.
+    #[must_use]
+    pub fn for_resource_type(&self, resource_type: &str) -> Self {
+        let mut params = self.clone();
+        if let Some(constraints) = params.type_constraints.take() {
+            let constraint = constraints
+                .get(resource_type)
+                .cloned()
+                .unwrap_or_else(|| SearchConstraint::Or(Vec::new()));
+            params.constraint = Some(match params.constraint.take() {
+                Some(existing) => SearchConstraint::And(vec![existing, constraint]),
+                None => constraint,
+            });
+        }
+        params
     }
 
     /// Whether only the total is requested, without resources or pagination.

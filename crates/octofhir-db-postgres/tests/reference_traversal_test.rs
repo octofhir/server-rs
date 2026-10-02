@@ -159,6 +159,287 @@ async fn assert_search(
 }
 
 #[tokio::test]
+async fn trusted_visibility_precedes_pagination_and_counts() {
+    use octofhir_storage::SearchConstraint;
+    use std::collections::HashMap;
+    let (_container, pool, registry) = setup().await;
+    let storage = PostgresStorage::from_pool(pool.clone());
+    // An IG canonical must retain the logical ID semantics in both the
+    // client's query and trusted grant predicates, even without a type hint.
+    for resource_type in ["Patient", "Observation"] {
+        registry.register(
+            SearchParameter::new(
+                "_id",
+                format!("https://ig.example/SearchParameter/{resource_type}-id"),
+                SearchParameterType::Token,
+                vec![resource_type.into()],
+            )
+            .with_expression(if resource_type == "Patient" {
+                "id".into()
+            } else {
+                format!("{resource_type}.id")
+            }),
+        );
+    }
+    registry.register(
+        SearchParameter::new(
+            "active",
+            "urn:test:Patient:active",
+            SearchParameterType::Token,
+            vec!["Patient".into()],
+        )
+        .with_expression("Patient.active")
+        .with_element_type_hint(ElementTypeHint::from_fhir_type("boolean", false)),
+    );
+    for (id, active) in [
+        ("active", Some(true)),
+        ("inactive", Some(false)),
+        ("unset", None),
+    ] {
+        let mut patient = json!({"resourceType":"Patient", "id":id});
+        if let Some(active) = active {
+            patient["active"] = json!(active);
+        }
+        storage.create(&patient).await.unwrap();
+    }
+    assert_search(&pool, &registry, "Patient", "active=true", &["active"]).await;
+    assert_search(&pool, &registry, "Patient", "_id=active", &["active"]).await;
+    assert_search(&pool, &registry, "Patient", "active=false", &["inactive"]).await;
+    assert_search(
+        &pool,
+        &registry,
+        "Patient",
+        "active:missing=true",
+        &["unset"],
+    )
+    .await;
+    for (id, reference, code) in [
+        ("a", "Patient/p1", "lab"),
+        ("b", "Patient/p1", "lab"),
+        ("c", "Patient/p1", "vital"),
+        ("d", "Patient/p2", "lab"),
+        ("e", "https://foreign.test/fhir/Patient/p1", "lab"),
+        ("f", "Practitioner/p1", "lab"),
+        ("g", "https://local.test/fhir/Patient/p1/_history/7", "lab"),
+        ("h", "Patient/p1/_history/3", "lab"),
+    ] {
+        storage
+            .create(&json!({"resourceType":"Observation", "id":id,
+                "subject":{"reference":reference}, "code":{"coding":[{"code":code}]}
+            }))
+            .await
+            .unwrap();
+    }
+    let predicate = |name: &str, value: &str| {
+        SearchConstraint::Query(HashMap::from([(name.into(), vec![value.into()])]))
+    };
+    let constraint = SearchConstraint::Or(vec![
+        SearchConstraint::And(vec![
+            predicate("subject", "Patient/p1,https://local.test/fhir/Patient/p1"),
+            predicate("code", "lab"),
+        ]),
+        predicate("_id", "d"),
+    ]);
+    let mut params = parse_query_string("_count=2&_total=accurate&_sort=_id", 10, 100);
+    params.constraint = Some(constraint);
+    let mut observed = BTreeSet::new();
+    for offset in [0, 2, 4] {
+        params.offset = Some(offset);
+        let result = octofhir_db_postgres::queries::search::execute_search_raw_with_config(
+            &pool,
+            "Observation",
+            &params,
+            Some(&registry),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.total, Some(5));
+        assert_eq!(result.has_more, offset < 4);
+        assert_eq!(result.entries.len(), if offset < 4 { 2 } else { 1 });
+        observed.extend(result.entries.into_iter().map(|entry| entry.id));
+    }
+    assert_eq!(
+        observed,
+        ["a", "b", "d", "g", "h"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    );
+
+    params.count = Some(0);
+    let mut transaction = pool.begin().await.unwrap();
+    let result = octofhir_db_postgres::queries::search::execute_search_with_tx(
+        &mut transaction,
+        "Observation",
+        &params,
+        Some(&registry),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.total, Some(5));
+    assert!(result.entries.is_empty());
+    transaction.rollback().await.unwrap();
+
+    params.constraint = Some(SearchConstraint::Or(Vec::new()));
+    let result = octofhir_db_postgres::queries::search::execute_search_raw_with_config(
+        &pool,
+        "Observation",
+        &params,
+        Some(&registry),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.total, Some(0));
+}
+
+#[tokio::test]
+async fn inline_visibility_filters_each_hop_before_limits() {
+    use octofhir_storage::{IncludeVisibility, SearchConstraint};
+    use std::collections::HashMap;
+    let (_container, pool, registry) = setup().await;
+    for (name, path, targets) in [
+        ("derived", "Observation.derivedFrom", vec!["Observation"]),
+        ("performer", "Observation.performer", vec!["Organization"]),
+    ] {
+        registry.register(
+            SearchParameter::new(
+                name,
+                format!("urn:test:{name}"),
+                SearchParameterType::Reference,
+                vec!["Observation".into()],
+            )
+            .with_expression(path)
+            .with_targets(targets.into_iter().map(String::from).collect()),
+        );
+    }
+    let storage = PostgresStorage::from_pool(pool.clone());
+    for resource in [
+        json!({"resourceType":"Organization", "id":"org1"}),
+        json!({"resourceType":"Organization", "id":"org2"}),
+        json!({"resourceType":"Patient", "id":"p1", "managingOrganization":{"reference":"Organization/org1"}}),
+        json!({"resourceType":"Patient", "id":"p2", "managingOrganization":{"reference":"Organization/org2"}}),
+        json!({"resourceType":"Observation", "id":"root", "subject":{"reference":"Patient/p1"}, "code":{"coding":[{"code":"lab"}]},
+            "derivedFrom":[{"reference":"Observation/peer"},{"reference":"Observation/denied"},{"reference":"https://foreign.test/fhir/Observation/alias"}]}),
+        json!({"resourceType":"Observation", "id":"peer", "subject":{"reference":"Patient/p1"}, "code":{"coding":[{"code":"lab"}]},
+            "performer":[{"reference":"Organization/org1"}]}),
+        json!({"resourceType":"Observation", "id":"denied", "subject":{"reference":"Patient/p2"}, "code":{"coding":[{"code":"lab"}]},
+            "performer":[{"reference":"Organization/org2"}]}),
+        json!({"resourceType":"Observation", "id":"alias", "subject":{"reference":"Patient/p1"}, "code":{"coding":[{"code":"lab"}]}}),
+        json!({"resourceType":"Observation", "id":"vital", "subject":{"reference":"Patient/p1"}, "code":{"coding":[{"code":"vital"}]}}),
+        json!({"resourceType":"Observation", "id":"foreign", "subject":{"reference":"https://foreign.test/fhir/Patient/p1"}, "code":{"coding":[{"code":"lab"}]}}),
+        json!({"resourceType":"Observation", "id":"deleted", "subject":{"reference":"Patient/p1"}, "code":{"coding":[{"code":"lab"}]}}),
+    ] {
+        storage.create(&resource).await.unwrap();
+    }
+    storage.delete("Observation", "deleted").await.unwrap();
+    let predicate = |key: &str, value: &str| {
+        SearchConstraint::Query(HashMap::from([(key.into(), vec![value.into()])]))
+    };
+    let visibility = IncludeVisibility {
+        constraints: HashMap::from([
+            (
+                "Observation".into(),
+                SearchConstraint::And(vec![
+                    predicate("subject", "Patient/p1"),
+                    predicate("code", "lab"),
+                ]),
+            ),
+            ("Patient".into(), predicate("_id", "p1")),
+            ("Organization".into(), SearchConstraint::And(Vec::new())),
+        ]),
+        fhir_base_url: Some("https://local.test/fhir".into()),
+    };
+    for (rt, query, expected) in [
+        (
+            "Observation",
+            "_id=root&_include:iterate=Observation:derived&_include:iterate=Observation:subject:Patient&_include:iterate=Observation:performer&_include:iterate=Patient:organization",
+            vec![
+                ("Observation", "peer"),
+                ("Patient", "p1"),
+                ("Organization", "org1"),
+            ],
+        ),
+        (
+            "Patient",
+            "_id=p1&_revinclude=Observation:subject&_include:iterate=Observation:performer",
+            vec![
+                ("Observation", "root"),
+                ("Observation", "peer"),
+                ("Observation", "alias"),
+                ("Organization", "org1"),
+            ],
+        ),
+    ] {
+        let mut params = parse_query_string(&format!("{query}&_count=1&_total=accurate"), 10, 100);
+        params.included_visibility = Some(visibility.clone());
+        let raw = octofhir_db_postgres::queries::search::execute_search_raw_with_options(
+            &pool,
+            rt,
+            &params,
+            Some(&registry),
+            None,
+            octofhir_db_postgres::queries::search::RawSearchOptions {
+                include_limits: octofhir_db_postgres::queries::search::IncludeLimits {
+                    max_resources: expected.len(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let parsed = octofhir_db_postgres::queries::search::execute_search(
+            &pool,
+            rt,
+            &params,
+            Some(&registry),
+        )
+        .await
+        .unwrap();
+        let expected: BTreeSet<_> = expected.into_iter().collect();
+        assert_eq!(
+            raw.included
+                .iter()
+                .map(|e| (e.resource_type.as_str(), e.id.as_str()))
+                .collect::<BTreeSet<_>>(),
+            expected,
+            "{query}"
+        );
+        assert_eq!(
+            parsed
+                .entries
+                .iter()
+                .skip(1)
+                .map(|e| (e.resource_type.as_str(), e.id.as_str()))
+                .collect::<BTreeSet<_>>(),
+            expected,
+            "{query}"
+        );
+        assert_eq!(raw.total, Some(1));
+        assert_eq!(parsed.total, Some(1));
+        assert_eq!(raw.entries.len(), 1);
+        assert!(!raw.has_more);
+        params.included_visibility = Some(IncludeVisibility::default());
+        let empty = octofhir_db_postgres::queries::search::execute_search_raw_with_config(
+            &pool,
+            rt,
+            &params,
+            Some(&registry),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(empty.included.is_empty());
+        assert_eq!(empty.total, Some(1));
+    }
+}
+
+#[tokio::test]
 async fn search_escaping_preserves_literal_delimiters() {
     let (_container, pool, registry) = setup().await;
     let storage = PostgresStorage::from_pool(pool.clone());
@@ -830,4 +1111,256 @@ async fn query_ids(pool: &PgPool, built: &BuiltQuery) -> Vec<String> {
         };
     }
     query.fetch_all(pool).await.unwrap()
+}
+
+#[tokio::test]
+async fn aggregate_visibility_precedes_global_pagination_and_inline_expansion() {
+    use octofhir_db_postgres::queries::search::{RawSearchOptions, execute_system_search_raw};
+    use octofhir_storage::{IncludeVisibility, SearchConstraint};
+    use std::collections::HashMap;
+    let (_container, pool, registry) = setup().await;
+    let storage = PostgresStorage::from_pool(pool.clone());
+    for id in ["own", "other"] {
+        storage
+            .create(&json!({"resourceType":"Patient", "id":id}))
+            .await
+            .unwrap();
+    }
+    for (id, subject, code) in [
+        ("a", "Patient/own", "lab"),
+        ("b", "https://local.test/fhir/Patient/own", "lab"),
+        ("foreign", "Patient/other", "lab"),
+        ("vital", "Patient/own", "vital"),
+    ] {
+        storage
+            .create(&json!({"resourceType":"Observation", "id":id,
+            "code":{"coding":[{"code":code}]}, "subject":{"reference":subject}}))
+            .await
+            .unwrap();
+    }
+    storage
+        .create(&json!({"resourceType":"Organization", "id":"own"}))
+        .await
+        .unwrap();
+    let query = |key: &str, value: &str| {
+        SearchConstraint::Query(HashMap::from([(key.into(), vec![value.into()])]))
+    };
+    let mut params = parse_query_string(
+        "_count=1&_total=accurate&_include=Observation:subject:Patient",
+        10,
+        100,
+    );
+    params.type_constraints = Some(HashMap::from([
+        ("Patient".into(), query("_id", "own")),
+        (
+            "Observation".into(),
+            SearchConstraint::And(vec![
+                query("subject", "Patient/own,https://local.test/fhir/Patient/own"),
+                query("code", "lab"),
+            ]),
+        ),
+    ]));
+    params.included_visibility = Some(IncludeVisibility {
+        constraints: HashMap::from([("Patient".into(), query("_id", "own"))]),
+        fhir_base_url: Some("https://local.test/fhir".into()),
+    });
+    // Duplicate types must neither duplicate rows nor inflate the global total.
+    let types = ["Patient", "Observation", "Organization", "Patient"];
+    for (offset, expected_type, expected_id) in [
+        (0, "Observation", "a"),
+        (1, "Observation", "b"),
+        (2, "Patient", "own"),
+    ] {
+        params.offset = Some(offset);
+        let result = execute_system_search_raw(
+            &pool,
+            &types,
+            &params,
+            &registry,
+            None,
+            RawSearchOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.total, Some(3));
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].resource_type, expected_type);
+        assert_eq!(result.entries[0].id, expected_id);
+        assert_eq!(result.has_more, offset < 2);
+        assert_eq!(
+            result.included.len(),
+            usize::from(expected_type == "Observation")
+        );
+        if let Some(included) = result.included.first() {
+            assert_eq!(
+                (included.resource_type.as_str(), included.id.as_str()),
+                ("Patient", "own")
+            );
+        }
+    }
+    params.offset = Some(0);
+    params
+        .included_visibility
+        .as_mut()
+        .unwrap()
+        .constraints
+        .clear();
+    let result = execute_system_search_raw(
+        &pool,
+        &types,
+        &params,
+        &registry,
+        None,
+        RawSearchOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.total, Some(3));
+    assert!(result.included.is_empty());
+    params.constraint = Some(query("_id", "a,own"));
+    params.count = Some(0);
+    let result = execute_system_search_raw(
+        &pool,
+        &types,
+        &params,
+        &registry,
+        None,
+        RawSearchOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.total, Some(2));
+    assert!(result.entries.is_empty());
+    params.type_constraints = Some(HashMap::new());
+    let result = execute_system_search_raw(
+        &pool,
+        &types,
+        &params,
+        &registry,
+        None,
+        RawSearchOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.total, Some(0));
+    // Lenient conversion cannot silently apply a known Patient-only criterion
+    // to the Patient branch while ignoring it for Observation.
+    params
+        .parameters
+        .insert("family".into(), vec!["Allowed".into()]);
+    assert!(
+        execute_system_search_raw(
+            &pool,
+            &types,
+            &params,
+            &registry,
+            None,
+            RawSearchOptions::default()
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn transactional_aggregate_and_inline_search_use_one_connection() {
+    use octofhir_storage::{IncludeLimits, IncludeVisibility, SearchConstraint};
+    use std::collections::HashMap;
+    use std::time::Duration;
+    let (_container, pool, registry) = setup().await;
+    let storage = PostgresStorage::from_pool(pool.clone());
+    storage.search_registry_slot().set(registry).unwrap();
+    storage
+        .create(&json!({"resourceType":"Patient", "id":"other"}))
+        .await
+        .unwrap();
+    // The fixture deliberately has just one pool connection: any fallback to
+    // pool search/include deadlocks, and cannot see these uncommitted writes.
+    let mut tx = storage.begin_transaction().await.unwrap();
+    tx.create(&json!({"resourceType":"Patient", "id":"own"}))
+        .await
+        .unwrap();
+    for (id, subject, code) in [
+        ("lab", "own", "lab"),
+        ("vital", "own", "vital"),
+        ("foreign", "other", "lab"),
+    ] {
+        tx.create(&json!({"resourceType":"Observation", "id":id,
+            "subject":{"reference":format!("Patient/{subject}")},
+            "code":{"coding":[{"code":code}]}}))
+            .await
+            .unwrap();
+    }
+    let query = |key: &str, value: &str| {
+        SearchConstraint::Query(HashMap::from([(key.into(), vec![value.into()])]))
+    };
+    let observation =
+        SearchConstraint::And(vec![query("subject", "Patient/own"), query("code", "lab")]);
+    let constraints = HashMap::from([
+        ("Patient".into(), query("_id", "own")),
+        ("Observation".into(), observation),
+    ]);
+    let mut params = parse_query_string(
+        "_count=1&_total=accurate&_include:iterate=Observation:subject:Patient&_revinclude:iterate=Observation:subject:Patient",
+        10,
+        100,
+    );
+    params.type_constraints = Some(constraints.clone());
+    params.included_visibility = Some(IncludeVisibility {
+        constraints,
+        fhir_base_url: Some("https://local.test/fhir".into()),
+    });
+    let search = tx.search_system_raw(
+        &["Patient", "Observation"],
+        &params,
+        IncludeLimits::default(),
+        false,
+    );
+    let result = tokio::time::timeout(Duration::from_secs(5), search)
+        .await
+        .expect("search checked out another connection")
+        .unwrap();
+    assert_eq!(result.total, Some(2));
+    assert!(result.has_more);
+    assert_eq!(result.entries[0].id, "lab");
+    assert_eq!(result.included.len(), 1);
+    assert_eq!(
+        (
+            result.included[0].resource_type.as_str(),
+            result.included[0].id.as_str()
+        ),
+        ("Patient", "own")
+    );
+    params.offset = Some(1);
+    let result = tx
+        .search_system_raw(
+            &["Patient", "Observation"],
+            &params,
+            IncludeLimits::default(),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.total, Some(2));
+    assert!(!result.has_more);
+    assert_eq!(result.entries[0].id, "own");
+    assert_eq!(result.included.len(), 1);
+    assert_eq!(result.included[0].id, "lab");
+    params.count = Some(0);
+    let result = tx
+        .search_system_raw(
+            &["Patient", "Observation"],
+            &params,
+            IncludeLimits::default(),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.total, Some(2));
+    assert!(result.entries.is_empty());
+    assert!(result.included.is_empty());
+    tx.rollback().await.unwrap();
+    assert!(storage.read("Patient", "own").await.unwrap().is_none());
+    assert!(storage.read("Observation", "lab").await.unwrap().is_none());
+    assert!(storage.read("Patient", "other").await.unwrap().is_some());
 }

@@ -1,4 +1,4 @@
-//! Pre-expand FHIR terminology modifiers into plain Token search values.
+//! Pre-expand FHIR terminology modifiers into Token values and trusted predicates.
 //!
 //! Per FHIR R4 §3.1.1.5.5 (https://hl7.org/fhir/R4/search.html#in) and
 //! §3.1.1.5.11 (https://hl7.org/fhir/R4/search.html#token) the `:in` and
@@ -8,16 +8,18 @@
 //! Because the SQL builder pipeline (`dispatch_search`) is synchronous and
 //! `TerminologyProvider::expand_valueset` is async, this module runs ahead of
 //! query building to expand the ValueSet, then rewrites the query parameters
-//! so `dispatch_search` sees an ordinary Token comma-OR query:
+//! and constraints before SQL compilation:
 //!
 //! - `code:in=<vsUrl>`     →  `code=<sys>|<code>,<sys>|<code>,…`
-//! - `code:not-in=<vsUrl>` →  `code:not=<sys>|<code>,<sys>|<code>,…`
+//! - `code:not-in=<vsUrl>` → repeated `code:not` predicates, one per code.
 //!
 //! Spec equivalence:
 //! - `:in` matches the SP when the indexed code is in the expanded VS — the
 //!   rewritten Token OR matches exactly the same set.
-//! - `:not-in` is the inverse — `:not=A,B,…` matches when the SP does not
-//!   equal any of A, B, … (per §3.1.1.5.5 the `:not` modifier semantics).
+//! - `:not-in` negates membership in the entire expanded set. Comma-separated
+//!   ValueSet alternatives are OR branches; repeated occurrences are AND.
+//! - Empty sets produce explicit false (`:in`) or true (`:not-in`) predicates.
+//!   Expanded token literals retain FHIR escaping for separator characters.
 //!
 //! Limitations:
 //! - Inline expansion only. Each expanded code becomes an OR branch in the
@@ -29,10 +31,8 @@
 //! - Only top-level params are walked. Terminology modifiers nested inside
 //!   `_has:…` or chained-reference parameters reach the sync dispatcher
 //!   directly and still return `NotImplemented`.
-//! - `:above` / `:below` (subsumption) need `HybridTerminologyProvider`'s
-//!   `expand_hierarchy`, which is not exposed on the `TerminologyProvider`
-//!   trait. Those modifiers continue to return `NotImplemented` until the
-//!   trait is extended or a concrete-typed plumbing is added.
+//! - `:above` / `:below` use the concrete `HybridTerminologyProvider` through
+//!   [`pre_expand_subsumption_modifiers`].
 
 use crate::parameters::SearchParameterType;
 use crate::registry::SearchParameterRegistry;
@@ -61,17 +61,13 @@ pub enum TerminologyPreprocessError {
     ExpansionFailed { vs: String, message: String },
 }
 
-/// Sentinel value emitted for `:in` against an empty ValueSet expansion. The
-/// downstream Token search never matches against this string, so the search
-/// correctly returns no results (spec: `:in` against empty VS matches nothing).
-const NO_MATCH_SENTINEL: &str = "__fhir262_no_match__";
-
 /// Pre-expand `:in` and `:not-in` Token modifiers in-place on `params`.
 ///
 /// Walks each `(key, [value_entry,…])` pair in `params.parameters`. For Token
 /// search parameters with a `:in` or `:not-in` modifier, the value entries
 /// (each of which may carry comma-separated ValueSet URLs for OR-of-ValueSets)
-/// are replaced by their expansion as `system|code` token literals.
+/// become escaped `system|code` literals for `:in`, or Boolean constraints for
+/// `:not-in` and empty expansions. Existing trusted constraints are preserved.
 pub async fn pre_expand_terminology_modifiers(
     params: &mut SearchParams,
     registry: &SearchParameterRegistry,
@@ -79,99 +75,126 @@ pub async fn pre_expand_terminology_modifiers(
     terminology: &Arc<dyn TerminologyProvider>,
     max_expansion: usize,
 ) -> Result<(), TerminologyPreprocessError> {
-    let mut rewrites: Vec<(String, String, Vec<String>)> = Vec::new();
-
+    use octofhir_storage::SearchConstraint;
+    let mut rewrites = Vec::new();
+    let mut predicates = Vec::new();
     for (key, value_entries) in &params.parameters {
         let Some((name, modifier)) = key.split_once(':') else {
             continue;
         };
-        let is_in = modifier == "in";
-        let is_not_in = modifier == "not-in";
-        if !(is_in || is_not_in) {
+        if !matches!(modifier, "in" | "not-in") {
             continue;
         }
-
-        let Some(def) = registry.get(resource_type, name) else {
+        let Some(definition) = registry.get(resource_type, name) else {
             continue;
         };
-        if def.param_type != SearchParameterType::Token {
+        if definition.param_type != SearchParameterType::Token {
             continue;
         }
-
-        let mut new_value_entries: Vec<String> = Vec::with_capacity(value_entries.len());
+        if value_entries.is_empty() {
+            return Err(TerminologyPreprocessError::ExpansionFailed {
+                vs: key.clone(),
+                message: "ValueSet canonical must not be empty".into(),
+            });
+        }
+        let mut values = Vec::new();
         for value_entry in value_entries {
-            let mut codes: Vec<String> = Vec::new();
-            for vs_url in value_entry
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
+            let mut codes = Vec::new();
+            let mut alternatives = Vec::new();
+            let mut expanded = 0usize;
+            for raw_url in crate::parser::split_escaped(value_entry, ',') {
+                let url = crate::parser::unescape_search_value(raw_url).map_err(|error| {
+                    TerminologyPreprocessError::ExpansionFailed {
+                        vs: value_entry.clone(),
+                        message: error.to_string(),
+                    }
+                })?;
+                if url.trim().is_empty() {
+                    return Err(TerminologyPreprocessError::ExpansionFailed {
+                        vs: value_entry.clone(),
+                        message: "ValueSet canonical must not be empty".into(),
+                    });
+                }
                 let expansion = terminology
-                    .expand_valueset(vs_url, None)
+                    .expand_valueset(&url, None)
                     .await
-                    .map_err(|e| TerminologyPreprocessError::ExpansionFailed {
-                        vs: vs_url.to_string(),
-                        message: e.to_string(),
+                    .map_err(|error| TerminologyPreprocessError::ExpansionFailed {
+                        vs: url.clone(),
+                        message: error.to_string(),
                     })?;
-
-                if expansion.contains.len() > max_expansion {
+                expanded = expanded.saturating_add(expansion.contains.len());
+                if expanded > max_expansion {
                     return Err(TerminologyPreprocessError::ExpansionTooLarge {
-                        vs: vs_url.to_string(),
-                        actual: expansion.contains.len(),
+                        vs: value_entry.clone(),
+                        actual: expanded,
                         limit: max_expansion,
                     });
                 }
-
-                for concept in expansion.contains {
-                    if concept.code.is_empty() {
-                        continue;
-                    }
-                    match concept.system.as_deref() {
-                        Some(sys) if !sys.is_empty() => {
-                            codes.push(format!("{sys}|{}", concept.code));
+                let mut set_codes: Vec<_> = expansion
+                    .contains
+                    .into_iter()
+                    .filter(|concept| !concept.code.is_empty())
+                    .map(|concept| {
+                        let code = escape_token_literal(&concept.code);
+                        match concept.system.filter(|system| !system.is_empty()) {
+                            Some(system) => format!("{}|{code}", escape_token_literal(&system)),
+                            None => code,
                         }
-                        _ => codes.push(concept.code),
-                    }
+                    })
+                    .collect();
+                set_codes.sort();
+                set_codes.dedup();
+                if modifier == "not-in" {
+                    // Negate the entire set, then OR the ValueSet alternatives.
+                    // Repeated :not occurrences are AND, one per expanded code.
+                    alternatives.push(if set_codes.is_empty() {
+                        SearchConstraint::And(Vec::new())
+                    } else {
+                        SearchConstraint::Query(std::collections::HashMap::from([(
+                            format!("{name}:not"),
+                            set_codes,
+                        )]))
+                    });
+                } else {
+                    codes.extend(set_codes);
                 }
             }
-
-            codes.sort();
-            codes.dedup();
-
-            if codes.is_empty() {
-                // Empty expansion semantics (§3.1.1.5.5):
-                //   :in     → matches nothing
-                //   :not-in → matches everything
-                // For :in, plant a sentinel that won't match any indexed code,
-                // forcing an empty result. For :not-in, drop this occurrence
-                // (no constraint added) — the AND with other params still
-                // restricts correctly.
-                if is_in {
-                    new_value_entries.push(NO_MATCH_SENTINEL.to_string());
+            if modifier == "not-in" {
+                predicates.push(SearchConstraint::Or(alternatives));
+            } else {
+                codes.sort();
+                codes.dedup();
+                if codes.is_empty() {
+                    // FHIR codes are arbitrary strings; a sentinel can collide.
+                    predicates.push(SearchConstraint::Or(Vec::new()));
+                } else {
+                    values.push(codes.join(","));
                 }
-                continue;
             }
-            new_value_entries.push(codes.join(","));
         }
-
-        let new_key = if is_not_in {
-            format!("{name}:not")
-        } else {
-            name.to_string()
-        };
-        rewrites.push((key.clone(), new_key, new_value_entries));
+        rewrites.push((key.clone(), name.to_string(), values));
     }
-
-    for (old_key, new_key, new_values) in rewrites {
-        params.parameters.remove(&old_key);
-        if new_values.is_empty() {
-            continue;
+    for (old, name, values) in rewrites {
+        params.parameters.remove(&old);
+        if !values.is_empty() {
+            params.parameters.entry(name).or_default().extend(values);
         }
-        let entry = params.parameters.entry(new_key).or_default();
-        entry.extend(new_values);
     }
-
+    if !predicates.is_empty() {
+        if let Some(existing) = params.constraint.take() {
+            predicates.push(existing);
+        }
+        params.constraint = Some(SearchConstraint::And(predicates));
+    }
     Ok(())
+}
+
+fn escape_token_literal(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace(',', "\\,")
+        .replace('|', "\\|")
+        .replace('$', "\\$")
 }
 
 /// Pre-expand `:above` and `:below` Token subsumption modifiers in-place.
@@ -218,34 +241,21 @@ pub async fn pre_expand_subsumption_modifiers(
             continue;
         }
 
+        if value_entries.is_empty() {
+            return Err(TerminologyPreprocessError::ExpansionFailed {
+                vs: key.clone(),
+                message: "Hierarchy criterion must not be empty".into(),
+            });
+        }
+
         let mut new_value_entries: Vec<String> = Vec::with_capacity(value_entries.len());
         for value_entry in value_entries {
             let mut tokens: Vec<String> = Vec::new();
-            for sys_code in value_entry
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                let (system, code) = match sys_code.split_once('|') {
-                    Some((sys, code)) if !sys.is_empty() && !code.is_empty() => (sys, code),
-                    _ => {
-                        return Err(TerminologyPreprocessError::ExpansionFailed {
-                            vs: sys_code.to_string(),
-                            message: format!(
-                                "{}/{} modifier requires `system|code` value",
-                                name,
-                                if direction == HierarchyDirection::Below {
-                                    "below"
-                                } else {
-                                    "above"
-                                }
-                            ),
-                        });
-                    }
-                };
+            for sys_code in crate::parser::split_escaped(value_entry, ',') {
+                let (system, code) = parse_hierarchy_seed(sys_code)?;
 
                 let hierarchy_codes = terminology
-                    .expand_hierarchy(system, code, direction)
+                    .expand_hierarchy(&system, &code, direction)
                     .await
                     .map_err(|e| TerminologyPreprocessError::ExpansionFailed {
                         vs: sys_code.to_string(),
@@ -264,11 +274,28 @@ pub async fn pre_expand_subsumption_modifiers(
                     if c.is_empty() {
                         continue;
                     }
-                    tokens.push(format!("{system}|{c}"));
+                    tokens.push(format!(
+                        "{}|{}",
+                        escape_token_literal(&system),
+                        escape_token_literal(&c)
+                    ));
                 }
                 // Always include the seed code itself — the hierarchy result
                 // may or may not include it depending on the system.
-                tokens.push(format!("{system}|{code}"));
+                tokens.push(format!(
+                    "{}|{}",
+                    escape_token_literal(&system),
+                    escape_token_literal(&code)
+                ));
+                tokens.sort();
+                tokens.dedup();
+                if tokens.len() > max_expansion {
+                    return Err(TerminologyPreprocessError::ExpansionTooLarge {
+                        vs: value_entry.clone(),
+                        actual: tokens.len(),
+                        limit: max_expansion,
+                    });
+                }
             }
 
             tokens.sort();
@@ -292,4 +319,46 @@ pub async fn pre_expand_subsumption_modifiers(
     }
 
     Ok(())
+}
+
+fn parse_hierarchy_seed(value: &str) -> Result<(String, String), TerminologyPreprocessError> {
+    let parts = crate::parser::split_escaped(value, '|')
+        .map(crate::parser::unescape_search_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| TerminologyPreprocessError::ExpansionFailed {
+            vs: value.into(),
+            message: error.to_string(),
+        })?;
+    match parts.as_slice() {
+        [system, code] if !system.trim().is_empty() && !code.trim().is_empty() => {
+            Ok((system.clone(), code.clone()))
+        }
+        _ => Err(TerminologyPreprocessError::ExpansionFailed {
+            vs: value.into(),
+            message: "Hierarchy modifier requires a nonempty `system|code` value".into(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hierarchy_literals_keep_escaped_separators_and_reject_invalid_criteria() {
+        assert_eq!(
+            parse_hierarchy_seed(r"urn:example\|edition|a\,b\|c\$d\\e").unwrap(),
+            ("urn:example|edition".into(), "a,b|c$d\\e".into())
+        );
+        for invalid in [
+            "",
+            "|code",
+            "system|",
+            "system|a|b",
+            r"system|a\q",
+            "system| ",
+        ] {
+            assert!(parse_hierarchy_seed(invalid).is_err(), "{invalid}");
+        }
+    }
 }

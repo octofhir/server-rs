@@ -1,6 +1,6 @@
 //! FHIR data provider implementation for CQL engine
 
-use crate::error::CqlResult;
+use crate::error::{CqlError, CqlResult};
 use bigdecimal::BigDecimal;
 use indexmap::IndexMap;
 use num_traits::ToPrimitive;
@@ -9,15 +9,39 @@ use octofhir_cql_types::{CqlList, CqlTuple, CqlType, CqlValue};
 use octofhir_fhirpath::{
     Collection, EvaluationContext as FhirPathContext, FhirPathEngine, FhirPathValue,
 };
-use octofhir_storage::{DynStorage, SearchParams};
+use octofhir_storage::{DynStorage, SearchParams, SearchResult};
 use serde_json::Value;
-use std::sync::Arc;
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
+
+/// The host supplies resource access for each evaluation. A request-scoped
+/// implementation can intersect retrieves with its trusted grants and policies.
+#[async_trait::async_trait]
+pub trait ResourceSearch: Send + Sync {
+    async fn search(&self, resource_type: &str, params: &SearchParams) -> CqlResult<SearchResult>;
+}
+
+struct StorageSearch(DynStorage);
+
+#[async_trait::async_trait]
+impl ResourceSearch for StorageSearch {
+    async fn search(&self, resource_type: &str, params: &SearchParams) -> CqlResult<SearchResult> {
+        Ok(self.0.search(resource_type, params).await?)
+    }
+}
 
 /// FHIR server data provider for CQL evaluation
 pub struct FhirServerDataProvider {
-    storage: DynStorage,
+    search: Arc<dyn ResourceSearch>,
     fhirpath_engine: Arc<FhirPathEngine>,
     max_retrieve_size: usize,
+    // The upstream synchronous trait cannot return errors. Retain the first
+    // error and reject the entire evaluation after it returns, never a partial
+    // clinical result. Each evaluation owns its own slot and deadline.
+    error: Mutex<Option<CqlError>>,
+    deadline: Option<Instant>,
 }
 
 impl FhirServerDataProvider {
@@ -27,10 +51,44 @@ impl FhirServerDataProvider {
         max_retrieve_size: usize,
     ) -> Self {
         Self {
-            storage,
+            search: Arc::new(StorageSearch(storage)),
             fhirpath_engine,
             max_retrieve_size,
+            error: Mutex::new(None),
+            deadline: None,
         }
+    }
+
+    pub fn with_search(
+        search: Arc<dyn ResourceSearch>,
+        fhirpath_engine: Arc<FhirPathEngine>,
+        max_retrieve_size: usize,
+    ) -> Self {
+        Self {
+            search,
+            fhirpath_engine,
+            max_retrieve_size,
+            error: Mutex::new(None),
+            deadline: None,
+        }
+    }
+
+    pub(crate) fn for_evaluation(&self, deadline: Instant) -> Self {
+        Self {
+            search: self.search.clone(),
+            fhirpath_engine: self.fhirpath_engine.clone(),
+            max_retrieve_size: self.max_retrieve_size,
+            error: Mutex::new(None),
+            deadline: Some(deadline),
+        }
+    }
+
+    pub(crate) fn take_error(&self) -> Option<CqlError> {
+        self.error.lock().unwrap().take()
+    }
+
+    fn record_error(&self, error: CqlError) {
+        self.error.lock().unwrap().get_or_insert(error);
     }
 
     /// Retrieve resources based on CQL retrieve parameters
@@ -39,7 +97,7 @@ impl FhirServerDataProvider {
     pub async fn retrieve(
         &self,
         data_type: &str,
-        _context_type: Option<&str>,
+        context_type: Option<&str>,
         context_value: Option<&Value>,
         template_id: Option<&str>,
         code_property: Option<&str>,
@@ -53,10 +111,12 @@ impl FhirServerDataProvider {
 
         // Context filtering
         if let Some(ctx_value) = context_value
+            && context_type == Some("Patient")
             && let Some(patient_id) = Self::extract_patient_id(ctx_value)
         {
             if Self::has_subject_field(data_type) {
-                search_params = search_params.with_param("subject", &patient_id);
+                search_params =
+                    search_params.with_param("subject", format!("Patient/{patient_id}"));
             } else if data_type == "Patient" {
                 search_params = search_params.with_param("_id", &patient_id);
             }
@@ -84,36 +144,82 @@ impl FhirServerDataProvider {
             search_params = search_params.with_param(param_name, format!("le{}", end));
         }
 
-        search_params = search_params.with_count(self.max_retrieve_size as u32);
-
-        let result = self
-            .storage
-            .search(data_type, &search_params)
-            .await
-            .map_err(|e| {
-                crate::error::CqlError::DataProviderError(format!("Search failed: {}", e))
-            })?;
-
-        let resources: Vec<Value> = result
-            .entries
-            .into_iter()
-            .map(|entry| entry.resource)
-            .collect();
-        Ok(resources)
+        if self.max_retrieve_size == 0 {
+            return Err(CqlError::InvalidParameter(
+                "CQL retrieve limit must be positive".into(),
+            ));
+        }
+        search_params.count = Some(self.max_retrieve_size.min(1000) as u32);
+        let mut resources = Vec::new();
+        loop {
+            let search = self.search.search(data_type, &search_params);
+            let result = if let Some(deadline) = self.deadline {
+                if Instant::now() >= deadline {
+                    return Err(CqlError::Timeout("CQL evaluation deadline exceeded".into()));
+                }
+                tokio::time::timeout_at(deadline.into(), search)
+                    .await
+                    .map_err(|_| CqlError::Timeout("CQL retrieve deadline exceeded".into()))??
+            } else {
+                search.await?
+            };
+            let count = result.entries.len();
+            if count > self.max_retrieve_size.saturating_sub(resources.len()) {
+                return Err(CqlError::DataProviderError(
+                    "CQL retrieve limit exceeded".into(),
+                ));
+            }
+            resources.extend(result.entries.into_iter().map(|entry| entry.resource));
+            if !result.has_more {
+                return Ok(resources);
+            }
+            if resources.len() == self.max_retrieve_size {
+                return Err(CqlError::DataProviderError(
+                    "CQL retrieve limit exceeded".into(),
+                ));
+            }
+            if count == 0 {
+                return Err(CqlError::DataProviderError(
+                    "CQL retrieve made no progress".into(),
+                ));
+            }
+            search_params.offset = Some(
+                search_params
+                    .offset
+                    .unwrap_or(0)
+                    .checked_add(u32::try_from(count).map_err(|_| {
+                        CqlError::DataProviderError("CQL retrieve offset overflow".into())
+                    })?)
+                    .ok_or_else(|| {
+                        CqlError::DataProviderError("CQL retrieve offset overflow".into())
+                    })?,
+            );
+            search_params.count = Some(
+                self.max_retrieve_size
+                    .saturating_sub(resources.len())
+                    .min(1000) as u32,
+            );
+        }
     }
 
     fn extract_patient_id(context_value: &Value) -> Option<String> {
         if let Some(reference) = context_value.get("reference").and_then(|r| r.as_str())
             && reference.starts_with("Patient/")
         {
-            return Some(reference.to_string());
+            return Some(reference.trim_start_matches("Patient/").to_string());
         }
         if let Some(id) = context_value.as_str() {
             if id.starts_with("Patient/") {
-                return Some(id.to_string());
+                return Some(id.trim_start_matches("Patient/").to_string());
             } else {
-                return Some(format!("Patient/{}", id));
+                return Some(id.to_string());
             }
+        }
+        if context_value.get("resourceType").and_then(Value::as_str) == Some("Patient") {
+            return context_value
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
         }
         None
     }
@@ -171,6 +277,9 @@ impl DataProvider for FhirServerDataProvider {
         date_property: Option<&str>,
         date_range: Option<&CqlValue>,
     ) -> Vec<CqlValue> {
+        if self.error.lock().unwrap().is_some() {
+            return Vec::new();
+        }
         let context_json = context_value.and_then(cql_value_to_json);
         let codes_json = codes.and_then(cql_value_to_json);
         let date_range_json = date_range.and_then(cql_value_to_json);
@@ -189,7 +298,7 @@ impl DataProvider for FhirServerDataProvider {
             )
             .await
             .unwrap_or_else(|e| {
-                tracing::error!(error = %e, "Failed to retrieve data");
+                self.record_error(e);
                 Vec::new()
             })
         });

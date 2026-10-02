@@ -5,9 +5,265 @@ use octofhir_auth::middleware::AuthContext;
 use octofhir_auth::policy::compartment::CompartmentChecker;
 use octofhir_auth::policy::{AccessDecision, PolicyContext, PolicyContextBuilder};
 use octofhir_auth::smart::scopes::{FhirOperation, ScopeContext};
+use octofhir_storage::{IncludeVisibility, SearchConstraint, SearchParams};
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 
 use crate::server::AppState;
+
+/// Trusted visibility prepared by authorization middleware for a type search.
+#[derive(Clone, Debug)]
+pub struct AuthorizedSearch {
+    constraint: Option<SearchConstraint>,
+    context: PolicyContext,
+    deferred: bool,
+}
+
+impl AuthorizedSearch {
+    pub(crate) async fn apply(
+        &self,
+        state: &AppState,
+        params: &mut SearchParams,
+    ) -> Result<(), ApiError> {
+        if let Some(constraint) = self.constraint.clone() {
+            params.constraint = Some(match params.constraint.take() {
+                Some(existing) => SearchConstraint::And(vec![existing, constraint]),
+                None => constraint,
+            });
+        }
+        self.apply_includes(state, params).await
+    }
+
+    /// Aggregate admission is deferred until the handler knows the actual types,
+    /// including `_type` values submitted in a POST form body.
+    pub(crate) fn is_deferred(&self) -> bool {
+        self.deferred
+    }
+
+    pub(crate) async fn apply_types(
+        &self,
+        state: &AppState,
+        types: &[String],
+        params: &mut SearchParams,
+    ) -> Result<(), ApiError> {
+        let mut constraints = HashMap::new();
+        for resource_type in types {
+            let mut context = self.context.clone();
+            context.resource = None;
+            context.request.resource_type = resource_type.clone();
+            context.request.resource_id = None;
+            context.request.query_params = params
+                .parameters
+                .iter()
+                .filter_map(|(key, values)| values.last().map(|value| (key.clone(), value.clone())))
+                .collect();
+            if !context.scopes.parsed.permits(
+                resource_type,
+                context.request.operation,
+                context.environment.patient_context.as_deref(),
+            ) || !matches!(
+                state.policy_evaluator.evaluate(&context).await,
+                AccessDecision::Allow
+            ) {
+                continue;
+            }
+            // Expanding a system or wildcard request cannot bypass a policy
+            // that restricts the corresponding ordinary type search.
+            let mut type_context = context.clone();
+            type_context.request.operation = FhirOperation::Search;
+            type_context.request.method = "GET".into();
+            type_context.request.path = format!("/fhir/{resource_type}");
+            type_context.request.compartment_type = None;
+            type_context.request.compartment_id = None;
+            type_context.request.body = None;
+            if !matches!(
+                state.policy_evaluator.evaluate(&type_context).await,
+                AccessDecision::Allow
+            ) {
+                continue;
+            }
+            constraints.insert(
+                resource_type.clone(),
+                query_visibility(&context, &state.compartment_registry, &state.base_url)?
+                    .unwrap_or(SearchConstraint::And(Vec::new())),
+            );
+        }
+        if constraints.is_empty() {
+            return Err(ApiError::forbidden(
+                "No search grant and policy allow the requested types",
+            ));
+        }
+        params.type_constraints = Some(constraints);
+        self.apply_includes(state, params).await
+    }
+
+    async fn apply_includes(
+        &self,
+        state: &AppState,
+        params: &mut SearchParams,
+    ) -> Result<(), ApiError> {
+        let registry = state.search_config.config().registry.clone();
+        let types = inline_resource_types(params, &registry);
+        if types.is_empty() {
+            return Ok(());
+        }
+        let mut visibility = IncludeVisibility {
+            fhir_base_url: Some(format!("{}/fhir", state.base_url.trim_end_matches('/'))),
+            ..Default::default()
+        };
+        for resource_type in types {
+            let mut context = self.context.clone();
+            context.resource = None;
+            context.request.resource_type = resource_type.clone();
+            context.request.resource_id = None;
+            context.request.compartment_type = None;
+            context.request.compartment_id = None;
+            context.request.body = None;
+            context.request.query_params.clear();
+            context.request.operation = FhirOperation::Search;
+            context.request.operation_id = None;
+            context.request.method = "GET".into();
+            context.request.path = format!("/fhir/{resource_type}");
+            // Inline requests are searches of the included resource type. Scopes
+            // and underlying access policies both apply, including at each iterate hop.
+            if !context.scopes.parsed.permits(
+                &resource_type,
+                FhirOperation::Search,
+                context.environment.patient_context.as_deref(),
+            ) || !matches!(
+                state.policy_evaluator.evaluate(&context).await,
+                AccessDecision::Allow
+            ) {
+                continue;
+            }
+            let constraint =
+                query_visibility(&context, &state.compartment_registry, &state.base_url)?
+                    .unwrap_or(SearchConstraint::And(Vec::new()));
+            visibility.constraints.insert(resource_type, constraint);
+        }
+        params.included_visibility = Some(visibility);
+        Ok(())
+    }
+}
+
+fn inline_resource_types(
+    params: &SearchParams,
+    registry: &octofhir_search::SearchParameterRegistry,
+) -> HashSet<String> {
+    let mut types = HashSet::new();
+    for (name, values) in &params.parameters {
+        let reverse = octofhir_search::include::is_revinclude_parameter(name);
+        if !reverse && !octofhir_search::include::is_include_parameter(name) {
+            continue;
+        }
+        for value in values {
+            let parts: Vec<_> = value.split(':').collect();
+            if parts.len() < 2 {
+                continue;
+            }
+            if reverse {
+                types.insert(parts[0].into());
+            } else if let Some(target) = parts.get(2) {
+                types.insert((*target).into());
+            } else if let Some(parameter) = registry.get(parts[0], parts[1]) {
+                types.extend(parameter.target.iter().cloned());
+            }
+        }
+    }
+    types
+}
+
+fn search_visibility(
+    context: &PolicyContext,
+    compartments: &crate::compartments::CompartmentRegistry,
+    base_url: &str,
+) -> Result<AuthorizedSearch, ApiError> {
+    if !context.scopes.parsed.permits(
+        &context.request.resource_type,
+        FhirOperation::Search,
+        context.environment.patient_context.as_deref(),
+    ) {
+        return Err(ApiError::forbidden("Insufficient scope for search"));
+    }
+    Ok(AuthorizedSearch {
+        constraint: query_visibility(context, compartments, base_url)?,
+        context: context.clone(),
+        deferred: false,
+    })
+}
+
+pub(crate) fn query_visibility(
+    context: &PolicyContext,
+    compartments: &crate::compartments::CompartmentRegistry,
+    base_url: &str,
+) -> Result<Option<SearchConstraint>, ApiError> {
+    let resource_type = &context.request.resource_type;
+    let patient = context.environment.patient_context.as_deref();
+    let grants: Vec<_> = context
+        .scopes
+        .parsed
+        .resource_scopes
+        .iter()
+        .filter(|scope| scope.matches(resource_type, context.request.operation, patient))
+        .collect();
+    if grants.is_empty() {
+        return Ok(Some(SearchConstraint::Or(Vec::new())));
+    }
+    let unrestricted = grants
+        .iter()
+        .any(|scope| scope.context != ScopeContext::Patient && scope.filter.is_none());
+    let constraint = if unrestricted {
+        None
+    } else {
+        let mut alternatives = Vec::new();
+        for grant in grants {
+            let mut predicates = Vec::new();
+            if grant.context == ScopeContext::Patient {
+                let patient =
+                    patient.ok_or_else(|| ApiError::forbidden("Patient context required"))?;
+                if patient.is_empty()
+                    || patient.len() > 64
+                    || !patient
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.'))
+                {
+                    return Err(ApiError::forbidden("Invalid Patient context ID"));
+                }
+                let compartment = if resource_type == "Patient" {
+                    SearchConstraint::Query(HashMap::from([("_id".into(), vec![patient.into()])]))
+                } else {
+                    let definition = compartments.get("Patient").map_err(|_| {
+                        ApiError::forbidden("Patient compartment definition unavailable")
+                    })?;
+                    definition.membership_constraint(patient, resource_type, base_url)
+                };
+                predicates.push(compartment);
+            }
+            if let Some(filter) = &grant.filter {
+                // Preserve repeated parameters (AND), comma alternatives (OR), and
+                // percent-encoded values from the SMART query suffix.
+                let query = format!("{}={}", filter.parameter, filter.value);
+                let mut parameters: HashMap<String, Vec<String>> = HashMap::new();
+                for (name, value) in url::form_urlencoded::parse(query.as_bytes()) {
+                    if name.is_empty() {
+                        return Err(ApiError::forbidden("Invalid scope filter"));
+                    }
+                    parameters
+                        .entry(name.into_owned())
+                        .or_default()
+                        .push(value.into_owned());
+                }
+                if parameters.is_empty() {
+                    return Err(ApiError::forbidden("Empty scope filter"));
+                }
+                predicates.push(SearchConstraint::Query(parameters));
+            }
+            alternatives.push(SearchConstraint::And(predicates));
+        }
+        Some(SearchConstraint::Or(alternatives))
+    };
+    Ok(constraint)
+}
 
 pub(crate) async fn hydrate_scope_context(
     state: &AppState,
@@ -15,6 +271,19 @@ pub(crate) async fn hydrate_scope_context(
     context: &mut PolicyContext,
 ) -> Result<(), ApiError> {
     let operation = context.request.operation;
+    if (operation == FhirOperation::SearchSystem
+        && matches!(request.uri().path(), "/fhir" | "/fhir/" | "/fhir/_search"))
+        || (matches!(operation, FhirOperation::Search | FhirOperation::SearchType)
+            && context.request.resource_type == "*"
+            && is_compartment_search_path(request.uri().path(), context))
+    {
+        request.extensions_mut().insert(AuthorizedSearch {
+            constraint: None,
+            context: context.clone(),
+            deferred: true,
+        });
+        return Ok(());
+    }
     if operation.required_permission().is_some()
         && !context.scopes.parsed.permits(
             &context.request.resource_type,
@@ -25,6 +294,14 @@ pub(crate) async fn hydrate_scope_context(
         return Err(ApiError::forbidden(
             "Insufficient scope for this interaction",
         ));
+    }
+    if matches!(operation, FhirOperation::Search | FhirOperation::SearchType)
+        && (is_type_search_path(request.uri().path(), &context.request.resource_type)
+            || is_compartment_search_path(request.uri().path(), context))
+    {
+        let visibility = search_visibility(context, &state.compartment_registry, &state.base_url)?;
+        request.extensions_mut().insert(visibility);
+        return Ok(());
     }
     if operation.required_permission().is_none()
         || context.scopes.parsed.resource_scopes.iter().any(|scope| {
@@ -103,13 +380,33 @@ pub(crate) async fn hydrate_scope_context(
     Ok(())
 }
 
+fn is_type_search_path(path: &str, resource_type: &str) -> bool {
+    let path = path
+        .strip_prefix("/fhir/")
+        .unwrap_or_else(|| path.trim_start_matches('/'));
+    resource_type != "*" && (path == resource_type || path == format!("{resource_type}/_search"))
+}
+
+fn is_compartment_search_path(path: &str, context: &PolicyContext) -> bool {
+    let path = path
+        .strip_prefix("/fhir/")
+        .unwrap_or(path.trim_start_matches('/'));
+    let path = path.strip_suffix("/_search").unwrap_or(path);
+    let parts: Vec<_> = path.split('/').collect();
+    matches!(parts.as_slice(), [compartment, id, resource_type]
+        if matches!(*compartment, "Patient" | "Encounter" | "Practitioner" | "RelatedPerson" | "Device")
+            && context.request.compartment_type.as_deref() == Some(*compartment)
+            && context.request.compartment_id.as_deref() == Some(*id)
+            && *resource_type == context.request.resource_type)
+}
+
 pub(crate) async fn authorize_entry(
     state: &AppState,
     auth: &AuthContext,
     entry: &Value,
-) -> Result<(), ApiError> {
+) -> Result<Option<AuthorizedSearch>, ApiError> {
     if state.config.auth.policy.anonymous_access {
-        return Ok(());
+        return Ok(None);
     }
     let request = &entry["request"];
     let method = request["method"]
@@ -139,6 +436,22 @@ pub(crate) async fn authorize_entry(
         .with_launch_context(auth.patient.clone(), auth.encounter.clone())
         .build()
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    context.request.path = if path.trim_matches('/').is_empty() {
+        "/fhir".into()
+    } else {
+        format!("/fhir/{}", path.trim_start_matches('/'))
+    };
+    if method.eq_ignore_ascii_case("GET")
+        && ((context.request.operation == FhirOperation::SearchSystem
+            && path.trim_matches('/').is_empty())
+            || (context.request.resource_type == "*" && is_compartment_search_path(path, &context)))
+    {
+        return Ok(Some(AuthorizedSearch {
+            constraint: None,
+            context,
+            deferred: true,
+        }));
+    }
     if context.request.operation.required_permission().is_some()
         && !context.scopes.parsed.permits(
             &context.request.resource_type,
@@ -149,6 +462,24 @@ pub(crate) async fn authorize_entry(
         return Err(ApiError::forbidden(
             "Insufficient scope for this Bundle entry",
         ));
+    }
+    if method.eq_ignore_ascii_case("GET")
+        && matches!(
+            context.request.operation,
+            FhirOperation::Search | FhirOperation::SearchType
+        )
+        && (is_type_search_path(path, &context.request.resource_type)
+            || is_compartment_search_path(path, &context))
+    {
+        return match state.policy_evaluator.evaluate(&context).await {
+            AccessDecision::Allow => {
+                search_visibility(&context, &state.compartment_registry, &state.base_url).map(Some)
+            }
+            AccessDecision::Deny(reason) => Err(ApiError::forbidden(reason.message)),
+            AccessDecision::Abstain => {
+                Err(ApiError::forbidden("No policy allows this Bundle entry"))
+            }
+        };
     }
     if let Some(id) = &context.request.resource_id {
         let stored = if context.request.operation == FhirOperation::VRead {
@@ -178,7 +509,7 @@ pub(crate) async fn authorize_entry(
         context.request.body = Some(patched);
     }
     match state.policy_evaluator.evaluate(&context).await {
-        AccessDecision::Allow => check_resource_scope(&context, &state.base_url),
+        AccessDecision::Allow => check_resource_scope(&context, &state.base_url).map(|()| None),
         AccessDecision::Deny(reason) => Err(ApiError::forbidden(reason.message)),
         AccessDecision::Abstain => Err(ApiError::forbidden("No policy allows this Bundle entry")),
     }
@@ -371,5 +702,86 @@ mod tests {
         context.scopes =
             ScopeSummary::from_smart_scopes(scopes, &SmartScopes::parse(scopes).unwrap());
         assert!(check_resource_scope(&context, "https://local.test").is_ok());
+    }
+
+    #[test]
+    fn search_grants_preserve_union_and_query_semantics() {
+        let mut context = context(
+            "system/Observation.s?code=lab%7Cone&code=lab%7Ctwo system/Observation.s?_id=other",
+            json!({"resourceType":"Observation"}),
+        );
+        context.request.operation = FhirOperation::Search;
+        let visibility = search_visibility(
+            &context,
+            &crate::compartments::CompartmentRegistry::new(),
+            "https://local.test",
+        )
+        .unwrap();
+        let Some(SearchConstraint::Or(grants)) = &visibility.constraint else {
+            panic!("Expected union");
+        };
+        assert_eq!(grants.len(), 2);
+        let SearchConstraint::And(predicates) = &grants[0] else {
+            panic!("Expected grant predicates");
+        };
+        let SearchConstraint::Query(query) = &predicates[0] else {
+            panic!("Expected query");
+        };
+        assert_eq!(query["code"], ["lab|one", "lab|two"]);
+    }
+
+    #[test]
+    fn patient_search_limits_patient_identity_and_rejects_injected_ids() {
+        let mut context = context("patient/Patient.s", json!({"resourceType":"Patient"}));
+        context.request.resource_type = "Patient".into();
+        context.request.operation = FhirOperation::Search;
+        let compartments = crate::compartments::CompartmentRegistry::new();
+        let visibility = search_visibility(&context, &compartments, "https://local.test").unwrap();
+        let Some(SearchConstraint::Or(grants)) = visibility.constraint else {
+            panic!("Expected union");
+        };
+        let SearchConstraint::And(predicates) = &grants[0] else {
+            panic!("Expected intersection");
+        };
+        let SearchConstraint::Query(query) = &predicates[0] else {
+            panic!("Expected ID restriction");
+        };
+        assert_eq!(query["_id"], ["p1"]);
+        for invalid in ["p1,p2", "Patient/p1", "", "p1&active=true"] {
+            context.environment.patient_context = Some(invalid.into());
+            assert!(search_visibility(&context, &compartments, "https://local.test").is_err());
+        }
+    }
+
+    #[test]
+    fn broad_development_grant_remains_unrestricted() {
+        let mut context = context("system/*.cruds", json!({"resourceType":"Observation"}));
+        context.request.operation = FhirOperation::Search;
+        let visibility = search_visibility(
+            &context,
+            &crate::compartments::CompartmentRegistry::new(),
+            "https://local.test",
+        )
+        .unwrap();
+        assert!(visibility.constraint.is_none());
+    }
+
+    #[test]
+    fn query_visibility_marker_is_limited_to_handlers_that_apply_it() {
+        for path in [
+            "/fhir/Observation",
+            "/fhir/Observation/_search",
+            "/Observation",
+        ] {
+            assert!(is_type_search_path(path, "Observation"), "{path}");
+        }
+        for path in [
+            "/fhir/Patient/p1/Observation",
+            "/fhir/Observation/_history",
+            "/fhir/Observation/$export",
+            "/fhir",
+        ] {
+            assert!(!is_type_search_path(path, "Observation"), "{path}");
+        }
     }
 }

@@ -44,35 +44,41 @@ impl EverythingOperation {
     async fn patient_everything(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         patient_id: &str,
         params: &EverythingParams,
     ) -> Result<Value, OperationError> {
         // 1. Verify patient exists and fetch it
-        let patient = state
-            .storage
-            .read("Patient", patient_id)
-            .await
-            .map_err(|e| OperationError::Internal(e.to_string()))?
+        let patient = context
+            .read(state, "Patient", patient_id)
+            .await?
             .ok_or_else(|| OperationError::NotFound(format!("Patient/{} not found", patient_id)))?;
 
         let mut resources = vec![patient.clone()];
 
         // 2. Query related resources using reference parameters
         // Based on FHIR Patient compartment definition
-        let compartment_searches = self.get_patient_compartment_searches(patient_id);
+        let definition = state
+            .compartment_registry
+            .get("Patient")
+            .map_err(|error| OperationError::Internal(error.to_string()))?;
+        let compartment_searches = definition.resource_types();
 
-        for (resource_type, param_name, reference) in compartment_searches {
+        for resource_type in compartment_searches {
             // Skip if _type filter is specified and doesn't include this type
             if let Some(ref types) = params.type_filter
-                && !types.contains(&resource_type)
+                && !types.contains(resource_type)
             {
                 continue;
             }
 
             // Build search query using modern FhirStorage
-            let mut search_params = SearchParams::new()
-                .with_count(1000)
-                .with_param(&param_name, &reference);
+            if !state.resource_type_set.load().contains(resource_type) {
+                continue;
+            }
+            let mut search_params = SearchParams::new().with_count(1000);
+            search_params.constraint =
+                Some(definition.membership_constraint(patient_id, resource_type, &state.base_url));
 
             // Apply _since filter if specified
             if let Some(since) = params.since {
@@ -83,26 +89,26 @@ impl EverythingOperation {
                     search_params.with_param("_lastUpdated", format!("ge{}", since_str));
             }
 
-            // Apply date range filters (start/end) if specified
-            if let Some(start) = params.start {
-                let start_str = start
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default();
-                search_params = search_params.with_param("date", format!("ge{}", start_str));
+            // Preserve FHIR date precision through native date comparisons.
+            if let Some(start) = &params.start {
+                search_params = search_params.with_param("date", format!("ge{start}"));
             }
-            if let Some(end) = params.end {
-                let end_str = end
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default();
-                search_params = search_params.with_param("date", format!("le{}", end_str));
+            if let Some(end) = &params.end {
+                search_params = search_params.with_param("date", format!("le{end}"));
             }
 
-            match state.storage.search(&resource_type, &search_params).await {
+            match self
+                .search_all(state, context, resource_type, &search_params)
+                .await
+            {
                 Ok(result) => {
-                    resources.extend(result.entries);
+                    resources.extend(result);
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    if !e.is_forbidden() {
+                        return Err(e);
+                    }
+                    tracing::debug!(
                         "Failed to search {} for patient {}: {}",
                         resource_type,
                         patient_id,
@@ -112,49 +118,26 @@ impl EverythingOperation {
             }
         }
 
-        // 3. Deduplicate resources by id
-        let deduplicated = self.deduplicate_resources(resources);
-
-        // 4. Apply pagination if _count is specified
-        let (paginated, total) = if let Some(count) = params.count {
-            let offset = params.offset.unwrap_or(0);
-            let total = deduplicated.len();
-            let end = std::cmp::min(offset + count, total);
-            (deduplicated[offset..end].to_vec(), total)
-        } else {
-            let total = deduplicated.len();
-            (deduplicated, total)
-        };
-
-        // 5. Build searchset Bundle
-        let resources_json: Vec<Value> = paginated.iter().map(|r| r.resource.clone()).collect();
-        let bundle = bundle_from_search(
-            total,
-            resources_json,
-            &state.base_url,
+        self.build_bundle(
+            state,
+            resources,
+            params,
             &format!("Patient/{}/$everything", patient_id),
-            params.offset.unwrap_or(0),
-            params.count.unwrap_or(50),
-            None, // No query suffix for operation
-        );
-
-        serde_json::to_value(bundle)
-            .map_err(|e| OperationError::Internal(format!("Failed to serialize bundle: {}", e)))
+        )
     }
 
     /// Encounter $everything: Retrieve all resources related to an encounter
     async fn encounter_everything(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         encounter_id: &str,
         params: &EverythingParams,
     ) -> Result<Value, OperationError> {
         // 1. Verify encounter exists and fetch it
-        let encounter = state
-            .storage
-            .read("Encounter", encounter_id)
-            .await
-            .map_err(|e| OperationError::Internal(e.to_string()))?
+        let encounter = context
+            .read(state, "Encounter", encounter_id)
+            .await?
             .ok_or_else(|| {
                 OperationError::NotFound(format!("Encounter/{} not found", encounter_id))
             })?;
@@ -162,18 +145,28 @@ impl EverythingOperation {
         let mut resources = vec![encounter.clone()];
 
         // 2. Query related resources using encounter reference
-        let compartment_searches = self.get_encounter_compartment_searches(encounter_id);
+        let definition = state
+            .compartment_registry
+            .get("Encounter")
+            .map_err(|error| OperationError::Internal(error.to_string()))?;
+        let compartment_searches = definition.resource_types();
 
-        for (resource_type, param_name, reference) in compartment_searches {
+        for resource_type in compartment_searches {
             if let Some(ref types) = params.type_filter
-                && !types.contains(&resource_type)
+                && !types.contains(resource_type)
             {
                 continue;
             }
 
-            let mut search_params = SearchParams::new()
-                .with_count(1000)
-                .with_param(&param_name, &reference);
+            if !state.resource_type_set.load().contains(resource_type) {
+                continue;
+            }
+            let mut search_params = SearchParams::new().with_count(1000);
+            search_params.constraint = Some(definition.membership_constraint(
+                encounter_id,
+                resource_type,
+                &state.base_url,
+            ));
 
             if let Some(since) = params.since {
                 let since_str = since
@@ -183,12 +176,18 @@ impl EverythingOperation {
                     search_params.with_param("_lastUpdated", format!("ge{}", since_str));
             }
 
-            match state.storage.search(&resource_type, &search_params).await {
+            match self
+                .search_all(state, context, resource_type, &search_params)
+                .await
+            {
                 Ok(result) => {
-                    resources.extend(result.entries);
+                    resources.extend(result);
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    if !e.is_forbidden() {
+                        return Err(e);
+                    }
+                    tracing::debug!(
                         "Failed to search {} for encounter {}: {}",
                         resource_type,
                         encounter_id,
@@ -198,74 +197,50 @@ impl EverythingOperation {
             }
         }
 
-        let deduplicated = self.deduplicate_resources(resources);
-
-        let (paginated, total) = if let Some(count) = params.count {
-            let offset = params.offset.unwrap_or(0);
-            let total = deduplicated.len();
-            let end = std::cmp::min(offset + count, total);
-            (deduplicated[offset..end].to_vec(), total)
-        } else {
-            let total = deduplicated.len();
-            (deduplicated, total)
-        };
-
-        let resources_json: Vec<Value> = paginated.iter().map(|r| r.resource.clone()).collect();
-        let bundle = bundle_from_search(
-            total,
-            resources_json,
-            &state.base_url,
+        self.build_bundle(
+            state,
+            resources,
+            params,
             &format!("Encounter/{}/$everything", encounter_id),
-            params.offset.unwrap_or(0),
-            params.count.unwrap_or(50),
-            None,
-        );
-
-        serde_json::to_value(bundle)
-            .map_err(|e| OperationError::Internal(format!("Failed to serialize bundle: {}", e)))
+        )
     }
 
     /// Group $everything: Retrieve resources for all group members
     async fn group_everything(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         group_id: &str,
         params: &EverythingParams,
     ) -> Result<Value, OperationError> {
         // 1. Verify group exists and fetch it
-        let group = state
-            .storage
-            .read("Group", group_id)
-            .await
-            .map_err(|e| OperationError::Internal(e.to_string()))?
+        let group = context
+            .read(state, "Group", group_id)
+            .await?
             .ok_or_else(|| OperationError::NotFound(format!("Group/{} not found", group_id)))?;
 
         // 2. Extract member references from Group.member[]
         let members = self.extract_group_members(&group)?;
 
         if members.is_empty() {
-            // Return just the group resource if no members
-            let resources_json: Vec<Value> = vec![group.resource.clone()];
-            let bundle = bundle_from_search(
-                1,
-                resources_json,
-                &state.base_url,
+            return self.build_bundle(
+                state,
+                vec![group],
+                params,
                 &format!("Group/{}/$everything", group_id),
-                0,
-                50,
-                None,
             );
-
-            return serde_json::to_value(bundle).map_err(|e| {
-                OperationError::Internal(format!("Failed to serialize bundle: {}", e))
-            });
         }
 
         // 3. For each member, run Patient $everything
         let mut all_resources = vec![group];
-
+        let mut member_params = params.clone();
+        member_params.count = None;
+        member_params.offset = None;
         for member_id in members {
-            match self.patient_everything(state, &member_id, params).await {
+            match self
+                .patient_everything(state, context, &member_id, &member_params)
+                .await
+            {
                 Ok(bundle_value) => {
                     // Extract resources from the bundle
                     if let Some(entries) = bundle_value.get("entry").and_then(|e| e.as_array()) {
@@ -299,7 +274,10 @@ impl EverythingOperation {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    if !e.is_forbidden() {
+                        return Err(e);
+                    }
+                    tracing::debug!(
                         "Failed to fetch $everything for patient {}: {}",
                         member_id,
                         e
@@ -308,256 +286,89 @@ impl EverythingOperation {
             }
         }
 
-        // 4. Deduplicate resources
-        let deduplicated = self.deduplicate_resources(all_resources);
-
-        // 5. Apply pagination
-        let (paginated, total) = if let Some(count) = params.count {
-            let offset = params.offset.unwrap_or(0);
-            let total = deduplicated.len();
-            let end = std::cmp::min(offset + count, total);
-            (deduplicated[offset..end].to_vec(), total)
-        } else {
-            let total = deduplicated.len();
-            (deduplicated, total)
-        };
-
-        let resources_json: Vec<Value> = paginated.iter().map(|r| r.resource.clone()).collect();
-        let bundle = bundle_from_search(
-            total,
-            resources_json,
-            &state.base_url,
+        self.build_bundle(
+            state,
+            all_resources,
+            params,
             &format!("Group/{}/$everything", group_id),
+        )
+    }
+
+    fn build_bundle(
+        &self,
+        state: &AppState,
+        mut resources: Vec<StoredResource>,
+        params: &EverythingParams,
+        path: &str,
+    ) -> Result<Value, OperationError> {
+        resources.retain(|resource| {
+            params
+                .type_filter
+                .as_ref()
+                .is_none_or(|types| types.contains(&resource.resource_type))
+                && params
+                    .since
+                    .is_none_or(|since| resource.last_updated >= since)
+        });
+        let resources = self.deduplicate_resources(resources);
+        let total = resources.len();
+        let offset = params.offset.unwrap_or(0).min(total);
+        let end = params
+            .count
+            .map_or(total, |count| offset.saturating_add(count).min(total));
+        let page = &resources[offset..end];
+        let fhir_base = format!("{}/fhir", state.base_url.trim_end_matches('/'));
+        let mut bundle = bundle_from_search(
+            total,
+            page.iter()
+                .map(|resource| resource.resource.clone())
+                .collect(),
+            &fhir_base,
+            path,
             params.offset.unwrap_or(0),
             params.count.unwrap_or(50),
-            None,
+            params.query_suffix().as_deref(),
         );
-
-        serde_json::to_value(bundle)
-            .map_err(|e| OperationError::Internal(format!("Failed to serialize bundle: {}", e)))
+        for (entry, resource) in bundle.entry.iter_mut().zip(page) {
+            entry.full_url = Some(format!(
+                "{}/{}/{}",
+                fhir_base, resource.resource_type, resource.id
+            ));
+        }
+        serde_json::to_value(bundle).map_err(|error| OperationError::Internal(error.to_string()))
     }
 
-    /// Get Patient compartment search parameters
-    /// Returns (resource_type, param_name, reference_value) tuples
-    fn get_patient_compartment_searches(&self, patient_id: &str) -> Vec<(String, String, String)> {
-        let reference = format!("Patient/{}", patient_id);
-        vec![
-            // Core clinical resources
-            (
-                "Observation".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Observation".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Condition".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Condition".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "AllergyIntolerance".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationRequest".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationRequest".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationStatement".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationStatement".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationAdministration".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationAdministration".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Procedure".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Procedure".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Immunization".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "DiagnosticReport".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "DiagnosticReport".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Encounter".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Encounter".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "CarePlan".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "CarePlan".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            ("Goal".to_string(), "patient".to_string(), reference.clone()),
-            ("Goal".to_string(), "subject".to_string(), reference.clone()),
-            (
-                "Specimen".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Specimen".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            // Documents and communications
-            (
-                "DocumentReference".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "DocumentReference".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Communication".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Communication".to_string(),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            // Financial resources
-            (
-                "Claim".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "ExplanationOfBenefit".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Coverage".to_string(),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Coverage".to_string(),
-                "beneficiary".to_string(),
-                reference.clone(),
-            ),
-        ]
-    }
-
-    /// Get Encounter compartment search parameters
-    fn get_encounter_compartment_searches(
+    async fn search_all(
         &self,
-        encounter_id: &str,
-    ) -> Vec<(String, String, String)> {
-        let reference = format!("Encounter/{}", encounter_id);
-        vec![
-            (
-                "Observation".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Condition".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Procedure".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationRequest".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationStatement".to_string(),
-                "context".to_string(),
-                reference.clone(),
-            ),
-            (
-                "MedicationAdministration".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                "DiagnosticReport".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                "ServiceRequest".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                "Communication".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                "DocumentReference".to_string(),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-        ]
+        state: &AppState,
+        context: &crate::operations::OperationContext,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<Vec<StoredResource>, OperationError> {
+        let mut params = params.clone();
+        let mut resources = Vec::new();
+        loop {
+            let result = context.search(state, resource_type, &params).await?;
+            let count = result.entries.len();
+            resources.extend(result.entries);
+            if !result.has_more {
+                return Ok(resources);
+            }
+            if count == 0 {
+                return Err(OperationError::Internal(
+                    "Search made no progress during $everything".into(),
+                ));
+            }
+            params.offset = Some(
+                params
+                    .offset
+                    .unwrap_or(0)
+                    .checked_add(count as u32)
+                    .ok_or_else(|| {
+                        OperationError::Internal("$everything search offset overflow".into())
+                    })?,
+            );
+        }
     }
 
     /// Extract patient member IDs from a Group resource
@@ -592,6 +403,9 @@ impl EverythingOperation {
             }
         }
 
+        deduplicated.sort_by(|left, right| {
+            (&left.resource_type, &left.id).cmp(&(&right.resource_type, &right.id))
+        });
         deduplicated
     }
 }
@@ -605,20 +419,39 @@ impl OperationHandler for EverythingOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
         // Parse parameters
-        let everything_params = EverythingParams::from_value(params)?;
+        let mut everything_params = EverythingParams::from_value(params)?;
+        if let Some(types) = &everything_params.type_filter
+            && types
+                .iter()
+                .any(|resource_type| !state.resource_type_set.load().contains(resource_type))
+        {
+            return Err(OperationError::InvalidParameters(
+                "_type contains an unsupported resource type".into(),
+            ));
+        }
+        everything_params
+            .count
+            .get_or_insert(state.search_config.config().default_count);
 
         match resource_type {
-            "Patient" => self.patient_everything(state, id, &everything_params).await,
-            "Encounter" => {
-                self.encounter_everything(state, id, &everything_params)
+            "Patient" => {
+                self.patient_everything(state, context, id, &everything_params)
                     .await
             }
-            "Group" => self.group_everything(state, id, &everything_params).await,
+            "Encounter" => {
+                self.encounter_everything(state, context, id, &everything_params)
+                    .await
+            }
+            "Group" => {
+                self.group_everything(state, context, id, &everything_params)
+                    .await
+            }
             _ => Err(OperationError::NotSupported(format!(
                 "$everything operation is not supported for resource type {}",
                 resource_type
@@ -628,7 +461,7 @@ impl OperationHandler for EverythingOperation {
 }
 
 /// Parameters for the $everything operation
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct EverythingParams {
     /// Limit number of results
     count: Option<usize>,
@@ -639,75 +472,138 @@ struct EverythingParams {
     /// Filter to specific resource types
     type_filter: Option<HashSet<String>>,
     /// Date range start (Patient $everything only)
-    start: Option<OffsetDateTime>,
+    start: Option<String>,
     /// Date range end (Patient $everything only)
-    end: Option<OffsetDateTime>,
+    end: Option<String>,
 }
 
 impl EverythingParams {
+    fn query_suffix(&self) -> Option<String> {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if let Some(types) = &self.type_filter {
+            let mut types: Vec<_> = types.iter().map(String::as_str).collect();
+            types.sort_unstable();
+            query.append_pair("_type", &types.join(","));
+        }
+        if let Some(since) = self.since {
+            query.append_pair("_since", &since.format(&Rfc3339).unwrap_or_default());
+        }
+        for (name, value) in [("start", &self.start), ("end", &self.end)] {
+            if let Some(value) = value {
+                query.append_pair(name, value);
+            }
+        }
+        let query = query.finish();
+        (!query.is_empty()).then_some(query)
+    }
+
     fn from_value(params: &Value) -> Result<Self, OperationError> {
+        let mut flat = params.as_object().cloned().unwrap_or_default();
+        if let Some(parameters) = params.get("parameter").and_then(Value::as_array) {
+            for parameter in parameters {
+                let Some(name) = parameter["name"].as_str() else {
+                    continue;
+                };
+                if !matches!(
+                    name,
+                    "_count" | "_offset" | "__offset" | "_since" | "_type" | "start" | "end"
+                ) {
+                    continue;
+                }
+                let value = parameter
+                    .as_object()
+                    .and_then(|parameter| {
+                        parameter
+                            .iter()
+                            .find(|(key, _)| key.starts_with("value"))
+                            .map(|(_, value)| value.clone())
+                    })
+                    .ok_or_else(|| {
+                        OperationError::InvalidParameters(format!("Missing value for {name}"))
+                    })?;
+                if name == "_type"
+                    && let Some(existing) = flat.get(name).and_then(Value::as_str)
+                {
+                    let value = value.as_str().ok_or_else(|| {
+                        OperationError::InvalidParameters(
+                            "_type must contain resource type codes".into(),
+                        )
+                    })?;
+                    flat.insert(name.into(), Value::String(format!("{existing},{value}")));
+                } else if flat.insert(name.into(), value).is_some() {
+                    return Err(OperationError::InvalidParameters(format!(
+                        "Repeated {name} parameter"
+                    )));
+                }
+            }
+        }
+        let params = Value::Object(flat);
         let mut result = EverythingParams::default();
 
-        // Parse _count parameter
+        let unsigned = |name: &str, value: &Value| -> Result<usize, OperationError> {
+            value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+                .ok_or_else(|| {
+                    OperationError::InvalidParameters(format!(
+                        "{name} must be a nonnegative integer"
+                    ))
+                })
+        };
         if let Some(count) = params.get("_count") {
-            result.count = count
-                .as_u64()
-                .map(|n| n as usize)
-                .or_else(|| count.as_str().and_then(|s| s.parse().ok()));
+            result.count = Some(unsigned("_count", count)?);
         }
-
-        // Parse __offset parameter (internal pagination)
-        if let Some(offset) = params.get("__offset") {
-            result.offset = offset
-                .as_u64()
-                .map(|n| n as usize)
-                .or_else(|| offset.as_str().and_then(|s| s.parse().ok()));
+        if let Some(offset) = params.get("_offset").or_else(|| params.get("__offset")) {
+            result.offset = Some(unsigned("_offset", offset)?);
         }
-
-        // Parse _since parameter
-        if let Some(since) = params.get("_since").and_then(|v| v.as_str()) {
-            result.since = OffsetDateTime::parse(since, &Rfc3339).ok().or_else(|| {
-                // Try parsing as date only (without time)
-                time::Date::parse(
-                    since,
-                    &time::format_description::parse_borrowed::<2>("[year]-[month]-[day]").unwrap(),
-                )
-                .ok()
-                .map(|d| d.midnight().assume_utc())
-            });
+        if let Some(since) = params.get("_since") {
+            result.since = Some(
+                OffsetDateTime::parse(since.as_str().unwrap_or_default(), &Rfc3339).map_err(
+                    |error| {
+                        OperationError::InvalidParameters(format!(
+                            "Invalid _since instant: {error}"
+                        ))
+                    },
+                )?,
+            );
         }
-
-        // Parse _type parameter (comma-separated list)
-        if let Some(type_param) = params.get("_type").and_then(|v| v.as_str()) {
-            let types: HashSet<String> = type_param
+        if let Some(types) = params.get("_type") {
+            let types = types.as_str().ok_or_else(|| {
+                OperationError::InvalidParameters("_type must contain resource type codes".into())
+            })?;
+            let types: HashSet<String> = types
                 .split(',')
-                .map(|s| s.trim().to_string())
+                .map(|value| value.trim().to_owned())
                 .collect();
+            if types.iter().any(|value| {
+                value.is_empty() || value.parse::<octofhir_core::ResourceType>().is_err()
+            }) {
+                return Err(OperationError::InvalidParameters(
+                    "Invalid _type resource code".into(),
+                ));
+            }
             result.type_filter = Some(types);
         }
-
-        // Parse start parameter
-        if let Some(start) = params.get("start").and_then(|v| v.as_str()) {
-            result.start = OffsetDateTime::parse(start, &Rfc3339).ok().or_else(|| {
-                time::Date::parse(
-                    start,
-                    &time::format_description::parse_borrowed::<2>("[year]-[month]-[day]").unwrap(),
-                )
-                .ok()
-                .map(|d| d.midnight().assume_utc())
-            });
+        for (name, destination) in [("start", &mut result.start), ("end", &mut result.end)] {
+            if let Some(value) = params.get(name) {
+                let value = value.as_str().ok_or_else(|| {
+                    OperationError::InvalidParameters(format!("{name} must be a FHIR date"))
+                })?;
+                octofhir_search::types::date::parse_date_range(value).map_err(|error| {
+                    OperationError::InvalidParameters(format!("Invalid {name}: {error}"))
+                })?;
+                *destination = Some(value.into());
+            }
         }
-
-        // Parse end parameter
-        if let Some(end) = params.get("end").and_then(|v| v.as_str()) {
-            result.end = OffsetDateTime::parse(end, &Rfc3339).ok().or_else(|| {
-                time::Date::parse(
-                    end,
-                    &time::format_description::parse_borrowed::<2>("[year]-[month]-[day]").unwrap(),
-                )
-                .ok()
-                .map(|d| d.midnight().assume_utc())
-            });
+        if let (Some(start), Some(end)) = (&result.start, &result.end) {
+            let start = octofhir_search::types::date::parse_date_range(start).unwrap();
+            let end = octofhir_search::types::date::parse_date_range(end).unwrap();
+            if start.start >= end.end {
+                return Err(OperationError::InvalidParameters(
+                    "start is after end".into(),
+                ));
+            }
         }
 
         Ok(result)

@@ -36,7 +36,7 @@
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use super::{OperationError, OperationHandler};
 use crate::server::AppState;
@@ -48,12 +48,36 @@ fn map_cql_error(err: octofhir_cql_service::CqlError) -> OperationError {
     use octofhir_cql_service::CqlError;
     let message = err.to_string();
     match err {
+        CqlError::ResourceAccess(error) => match error.downcast::<OperationError>() {
+            Ok(error) => *error,
+            Err(error) => OperationError::Internal(error.to_string()),
+        },
         CqlError::ParseError(_)
         | CqlError::EvaluationError(_)
         | CqlError::CompilationError(_)
         | CqlError::InvalidParameter(_)
         | CqlError::LibraryNotFound(_) => OperationError::InvalidParameters(message),
         _ => OperationError::Internal(message),
+    }
+}
+
+/// Identity stays with this one evaluation, including all secondary retrieves.
+struct ScopedCqlSearch {
+    state: AppState,
+    context: crate::operations::OperationContext,
+}
+
+#[async_trait]
+impl octofhir_cql_service::data_provider::ResourceSearch for ScopedCqlSearch {
+    async fn search(
+        &self,
+        resource_type: &str,
+        params: &octofhir_storage::SearchParams,
+    ) -> octofhir_cql_service::CqlResult<octofhir_storage::SearchResult> {
+        self.context
+            .search(&self.state, resource_type, params)
+            .await
+            .map_err(|error| octofhir_cql_service::CqlError::ResourceAccess(Box::new(error)))
     }
 }
 
@@ -287,6 +311,7 @@ impl CqlOperation {
     async fn run(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         context_type: Option<&str>,
         context_value: Option<Value>,
         params: &Value,
@@ -302,6 +327,17 @@ impl CqlOperation {
             let issues = cql_service.validate_source(&source);
             return Ok(self.build_validate_response(issues));
         }
+
+        let cql_service = cql_service.with_data_provider(Arc::new(
+            octofhir_cql_service::data_provider::FhirServerDataProvider::with_search(
+                Arc::new(ScopedCqlSearch {
+                    state: state.clone(),
+                    context: context.clone(),
+                }),
+                state.fhirpath_engine.clone(),
+                state.config.cql.max_retrieve_size,
+            ),
+        ));
 
         let parameters = self.extract_parameters(params);
 
@@ -337,46 +373,59 @@ impl OperationHandler for CqlOperation {
     async fn handle_system(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         // Context comes purely from the request body (inline `contextValue`).
         let (context_type, context_value) = self.extract_context(params);
-        self.run(state, context_type.as_deref(), context_value, params)
-            .await
+        self.run(
+            state,
+            context,
+            context_type.as_deref(),
+            context_value,
+            params,
+        )
+        .await
     }
 
     async fn handle_type(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
         // Explicit body context wins; otherwise default to the path resource type.
         let (body_type, context_value) = self.extract_context(params);
         let context_type = body_type.unwrap_or_else(|| resource_type.to_string());
-        self.run(state, Some(&context_type), context_value, params)
+        self.run(state, context, Some(&context_type), context_value, params)
             .await
     }
 
     async fn handle_instance(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
         // Retrieve the resource and use it as the evaluation context.
-        let resource = state
-            .storage
-            .read(resource_type, id)
-            .await
-            .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
+        let resource = context
+            .read(state, resource_type, id)
+            .await?
             .ok_or_else(|| {
                 OperationError::NotFound(format!("{}/{} not found", resource_type, id))
             })?;
 
-        self.run(state, Some(resource_type), Some(resource.resource), params)
-            .await
+        self.run(
+            state,
+            context,
+            Some(resource_type),
+            Some(resource.resource),
+            params,
+        )
+        .await
     }
 }
 

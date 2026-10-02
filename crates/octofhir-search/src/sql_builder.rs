@@ -1279,6 +1279,19 @@ impl SqlBuilder {
         &self.conditions
     }
 
+    /// Group newly accumulated conditions without changing their bound values.
+    pub(crate) fn group_conditions_since(&mut self, start: usize, disjunction: bool) {
+        let conditions = self.conditions.split_off(start);
+        let expression = if conditions.is_empty() {
+            crate::ir::sql::SqlExpr::Bool(!disjunction)
+        } else if disjunction {
+            crate::ir::sql::SqlExpr::Or(conditions)
+        } else {
+            crate::ir::sql::SqlExpr::And(conditions)
+        };
+        self.add_condition(expression);
+    }
+
     /// Build the final WHERE clause by joining conditions with AND.
     ///
     /// Returns `None` if there are no conditions.

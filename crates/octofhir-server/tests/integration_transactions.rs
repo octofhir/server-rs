@@ -427,7 +427,22 @@ async fn bundle_writes_follow_identity_validation_patch_and_version_contracts() 
 // Test Infrastructure
 // =============================================================================
 
-async fn start_postgres() -> (ContainerAsync<Postgres>, String) {
+struct PostgresFixture {
+    _container: ContainerAsync<Postgres>,
+    _isolation: tokio::sync::OwnedMutexGuard<()>,
+}
+
+async fn start_postgres() -> (PostgresFixture, String) {
+    // Canonical packages are process-global. Hold isolation for the whole
+    // fixture, including container startup and teardown, rather than starting
+    // every database while its test waits to initialize the server.
+    static FIXTURE_LOCK: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> =
+        std::sync::OnceLock::new();
+    let isolation = FIXTURE_LOCK
+        .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+        .lock_owned()
+        .await;
     // Match production PG (docker-compose postgres:18). The migration needs
     // PG14+ for tstzmultirange and the jsonpath[] date-extraction overloads;
     // the testcontainers default (11-alpine) lacks both.
@@ -443,11 +458,25 @@ async fn start_postgres() -> (ContainerAsync<Postgres>, String) {
         host_port
     );
 
-    (container, url)
+    (
+        PostgresFixture {
+            _container: container,
+            _isolation: isolation,
+        },
+        url,
+    )
 }
 
 fn create_config(postgres_url: &str) -> AppConfig {
     let mut config = AppConfig::default();
+    // Pin the published archive so each fresh fixture DB can reuse the
+    // integrity-checked tarball cache without registry metadata requests.
+    config.packages.load = vec![octofhir_server::config::PackageSpec::Table {
+        id: Some("hl7.fhir.r4.core".into()),
+        version: Some("4.0.1".into()),
+        path: None,
+        url: Some("https://hl7.org/fhir/R4/hl7.fhir.r4.core.tgz".into()),
+    }];
     config.storage.postgres = Some(PostgresStorageConfig {
         url: Some(postgres_url.to_string()),
         pool_size: 10, // Higher for concurrent transaction tests
@@ -462,16 +491,8 @@ fn create_config(postgres_url: &str) -> AppConfig {
 async fn start_server(
     config: &AppConfig,
 ) -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
-    // Canonical packages are process-global. Every fixture uses a different DB;
-    // serialize fixture lifetimes and rebuild the registry for that database.
-    // Request concurrency inside an individual test is unaffected.
-    static FIXTURE_LOCK: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> =
-        std::sync::OnceLock::new();
-    let isolation = FIXTURE_LOCK
-        .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
-        .clone()
-        .lock_owned()
-        .await;
+    // Every isolated fixture uses a different database; rebuild its canonical
+    // registry. Concurrent requests inside a fixture still run concurrently.
     if octofhir_server::canonical::get_manager().is_some() {
         octofhir_server::canonical::rebuild_from_config_async(config)
             .await
@@ -492,7 +513,6 @@ async fn start_server(
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     let server = tokio::spawn(async move {
-        let _isolation = isolation;
         let _ = axum::serve(listener, app)
             .with_graceful_shutdown(async move {
                 let _ = rx.await;
@@ -1988,4 +2008,64 @@ async fn test_batch_invalid_resource_per_entry_422_siblings_persist() {
     );
 
     let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn transaction_search_counts_and_includes_observe_own_writes_with_one_connection() {
+    use reqwest::StatusCode;
+    let (_container, postgres_url) = start_postgres().await;
+    let mut config = create_config(&postgres_url);
+    config.storage.postgres.as_mut().unwrap().pool_size = 1;
+    let (base, shutdown, _server) = start_server(&config).await;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap();
+    for rollback in [false, true] {
+        let identifier = if rollback {
+            "rollback-search"
+        } else {
+            "commit-search"
+        };
+        let mut entries = vec![
+            json!({"fullUrl":"urn:uuid:new-patient", "resource":{"resourceType":"Patient", "identifier":[{"system":"urn:test:tx-search", "value":identifier}]}, "request":{"method":"POST", "url":"Patient"}}),
+            json!({"resource":{"resourceType":"Observation", "status":"final", "code":{"coding":[{"system":"urn:test:tx-search", "code":identifier}]}, "subject":{"reference":"urn:uuid:new-patient"}}, "request":{"method":"POST", "url":"Observation"}}),
+            json!({"request":{"method":"GET", "url":format!("Observation?code=urn%3Atest%3Atx-search%7C{identifier}&_total=accurate&_count=1&_include=Observation:subject:Patient")}}),
+            json!({"request":{"method":"GET", "url":format!("Patient?identifier=urn%3Atest%3Atx-search%7C{identifier}&_summary=count")}}),
+        ];
+        if rollback {
+            entries
+                .push(json!({"request":{"method":"GET", "url":"Patient/missing-search-rollback"}}));
+        }
+        let (status, body) = send_bundle(&client, &base, "transaction", json!(entries)).await;
+        if rollback {
+            assert!(status.is_client_error(), "{body}");
+        } else {
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let patient_id = body["entry"][0]["resource"]["id"].as_str().unwrap();
+            let nested = &body["entry"][2]["resource"];
+            assert_eq!(nested["total"], 1, "{nested}");
+            assert_eq!(nested["entry"].as_array().unwrap().len(), 2, "{nested}");
+            assert_eq!(nested["entry"][0]["search"]["mode"], "match");
+            assert_eq!(nested["entry"][1]["search"]["mode"], "include");
+            assert_eq!(nested["entry"][1]["resource"]["id"], patient_id);
+            assert_eq!(body["entry"][3]["resource"]["total"], 1);
+            assert!(
+                body["entry"][3]["resource"]["entry"]
+                    .as_array()
+                    .is_none_or(Vec::is_empty)
+            );
+        }
+        let response = client
+            .get(format!(
+                "{base}/Patient?identifier=urn%3Atest%3Atx-search%7C{identifier}&_total=accurate"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let stored: Value = response.json().await.unwrap();
+        assert_eq!(stored["total"], usize::from(!rollback), "{stored}");
+    }
+    let _ = shutdown.send(());
 }

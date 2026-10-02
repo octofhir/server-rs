@@ -26,8 +26,8 @@ use tracing::trace;
 use crate::error::StorageError;
 use crate::traits::{FhirStorage, Transaction};
 use crate::types::{
-    HistoryParams, HistoryResult, RawHistoryResult, RawStoredResource, SearchParams, SearchResult,
-    StoredResource,
+    HistoryParams, HistoryResult, IncludeLimits, RawHistoryResult, RawSearchResult,
+    RawStoredResource, SearchParams, SearchResult, StoredResource,
 };
 
 /// A storage wrapper that emits events after successful CRUD operations.
@@ -463,12 +463,32 @@ impl Transaction for EventedTransaction {
         self.inner.exists_many_grouped(groups).await
     }
 
+    async fn read_for_update(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<StoredResource>, StorageError> {
+        self.inner.read_for_update(resource_type, id).await
+    }
+
     async fn search(
         &self,
         resource_type: &str,
         params: &SearchParams,
     ) -> Result<SearchResult, StorageError> {
         self.inner.search(resource_type, params).await
+    }
+
+    async fn search_system_raw(
+        &self,
+        resource_types: &[&str],
+        params: &SearchParams,
+        include_limits: IncludeLimits,
+        strict: bool,
+    ) -> Result<RawSearchResult, StorageError> {
+        self.inner
+            .search_system_raw(resource_types, params, include_limits, strict)
+            .await
     }
 
     async fn create_batch(

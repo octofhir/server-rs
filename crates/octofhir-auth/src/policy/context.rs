@@ -630,6 +630,18 @@ pub fn parse_fhir_path(path: &str) -> (String, Option<String>, Option<String>, O
             (resource_type.to_string(), Some(id.to_string()), None, None)
         }
 
+        // /CompartmentType/id/ResourceType/_search
+        [compartment_type, compartment_id, resource_type, "_search"]
+            if !resource_type.starts_with('_') && !resource_type.starts_with('$') =>
+        {
+            (
+                resource_type.to_string(),
+                None,
+                Some(compartment_type.to_string()),
+                Some(compartment_id.to_string()),
+            )
+        }
+
         // /ResourceType/id/_history/vid
         [resource_type, id, "_history", _vid] if !id.starts_with('_') && !id.starts_with('$') => {
             (resource_type.to_string(), Some(id.to_string()), None, None)
@@ -677,6 +689,7 @@ pub struct PolicyContextBuilder {
     request: Option<RequestContext>,
     resource: Option<ResourceContext>,
     environment: Option<EnvironmentContext>,
+    launch_context: Option<(Option<String>, Option<String>)>,
 }
 
 impl PolicyContextBuilder {
@@ -766,10 +779,7 @@ impl PolicyContextBuilder {
         patient: Option<String>,
         encounter: Option<String>,
     ) -> Self {
-        if let Some(ref mut env) = self.environment {
-            env.patient_context = patient;
-            env.encounter_context = encounter;
-        }
+        self.launch_context = Some((patient, encounter));
         self
     }
 
@@ -785,7 +795,14 @@ impl PolicyContextBuilder {
             scopes: self.scopes.ok_or(ContextError::MissingScopes)?,
             request: self.request.ok_or(ContextError::MissingRequest)?,
             resource: self.resource,
-            environment: self.environment.ok_or(ContextError::MissingEnvironment)?,
+            environment: {
+                let mut environment = self.environment.ok_or(ContextError::MissingEnvironment)?;
+                if let Some((patient, encounter)) = self.launch_context {
+                    environment.patient_context = patient;
+                    environment.encounter_context = encounter;
+                }
+                environment
+            },
         })
     }
 }
@@ -1038,6 +1055,26 @@ mod tests {
     }
 
     #[test]
+    fn post_compartment_search_keeps_compartment_context() {
+        for resource_type in ["Observation", "*"] {
+            let path = format!("/Patient/123/{resource_type}/_search");
+            assert_eq!(
+                parse_fhir_path(&path),
+                (
+                    resource_type.into(),
+                    None,
+                    Some("Patient".into()),
+                    Some("123".into())
+                )
+            );
+            assert_eq!(
+                detect_operation("POST", &path, true),
+                FhirOperation::SearchType
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_fhir_path_compartment() {
         let (rt, id, ct, cid) = parse_fhir_path("/Patient/123/Observation");
         assert_eq!(rt, "Observation");
@@ -1248,6 +1285,35 @@ mod tests {
             .build();
 
         assert!(matches!(result, Err(ContextError::MissingClient)));
+    }
+
+    #[test]
+    fn launch_context_survives_environment_settings_in_either_order() {
+        let auth = create_test_auth_context();
+        for launch_first in [true, false] {
+            let builder = PolicyContextBuilder::new()
+                .with_auth_context(&auth)
+                .with_request("GET", "/Patient/123", HashMap::new(), None);
+            let builder = if launch_first {
+                builder
+                    .with_launch_context(Some("123".into()), Some("enc-1".into()))
+                    .with_environment("operation-call".into(), None)
+            } else {
+                builder
+                    .with_environment("operation-call".into(), None)
+                    .with_launch_context(Some("123".into()), Some("enc-1".into()))
+            };
+            let context = builder
+                .with_environment("updated-request-id".into(), None)
+                .build()
+                .unwrap();
+            assert_eq!(context.environment.patient_context.as_deref(), Some("123"));
+            assert_eq!(
+                context.environment.encounter_context.as_deref(),
+                Some("enc-1")
+            );
+            assert_eq!(context.environment.request_id, "updated-request-id");
+        }
     }
 
     // -------------------------------------------------------------------------

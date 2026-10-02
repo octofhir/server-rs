@@ -32,6 +32,10 @@ pub enum CqlError {
     #[error("Data provider error: {0}")]
     DataProviderError(String),
 
+    /// Preserve a host's resource-access error through the synchronous evaluator.
+    #[error("Resource access failed: {0}")]
+    ResourceAccess(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     /// Terminology provider error
     #[error("Terminology provider error: {0}")]
     TerminologyError(String),

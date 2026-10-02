@@ -120,6 +120,7 @@ impl OperationHandler for ViewDefinitionSqlOperation {
     async fn handle_type(
         &self,
         _state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -141,6 +142,7 @@ impl OperationHandler for ViewDefinitionSqlOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
+        _context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         _params: &Value,
