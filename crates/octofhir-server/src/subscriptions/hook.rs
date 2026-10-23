@@ -103,19 +103,17 @@ impl SubscriptionHook {
                 "Found active subscriptions for topic"
             );
 
-            // Get the resource data for matching
-            let Some(ref resource) = event.resource else {
-                // For delete events without resource data, we can only match
-                // based on resource type - detailed matching is skipped
-                if event.event_type == ResourceEventType::Deleted {
-                    self.queue_events_for_delete(
-                        &topic.url,
-                        &subscriptions,
-                        &event.resource_type,
-                        &event.resource_id,
-                    )
-                    .await?;
-                }
+            // Deletes match filters against the exact committed previous body.
+            let resource = if event.event_type == ResourceEventType::Deleted {
+                event.previous_resource.as_deref()
+            } else {
+                event.resource.as_deref()
+            };
+            let Some(resource) = resource else {
+                tracing::warn!(
+                    resource_id = event.resource_id,
+                    "Subscription event has no snapshot; cannot evaluate filters"
+                );
                 continue;
             };
 
@@ -141,7 +139,7 @@ impl SubscriptionHook {
                     .event_matcher
                     .matches(
                         resource,
-                        None, // TODO: Support previous resource version for update triggers
+                        event.previous_resource.as_deref(),
                         &topic,
                         &subscription,
                         interaction,
@@ -195,61 +193,6 @@ impl SubscriptionHook {
                     }
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    /// Queue events for delete operations where we don't have resource data.
-    async fn queue_events_for_delete(
-        &self,
-        topic_url: &str,
-        subscriptions: &[super::types::ActiveSubscription],
-        resource_type: &str,
-        resource_id: &str,
-    ) -> SubscriptionResult<()> {
-        for subscription in subscriptions {
-            if subscription.status != SubscriptionStatus::Active {
-                continue;
-            }
-
-            // For deletes without resource data, we can't evaluate FHIRPath filters
-            // Only subscriptions without filters will receive the notification
-            if !subscription.filter_by.is_empty() {
-                tracing::debug!(
-                    subscription_id = subscription.id,
-                    "Skipping delete notification for subscription with filters (no resource data)"
-                );
-                continue;
-            }
-
-            tracing::debug!(
-                subscription_id = subscription.id,
-                resource_type = resource_type,
-                resource_id = resource_id,
-                "Queueing delete event for subscription"
-            );
-
-            // Build minimal notification bundle for delete
-            let bundle = NotificationBundleBuilder::new(
-                subscription.id.clone(),
-                topic_url.to_string(),
-                SubscriptionEventType::EventNotification,
-                0,
-            )
-            .build();
-
-            self.event_storage
-                .enqueue(
-                    &subscription.id,
-                    topic_url,
-                    SubscriptionEventType::EventNotification,
-                    Some(resource_type),
-                    Some(resource_id),
-                    Some(TriggerInteraction::Delete),
-                    bundle,
-                )
-                .await?;
         }
 
         Ok(())

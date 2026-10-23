@@ -3,6 +3,8 @@
 //! This module implements the FHIR $validate operation for validating
 //! resources against FHIR schemas and constraints.
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use octofhir_core::ResourceType;
 use serde_json::{Value, json};
@@ -178,31 +180,23 @@ impl ValidateOperation {
         {
             schemas.push(profile.to_owned());
         }
-        // Validators retain their resolver. Keep this validator and its read
-        // snapshots invocation-local; shared model/schema loading remains cached.
-        // Ordinary write validation continues using the shared integrity service.
         let resolver = (!state.config.validation.skip_reference_validation).then(|| {
             Arc::new(super::validation_reference::ValidationReferenceResolver::new(state, context))
         });
-        let validation = match &resolver {
-            Some(resolver) => crate::validation::ValidationService::with_options_full(
-                state.model_provider.clone(),
-                state.fhirpath_engine.clone(),
-                Some(resolver.clone()),
-                state.terminology_provider.clone().map(|provider| {
-                    Arc::new(octofhir_fhirschema::TerminologyProviderAdapter::new(
-                        provider,
-                    ))
-                        as Arc<dyn octofhir_fhirschema::terminology::TerminologyService>
-                }),
-                state.config.validation.check_target_profile,
-                state.config.validation.max_reference_depth,
-            ),
-            None => state.validation_service.clone(),
+        let outcome = match &resolver {
+            Some(resolver) => {
+                state
+                    .validation_service
+                    .validate_profiles_with_resolver(resource, &schemas, None, resolver.clone())
+                    .await
+            }
+            None => {
+                state
+                    .validation_service
+                    .validate_against_profiles(resource, &schemas)
+                    .await
+            }
         };
-        let outcome = validation
-            .validate_against_profiles(resource, &schemas)
-            .await;
         if let Some(resolver) = resolver
             && let Some(error) = resolver.take_error()
         {
@@ -358,8 +352,16 @@ impl ValidateOperation {
                     "Cannot validate against unavailable profile".into(),
                 ));
             }
-            let issue =
-                check_write(state, context, WriteMode::Delete, resource_type, id, None).await?;
+            let issue = check_write(
+                state,
+                context,
+                WriteMode::Delete,
+                resource_type,
+                id,
+                None,
+                &Default::default(),
+            )
+            .await?;
             return Ok(self.build_outcome(vec![issue.unwrap_or_else(|| {
                 Issue::information("informational", "Delete validation completed successfully")
             })]));
@@ -400,13 +402,56 @@ impl ValidateOperation {
                 &octofhir_storage::SearchParams::new(),
             )?;
         }
-        let mut outcome = self
-            .validate_requested_profile(state, context, params, &resource)
-            .await?;
+        let (mut outcome, references) = if mode.is_some() {
+            if let Some(profile) = profile
+                && state
+                    .model_provider
+                    .get_schema_by_url(profile)
+                    .await
+                    .is_none()
+            {
+                return Err(OperationError::InvalidParameters(format!(
+                    "Cannot validate against unavailable profile: {profile}"
+                )));
+            }
+            let mut schemas =
+                crate::validation::ValidationService::schemas_for(&resource, resource_type);
+            if let Some(profile) = profile
+                && !schemas.iter().any(|schema| schema == profile)
+            {
+                schemas.push(profile.to_owned());
+            }
+            match crate::handlers::validate_write_content(&resource, state, &schemas).await {
+                Ok(validated) => validated,
+                Err(octofhir_api::ApiError::UnprocessableEntity {
+                    message,
+                    operation_outcome,
+                }) => {
+                    return Ok(operation_outcome.unwrap_or_else(|| {
+                        self.build_outcome(vec![Issue::error("invalid", &message)])
+                    }));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            (
+                self.validate_requested_profile(state, context, params, &resource)
+                    .await?,
+                Default::default(),
+            )
+        };
         if outcome.valid
             && let Some(mode) = mode
-            && let Some(issue) =
-                check_write(state, context, mode, resource_type, id, Some(&resource)).await?
+            && let Some(issue) = check_write(
+                state,
+                context,
+                mode,
+                resource_type,
+                id,
+                Some(&resource),
+                &references,
+            )
+            .await?
         {
             outcome.valid = false;
             outcome.issues.push(crate::validation::ValidationIssue {
@@ -553,6 +598,10 @@ impl ValidateOperation {
 
 #[async_trait]
 impl OperationHandler for ValidateOperation {
+    fn supports_level(&self, _level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        true
+    }
+
     fn code(&self) -> &str {
         "validate"
     }

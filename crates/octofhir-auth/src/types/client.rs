@@ -200,21 +200,41 @@ impl Client {
             return true;
         }
 
+        Self::scope_is_covered(&self.scopes, scope)
+    }
+
+    /// Test an issued grant as a union of permissions. An empty grant covers
+    /// nothing, unlike an unrestricted client registration.
+    #[must_use]
+    pub fn scope_is_covered(granted: &[String], scope: &str) -> bool {
         let requested_smart = SmartScope::parse(scope).ok();
 
-        self.scopes.iter().any(|allowed| {
-            // Exact string match (handles openid, fhirUser, launch/*, offline_access, etc.)
-            if allowed == scope {
-                return true;
-            }
-            // SMART semantic matching: wildcard + permission coverage
-            if let Some(ref req) = requested_smart
-                && let Ok(allowed_smart) = SmartScope::parse(allowed)
-            {
-                return allowed_smart.covers(req);
-            }
-            false
-        })
+        if granted.iter().any(|allowed| allowed == scope) {
+            return true;
+        }
+        let Some(requested) = requested_smart else {
+            return false;
+        };
+        // SMART permissions compose as a union, including registrations that
+        // express r and s separately. Filter coverage remains conservative: a
+        // restricted registration cannot grant an unfiltered token.
+        ['c', 'r', 'u', 'd', 's']
+            .into_iter()
+            .filter(|permission| requested.has_permission(*permission))
+            .all(|permission| {
+                let mut required = requested.clone();
+                required.permissions = crate::smart::scopes::Permissions {
+                    create: permission == 'c',
+                    read: permission == 'r',
+                    update: permission == 'u',
+                    delete: permission == 'd',
+                    search: permission == 's',
+                };
+                granted
+                    .iter()
+                    .filter_map(|allowed| SmartScope::parse(allowed).ok())
+                    .any(|allowed| allowed.covers(&required))
+            })
     }
 
     /// Checks if the given grant type is allowed for this client.
@@ -341,6 +361,23 @@ mod tests {
             jwks: None,
             jwks_uri: None,
         }
+    }
+
+    #[test]
+    fn registrations_compose_permissions_without_broadening_filters() {
+        let mut client = make_valid_confidential_client();
+        client.scopes = vec!["system/Patient.r".into(), "system/Patient.s".into()];
+        assert!(client.is_scope_allowed("system/Patient.rs"));
+        assert!(!client.is_scope_allowed("system/Patient.c"));
+        client.scopes = vec![
+            "system/Patient.r?gender=female".into(),
+            "system/Patient.s?gender=male".into(),
+        ];
+        assert!(!client.is_scope_allowed("system/Patient.rs"));
+        assert!(!client.is_scope_allowed("system/Patient.rs?gender=female"));
+        client.scopes[1] = "system/Patient.s?gender=female".into();
+        assert!(client.is_scope_allowed("system/Patient.rs?gender=female"));
+        assert!(!client.is_scope_allowed("system/Patient.rs?gender=male"));
     }
 
     #[test]

@@ -3,6 +3,8 @@
 //! This operation generates SQL from a ViewDefinition without executing it,
 //! useful for previewing the generated query.
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
@@ -113,6 +115,10 @@ impl ViewDefinitionSqlOperation {
 
 #[async_trait]
 impl OperationHandler for ViewDefinitionSqlOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        self.enabled && level != OperationLevel::System && resource_type == Some("ViewDefinition")
+    }
+
     fn code(&self) -> &str {
         "sql"
     }
@@ -142,7 +148,7 @@ impl OperationHandler for ViewDefinitionSqlOperation {
     async fn handle_instance(
         &self,
         state: &AppState,
-        _context: &crate::operations::OperationContext,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         _params: &Value,
@@ -158,11 +164,9 @@ impl OperationHandler for ViewDefinitionSqlOperation {
         }
 
         // Load the ViewDefinition from storage
-        let storage = &state.storage;
-        let stored = storage
-            .read("ViewDefinition", id)
-            .await
-            .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
+        let stored = context
+            .read(state, "ViewDefinition", id)
+            .await?
             .ok_or_else(|| OperationError::NotFound(format!("ViewDefinition/{} not found", id)))?;
 
         let view_def = ViewDefinition::from_json(&stored.resource).map_err(|e| {

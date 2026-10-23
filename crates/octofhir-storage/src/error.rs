@@ -25,6 +25,10 @@ pub enum StorageError {
         actual: String,
     },
 
+    /// A planned mutation became stale after concurrent committed changes.
+    #[error("Concurrent write conflict: {message}")]
+    WriteConflict { message: String },
+
     /// Attempted to create a resource that already exists.
     #[error("Resource already exists: {resource_type}/{id}")]
     AlreadyExists {
@@ -170,7 +174,7 @@ impl StorageError {
     pub fn category(&self) -> ErrorCategory {
         match self {
             Self::NotFound { .. } => ErrorCategory::NotFound,
-            Self::VersionConflict { .. } => ErrorCategory::Conflict,
+            Self::VersionConflict { .. } | Self::WriteConflict { .. } => ErrorCategory::Conflict,
             Self::AlreadyExists { .. } => ErrorCategory::Conflict,
             Self::InvalidResource { .. } => ErrorCategory::Validation,
             Self::TransactionError { .. } => ErrorCategory::Transaction,

@@ -19,7 +19,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use std::collections::HashMap;
 
 use super::OperationContext;
 use super::params::OperationParams;
@@ -31,6 +30,36 @@ use octofhir_api::ApiError;
 #[inline]
 pub fn is_operation(segment: &str) -> bool {
     segment.starts_with('$')
+}
+
+/// Render asynchronous operation kickoff with the polling location required by
+/// FHIR; the internal job envelope is not a clinical response resource.
+fn operation_response(code: &str, result: serde_json::Value) -> Result<Response, ApiError> {
+    if matches!(code, "export" | "import") && result["status"] == "accepted" {
+        let location = result["status_url"]
+            .as_str()
+            .ok_or_else(|| ApiError::internal("Async operation has no status location"))?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/fhir+json"),
+        );
+        headers.insert(
+            axum::http::header::CONTENT_LOCATION,
+            axum::http::HeaderValue::from_str(location)
+                .map_err(|_| ApiError::internal("Invalid async status location"))?,
+        );
+        headers.insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        let outcome = serde_json::json!({"resourceType":"OperationOutcome","issue":[{
+            "severity":"information","code":"informational","diagnostics":"Asynchronous request accepted"
+        }]});
+        Ok((StatusCode::ACCEPTED, headers, Json(outcome)).into_response())
+    } else {
+        Ok((StatusCode::OK, Json(result)).into_response())
+    }
 }
 
 /// Handler for system-level operations (e.g., `GET /$operation` or `POST /$operation`).
@@ -66,7 +95,7 @@ pub async fn system_operation_handler(
                 .await
                 .map_err(ApiError::from)?;
 
-            Ok((StatusCode::OK, Json(result)))
+            operation_response(code, result)
         }
         None => Err(ApiError::not_implemented(format!(
             "Operation ${} is not implemented",
@@ -109,7 +138,7 @@ pub async fn type_operation_handler(
                 .await
                 .map_err(ApiError::from)?;
 
-            Ok((StatusCode::OK, Json(result)))
+            operation_response(code, result)
         }
         None => Err(ApiError::not_implemented(format!(
             "Operation ${} is not implemented",
@@ -133,8 +162,9 @@ pub async fn type_operation_handler(
 pub async fn instance_operation_or_history_handler(
     state: State<AppState>,
     context: OperationContext,
+    authorization: Option<Extension<crate::authorization::AuthorizedHistory>>,
     Path((resource_type, id, operation)): Path<(String, String, String)>,
-    Query(query_params): Query<HashMap<String, String>>,
+    Query(query_params): Query<Vec<(String, String)>>,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
 ) -> Response {
     if operation == "_history" {
@@ -143,7 +173,7 @@ pub async fn instance_operation_or_history_handler(
             Err(error) => return ApiError::bad_request(error.to_string()).into_response(),
         };
         let path = Path((resource_type, id));
-        match crate::handlers::instance_history(state, path, query).await {
+        match crate::handlers::instance_history(state, authorization, path, query).await {
             Ok(resp) => resp.into_response(),
             Err(e) => e.into_response(),
         }
@@ -168,7 +198,9 @@ pub async fn instance_operation_or_history_handler(
                     .handle_instance(&app_state, &context, &resource_type, &id, &params_value)
                     .await
                 {
-                    Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+                    Ok(result) => {
+                        operation_response(code, result).unwrap_or_else(IntoResponse::into_response)
+                    }
                     Err(e) => ApiError::from(e).into_response(),
                 }
             }
@@ -222,7 +254,7 @@ pub async fn instance_operation_handler(
                 .await
                 .map_err(ApiError::from)?;
 
-            Ok((StatusCode::OK, Json(result)))
+            operation_response(code, result)
         }
         None => Err(ApiError::not_implemented(format!(
             "Operation ${} is not implemented",
@@ -249,13 +281,13 @@ pub async fn merged_root_get_handler(
     ),
     headers: HeaderMap,
     Path(param): Path<String>,
-    Query(query_params): Query<HashMap<String, String>>,
+    Query(query_params): Query<Vec<(String, String)>>,
     RawQuery(raw): RawQuery,
 ) -> Result<Response, ApiError> {
     let (context, visibility) = authorization;
     if is_operation(&param) {
         // Dispatch to system operation handler
-        let params = OperationParams::Get(query_params.clone());
+        let params = OperationParams::Get(query_params);
         let result = system_operation_handler_internal(state, context, param, params).await?;
         Ok(result.into_response())
     } else {
@@ -266,7 +298,7 @@ pub async fn merged_root_get_handler(
             visibility,
             headers,
             Path(param),
-            Query(query_params),
+            Query(query_params.into_iter().collect()),
             RawQuery(raw),
         )
         .await?;
@@ -280,9 +312,10 @@ pub async fn merged_root_get_handler(
 pub async fn merged_root_post_handler(
     state: State<AppState>,
     context: OperationContext,
+    authorization: Option<Extension<crate::write::AuthorizedWrite>>,
     Path(param): Path<String>,
     headers: HeaderMap,
-    Query(query_params): Query<HashMap<String, String>>,
+    Query(query_params): Query<Vec<(String, String)>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
@@ -301,7 +334,8 @@ pub async fn merged_root_post_handler(
         let json_value: serde_json::Value = serde_json::from_slice(&body)
             .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?;
         let result =
-            handlers::create_resource(state, Path(param), headers, Json(json_value)).await?;
+            handlers::create_resource(state, Path(param), authorization, headers, Json(json_value))
+                .await?;
         Ok(result.into_response())
     }
 }
@@ -312,8 +346,9 @@ pub async fn merged_root_post_handler(
 pub async fn merged_type_get_handler(
     state: State<AppState>,
     context: OperationContext,
+    authorization: Option<Extension<crate::authorization::AuthorizedRead>>,
     Path((resource_type, param)): Path<(String, String)>,
-    Query(query_params): Query<HashMap<String, String>>,
+    Query(query_params): Query<Vec<(String, String)>>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
@@ -326,9 +361,10 @@ pub async fn merged_type_get_handler(
         // Dispatch to resource read handler (param is the resource id)
         let result = handlers::read_resource(
             state,
+            authorization,
             Path((resource_type, param)),
             headers,
-            Query(query_params),
+            Query(query_params.into_iter().collect()),
         )
         .await?;
         Ok(result.into_response())
@@ -342,7 +378,7 @@ pub async fn merged_type_post_handler(
     state: State<AppState>,
     context: OperationContext,
     Path((resource_type, param)): Path<(String, String)>,
-    Query(query_params): Query<HashMap<String, String>>,
+    Query(query_params): Query<Vec<(String, String)>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
@@ -376,7 +412,7 @@ pub async fn compartment_post_handler(
     State(state): State<AppState>,
     context: OperationContext,
     Path((id, param)): Path<(String, String)>,
-    Query(query_params): Query<HashMap<String, String>>,
+    Query(query_params): Query<Vec<(String, String)>>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
@@ -442,7 +478,7 @@ async fn system_operation_handler_internal(
                 .handle_system(&state, &context, &params_value)
                 .await
                 .map_err(ApiError::from)?;
-            Ok((StatusCode::OK, Json(result)))
+            operation_response(code, result)
         }
         None => Err(ApiError::not_implemented(format!(
             "Operation ${} is not implemented",
@@ -479,7 +515,7 @@ pub(crate) async fn instance_operation_handler_internal(
                 .handle_instance(state, context, resource_type, id, &params_value)
                 .await
                 .map_err(ApiError::from)?;
-            Ok((StatusCode::OK, Json(result)).into_response())
+            operation_response(code, result)
         }
         None => Err(ApiError::not_implemented(format!(
             "Operation ${code} is not implemented"
@@ -515,7 +551,7 @@ async fn type_operation_handler_internal(
                 .handle_type(&state, &context, &resource_type, &params_value)
                 .await
                 .map_err(ApiError::from)?;
-            Ok((StatusCode::OK, Json(result)))
+            operation_response(code, result)
         }
         None => Err(ApiError::not_implemented(format!(
             "Operation ${} is not implemented",

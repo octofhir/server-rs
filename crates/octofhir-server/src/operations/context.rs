@@ -23,14 +23,36 @@ pub struct OperationContext {
     auth: Option<Arc<AuthContext>>,
     request_id: String,
     if_match: Option<String>,
+    request_url: String,
 }
 
 impl FromRequestParts<AppState> for OperationContext {
     type Rejection = ApiError;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &AppState) -> Result<Self, ApiError> {
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
+        if parts
+            .headers
+            .get_all(axum::http::header::IF_MATCH)
+            .iter()
+            .count()
+            > 1
+        {
+            return Err(ApiError::bad_request(
+                "If-Match requires a single version ETag",
+            ));
+        }
+        let uri = parts
+            .extensions
+            .get::<axum::extract::OriginalUri>()
+            .map(|original| &original.0)
+            .unwrap_or(&parts.uri);
         Ok(Self {
-            auth: parts.extensions.get::<Arc<AuthContext>>().cloned(),
+            request_url: format!("{}{}", state.base_url.trim_end_matches('/'), uri),
+            auth: parts
+                .extensions
+                .get::<Arc<AuthContext>>()
+                .filter(|auth| !state.is_anonymous_context(auth))
+                .cloned(),
             request_id: parts
                 .headers
                 .get("x-request-id")
@@ -48,8 +70,40 @@ impl FromRequestParts<AppState> for OperationContext {
 }
 
 impl OperationContext {
+    pub(crate) async fn for_job(
+        state: &AppState,
+        job_id: uuid::Uuid,
+    ) -> Result<Self, OperationError> {
+        let job = state
+            .async_job_manager
+            .get_job(job_id)
+            .await
+            .map_err(|error| OperationError::Internal(error.to_string()))?;
+        Ok(Self {
+            auth: job.authorization()?.resume(state).await?,
+            request_id: job_id.to_string(),
+            if_match: None,
+            request_url: job.request_url,
+        })
+    }
+
+    pub(crate) fn request_url(&self) -> &str {
+        &self.request_url
+    }
+
     pub fn auth(&self) -> Option<&AuthContext> {
         self.auth.as_deref()
+    }
+
+    pub(crate) fn job_authorization(
+        &self,
+        state: &AppState,
+    ) -> Result<crate::async_jobs::TrustedJobAuthorization, OperationError> {
+        crate::async_jobs::TrustedJobAuthorization::capture(
+            self.auth(),
+            state.config.auth.policy.anonymous_access,
+        )
+        .map_err(Into::into)
     }
 
     pub(super) fn policy_context(
@@ -60,7 +114,7 @@ impl OperationContext {
         id: Option<&str>,
         params: &SearchParams,
     ) -> Result<Option<PolicyContext>, OperationError> {
-        if state.config.auth.policy.anonymous_access {
+        if self.auth.is_none() && state.config.auth.policy.anonymous_access {
             return Ok(None);
         }
         let auth = self
@@ -110,8 +164,23 @@ impl OperationContext {
         state: &AppState,
         context: &PolicyContext,
     ) -> Result<(), OperationError> {
-        match state.policy_evaluator.evaluate(context).await {
+        Self::policy_decision(state.policy_evaluator.evaluate(context).await)
+    }
+
+    fn policy_decision(decision: AccessDecision) -> Result<(), OperationError> {
+        match decision {
             AccessDecision::Allow => Ok(()),
+            AccessDecision::Deny(reason)
+                if matches!(
+                    reason.code.as_str(),
+                    "policy-error" | "script-error" | "script-timeout" | "script-memory-limit"
+                ) =>
+            {
+                tracing::error!(policy_id = ?reason.policy_id, code = %reason.code, "Operation resource policy failed");
+                Err(OperationError::Internal(
+                    "Resource policy evaluation failed".into(),
+                ))
+            }
             AccessDecision::Deny(reason) => Err(ApiError::forbidden(reason.message).into()),
             AccessDecision::Abstain => {
                 Err(ApiError::forbidden("No policy allows operation resource access").into())
@@ -170,6 +239,74 @@ impl OperationContext {
             .await
     }
 
+    /// Read a set of known identities with read grants, using one native query
+    /// for the type. Each returned snapshot still receives its own resource
+    /// policy evaluation; a denied member is omitted from operation traversal.
+    pub(super) async fn read_many(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<Vec<StoredResource>, OperationError> {
+        let mut ids = ids.to_vec();
+        ids.sort();
+        ids.dedup();
+        for id in &ids {
+            octofhir_core::validate_id(id)
+                .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        }
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let count = u32::try_from(ids.len()).map_err(|_| {
+            OperationError::InvalidParameters("Too many operation references".into())
+        })?;
+        let mut params = SearchParams::new()
+            .with_count(count)
+            .with_param("_id", ids.join(","));
+        let Some(context) =
+            self.policy_context(state, FhirOperation::Read, resource_type, None, &params)?
+        else {
+            return state
+                .storage
+                .read_many(resource_type, &ids)
+                .await
+                .map_err(crate::handlers::map_storage_error)
+                .map_err(Into::into);
+        };
+        params.constraint = crate::authorization::query_visibility(
+            &context,
+            &state.compartment_registry,
+            &state.base_url,
+        )?;
+        let snapshots = self.query(state, resource_type, &params).await?.entries;
+        let policies = state
+            .policy_evaluator
+            .prepare(resource_type)
+            .await
+            .map_err(|error| OperationError::Internal(error.to_string()))?;
+        let mut allowed = Vec::with_capacity(snapshots.len());
+        for (index, snapshot) in snapshots.into_iter().enumerate() {
+            let mut context = context.clone();
+            context.request.path = format!("/fhir/{resource_type}/{}", snapshot.id);
+            context.request.resource_id = Some(snapshot.id.clone());
+            context
+                .request
+                .query_params
+                .insert("_id".into(), snapshot.id.clone());
+            context.resource = Some(ResourceContext::from_resource(snapshot.resource.clone()));
+            match Self::policy_decision(policies.evaluate(&context)) {
+                Ok(()) => allowed.push(snapshot),
+                Err(error) if error.is_forbidden() => {}
+                Err(error) => return Err(error),
+            }
+            if index % 32 == 31 {
+                tokio::task::yield_now().await;
+            }
+        }
+        Ok(allowed)
+    }
+
     /// Reference validation cannot conclude that an invisible target is
     /// nonexistent. Preserve that uncertainty as a masked access error.
     pub(crate) async fn read_reference(
@@ -182,8 +319,8 @@ impl OperationContext {
             .await
     }
 
-    /// Use the requested historical snapshot, never substitute the current
-    /// version. Historical SQL grant predicates need their own search source.
+    /// Authorize the requested historical body through the same native proposed
+    /// snapshot source as HTTP vread; never substitute the current revision.
     pub(crate) async fn vread_reference(
         &self,
         state: &AppState,
@@ -204,28 +341,36 @@ impl OperationContext {
         )?;
         if let Some(context) = &mut context {
             context.request.path = format!("/fhir/{resource_type}/{id}/_history/{version}");
-            if crate::authorization::query_visibility(
-                context,
+        }
+        let snapshot = state
+            .storage
+            .version_snapshot(resource_type, id, version)
+            .await
+            .map_err(crate::handlers::map_storage_error)?;
+        let stored = snapshot
+            .as_ref()
+            .map(|snapshot| crate::handlers::stored_snapshot(&snapshot.resource))
+            .transpose()?;
+        if let Some(context) = context {
+            let constrained = crate::authorization::query_visibility(
+                &context,
                 &state.compartment_registry,
                 &state.base_url,
             )?
-            .is_some()
-            {
-                return Err(ApiError::NotImplemented(
-                    "Historical reference validation with constrained grants is not implemented"
-                        .into(),
-                )
-                .into());
+            .is_some();
+            let prepared = crate::authorization::AuthorizedRead(context)
+                .prepare(state)
+                .await?;
+            if let Some(stored) = &stored {
+                prepared.authorize(state, &stored.resource).await?;
+            } else if constrained {
+                return Err(ApiError::not_found("Referenced resource is unavailable").into());
             }
         }
-        let stored = state
-            .storage
-            .vread(resource_type, id, version)
-            .await
-            .map_err(crate::handlers::map_storage_error)?;
-        if let (Some(context), Some(stored)) = (&mut context, &stored) {
-            context.resource = Some(ResourceContext::from_resource(stored.resource.clone()));
-            Self::evaluate(state, context).await?;
+        if snapshot
+            .is_some_and(|snapshot| snapshot.method == octofhir_storage::HistoryMethod::Delete)
+        {
+            return Err(ApiError::gone("Referenced revision records a deletion").into());
         }
         Ok(stored)
     }
@@ -387,7 +532,22 @@ impl OperationContext {
         if let Some(context) =
             self.policy_context(state, FhirOperation::Search, resource_type, None, &params)?
         {
-            Self::evaluate(state, &context).await?;
+            let policies = state
+                .policy_evaluator
+                .prepare(resource_type)
+                .await
+                .map_err(|error| OperationError::Internal(error.to_string()))?;
+            match policies.evaluate_admission(&context) {
+                AccessDecision::Allow => {}
+                AccessDecision::Deny(reason) => {
+                    return Err(ApiError::forbidden(reason.message).into());
+                }
+                AccessDecision::Abstain => {
+                    return Err(
+                        ApiError::forbidden("No policy allows operation resource access").into(),
+                    );
+                }
+            }
             if let Some(grant) = crate::authorization::query_visibility(
                 &context,
                 &state.compartment_registry,
@@ -396,6 +556,43 @@ impl OperationContext {
                 params.constraint = Some(match params.constraint.take() {
                     Some(existing) => SearchConstraint::And(vec![existing, grant]),
                     None => grant,
+                });
+            }
+            let visibility =
+                crate::authorization::AuthorizedSearch::for_prepared_context(context.clone());
+            visibility.apply(state, &mut params).await?;
+            if policies.requires_snapshots(&context) || params.included_visibility.is_some() {
+                let prepared = visibility
+                    .prepare_snapshots(state, &[resource_type], &params)
+                    .await?;
+                if !prepared.required() {
+                    return self.query(state, resource_type, &params).await;
+                }
+                let result = prepared
+                    .execute(
+                        state,
+                        &[resource_type],
+                        &params,
+                        octofhir_db_postgres::queries::RawSearchOptions {
+                            include_limits: state.config.search.include_limits,
+                            unknown_param_handling: Some(
+                                octofhir_search::UnknownParamHandling::Strict,
+                            ),
+                            max_valueset_expansion: Some(
+                                state.config.search.max_valueset_expansion,
+                            ),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                return Ok(SearchResult {
+                    entries: result
+                        .entries
+                        .into_iter()
+                        .map(stored_resource)
+                        .collect::<Result<_, _>>()?,
+                    total: result.total,
+                    has_more: result.has_more,
                 });
             }
         }

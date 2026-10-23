@@ -494,7 +494,7 @@ pub fn detect_operation(method: &str, path: &str, has_body: bool) -> FhirOperati
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     match method.to_uppercase().as_str() {
-        "GET" => detect_get_operation(path, &segments),
+        "GET" | "HEAD" => detect_get_operation(path, &segments),
         "POST" => detect_post_operation(path, &segments, has_body),
         "PUT" => FhirOperation::Update,
         "PATCH" => FhirOperation::Patch,
@@ -984,6 +984,10 @@ mod tests {
     fn test_detect_operation_vread() {
         assert_eq!(
             detect_operation("GET", "/Patient/123/_history/1", false),
+            FhirOperation::VRead
+        );
+        assert_eq!(
+            detect_operation("HEAD", "/Patient/123/_history/1", false),
             FhirOperation::VRead
         );
     }

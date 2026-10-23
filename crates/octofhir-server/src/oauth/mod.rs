@@ -84,7 +84,12 @@ impl OAuthState {
         let refresh_token_secs = config.auth.oauth.refresh_token_lifetime.as_secs() as i64;
 
         // Create token config
+        let resource_audiences = vec![
+            config.base_url(),
+            format!("{}/fhir", config.base_url().trim_end_matches('/')),
+        ];
         let token_config = TokenConfig::new(config.auth.issuer.clone(), config.base_url())
+            .with_audiences(resource_audiences.clone())
             .with_access_token_lifetime(Duration::seconds(access_token_secs))
             .with_refresh_token_lifetime(Duration::seconds(refresh_token_secs));
 
@@ -147,7 +152,7 @@ impl OAuthState {
             AuthorizationService::new(
                 client_storage.clone(),
                 session_storage.clone(),
-                AuthorizationConfig::default(),
+                AuthorizationConfig::default().with_audiences(resource_audiences),
             )
             .with_launch_storage(launch_storage.clone()),
         );

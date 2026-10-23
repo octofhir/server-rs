@@ -20,15 +20,14 @@
 //! }
 //! ```
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
-use chrono::Utc;
 use futures_util::{StreamExt, stream};
-use octofhir_db_postgres::SchemaManager;
-use octofhir_search::SearchParameterRegistry;
+use octofhir_fhir_model::provider::ModelProvider;
 use serde_json::{Value, json};
-use sqlx_core::query::query;
-use sqlx_core::query_as::query_as;
-use sqlx_core::sql_str::AssertSqlSafe;
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
 
 use crate::async_jobs::AsyncJobRequest;
@@ -55,23 +54,7 @@ impl ImportOperation {
 
     /// Parse FHIR Parameters resource into import inputs
     fn parse_inputs(params: &Value) -> Result<Vec<ImportInput>, OperationError> {
-        // OperationParams wraps non-Parameters bodies as:
-        // {"resourceType":"Parameters","parameter":[{"name":"resource","resource":{...}}]}
-        // Unwrap if the body was auto-wrapped
-        let effective_params =
-            if let Some(parameter) = params.get("parameter").and_then(|v| v.as_array()) {
-                if parameter.len() == 1
-                    && parameter[0].get("name").and_then(|v| v.as_str()) == Some("resource")
-                {
-                    // Unwrap the auto-wrapped resource
-                    parameter[0].get("resource").unwrap_or(params)
-                } else {
-                    params
-                }
-            } else {
-                params
-            };
-        let params = effective_params;
+        let params = effective_params(params);
 
         // Support both direct JSON format and FHIR Parameters resource
         let inputs = if let Some(parameter) = params.get("parameter").and_then(|v| v.as_array()) {
@@ -85,29 +68,58 @@ impl ImportOperation {
                 let parts = param.get("part").and_then(|v| v.as_array());
                 let parts = match parts {
                     Some(p) => p,
-                    None => continue,
+                    None => {
+                        return Err(OperationError::InvalidParameters(
+                            "Each input requires a part array".into(),
+                        ));
+                    }
                 };
 
                 let mut resource_type = None;
                 let mut url = None;
+                let mut seen = std::collections::HashSet::new();
 
                 for part in parts {
                     let part_name = part.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    if !seen.insert(part_name) {
+                        return Err(OperationError::InvalidParameters(
+                            "Duplicate import input part".into(),
+                        ));
+                    }
+                    if part.get("valueUrl").is_some() && part.get("valueString").is_some() {
+                        return Err(OperationError::InvalidParameters(
+                            "Import input part has multiple values".into(),
+                        ));
+                    }
                     match part_name {
                         "type" => {
+                            if resource_type.is_some() {
+                                return Err(OperationError::InvalidParameters(
+                                    "Duplicate input type".into(),
+                                ));
+                            }
                             resource_type = part
                                 .get("valueString")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
                         }
                         "url" => {
+                            if url.is_some() {
+                                return Err(OperationError::InvalidParameters(
+                                    "Duplicate input url".into(),
+                                ));
+                            }
                             url = part
                                 .get("valueUrl")
                                 .or_else(|| part.get("valueString"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
                         }
-                        _ => {}
+                        _ => {
+                            return Err(OperationError::InvalidParameters(
+                                "Unknown import input part".into(),
+                            ));
+                        }
                     }
                 }
 
@@ -161,12 +173,25 @@ impl ImportOperation {
             ));
         }
 
+        for input in &inputs {
+            input
+                .resource_type
+                .parse::<octofhir_core::ResourceType>()
+                .map_err(|_| {
+                    OperationError::InvalidParameters("Unknown import resource type".into())
+                })?;
+            parse_source_url(&input.url).map_err(OperationError::InvalidParameters)?;
+        }
         Ok(inputs)
     }
 }
 
 #[async_trait]
 impl OperationHandler for ImportOperation {
+    fn supports_level(&self, level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        self.config.enabled && level == OperationLevel::System
+    }
+
     fn code(&self) -> &str {
         "import"
     }
@@ -175,7 +200,7 @@ impl OperationHandler for ImportOperation {
     async fn handle_system(
         &self,
         state: &AppState,
-        _context: &crate::operations::OperationContext,
+        context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         if !self.config.enabled {
@@ -186,21 +211,62 @@ impl OperationHandler for ImportOperation {
 
         let inputs = Self::parse_inputs(params)?;
 
-        let skip_validation = params
-            .get("skipValidation")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(self.config.default_skip_validation);
-
-        let batch_size = params
-            .get("batchSize")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(self.config.batch_size as u64)
-            .max(1) as usize;
-        let parallelism = params
-            .get("parallelism")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(self.config.max_parallel_resources as u64)
-            .max(1) as usize;
+        if inputs.len() > self.config.max_sources {
+            return Err(OperationError::InvalidParameters(
+                "Import source count exceeds the configured limit".into(),
+            ));
+        }
+        let params = effective_params(params);
+        let skip_validation = match parameter(params, "skipValidation")? {
+            None => self.config.default_skip_validation,
+            Some(value) => value.as_bool().ok_or_else(|| {
+                OperationError::InvalidParameters("skipValidation must be boolean".into())
+            })?,
+        };
+        let batch_size = positive_parameter(params, "batchSize", self.config.batch_size)?;
+        let parallelism =
+            positive_parameter(params, "parallelism", self.config.max_parallel_resources)?;
+        if let Some(format) = parameter(params, "inputFormat")?
+            && !matches!(
+                format.as_str(),
+                Some("application/fhir+ndjson" | "application/ndjson" | "application/x-ndjson")
+            )
+        {
+            return Err(OperationError::InvalidParameters(
+                "Only NDJSON import is implemented".into(),
+            ));
+        }
+        let known_types = state
+            .model_provider
+            .get_resource_types()
+            .await
+            .map_err(|_| OperationError::Internal("Cannot load import resource types".into()))?;
+        for input in &inputs {
+            if !known_types.contains(&input.resource_type) {
+                return Err(OperationError::InvalidParameters(
+                    "Unknown import resource type".into(),
+                ));
+            }
+            let create = context.policy_context(
+                state,
+                octofhir_auth::smart::scopes::FhirOperation::Create,
+                &input.resource_type,
+                None,
+                &Default::default(),
+            );
+            if let Err(error) = create {
+                if !error.is_forbidden() {
+                    return Err(error);
+                }
+                context.policy_context(
+                    state,
+                    octofhir_auth::smart::scopes::FhirOperation::Update,
+                    &input.resource_type,
+                    None,
+                    &Default::default(),
+                )?;
+            }
+        }
 
         // Build serializable input list for the job
         let input_list: Vec<Value> = inputs
@@ -223,10 +289,11 @@ impl OperationHandler for ImportOperation {
         let async_request = AsyncJobRequest {
             request_type: "bulk_import".to_string(),
             method: "POST".to_string(),
-            url: format!("{}/fhir/$import", state.base_url),
+            url: context.request_url().to_owned(),
             body: Some(job_params),
             headers: None,
-            client_id: None,
+            client_id: context.auth().map(|auth| auth.client_id().to_owned()),
+            authorization: context.job_authorization(state)?,
         };
 
         let job_id = state
@@ -249,93 +316,20 @@ impl OperationHandler for ImportOperation {
     }
 }
 
-/// Upsert a resource via INSERT ... ON CONFLICT DO UPDATE.
-/// Handles new resources, existing resources, and previously-deleted resources.
-async fn upsert_resource_with_indexes(
-    pool: &sqlx_postgres::PgPool,
-    _registry: &SearchParameterRegistry,
-    resource_type: &str,
-    id: &str,
-    resource: &Value,
-) -> Result<String, octofhir_storage::StorageError> {
-    let table = SchemaManager::table_name(resource_type);
-    let now = Utc::now();
-    let mut tx = pool.begin().await.map_err(|e| {
-        octofhir_storage::StorageError::transaction_error(format!(
-            "Failed to begin import upsert transaction: {e}"
-        ))
-    })?;
-
-    // Single query: create transaction + upsert resource with meta injection.
-    // ON CONFLICT handles both existing and deleted resources by overwriting.
-    let sql = format!(
-        r#"WITH new_tx AS (
-               SELECT nextval('_transaction_txid_seq') AS txid
-           )
-           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
-           SELECT
-               $1,
-               new_tx.txid,
-               $2,
-               $2,
-               jsonb_set(
-                   jsonb_set(
-                       jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
-                       '{{meta}}', '{{}}'::jsonb, true
-                   ),
-                   '{{meta}}',
-                   jsonb_build_object(
-                       'versionId', new_tx.txid::text,
-                       'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                   ),
-                   true
-               ),
-               'created'
-           FROM new_tx
-           ON CONFLICT (id) DO UPDATE
-           SET txid = EXCLUDED.txid,
-               resource = EXCLUDED.resource,
-               status = 'updated',
-               updated_at = EXCLUDED.updated_at
-           RETURNING id"#
-    );
-
-    let row: (String,) = query_as::<_, (String,)>(AssertSqlSafe(sql.to_string()))
-        .bind(id)
-        .bind(now)
-        .bind(resource)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| {
-            octofhir_storage::StorageError::internal(format!("Failed to upsert resource: {e}"))
-        })?;
-
-    tx.commit().await.map_err(|e| {
-        octofhir_storage::StorageError::transaction_error(format!(
-            "Failed to commit import upsert transaction: {e}"
-        ))
-    })?;
-
-    Ok(row.0)
-}
-
-/// A parsed + validated import line, ready for the batch upsert.
+/// A parsed import line, ready for the shared native write protocol.
 struct PreparedImportResource {
     line_number: usize,
-    id: String,
     resource: Value,
 }
 
 /// Parse + validate one NDJSON line. No database access — writes happen in
-/// `batch_upsert_resources` so a whole batch shares one transaction/commit.
+/// the shared transaction protocol so a chunk has one atomic commit.
 async fn prepare_import_line(
-    state: AppState,
     job_id: Uuid,
     resource_type: String,
     source_url: String,
     line_number: usize,
     line: String,
-    skip_validation: bool,
 ) -> Result<PreparedImportResource, Value> {
     let resource: Value = match serde_json::from_str(&line) {
         Ok(v) => v,
@@ -367,139 +361,83 @@ async fn prepare_import_line(
         }));
     }
 
-    if !skip_validation {
-        let validation_outcome = state.validation_service.validate(&resource).await;
-        if !validation_outcome.valid {
-            let diagnostics = validation_outcome
-                .issues
-                .iter()
-                .map(|issue| issue.diagnostics.clone())
-                .collect::<Vec<_>>()
-                .join("; ");
-
-            return Err(json!({
-                "source": source_url,
-                "line": line_number,
-                "error": format!("Validation failed: {diagnostics}"),
-            }));
-        }
+    if let Some(id) = resource.get("id")
+        && id
+            .as_str()
+            .is_none_or(|id| octofhir_core::validate_id(id).is_err())
+    {
+        return Err(
+            json!({"source":source_url, "line":line_number, "error":"Invalid resource id"}),
+        );
     }
-
-    let id = resource
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .unwrap_or_else(|| Uuid::now_v7().to_string());
-
     Ok(PreparedImportResource {
         line_number,
-        id,
         resource,
     })
 }
 
-/// Upsert a whole batch in ONE transaction: one `_transaction` row, one
-/// UNNEST INSERT ... ON CONFLICT, one commit — instead of a transaction and
-/// commit per resource.
-async fn batch_upsert_resources(
-    pool: &sqlx_postgres::PgPool,
-    resource_type: &str,
-    prepared: &[PreparedImportResource],
-) -> Result<u64, octofhir_storage::StorageError> {
-    let table = SchemaManager::table_name(resource_type);
-    let now = Utc::now();
-
-    let ids: Vec<&str> = prepared.iter().map(|p| p.id.as_str()).collect();
-    let resources: Vec<&Value> = prepared.iter().map(|p| &p.resource).collect();
-
-    let mut tx = pool.begin().await.map_err(|e| {
-        octofhir_storage::StorageError::transaction_error(format!(
-            "Failed to begin import batch transaction: {e}"
-        ))
-    })?;
-
-    let sql = format!(
-        r#"WITH new_tx AS (
-               SELECT nextval('_transaction_txid_seq') AS txid
-           )
-           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
-           SELECT
-               t.id,
-               new_tx.txid,
-               $3,
-               $3,
-               jsonb_set(
-                   jsonb_set(t.resource, '{{id}}', to_jsonb(t.id)),
-                   '{{meta}}',
-                   jsonb_build_object(
-                       'versionId', new_tx.txid::text,
-                       'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                   ),
-                   true
-               ),
-               'created'
-           FROM new_tx, UNNEST($1::text[], $2::jsonb[]) AS t(id, resource)
-           ON CONFLICT (id) DO UPDATE
-           SET txid = EXCLUDED.txid,
-               resource = EXCLUDED.resource,
-               status = 'updated',
-               updated_at = EXCLUDED.updated_at"#
-    );
-
-    let result = query(AssertSqlSafe(sql.to_string()))
-        .bind(&ids)
-        .bind(&resources)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            octofhir_storage::StorageError::internal(format!(
-                "Failed to batch-upsert resources: {e}"
-            ))
-        })?;
-
-    tx.commit().await.map_err(|e| {
-        octofhir_storage::StorageError::transaction_error(format!(
-            "Failed to commit import batch transaction: {e}"
-        ))
-    })?;
-
-    Ok(result.rows_affected())
+#[derive(Clone, Copy)]
+struct ImportSource<'a> {
+    index: usize,
+    resource_type: &'a str,
+    url: &'a str,
 }
 
 async fn process_import_batch(
     state: AppState,
     job_id: Uuid,
-    resource_type: &str,
-    source_url: &str,
+    source: ImportSource<'_>,
     lines: Vec<(usize, String)>,
     parallelism: usize,
     skip_validation: bool,
-) -> (usize, Vec<Value>) {
+) -> Result<(usize, Vec<Value>), String> {
+    let resource_type = source.resource_type;
+    let source_url = source.url;
+    let first_line = lines
+        .first()
+        .map(|(line, _)| *line)
+        .ok_or("Empty import chunk")?;
+    let mut step = crate::async_jobs::CheckpointStep::new(
+        format!("import-{}-{first_line}", source.index),
+        &json!({"source":source_url, "type":resource_type, "lines":lines, "skip_validation":skip_validation}),
+    ).map_err(|error| error.to_string())?;
+    step.count_only = true;
+    crate::operations::OperationContext::for_job(&state, job_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(record) = state
+        .async_job_manager
+        .restore_checkpoint(&step)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        let errors = record["metadata"]["errors"]
+            .as_array()
+            .cloned()
+            .ok_or("Invalid import checkpoint errors")?;
+        return Ok((
+            record["result"]["created"]
+                .as_u64()
+                .and_then(|count| usize::try_from(count).ok())
+                .ok_or("Invalid import checkpoint count")?,
+            errors,
+        ));
+    }
     let concurrency = lines.len().min(parallelism).max(1);
     let mut created = 0usize;
     let mut errors = Vec::new();
 
     // Phase 1 — parse + validate in parallel (no DB writes).
     let mut prepared: Vec<PreparedImportResource> = Vec::with_capacity(lines.len());
-    let mut outcomes = stream::iter(lines.into_iter().map(|(line_number, line)| {
-        let state = state.clone();
-        let resource_type = resource_type.to_string();
-        let source_url = source_url.to_string();
-        async move {
-            prepare_import_line(
-                state,
-                job_id,
-                resource_type,
-                source_url,
-                line_number,
-                line,
-                skip_validation,
-            )
-            .await
-        }
-    }))
-    .buffer_unordered(concurrency);
+    let mut outcomes =
+        stream::iter(lines.into_iter().map(|(line_number, line)| {
+            let resource_type = resource_type.to_string();
+            let source_url = source_url.to_string();
+            async move {
+                prepare_import_line(job_id, resource_type, source_url, line_number, line).await
+            }
+        }))
+        .buffer_unordered(concurrency);
 
     while let Some(outcome) = outcomes.next().await {
         match outcome {
@@ -509,288 +447,491 @@ async fn process_import_batch(
     }
 
     if prepared.is_empty() {
-        return (created, errors);
+        step.metadata = json!({"errors": errors});
+        state
+            .async_job_manager
+            .save_read_checkpoint(
+                &step,
+                &json!({"resourceType":"Bundle", "type":"transaction-response", "entry":[]}),
+                state.config.search.include_limits.max_bytes,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        return Ok((created, errors));
     }
 
-    // Phase 2 — one batched upsert. On batch failure, fall back to per-resource
-    // upserts so the offending line(s) are isolated and reported individually.
-    match batch_upsert_resources(state.db_pool.as_ref(), resource_type, &prepared).await {
-        Ok(_) => created += prepared.len(),
-        Err(batch_err) => {
-            tracing::warn!(
-                job_id = %job_id,
-                error = %batch_err,
-                "Batch upsert failed; retrying resources individually"
-            );
-            for p in &prepared {
-                match upsert_resource_with_indexes(
-                    state.db_pool.as_ref(),
-                    &state.search_config.config().registry,
-                    resource_type,
-                    &p.id,
-                    &p.resource,
+    prepared.sort_by_key(|resource| resource.line_number);
+    let entries = prepared.iter().map(|resource| {
+        let id = resource.resource["id"].as_str();
+        json!({"resource": resource.resource, "request": {
+            "method": if id.is_some() {"PUT"} else {"POST"},
+            "url": id.map_or_else(|| resource_type.to_owned(), |id| format!("{resource_type}/{id}"))
+        }})
+    }).collect();
+    step.metadata = json!({"errors": errors});
+    match crate::handlers::execute_worker_write_chunk(
+        &state,
+        entries,
+        skip_validation,
+        step.clone(),
+    )
+    .await
+    {
+        Ok(result) => {
+            created = if let Some(entries) = result["entry"].as_array() {
+                entries.len()
+            } else {
+                result["created"]
+                    .as_u64()
+                    .and_then(|count| usize::try_from(count).ok())
+                    .ok_or("Invalid restored import count")?
+            };
+        }
+        Err(error) => {
+            // A failed native chunk has rolled back as a group. Report every
+            // affected line; never fall back to weaker individual upserts.
+            for resource in &prepared {
+                errors.push(json!({"source":source_url, "line":resource.line_number,
+                    "error":error.to_operation_outcome()}));
+            }
+            step.metadata = json!({"errors": errors});
+            state
+                .async_job_manager
+                .save_read_checkpoint(
+                    &step,
+                    &json!({"resourceType":"Bundle", "type":"transaction-response", "entry":[]}),
+                    state.config.search.include_limits.max_bytes,
                 )
                 .await
-                {
-                    Ok(_) => created += 1,
-                    Err(e) => {
-                        tracing::warn!(
-                            job_id = %job_id,
-                            line = p.line_number,
-                            error = %e,
-                            "Failed to create resource"
-                        );
-                        errors.push(json!({
-                            "source": source_url,
-                            "line": p.line_number,
-                            "error": format!("Create failed: {e}"),
-                        }));
-                    }
-                }
-            }
+                .map_err(|error| error.to_string())?;
         }
     }
 
-    (created, errors)
+    Ok((created, errors))
 }
 
-/// Execute a bulk import job (called by async job executor)
+// Unwrap only the extractor's single-resource wrapper. Parameters themselves
+// retain typed primitive values and repeats for strict validation.
+fn effective_params(params: &Value) -> &Value {
+    if let Some(parameters) = params["parameter"].as_array()
+        && parameters.len() == 1
+        && parameters[0]["name"] == "resource"
+    {
+        return parameters[0].get("resource").unwrap_or(params);
+    }
+    params
+}
+
+fn parameter<'a>(params: &'a Value, name: &str) -> Result<Option<&'a Value>, OperationError> {
+    let Some(parameters) = params.get("parameter") else {
+        return Ok(params.get(name));
+    };
+    let parameters = parameters
+        .as_array()
+        .ok_or_else(|| OperationError::InvalidParameters("parameter must be an array".into()))?;
+    let mut values = parameters
+        .iter()
+        .filter(|parameter| parameter["name"] == name);
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(OperationError::InvalidParameters(format!(
+            "{name} must occur once"
+        )));
+    }
+    let mut fields = value
+        .as_object()
+        .into_iter()
+        .flat_map(|obj| obj.iter())
+        .filter(|(key, _)| key.starts_with("value"));
+    let result = fields.next().map(|(_, value)| value).ok_or_else(|| {
+        OperationError::InvalidParameters(format!("{name} requires a primitive value"))
+    })?;
+    if fields.next().is_some() {
+        return Err(OperationError::InvalidParameters(format!(
+            "{name} has multiple values"
+        )));
+    }
+    Ok(Some(result))
+}
+
+fn positive_parameter(params: &Value, name: &str, maximum: usize) -> Result<usize, OperationError> {
+    let Some(value) = parameter(params, name)? else {
+        return Ok(maximum);
+    };
+    let number = value
+        .as_u64()
+        .and_then(|number| usize::try_from(number).ok())
+        .filter(|number| *number > 0 && *number <= maximum)
+        .ok_or_else(|| {
+            OperationError::InvalidParameters(format!("{name} must be between 1 and {maximum}"))
+        })?;
+    Ok(number)
+}
+
+fn parse_source_url(value: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(value).map_err(|_| "Invalid import source URL")?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Import requires an HTTP(S) source URL without credentials or fragment".into());
+    }
+    Ok(url)
+}
+
+fn source_client(timeout: std::time::Duration) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(timeout)
+        .read_timeout(timeout)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            let target = attempt.url();
+            if attempt.previous().len() >= 10 {
+                return attempt.error("Import redirect limit exceeded");
+            }
+            if parse_source_url(target.as_str()).is_err()
+                || attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|original| original.origin() != target.origin())
+            {
+                return attempt.error("Import redirect must retain the source origin");
+            }
+            attempt.follow()
+        }))
+        .build()
+        .map_err(|_| "Cannot construct import HTTP client".into())
+}
+
+/// Download and attest the entire source before any chunk is committed. An
+/// unnamed temporary file drops on cancellation; memory is bounded by one HTTP
+/// chunk and later one native transaction batch. A changed suffix or truncated
+/// source is rejected before any further write on recovery.
+async fn download_source(
+    client: &reqwest::Client,
+    url: &str,
+    max_bytes: u64,
+) -> Result<(tokio::fs::File, String), String> {
+    let url = parse_source_url(url)?;
+    let mut response = client.get(url).send().await.map_err(|error| {
+        if error.is_timeout() {
+            "Import source request timed out".into()
+        } else {
+            format!("Import source request failed: {}", error.without_url())
+        }
+    })?;
+    if !response.status().is_success() {
+        return Err(format!("Import source returned HTTP {}", response.status()));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes)
+    {
+        return Err("Import source exceeds the configured byte limit".into());
+    }
+    let file = tempfile::tempfile().map_err(|_| "Cannot create import source spool")?;
+    let mut file = tokio::fs::File::from_std(file);
+    let mut length = 0u64;
+    let mut digest = Sha256::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        if error.is_timeout() {
+            "Import source read timed out".into()
+        } else {
+            format!("Import source read failed: {}", error.without_url())
+        }
+    })? {
+        length = length
+            .checked_add(chunk.len() as u64)
+            .ok_or("Import source size overflow")?;
+        if length > max_bytes {
+            return Err("Import source exceeds the configured byte limit".into());
+        }
+        digest.update(&chunk);
+        file.write_all(&chunk)
+            .await
+            .map_err(|_| "Cannot write import source spool")?;
+    }
+    file.flush()
+        .await
+        .map_err(|_| "Cannot flush import source spool")?;
+    file.rewind()
+        .await
+        .map_err(|_| "Cannot rewind import source spool")?;
+    Ok((file, hex::encode(digest.finalize())))
+}
+
+async fn read_source_line<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    maximum: usize,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut line = Vec::new();
+    loop {
+        let bytes = reader
+            .fill_buf()
+            .await
+            .map_err(|_| "Cannot read import source spool")?;
+        if bytes.is_empty() {
+            return Ok((!line.is_empty()).then_some(line));
+        }
+        let newline = bytes.iter().position(|byte| *byte == b'\n');
+        let count = newline.map_or(bytes.len(), |index| index + 1);
+        if count > maximum.saturating_sub(line.len()) {
+            return Err("NDJSON line exceeds the configured byte limit".into());
+        }
+        line.extend_from_slice(&bytes[..count]);
+        reader.consume(count);
+        if newline.is_some() {
+            return Ok(Some(line));
+        }
+    }
+}
+
+fn collect_errors(
+    details: &mut Vec<Value>,
+    mut errors: Vec<Value>,
+    maximum: usize,
+) -> Result<(), String> {
+    if errors.len() > maximum.saturating_sub(details.len()) {
+        return Err("Import partial failures exceed the configured error limit; committed chunks remain checkpointed".into());
+    }
+    details.append(&mut errors);
+    Ok(())
+}
+
+/// Execute a bulk import job (called by async job executor).
 pub async fn execute_bulk_import(
     state: AppState,
     job_id: Uuid,
     params: Value,
 ) -> Result<Value, String> {
-    tracing::info!(job_id = %job_id, "Starting bulk import execution");
-
-    let inputs = params
-        .get("input")
-        .and_then(|v| v.as_array())
-        .ok_or("Missing input array in job params")?;
-
-    let batch_size = params
-        .get("batch_size")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1000)
-        .max(1) as usize;
-    let parallelism = params
-        .get("parallelism")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(32)
-        .max(1) as usize;
-
-    let skip_validation = params
-        .get("skip_validation")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let mut total_created: usize = 0;
-    let mut total_errors: usize = 0;
-    let mut error_details: Vec<Value> = Vec::new();
-
-    let http_client = reqwest::Client::new();
-
+    let config = &state.config.bulk_import;
+    let inputs = ImportOperation::parse_inputs(&params).map_err(|error| error.to_string())?;
+    if inputs.len() > config.max_sources {
+        return Err("Import source count exceeds the configured limit".into());
+    }
+    let batch_size = positive_parameter(&params, "batch_size", config.batch_size)
+        .map_err(|error| error.to_string())?;
+    let parallelism = positive_parameter(&params, "parallelism", config.max_parallel_resources)
+        .map_err(|error| error.to_string())?;
+    let skip_validation = params["skip_validation"]
+        .as_bool()
+        .ok_or("Missing skip_validation in import job")?;
+    let http_client = source_client(state.config.read_timeout())?;
+    let mut total_created = 0usize;
+    let mut error_details = Vec::new();
     for (idx, input) in inputs.iter().enumerate() {
-        let resource_type = input
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing type in input")?;
-        let url = input
-            .get("url")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing url in input")?;
-
-        tracing::info!(
-            job_id = %job_id,
-            resource_type = %resource_type,
-            url = %url,
-            input_index = idx,
-            "Processing import source"
-        );
-
-        // Fetch NDJSON from URL
-        let response = http_client
-            .get(url)
-            .send()
+        crate::operations::OperationContext::for_job(&state, job_id)
             .await
-            .map_err(|e| format!("Failed to fetch {url}: {e}"))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let msg = format!("Failed to fetch {url}: HTTP {status}");
-            tracing::error!(job_id = %job_id, %msg);
-            error_details.push(json!({
-                "source": url,
-                "error": msg,
-            }));
-            total_errors += 1;
-            continue;
-        }
-
-        let content_length = response.content_length();
-        let mut response = response;
-        let mut buffered = Vec::new();
-        let mut line_number = 0usize;
-        let mut processed_lines = 0usize;
-        let mut source_created = 0usize;
-        let mut bytes_read = 0u64;
-        let mut pending_batch: Vec<(usize, String)> = Vec::with_capacity(batch_size);
-        let progress_start = (idx as f32 / inputs.len() as f32) * 100.0;
-        let progress_end = ((idx + 1) as f32 / inputs.len() as f32) * 100.0;
-
-        while let Some(chunk) = response
-            .chunk()
+            .map_err(|error| error.to_string())?;
+        tracing::info!(%job_id, resource_type = %input.resource_type, input_index = idx, "Downloading import source");
+        let (file, digest) =
+            download_source(&http_client, &input.url, config.max_source_bytes).await?;
+        let attestation = crate::async_jobs::CheckpointStep::new(format!("import-source-{idx}"), &json!({"url":input.url,"type":input.resource_type,"sha256":digest,"batch_size":batch_size,"max_batch_bytes":config.max_batch_bytes,"skip_validation":skip_validation})).map_err(|error| error.to_string())?;
+        if state
+            .async_job_manager
+            .restore_checkpoint(&attestation)
             .await
-            .map_err(|e| format!("Failed to read chunk from {url}: {e}"))?
+            .map_err(|error| error.to_string())?
+            .is_none()
         {
-            bytes_read = bytes_read.saturating_add(chunk.len() as u64);
-
-            buffered.extend_from_slice(&chunk);
-
-            while let Some(newline_pos) = buffered.iter().position(|byte| *byte == b'\n') {
-                let mut line_bytes: Vec<u8> = buffered.drain(..=newline_pos).collect();
-                if line_bytes.last() == Some(&b'\n') {
-                    line_bytes.pop();
-                }
-                if line_bytes.last() == Some(&b'\r') {
-                    line_bytes.pop();
-                }
-
-                let line = match String::from_utf8(line_bytes) {
-                    Ok(line) => line,
-                    Err(e) => {
-                        line_number += 1;
-                        processed_lines += 1;
-                        tracing::warn!(
-                            job_id = %job_id,
-                            line = line_number,
-                            error = %e,
-                            "Invalid UTF-8 line, skipping"
-                        );
-                        error_details.push(json!({
-                            "source": url,
-                            "line": line_number,
-                            "error": format!("Invalid UTF-8: {e}"),
-                        }));
-                        total_errors += 1;
-                        continue;
-                    }
-                };
-
-                if line.trim().is_empty() {
-                    continue;
-                }
-
-                line_number += 1;
-                processed_lines += 1;
-                pending_batch.push((line_number, line));
-
-                if pending_batch.len() >= batch_size {
-                    let (batch_created, mut batch_errors) = process_import_batch(
-                        state.clone(),
-                        job_id,
-                        resource_type,
-                        url,
-                        std::mem::take(&mut pending_batch),
-                        parallelism,
-                        skip_validation,
-                    )
-                    .await;
-                    source_created += batch_created;
-                    total_errors += batch_errors.len();
-                    error_details.append(&mut batch_errors);
-
-                    let progress_pct = if let Some(total_bytes) = content_length {
-                        if total_bytes > 0 {
-                            progress_start
-                                + ((bytes_read as f32 / total_bytes as f32)
-                                    * (progress_end - progress_start))
-                        } else {
-                            progress_end
-                        }
-                    } else {
-                        progress_start
-                    };
-
-                    if let Err(e) = state
-                        .async_job_manager
-                        .update_progress(job_id, progress_pct)
-                        .await
-                    {
-                        tracing::warn!(
-                            job_id = %job_id,
-                            error = %e,
-                            "Failed to update progress"
-                        );
-                    }
-                }
-            }
+            state
+                .async_job_manager
+                .save_read_checkpoint(
+                    &attestation,
+                    &Value::Null,
+                    state.config.search.include_limits.max_bytes,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
         }
-
-        if !buffered.iter().all(|byte| byte.is_ascii_whitespace()) {
-            line_number += 1;
-            processed_lines += 1;
-
-            if buffered.last() == Some(&b'\r') {
-                buffered.pop();
+        let mut reader = tokio::io::BufReader::new(file);
+        let mut line_number = 0usize;
+        let mut pending = Vec::with_capacity(batch_size);
+        let mut pending_bytes = 0usize;
+        let mut source_created = 0usize;
+        while let Some(bytes) = read_source_line(&mut reader, config.max_line_bytes).await? {
+            line_number = line_number
+                .checked_add(1)
+                .ok_or("Import line number overflow")?;
+            if bytes.iter().all(u8::is_ascii_whitespace) {
+                continue;
             }
-
-            let trailing_line = String::from_utf8(buffered)
-                .map_err(|e| format!("Invalid UTF-8 in trailing NDJSON line from {url}: {e}"))?;
-
-            pending_batch.push((line_number, trailing_line));
+            let line = String::from_utf8(bytes)
+                .map_err(|_| format!("Input {idx}, line {line_number}: NDJSON must be UTF-8"))?;
+            if !pending.is_empty()
+                && (pending.len() == batch_size
+                    || line.len() > config.max_batch_bytes.saturating_sub(pending_bytes))
+            {
+                let (created, errors) = process_import_batch(
+                    state.clone(),
+                    job_id,
+                    ImportSource {
+                        index: idx,
+                        resource_type: &input.resource_type,
+                        url: &input.url,
+                    },
+                    std::mem::take(&mut pending),
+                    parallelism,
+                    skip_validation,
+                )
+                .await?;
+                source_created += created;
+                collect_errors(&mut error_details, errors, config.max_errors)?;
+                pending_bytes = 0;
+            }
+            pending_bytes += line.len();
+            pending.push((line_number, line));
         }
-
-        if !pending_batch.is_empty() {
-            let (batch_created, mut batch_errors) = process_import_batch(
+        if !pending.is_empty() {
+            let (created, errors) = process_import_batch(
                 state.clone(),
                 job_id,
-                resource_type,
-                url,
-                std::mem::take(&mut pending_batch),
+                ImportSource {
+                    index: idx,
+                    resource_type: &input.resource_type,
+                    url: &input.url,
+                },
+                pending,
                 parallelism,
                 skip_validation,
             )
-            .await;
-            source_created += batch_created;
-            total_errors += batch_errors.len();
-            error_details.append(&mut batch_errors);
+            .await?;
+            source_created += created;
+            collect_errors(&mut error_details, errors, config.max_errors)?;
         }
-
         total_created += source_created;
-
-        if let Err(e) = state
+        state
             .async_job_manager
-            .update_progress(job_id, progress_end)
+            .update_progress(job_id, (idx + 1) as f32 / inputs.len() as f32)
             .await
-        {
-            tracing::warn!(
-                job_id = %job_id,
-                error = %e,
-                "Failed to update progress"
+            .map_err(|error| error.to_string())?;
+        tracing::info!(%job_id, input_index = idx, created = source_created, "Completed native import source");
+    }
+    let result = json!({"total_created":total_created, "total_errors":error_details.len(), "errors":error_details});
+    crate::async_jobs::ensure_result_budget(&result, state.config.search.include_limits.max_bytes)
+        .map_err(|error| error.to_string())?;
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    #[test]
+    fn import_parameters_reject_invalid_sources_duplicates_and_unbounded_options() {
+        for url in [
+            "file:///etc/passwd",
+            "ftp://example.org/a",
+            "https://user:pass@example.org/a",
+            "https://example.org/a#part",
+            "not a url",
+        ] {
+            assert!(
+                ImportOperation::parse_inputs(&json!({"input":[{"type":"Patient","url":url}]}))
+                    .is_err()
             );
         }
-
-        tracing::info!(
-            job_id = %job_id,
-            resource_type = %resource_type,
-            processed_lines = processed_lines,
-            created = source_created,
-            "Completed streaming NDJSON import source"
+        let input = json!({"resourceType":"Parameters", "parameter":[{"name":"input","part":[{"name":"type","valueString":"Patient"},{"name":"url","valueUrl":"https://example.org/a"}]}]});
+        assert_eq!(ImportOperation::parse_inputs(&input).unwrap().len(), 1);
+        let mut duplicate = input.clone();
+        duplicate["parameter"][0]["part"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"type","valueString":"Observation"}));
+        assert!(ImportOperation::parse_inputs(&duplicate).is_err());
+        for number in [json!(0), json!(-1), json!(1001), json!("10"), json!(1.5)] {
+            assert!(positive_parameter(&json!({"batchSize":number}), "batchSize", 1000).is_err());
+        }
+        assert_eq!(
+            positive_parameter(
+                &json!({"parameter":[{"name":"batchSize","valueInteger":10}]}),
+                "batchSize",
+                1000
+            )
+            .unwrap(),
+            10
         );
+        assert!(parameter(&json!({"parameter":[{"name":"skipValidation","valueBoolean":true},{"name":"skipValidation","valueBoolean":false}]}), "skipValidation").is_err());
     }
 
-    let result = json!({
-        "total_created": total_created,
-        "total_errors": total_errors,
-        "errors": error_details,
-    });
-
-    tracing::info!(
-        job_id = %job_id,
-        total_created = total_created,
-        total_errors = total_errors,
-        "Bulk import completed"
-    );
-
-    Ok(result)
+    #[tokio::test]
+    async fn download_attests_full_input_and_bounds_bytes_redirects_and_timeouts() {
+        let source = MockServer::start().await;
+        let other = MockServer::start().await;
+        let body = "{\"resourceType\":\"Patient\"}\n\n";
+        Mock::given(method("GET"))
+            .and(path("/data"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&source)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/same"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/data"))
+            .mount(&source)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/other"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", format!("{}/data", other.uri())),
+            )
+            .mount(&source)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/slow"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(300)))
+            .mount(&source)
+            .await;
+        let client = source_client(Duration::from_millis(100)).unwrap();
+        let (file, digest) = download_source(&client, &format!("{}/same", source.uri()), 1000)
+            .await
+            .unwrap();
+        assert_eq!(digest, hex::encode(Sha256::digest(body.as_bytes())));
+        let mut reader = tokio::io::BufReader::with_capacity(2, file);
+        assert_eq!(
+            read_source_line(&mut reader, 100).await.unwrap().unwrap(),
+            b"{\"resourceType\":\"Patient\"}\n"
+        );
+        assert_eq!(
+            read_source_line(&mut reader, 100).await.unwrap().unwrap(),
+            b"\n"
+        );
+        assert!(read_source_line(&mut reader, 100).await.unwrap().is_none());
+        assert!(
+            download_source(&client, &format!("{}/data", source.uri()), 1)
+                .await
+                .is_err()
+        );
+        assert!(
+            download_source(&client, &format!("{}/other", source.uri()), 1000)
+                .await
+                .is_err()
+        );
+        assert!(other.received_requests().await.unwrap().is_empty());
+        assert!(
+            download_source(
+                &client,
+                &format!("{}/slow?secret=never-log", source.uri()),
+                1000
+            )
+            .await
+            .unwrap_err()
+            .contains("timed out")
+        );
+        let mut oversized = tokio::io::BufReader::with_capacity(2, &b"abcde\n"[..]);
+        assert!(read_source_line(&mut oversized, 4).await.is_err());
+        let mut trailing = tokio::io::BufReader::with_capacity(2, &b"abcd"[..]);
+        assert_eq!(
+            read_source_line(&mut trailing, 4).await.unwrap().unwrap(),
+            b"abcd"
+        );
+    }
 }

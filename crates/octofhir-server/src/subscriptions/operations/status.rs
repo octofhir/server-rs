@@ -3,6 +3,8 @@
 //! Returns the current status of a subscription, including delivery statistics
 //! and error information.
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
@@ -19,6 +21,10 @@ pub struct StatusOperation;
 
 #[async_trait]
 impl OperationHandler for StatusOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        level == OperationLevel::Instance && resource_type == Some("Subscription")
+    }
+
     fn code(&self) -> &str {
         "status"
     }

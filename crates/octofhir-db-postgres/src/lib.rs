@@ -49,6 +49,7 @@
 //! - [`queries`]: SQL query implementations
 //! - [`migrations`]: Database migration management
 
+mod bootstrap_lock;
 mod config;
 mod error;
 mod fcm_storage;
@@ -68,6 +69,7 @@ pub mod migrations;
 pub mod queries;
 
 // Re-export main types
+pub use bootstrap_lock::BootstrapLock;
 pub use config::PostgresConfig;
 pub use error::{PostgresError, Result};
 pub use fcm_storage::{FhirSchemaInfo, FhirSchemaRecord, PostgresPackageStore};

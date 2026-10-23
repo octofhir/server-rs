@@ -15,7 +15,8 @@ use crate::config::BulkExportConfig;
 use crate::operations::bulk::NdjsonWriter;
 use crate::operations::{OperationError, OperationHandler};
 use crate::server::AppState;
-use octofhir_sof::{ViewDefinition, ViewRunner};
+use octofhir_sof::{CompiledView, ViewDefinition};
+use octofhir_storage::SearchParams;
 
 /// The ViewDefinition $export operation handler.
 ///
@@ -100,12 +101,25 @@ impl ViewDefinitionExportOperation {
     }
 
     /// Submit an export job and return the status URL.
-    async fn submit_export(
+    pub(crate) async fn submit_export(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         view_def: ViewDefinition,
-        request_url: &str,
+        _request_url: &str,
     ) -> Result<Value, OperationError> {
+        self.check_enabled()?;
+        let request_url = context.request_url();
+        context
+            .search(
+                state,
+                &view_def.resource,
+                &SearchParams::new().with_count(1),
+            )
+            .await?;
+        CompiledView::compile(&view_def).await.map_err(|error| {
+            OperationError::InvalidParameters(format!("Invalid ViewDefinition: {error}"))
+        })?;
         // Store job parameters as JSON for the async job
         let job_params = json!({
             "type": "viewdefinition_export",
@@ -126,7 +140,8 @@ impl ViewDefinitionExportOperation {
             url: request_url.to_string(),
             body: Some(job_params),
             headers: None,
-            client_id: None,
+            client_id: context.auth().map(|auth| auth.client_id().to_owned()),
+            authorization: context.job_authorization(state)?,
         };
 
         let job_id = state
@@ -145,7 +160,7 @@ impl ViewDefinitionExportOperation {
         Ok(json!({
             "status": "accepted",
             "job_id": job_id.to_string(),
-            "status_url": format!("{}/_async-status/{}", state.base_url, job_id),
+            "status_url": format!("{}/_async-status/{}", state.fhir_base_url(), job_id),
         }))
     }
 }
@@ -161,7 +176,7 @@ impl OperationHandler for ViewDefinitionExportOperation {
     async fn handle_type(
         &self,
         state: &AppState,
-        _context: &crate::operations::OperationContext,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -179,13 +194,14 @@ impl OperationHandler for ViewDefinitionExportOperation {
         let view_def = self.extract_view_definition(params)?;
         let request_url = format!("{}/fhir/ViewDefinition/$export", state.base_url);
 
-        self.submit_export(state, view_def, &request_url).await
+        self.submit_export(state, context, view_def, &request_url)
+            .await
     }
 
     async fn handle_instance(
         &self,
         state: &AppState,
-        _context: &crate::operations::OperationContext,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         _params: &Value,
@@ -201,11 +217,9 @@ impl OperationHandler for ViewDefinitionExportOperation {
         }
 
         // Load the ViewDefinition from storage
-        let storage = &state.storage;
-        let stored = storage
-            .read("ViewDefinition", id)
-            .await
-            .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
+        let stored = context
+            .read(state, "ViewDefinition", id)
+            .await?
             .ok_or_else(|| OperationError::NotFound(format!("ViewDefinition/{} not found", id)))?;
 
         let view_def = ViewDefinition::from_json(&stored.resource).map_err(|e| {
@@ -214,7 +228,8 @@ impl OperationHandler for ViewDefinitionExportOperation {
 
         let request_url = format!("{}/fhir/ViewDefinition/{}/$export", state.base_url, id);
 
-        self.submit_export(state, view_def, &request_url).await
+        self.submit_export(state, context, view_def, &request_url)
+            .await
     }
 }
 
@@ -260,63 +275,85 @@ pub async fn execute_viewdefinition_export(
         "Executing ViewDefinition export"
     );
 
-    // Update progress: starting
-    if let Err(e) = state.async_job_manager.update_progress(job_id, 0.1).await {
-        tracing::warn!(error = %e, "Failed to update job progress");
+    if batch_size == 0 || max_resources_per_file == 0 {
+        return Err("Export batch and file limits must be positive".into());
     }
-
-    // Create view runner
-    let pool = state.db_pool.as_ref().clone();
-    let runner = ViewRunner::new(pool);
-
-    // Execute the view
-    let result = runner
-        .run(&view_def)
+    let started_at = Utc::now();
+    let compiled = CompiledView::compile(&view_def)
         .await
-        .map_err(|e| format!("Failed to execute ViewDefinition: {}", e))?;
-
-    // Update progress: query complete
-    if let Err(e) = state.async_job_manager.update_progress(job_id, 0.5).await {
-        tracing::warn!(error = %e, "Failed to update job progress");
-    }
-
-    // Create NDJSON writer
+        .map_err(|error| format!("Invalid ViewDefinition: {error}"))?;
+    let view_name = view_def.name.as_deref().unwrap_or("view");
     let mut writer = NdjsonWriter::new(export_path, job_id, max_resources_per_file)
         .await
-        .map_err(|e| format!("Failed to create NDJSON writer: {}", e))?;
-
-    let view_name = view_def.name.as_deref().unwrap_or("view");
-    let rows = result.to_json_array();
-    let total_rows = rows.len();
-
-    tracing::info!(
-        job_id = %job_id,
-        view_name = %view_name,
-        total_rows = total_rows,
-        "Writing ViewDefinition results to NDJSON"
-    );
-
-    // Write rows in batches
-    let mut written = 0;
-    for (i, row) in rows.iter().enumerate() {
-        writer
-            .write_resource(view_name, row)
+        .map_err(|error| format!("Failed to create NDJSON writer: {error}"))?;
+    let page_size =
+        u32::try_from(batch_size.min(1000)).map_err(|_| "Export batch size is too large")?;
+    let mut offset = 0_u32;
+    let mut written = 0_usize;
+    loop {
+        // Reconstruct delegation for each page so current users and client
+        // activation participate in every native source query.
+        let context = crate::operations::OperationContext::for_job(&state, job_id)
             .await
-            .map_err(|e| format!("Failed to write row: {}", e))?;
-
-        written += 1;
-
-        // Update progress periodically
-        if i % batch_size == 0 && total_rows > 0 {
-            let progress = 0.5 + (0.4 * (i as f32 / total_rows as f32));
-            if let Err(e) = state
-                .async_job_manager
-                .update_progress(job_id, progress)
-                .await
-            {
-                tracing::warn!(error = %e, "Failed to update job progress");
-            }
+            .map_err(|error| error.to_string())?;
+        let mut search = SearchParams::new()
+            .with_count(page_size)
+            .with_sort("_id", false);
+        search.offset = Some(offset);
+        search.parameters.insert(
+            "_lastUpdated".into(),
+            vec![format!("le{}", started_at.to_rfc3339())],
+        );
+        let page = context
+            .search(&state, &view_def.resource, &search)
+            .await
+            .map_err(|error| error.to_string())?;
+        let fetched = page.entries.len();
+        if page.has_more && fetched == 0 {
+            return Err("View source pagination made no progress".into());
         }
+        for entry in page.entries {
+            let data = compiled
+                .execute_resource(&entry.resource)
+                .await
+                .map_err(|error| format!("Failed to execute ViewDefinition: {error}"))?;
+            let result = octofhir_sof::ViewResult {
+                row_count: data.len(),
+                data,
+                columns: compiled.columns().to_vec(),
+            };
+            let rows = result.to_json_array();
+            let limits = state.config.search.include_limits;
+            if rows.len() > limits.max_resources
+                || serde_json::to_vec(&rows)
+                    .map_err(|error| error.to_string())?
+                    .len()
+                    > limits.max_bytes
+            {
+                return Err(
+                    "View projection exceeds the configured resource or byte budget".into(),
+                );
+            }
+            writer
+                .write_resources(view_name, &rows)
+                .await
+                .map_err(|error| format!("Failed to write view rows: {error}"))?;
+            written = written
+                .checked_add(rows.len())
+                .ok_or("View row count overflow")?;
+            tokio::task::yield_now().await;
+        }
+        state
+            .async_job_manager
+            .update_progress(job_id, 0.5)
+            .await
+            .map_err(|error| error.to_string())?;
+        if !page.has_more {
+            break;
+        }
+        offset = offset
+            .checked_add(u32::try_from(fetched).map_err(|_| "View source pagination overflow")?)
+            .ok_or("View source pagination overflow")?;
     }
 
     // Finish writing and get file information
@@ -342,6 +379,8 @@ pub async fn execute_viewdefinition_export(
         }
     }
 
+    output.sort_by(|left, right| left["url"].as_str().cmp(&right["url"].as_str()));
+
     tracing::info!(
         job_id = %job_id,
         view_name = %view_name,
@@ -351,9 +390,9 @@ pub async fn execute_viewdefinition_export(
     );
 
     Ok(json!({
-        "transactionTime": Utc::now().to_rfc3339(),
+        "transactionTime": started_at.to_rfc3339(),
         "request": request_url,
-        "requiresAccessToken": true,
+        "requiresAccessToken": crate::operations::OperationContext::for_job(&state, job_id).await.map_err(|error| error.to_string())?.auth().is_some(),
         "output": output,
         "error": [],
         "extension": [{

@@ -260,38 +260,53 @@ fn create_test_registry() -> Arc<SearchParameterRegistry> {
     let registry = SearchParameterRegistry::new();
 
     // Add Patient search parameters
-    registry.register(SearchParameter::new(
-        "name",
-        "http://hl7.org/fhir/SearchParameter/Patient-name",
-        SearchParameterType::String,
-        vec!["Patient".to_string()],
-    ));
-    registry.register(SearchParameter::new(
-        "birthdate",
-        "http://hl7.org/fhir/SearchParameter/Patient-birthdate",
-        SearchParameterType::Date,
-        vec!["Patient".to_string()],
-    ));
-    registry.register(SearchParameter::new(
-        "gender",
-        "http://hl7.org/fhir/SearchParameter/Patient-gender",
-        SearchParameterType::Token,
-        vec!["Patient".to_string()],
-    ));
+    registry.register(
+        SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name"),
+    );
+    registry.register(
+        SearchParameter::new(
+            "birthdate",
+            "http://hl7.org/fhir/SearchParameter/Patient-birthdate",
+            SearchParameterType::Date,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.birthDate"),
+    );
+    registry.register(
+        SearchParameter::new(
+            "gender",
+            "http://hl7.org/fhir/SearchParameter/Patient-gender",
+            SearchParameterType::Token,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.gender"),
+    );
 
     // Add Observation search parameters
-    registry.register(SearchParameter::new(
-        "code",
-        "http://hl7.org/fhir/SearchParameter/Observation-code",
-        SearchParameterType::Token,
-        vec!["Observation".to_string()],
-    ));
-    registry.register(SearchParameter::new(
-        "patient",
-        "http://hl7.org/fhir/SearchParameter/Observation-patient",
-        SearchParameterType::Reference,
-        vec!["Observation".to_string()],
-    ));
+    registry.register(
+        SearchParameter::new(
+            "code",
+            "http://hl7.org/fhir/SearchParameter/Observation-code",
+            SearchParameterType::Token,
+            vec!["Observation".to_string()],
+        )
+        .with_expression("Observation.code"),
+    );
+    registry.register(
+        SearchParameter::new(
+            "patient",
+            "http://hl7.org/fhir/SearchParameter/Observation-patient",
+            SearchParameterType::Reference,
+            vec!["Observation".to_string()],
+        )
+        .with_expression("Observation.subject.where(resolve() is Patient)"),
+    );
 
     Arc::new(registry)
 }
@@ -1181,26 +1196,35 @@ fn create_test_registry_with_targets() -> Arc<SearchParameterRegistry> {
     let registry = SearchParameterRegistry::new();
 
     // Add Patient search parameters
-    registry.register(SearchParameter::new(
-        "name",
-        "http://hl7.org/fhir/SearchParameter/Patient-name",
-        SearchParameterType::String,
-        vec!["Patient".to_string()],
-    ));
-    registry.register(SearchParameter::new(
-        "gender",
-        "http://hl7.org/fhir/SearchParameter/Patient-gender",
-        SearchParameterType::Token,
-        vec!["Patient".to_string()],
-    ));
+    registry.register(
+        SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name"),
+    );
+    registry.register(
+        SearchParameter::new(
+            "gender",
+            "http://hl7.org/fhir/SearchParameter/Patient-gender",
+            SearchParameterType::Token,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.gender"),
+    );
 
     // Add Observation search parameters with targets
-    registry.register(SearchParameter::new(
-        "code",
-        "http://hl7.org/fhir/SearchParameter/Observation-code",
-        SearchParameterType::Token,
-        vec!["Observation".to_string()],
-    ));
+    registry.register(
+        SearchParameter::new(
+            "code",
+            "http://hl7.org/fhir/SearchParameter/Observation-code",
+            SearchParameterType::Token,
+            vec!["Observation".to_string()],
+        )
+        .with_expression("Observation.code"),
+    );
     registry.register(
         SearchParameter::new(
             "subject",
@@ -1208,6 +1232,7 @@ fn create_test_registry_with_targets() -> Arc<SearchParameterRegistry> {
             SearchParameterType::Reference,
             vec!["Observation".to_string()],
         )
+        .with_expression("Observation.subject")
         .with_targets(vec!["Patient".to_string()]),
     );
     registry.register(
@@ -1217,6 +1242,7 @@ fn create_test_registry_with_targets() -> Arc<SearchParameterRegistry> {
             SearchParameterType::Reference,
             vec!["Observation".to_string()],
         )
+        .with_expression("Observation.subject.where(resolve() is Patient)")
         .with_targets(vec!["Patient".to_string()]),
     );
 
@@ -1474,12 +1500,15 @@ async fn test_chained_reference_resolution() {
     let registry = SearchParameterRegistry::new();
 
     // Add Patient search parameters
-    registry.register(SearchParameter::new(
-        "name",
-        "http://hl7.org/fhir/SearchParameter/Patient-name",
-        SearchParameterType::String,
-        vec!["Patient".to_string()],
-    ));
+    registry.register(
+        SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name"),
+    );
     registry.register(
         SearchParameter::new(
             "organization",
@@ -1487,16 +1516,20 @@ async fn test_chained_reference_resolution() {
             SearchParameterType::Reference,
             vec!["Patient".to_string()],
         )
+        .with_expression("Patient.managingOrganization")
         .with_targets(vec!["Organization".to_string()]),
     );
 
     // Add Organization search parameters
-    registry.register(SearchParameter::new(
-        "name",
-        "http://hl7.org/fhir/SearchParameter/Organization-name",
-        SearchParameterType::String,
-        vec!["Organization".to_string()],
-    ));
+    registry.register(
+        SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Organization-name",
+            SearchParameterType::String,
+            vec!["Organization".to_string()],
+        )
+        .with_expression("Organization.name"),
+    );
 
     // Add Observation search parameters
     registry.register(
@@ -1506,6 +1539,7 @@ async fn test_chained_reference_resolution() {
             SearchParameterType::Reference,
             vec!["Observation".to_string()],
         )
+        .with_expression("Observation.subject")
         .with_targets(vec!["Patient".to_string()]),
     );
 
@@ -2231,7 +2265,10 @@ async fn test_schema_builds_with_converted_schemas() {
         .unwrap()
         .join(".fhir/packages/hl7.fhir.r4.core-4.0.1/package");
 
-    if !package_path.exists() {
+    if !package_path
+        .join("StructureDefinition-Patient.json")
+        .exists()
+    {
         println!("Package not found at {:?}, skipping test", package_path);
         return;
     }

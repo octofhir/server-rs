@@ -17,13 +17,14 @@ use std::sync::Arc;
 use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::{Value, json};
-use testcontainers::{ContainerAsync, runners::AsyncRunner};
+use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tokio::task::JoinHandle;
 
 /// Helper to start a PostgreSQL container and return the connection URL
 async fn start_postgres() -> (ContainerAsync<Postgres>, String) {
     let container = Postgres::default()
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("start postgres container");

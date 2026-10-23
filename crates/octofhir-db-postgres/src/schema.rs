@@ -19,20 +19,7 @@ use crate::error::{PostgresError, Result};
 /// Archiving is statement-level: one set-based insert per statement, reading the
 /// old rows from a transition table. A Bundle updating 200 rows issues a single
 /// `UPDATE ... FROM UNNEST(...)`, so the whole batch archives in one insert.
-const ARCHIVE_FN_SQL: &str = r#"
-    CREATE OR REPLACE FUNCTION archive_to_history()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        EXECUTE format(
-            'INSERT INTO %I_history (id, txid, created_at, updated_at, resource, status)
-             SELECT id, txid, created_at, updated_at, resource, status FROM old_rows
-             ON CONFLICT (id, txid) DO NOTHING',
-            TG_TABLE_NAME
-        );
-        RETURN NULL;
-    END;
-    $$ LANGUAGE plpgsql;
-"#;
+const ARCHIVE_FN_SQL: &str = include_str!("../sql/resource_history.sql");
 
 /// Extracts `meta.profile` as a `text[]`, or NULL when the resource declares no
 /// profiles. Backs the generated `profile` column on every resource table.
@@ -56,6 +43,10 @@ const META_PROFILES_FN_SQL: &str = r#"
         END
     $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 "#;
+
+const RESOURCE_WRITE_METADATA_FN_SQL: &str = include_str!("../sql/resource_write_metadata.sql");
+
+const RESOURCE_WRITE_GATE_FN_SQL: &str = include_str!("../sql/resource_write_gate.sql");
 
 /// Manages the database schema for FHIR resources.
 ///
@@ -189,7 +180,7 @@ impl SchemaManager {
     fn build_resource_schema_sql(&self, resource_type: &str) -> String {
         let table = Self::table_name(resource_type);
         let history_table = format!("{}_history", table);
-        let is_internal = Self::is_internal_resource(&table);
+        let skips_history = Self::skips_history(&table);
         let is_gateway = Self::is_gateway_resource(&table);
         let is_policy = Self::is_policy_resource(&table);
 
@@ -230,21 +221,29 @@ impl SchemaManager {
             );\n"
         ));
 
+        // Statement triggers cover direct/autocommit SQL paths too. Row locks
+        // in the transaction API acquire this same shared gate before selecting.
+        sql.push_str(&format!(
+            "DROP TRIGGER IF EXISTS octofhir_write_gate ON \"{table}\";\n\
+             CREATE TRIGGER octofhir_write_gate BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON \"{table}\" \
+             FOR EACH STATEMENT EXECUTE FUNCTION octofhir_guard_resource_write();\n"
+        ));
+
         // Update trigger (drop + create)
         let update_trigger = format!("{}_update_timestamp", table);
         sql.push_str(&format!(
             "DROP TRIGGER IF EXISTS \"{update_trigger}\" ON \"{table}\";\n\
-             CREATE TRIGGER \"{update_trigger}\" BEFORE UPDATE ON \"{table}\" \
-             FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();\n"
+             CREATE TRIGGER \"{update_trigger}\" BEFORE INSERT OR UPDATE ON \"{table}\" \
+             FOR EACH ROW EXECUTE FUNCTION octofhir_set_resource_metadata();\n"
         ));
 
-        // History table + triggers (skipped for internal resources).
+        // History table + triggers (skipped for high-churn internal resources).
         //
         // One statement-level trigger per event, each with a transition table,
         // so a batched write archives in a single set-based insert. UPDATE and
         // DELETE need separate triggers: a trigger declaring `REFERENCING` may
         // only name one event.
-        if !is_internal {
+        if !skips_history {
             sql.push_str(&format!(
                 "CREATE TABLE IF NOT EXISTS \"{history_table}\" (\n\
                     id TEXT NOT NULL,\n\
@@ -257,10 +256,23 @@ impl SchemaManager {
                 );\n\
                 ALTER TABLE \"{history_table}\" SET (toast_tuple_target = 8160);\n"
             ));
+            // Compact range summaries bound resurrection checks independently
+            // of batch width. History is append-only; current HOT eligibility
+            // and its deliberate absence of timestamp indexes are unchanged.
+            sql.push_str(&format!(
+                "CREATE INDEX IF NOT EXISTS \"idx_{table}_history_revision_brin\" \
+                 ON \"{history_table}\" USING BRIN (txid, updated_at) \
+                 WITH (pages_per_range = 32);\n"
+            ));
             let update_hist = format!("{}_history_update", table);
             let delete_hist = format!("{}_history_delete", table);
+            let insert_guard = format!("{}_insert_revision_guard", table);
             sql.push_str(&format!(
-                "DROP TRIGGER IF EXISTS \"{update_hist}\" ON \"{table}\";\n\
+                "DROP TRIGGER IF EXISTS \"{insert_guard}\" ON \"{table}\";\n\
+                 CREATE TRIGGER \"{insert_guard}\" AFTER INSERT ON \"{table}\" \
+                 REFERENCING NEW TABLE AS new_rows \
+                 FOR EACH STATEMENT EXECUTE FUNCTION octofhir_guard_insert_revisions();\n\
+                 DROP TRIGGER IF EXISTS \"{update_hist}\" ON \"{table}\";\n\
                  CREATE TRIGGER \"{update_hist}\" AFTER UPDATE ON \"{table}\" \
                  REFERENCING OLD TABLE AS old_rows \
                  FOR EACH STATEMENT EXECUTE FUNCTION archive_to_history();\n\
@@ -275,8 +287,8 @@ impl SchemaManager {
         // index on `updated_at` alone costs every table its HOT updates, since
         // the timestamp trigger touches the column on every write.
         //
-        // History carries only its `(id, txid)` primary key, which also serves
-        // lookups by `id` as the leading column.
+        // History's `(id, txid)` primary key serves version/identity lookups;
+        // its compact BRIN above bounds revision checks on appended history.
 
         // Whole-document GIN — on every table unless the deployment narrowed the
         // set. It is what keeps a search on a parameter outside
@@ -364,6 +376,14 @@ impl SchemaManager {
             .execute(pool)
             .await
             .map_err(PostgresError::from)?;
+        sqlx_core::raw_sql::raw_sql(AssertSqlSafe(RESOURCE_WRITE_METADATA_FN_SQL.to_string()))
+            .execute(pool)
+            .await
+            .map_err(PostgresError::from)?;
+        sqlx_core::query::query(AssertSqlSafe(RESOURCE_WRITE_GATE_FN_SQL.to_string()))
+            .execute(pool)
+            .await
+            .map_err(PostgresError::from)?;
         Ok(())
     }
 
@@ -377,27 +397,21 @@ impl SchemaManager {
         table == "accesspolicy"
     }
 
-    /// Returns true if this is an internal resource that should not have history tables.
-    /// These resources are managed differently and don't need FHIR-style versioning.
-    fn is_internal_resource(table: &str) -> bool {
-        matches!(
-            table,
-            "user"
-                | "client"
-                | "session"
-                | "authsession" // SSO sessions - no history needed
-                | "accesspolicy"
-                | "refreshtoken"
-                | "revokedtoken"
-                | "identityprovider"
-                | "role"
-                | "app"
-                | "customoperation"
-                | "appsubscription"
-                | "notificationlog"
-                | "notificationprovider"
-                | "notificationtemplate"
-        )
+    /// High-churn internal tables that keep no history.
+    ///
+    /// Auth and configuration resources (User, Client, AccessPolicy, ...) are
+    /// served through the FHIR API, so vread/history must work for them. Only
+    /// token, SSO-session and delivery-log rows, written on every login or
+    /// send, skip the archive.
+    pub const HISTORYLESS_TABLES: &'static [&'static str] = &[
+        "authsession",
+        "refreshtoken",
+        "revokedtoken",
+        "notificationlog",
+    ];
+
+    fn skips_history(table: &str) -> bool {
+        Self::HISTORYLESS_TABLES.contains(&table)
     }
 
     /// Lists all resource tables (excludes history and system tables).
@@ -409,6 +423,12 @@ impl SchemaManager {
             // the list of resource tables.
             "SELECT table_name FROM information_schema.tables
              WHERE table_schema = 'public'
+             AND EXISTS (SELECT 1 FROM information_schema.columns AS rc
+                 WHERE rc.table_schema = 'public' AND rc.table_name = tables.table_name
+                 AND rc.column_name = 'resource' AND rc.data_type = 'jsonb')
+             AND EXISTS (SELECT 1 FROM information_schema.columns AS sc
+                 WHERE sc.table_schema = 'public' AND sc.table_name = tables.table_name
+                 AND sc.column_name = 'status' AND sc.udt_name = 'resource_status')
              AND table_name NOT LIKE '%\\_history' ESCAPE '\\'
              AND table_name NOT LIKE '\\_%' ESCAPE '\\'
              ORDER BY table_name",

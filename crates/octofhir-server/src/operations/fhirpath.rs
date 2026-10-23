@@ -12,7 +12,7 @@
 //! # Examples
 //!
 //! System-level (no resource):
-//! ```
+//! ```text
 //! POST /fhir/$fhirpath
 //! {
 //!   "resourceType": "Parameters",
@@ -23,7 +23,7 @@
 //! ```
 //!
 //! With resource:
-//! ```
+//! ```text
 //! POST /fhir/$fhirpath
 //! {
 //!   "resourceType": "Parameters",
@@ -33,6 +33,8 @@
 //!   ]
 //! }
 //! ```
+
+use crate::operations::handler::OperationLevel;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -333,6 +335,10 @@ impl Default for FhirPathOperation {
 
 #[async_trait]
 impl OperationHandler for FhirPathOperation {
+    fn supports_level(&self, _level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        true
+    }
+
     fn code(&self) -> &str {
         "fhirpath"
     }

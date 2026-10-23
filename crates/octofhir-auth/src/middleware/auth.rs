@@ -71,6 +71,10 @@ pub struct AuthState {
 
     /// Cookie configuration for browser-based auth.
     pub cookie_config: CookieConfig,
+
+    /// Resource server audiences, supplied from trusted configuration.
+    /// Empty keeps this reusable extractor unconfigured for audience checking.
+    pub accepted_audiences: Vec<String>,
 }
 
 impl AuthState {
@@ -87,7 +91,72 @@ impl AuthState {
             revoked_token_storage,
             user_storage,
             cookie_config: CookieConfig::default(),
+            accepted_audiences: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_audiences(mut self, audiences: Vec<String>) -> Self {
+        self.accepted_audiences = audiences;
+        self
+    }
+
+    /// Check application claims even after a signature-cache hit.
+    pub fn validate_access_claims(&self, claims: &AccessTokenClaims) -> Result<(), AuthError> {
+        if claims.exp <= time::OffsetDateTime::now_utc().unix_timestamp() {
+            return Err(AuthError::TokenExpired);
+        }
+        if claims.iss != self.jwt_service.issuer()
+            || claims.sub.is_empty()
+            || claims.client_id.is_empty()
+            || claims.jti.is_empty()
+        {
+            return Err(AuthError::invalid_token("Invalid access token identity"));
+        }
+        if !self.accepted_audiences.is_empty()
+            && !claims
+                .aud
+                .iter()
+                .any(|audience| self.accepted_audiences.contains(audience))
+        {
+            return Err(AuthError::invalid_token(
+                "Access token audience is not this server",
+            ));
+        }
+        Ok(())
+    }
+
+    /// A signature proves issuance; current client and user records determine
+    /// whether the issued delegation is still usable. Roles and attributes are
+    /// loaded again rather than copied from an authentication-context cache.
+    pub async fn load_current_context(
+        &self,
+        claims: Arc<AccessTokenClaims>,
+    ) -> Result<AuthContext, AuthError> {
+        self.validate_access_claims(&claims)?;
+        let client = self
+            .client_storage
+            .find_by_client_id(&claims.client_id)
+            .await?
+            .filter(|client| client.active)
+            .ok_or_else(|| AuthError::invalid_token("Client is unavailable"))?;
+        if !claims
+            .scope
+            .split_whitespace()
+            .all(|scope| client.is_scope_allowed(scope))
+        {
+            return Err(AuthError::invalid_token(
+                "Access token exceeds current client permissions",
+            ));
+        }
+        let user = load_user_context(self, &claims).await?;
+        Ok(AuthContext {
+            patient: claims.patient.clone(),
+            encounter: claims.encounter.clone(),
+            token_claims: claims,
+            client,
+            user,
+        })
     }
 
     /// Sets cookie configuration for browser-based authentication.
@@ -186,50 +255,15 @@ where
             })?
             .claims;
 
-        // 4. Check expiration (already done by JWT library, but explicit check)
-        let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        if claims.exp < now {
-            tracing::debug!(jti = %claims.jti, "Token expired");
-            return Err(AuthError::TokenExpired);
-        }
-
-        // 5. Check revocation
+        auth_state.validate_access_claims(&claims)?;
         if auth_state
             .revoked_token_storage
             .is_revoked(&claims.jti)
             .await?
         {
-            tracing::debug!(jti = %claims.jti, "Token revoked");
             return Err(AuthError::TokenRevoked);
         }
-
-        // 6. Load client
-        let client = auth_state
-            .client_storage
-            .find_by_client_id(&claims.client_id)
-            .await?
-            .ok_or_else(|| {
-                tracing::warn!(client_id = %claims.client_id, "Unknown client in token");
-                AuthError::invalid_token("Unknown client")
-            })?;
-
-        // 7. Verify client is active
-        if !client.active {
-            tracing::warn!(client_id = %claims.client_id, "Inactive client");
-            return Err(AuthError::invalid_token("Client is inactive"));
-        }
-
-        // 8. Load user context if subject is a valid UUID
-        let user = load_user_context(&auth_state, &claims).await?;
-
-        // 9. Build auth context (wrap claims in Arc for cheap cloning)
-        let auth_context = AuthContext {
-            patient: claims.patient.clone(),
-            encounter: claims.encounter.clone(),
-            token_claims: Arc::new(claims),
-            client,
-            user,
-        };
+        let auth_context = auth_state.load_current_context(Arc::new(claims)).await?;
 
         tracing::debug!(
             client_id = %auth_context.client_id(),
@@ -250,9 +284,12 @@ async fn load_user_context(
     // Subject claim contains the user ID
     let user_id = &claims.sub;
 
-    // If subject is empty or looks like a client ID, skip user lookup
-    if user_id.is_empty() {
+    // Client credentials have the client as subject and no user delegation.
+    if user_id == &claims.client_id {
         return Ok(None);
+    }
+    if user_id.is_empty() {
+        return Err(AuthError::invalid_token("Missing token subject"));
     }
 
     // Load user from storage
@@ -268,17 +305,12 @@ async fn load_user_context(
                 username: user.username,
                 name: user.name,
                 email: user.email,
-                fhir_user: user.fhir_user.or_else(|| claims.fhir_user.clone()),
+                fhir_user: user.fhir_user,
                 roles: user.roles,
                 attributes: user.attributes,
             }))
         }
-        None => {
-            // User not found - treat as valid token but no user context
-            // This can happen if user was deleted after token was issued
-            tracing::debug!(user_id = %user_id, "User not found in storage");
-            Ok(None)
-        }
+        None => Err(AuthError::invalid_token("User delegation is unavailable")),
     }
 }
 

@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::error::StorageError;
 use crate::types::{
-    HistoryParams, HistoryResult, IncludeLimits, RawHistoryResult, RawSearchResult,
-    RawStoredResource, SearchParams, SearchResult, StoredResource,
+    HistoryParams, HistoryResult, IncludeLimits, ProposedResource, RawHistoryResult,
+    RawSearchResult, RawStoredResource, SearchParams, SearchResult, StoredResource,
 };
 
 /// The main storage trait that all FHIR storage backends must implement.
@@ -282,6 +282,38 @@ pub trait FhirStorage: Send + Sync {
         version: &str,
     ) -> Result<Option<StoredResource>, StorageError>;
 
+    /// Internal exact snapshot for authorizing deleted revisions. Its deletion
+    /// body must never be exposed as a live FHIR resource.
+    /// Internal latest snapshot, retaining deleted attributes for policy checks.
+    async fn current_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
+        Ok(self
+            .read_raw(resource_type, id)
+            .await?
+            .map(|resource| crate::RawHistoryEntry {
+                resource,
+                method: crate::HistoryMethod::Update,
+            }))
+    }
+
+    async fn version_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
+        Ok(self
+            .vread_raw(resource_type, id, version)
+            .await?
+            .map(|resource| crate::RawHistoryEntry {
+                resource,
+                method: crate::HistoryMethod::Update,
+            }))
+    }
+
     /// Reads a specific version of a resource as raw JSON string.
     ///
     /// This is an optimized vread path that returns the resource JSON as a raw string
@@ -410,6 +442,87 @@ pub trait FhirStorage: Send + Sync {
 /// ```
 #[async_trait]
 pub trait Transaction: Send + Sync {
+    /// Read an exact retained revision on the checked-out connection, including
+    /// revisions created earlier in this transaction.
+    async fn vread(
+        &self,
+        _resource_type: &str,
+        _id: &str,
+        _version: &str,
+    ) -> Result<Option<StoredResource>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Transaction version reads are not supported",
+        ))
+    }
+
+    /// Internal snapshot, including deletion attributes for authorization.
+    /// Internal latest snapshot, retaining deleted attributes for policy checks.
+    async fn current_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
+        self.read(resource_type, id)
+            .await?
+            .map(|stored| {
+                let resource_json = serde_json::to_string(&stored.resource)
+                    .map_err(|error| StorageError::internal(error.to_string()))?;
+                Ok(crate::RawHistoryEntry {
+                    resource: RawStoredResource {
+                        id: stored.id,
+                        version_id: stored.version_id,
+                        resource_type: stored.resource_type,
+                        resource_json,
+                        last_updated: stored.last_updated,
+                        created_at: stored.created_at,
+                    },
+                    method: crate::HistoryMethod::Update,
+                })
+            })
+            .transpose()
+    }
+
+    async fn version_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
+        self.vread(resource_type, id, version)
+            .await?
+            .map(|stored| {
+                let resource_json = serde_json::to_string(&stored.resource)
+                    .map_err(|error| StorageError::internal(error.to_string()))?;
+                Ok(crate::RawHistoryEntry {
+                    resource: RawStoredResource {
+                        id: stored.id,
+                        version_id: stored.version_id,
+                        resource_type: stored.resource_type,
+                        resource_json,
+                        last_updated: stored.last_updated,
+                        created_at: stored.created_at,
+                    },
+                    method: crate::HistoryMethod::Update,
+                })
+            })
+            .transpose()
+    }
+
+    /// Save an asynchronous outcome in the same database transaction as its
+    /// resource writes. A key records one recoverable step; no key completes the
+    /// job. The backend must fence the attempt and reject cancelled/expired work.
+    async fn save_async_job_checkpoint(
+        &mut self,
+        _job_id: uuid::Uuid,
+        _execution_id: uuid::Uuid,
+        _key: Option<&str>,
+        _result: &Value,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::transaction_error(
+            "This backend cannot atomically checkpoint asynchronous work",
+        ))
+    }
+
     /// Commits all operations in this transaction.
     ///
     /// After commit, the transaction is consumed and cannot be used again.
@@ -427,6 +540,16 @@ pub trait Transaction: Send + Sync {
     ///
     /// Returns `StorageError::TransactionError` if the rollback fails.
     async fn rollback(self: Box<Self>) -> Result<(), StorageError>;
+
+    /// Exclude resource mutations while resolving and applying conditional
+    /// interactions. Acquire this before reading or locking any resource.
+    /// Implementations must coordinate ordinary writes as well as overlapping
+    /// conditions; a lock on one query string cannot protect other predicates.
+    async fn lock_conditional_writes(&mut self) -> Result<(), StorageError> {
+        Err(StorageError::transaction_error(
+            "Conditional write coordination is not supported",
+        ))
+    }
 
     /// Creates a new resource within this transaction.
     ///
@@ -459,6 +582,26 @@ pub trait Transaction: Send + Sync {
     ) -> Result<StoredResource, StorageError>;
 
     /// Updates a resource and returns its JSON representation.
+    /// Atomic update with exact preceding attributes for lifecycle consumers.
+    async fn update_with_snapshot(
+        &mut self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<crate::UpdatedResource, StorageError> {
+        let resource_type = resource["resourceType"]
+            .as_str()
+            .ok_or_else(|| StorageError::invalid_resource("Missing resourceType"))?;
+        let id = resource["id"]
+            .as_str()
+            .ok_or_else(|| StorageError::invalid_resource("Missing id"))?;
+        let previous = self
+            .read_for_update(resource_type, id)
+            .await?
+            .ok_or_else(|| StorageError::not_found(resource_type, id))?;
+        let stored = self.update(resource, if_match).await?;
+        Ok(crate::UpdatedResource { stored, previous })
+    }
+
     async fn update_raw(
         &mut self,
         resource: &Value,
@@ -500,6 +643,72 @@ pub trait Transaction: Send + Sync {
     ) -> Result<Option<StoredResource>, StorageError> {
         Err(StorageError::transaction_error(
             "Row locking is not supported",
+        ))
+    }
+
+    /// Lock distinct live resources in a deterministic order. Native backends
+    /// should fetch the whole set in one statement; missing/deleted rows are absent.
+    async fn read_many_for_update(
+        &self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<Vec<StoredResource>, StorageError> {
+        let mut rows = Vec::new();
+        for id in ids.iter().collect::<std::collections::BTreeSet<_>>() {
+            match self.read_for_update(resource_type, id).await {
+                Ok(Some(row)) => rows.push(row),
+                Ok(None) | Err(StorageError::Deleted { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Check live references while holding shared row locks until transaction
+    /// completion. An unlocked existence check cannot replace this operation.
+    async fn lock_references(
+        &mut self,
+        _groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Reference locking is not supported",
+        ))
+    }
+
+    /// Read and hold the exact target body stable until commit/rollback. Used
+    /// to compare reference conformance snapshots validated outside the pool.
+    async fn lock_reference_snapshot(
+        &mut self,
+        _reference: &octofhir_core::FhirReference,
+    ) -> Result<Option<Value>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Reference snapshot locking is not supported",
+        ))
+    }
+
+    /// Lock unique target bodies in batches, including exact historical
+    /// versions. Missing targets are absent from the returned map.
+    async fn lock_reference_snapshots(
+        &mut self,
+        references: &[octofhir_core::FhirReference],
+    ) -> Result<std::collections::HashMap<String, Value>, StorageError> {
+        let mut snapshots = std::collections::HashMap::new();
+        for reference in references {
+            if let Some(body) = self.lock_reference_snapshot(reference).await? {
+                snapshots.insert(reference.to_versioned(), body);
+            }
+        }
+        Ok(snapshots)
+    }
+
+    /// Lock the exact retained version of each literal reference. A live row
+    /// with the same ID cannot substitute for the requested history version.
+    async fn lock_reference_versions(
+        &mut self,
+        _references: &[octofhir_core::FhirReference],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Versioned reference locking is not supported",
         ))
     }
 
@@ -545,6 +754,80 @@ pub trait Transaction: Send + Sync {
         ))
     }
 
+    /// Execute native search with application snapshot policies.
+    ///
+    /// Snapshot policies run before pagination/totals and at every include hop.
+    /// This must use the same checked-out transaction as the resource writes.
+    async fn search_system_raw_authorized(
+        &self,
+        resource_types: &[&str],
+        params: &SearchParams,
+        include_limits: IncludeLimits,
+        strict: bool,
+        authorization: crate::RawSearchAuthorization<'_>,
+    ) -> Result<RawSearchResult, StorageError> {
+        if authorization.main.is_none() && authorization.included.is_none() {
+            return self
+                .search_system_raw(resource_types, params, include_limits, strict)
+                .await;
+        }
+        Err(StorageError::transaction_error(
+            "Backend does not support transactional snapshot-authorized search",
+        ))
+    }
+
+    /// Resolve independent prepared conditional predicates with native batching.
+    /// Results correspond to input positions and contain at most two complete
+    /// snapshots each. Trusted grants apply before each predicate's LIMIT;
+    /// client result controls cannot alter cardinality. Never use another pool
+    /// connection or fall back to a query per predicate.
+    async fn search_conditional_batch(
+        &self,
+        _predicates: &[(String, SearchParams)],
+    ) -> Result<Vec<Vec<StoredResource>>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Backend does not support batched conditional search",
+        ))
+    }
+
+    /// Reserve metadata without resource/history/event writes, or adopt a
+    /// trusted reservation made by this request's validation preview.
+    async fn reserve_write_metadata(
+        &mut self,
+        _planned: Option<&crate::TransactionWriteMetadata>,
+    ) -> Result<crate::TransactionWriteMetadata, StorageError> {
+        Err(StorageError::transaction_error(
+            "Backend does not support planned write metadata",
+        ))
+    }
+
+    /// Search the proposed graph with the same native predicates as saved rows.
+    /// The overlay has no writes, history, events or DDL. Every identity occurs
+    /// once; its old body is excluded before independent bounded matching.
+    async fn search_proposed_conditional_batch(
+        &self,
+        _predicates: &[(String, SearchParams)],
+        _proposed: &[ProposedResource],
+    ) -> Result<Vec<Vec<StoredResource>>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Backend does not support proposed graph search",
+        ))
+    }
+
+    /// Independent candidate identity domains with a lookahead row per predicate.
+    /// This is a native grouped query over the same proposed graph. The caller
+    /// must reject domains larger than `max_candidates`, never truncate them.
+    async fn search_proposed_conditional_candidates(
+        &self,
+        _predicates: &[(String, SearchParams)],
+        _proposed: &[ProposedResource],
+        _max_candidates: usize,
+    ) -> Result<Vec<Vec<String>>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Backend does not support conditional graph candidate search",
+        ))
+    }
+
     /// Bulk-creates many resources of the same `resource_type` within this
     /// transaction.
     ///
@@ -582,10 +865,19 @@ pub trait Transaction: Send + Sync {
         resources: &[Value],
     ) -> Result<BatchUpdateOutcome, StorageError> {
         let mut updated = Vec::with_capacity(resources.len());
+        let mut previous = Vec::with_capacity(resources.len());
         let mut missing = Vec::new();
         for r in resources {
+            let snapshot = self
+                .read_for_update(resource_type, r["id"].as_str().unwrap_or_default())
+                .await?;
             match self.update(r, None).await {
-                Ok(stored) => updated.push(stored),
+                Ok(stored) => {
+                    if let Some(snapshot) = snapshot {
+                        previous.push(snapshot);
+                    }
+                    updated.push(stored);
+                }
                 Err(StorageError::NotFound { .. }) => {
                     missing.push(r["id"].as_str().unwrap_or_default().to_string());
                 }
@@ -593,23 +885,51 @@ pub trait Transaction: Send + Sync {
             }
         }
         let _ = resource_type;
-        Ok(BatchUpdateOutcome { updated, missing })
+        Ok(BatchUpdateOutcome {
+            updated,
+            previous,
+            missing,
+        })
+    }
+
+    /// Bulk-deletes many resources of the same `resource_type` within this
+    /// transaction while returning exact preceding snapshots and deletion
+    /// revisions. Missing identities yield no snapshots or mutation events.
+    async fn delete_batch_with_snapshots(
+        &mut self,
+        _resource_type: &str,
+        _ids: &[String],
+    ) -> Result<Vec<crate::DeletedResource>, StorageError> {
+        Err(StorageError::transaction_error(
+            "Atomic deletion snapshots are not supported",
+        ))
     }
 
     /// Bulk-deletes many resources of the same `resource_type` within this
     /// transaction.
     ///
     /// Deletion is idempotent per FHIR, so ids that do not exist are silently
-    /// ignored. The default implementation falls back to `delete()` per id.
+    /// ignored. Returns only identities actually deleted, once each, so callers
+    /// can emit mutation events without another read. The default implementation
+    /// locks each distinct live row before deleting it; backends should override
+    /// this with a native DELETE RETURNING query where available.
     async fn delete_batch(
         &mut self,
         resource_type: &str,
         ids: &[String],
-    ) -> Result<(), StorageError> {
-        for id in ids {
-            self.delete(resource_type, id).await?;
+    ) -> Result<Vec<String>, StorageError> {
+        let mut deleted = Vec::new();
+        for id in ids.iter().collect::<std::collections::BTreeSet<_>>() {
+            match self.read_for_update(resource_type, id).await {
+                Ok(Some(_)) => {
+                    self.delete(resource_type, id).await?;
+                    deleted.push(id.clone());
+                }
+                Ok(None) | Err(StorageError::Deleted { .. }) => {}
+                Err(error) => return Err(error),
+            }
         }
-        Ok(())
+        Ok(deleted)
     }
 }
 
@@ -618,6 +938,8 @@ pub trait Transaction: Send + Sync {
 pub struct BatchUpdateOutcome {
     /// Resources that matched an existing row and were updated.
     pub updated: Vec<StoredResource>,
+    /// Exact snapshots locked before the updates, for lifecycle consumers.
+    pub previous: Vec<StoredResource>,
     /// Ids from the input that matched no live row.
     pub missing: Vec<String>,
 }

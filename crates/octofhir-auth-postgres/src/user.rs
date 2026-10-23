@@ -269,7 +269,7 @@ impl<'a> UserStorage<'a> {
         ) = query_as(
             r#"
             INSERT INTO "user" (id, txid, created_at, updated_at, resource, status)
-            VALUES ($1, 1, NOW(), NOW(), $2, 'created')
+            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
@@ -319,7 +319,7 @@ impl<'a> UserStorage<'a> {
             r#"
             UPDATE "user"
             SET resource = $2,
-                txid = txid + 1,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
@@ -361,8 +361,8 @@ impl<'a> UserStorage<'a> {
         )> = query_as(
             r#"
             UPDATE "user"
-            SET resource = jsonb_set(resource, '{lastLogin}', to_jsonb(NOW()::text)),
-                txid = txid + 1,
+            SET resource = jsonb_set(resource, '{lastLogin}', to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))),
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
@@ -397,8 +397,8 @@ impl<'a> UserStorage<'a> {
             r#"
             UPDATE "user"
             SET status = 'deleted',
-                txid = txid + 1,
-                ts = NOW()
+                txid = nextval('_transaction_txid_seq'),
+                updated_at = NOW()
             WHERE id = $1
               AND status != 'deleted'
             "#,
@@ -432,7 +432,7 @@ impl<'a> UserStorage<'a> {
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM "user"
             WHERE status != 'deleted'
-            ORDER BY ts DESC
+            ORDER BY updated_at DESC, id
             LIMIT $1 OFFSET $2
             "#,
         )

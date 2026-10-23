@@ -16,24 +16,27 @@ use std::path::Path;
 use std::sync::Arc;
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::OnceCell;
 use uuid::Uuid;
 
-/// Shared test infrastructure: postgres container, pool, and model provider
+/// Shared test infrastructure: postgres container with migrated schema.
+///
+/// Only the container is shared. Pools are created per test because each
+/// `#[tokio::test]` has its own runtime, and a pool bound to a finished
+/// test's runtime fails with "Tokio context is being shutdown".
 struct TestInfra {
     #[allow(dead_code)]
     container: ContainerAsync<Postgres>,
-    pool: Arc<sqlx_postgres::PgPool>,
-    model_provider: Arc<OctoFhirModelProvider>,
+    url: String,
 }
 
-static SHARED_INFRA: OnceCell<Arc<Mutex<TestInfra>>> = OnceCell::const_new();
+static SHARED_INFRA: OnceCell<Arc<TestInfra>> = OnceCell::const_new();
 
 /// Default FHIR version for tests - matches server default
 const TEST_FHIR_VERSION: ModelFhirVersion = ModelFhirVersion::R4;
 
-/// Get shared test infrastructure (postgres container, pool, model provider)
-async fn get_test_infra() -> Arc<Mutex<TestInfra>> {
+/// Get shared test infrastructure (postgres container, migrated once)
+async fn get_test_infra() -> Arc<TestInfra> {
     SHARED_INFRA
         .get_or_init(|| async {
             let container = Postgres::default()
@@ -48,35 +51,28 @@ async fn get_test_infra() -> Arc<Mutex<TestInfra>> {
                 host_port
             );
 
-            let pool = Arc::new(
-                PgPoolOptions::new()
-                    .max_connections(5)
-                    .connect(&url)
-                    .await
-                    .expect("connect to postgres"),
-            );
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&url)
+                .await
+                .expect("connect to postgres");
 
             // Run migrations
             let migrator = Migrator::new(Path::new("../octofhir-db-postgres/migrations"))
                 .await
                 .expect("load migrations");
-            migrator.run(pool.as_ref()).await.expect("run migrations");
+            migrator.run(&pool).await.expect("run migrations");
 
             // Insert minimal FHIR schemas for testing
-            setup_test_fhir_schemas(pool.as_ref()).await;
+            setup_test_fhir_schemas(&pool).await;
+            // Shared by several tests; concurrent `CREATE TABLE IF NOT EXISTS`
+            // of the same name races on pg_type, so create it once up front.
+            pool.execute("CREATE TABLE IF NOT EXISTS patient (id text, resource jsonb)")
+                .await
+                .expect("create patient table");
+            pool.close().await;
 
-            // Create shared model provider - same pattern as server startup
-            let model_provider = Arc::new(OctoFhirModelProvider::new(
-                pool.as_ref().clone(),
-                TEST_FHIR_VERSION,
-                500, // Same cache size as server
-            ));
-
-            Arc::new(Mutex::new(TestInfra {
-                container,
-                pool,
-                model_provider,
-            }))
+            Arc::new(TestInfra { container, url })
         })
         .await
         .clone()
@@ -158,11 +154,25 @@ async fn setup_test_fhir_schemas(pool: &sqlx_postgres::PgPool) {
     .expect("insert HumanName schema");
 }
 
-/// Get shared pool and model provider for tests
+/// Get a pool and model provider bound to the current test's runtime
 async fn get_shared_resources() -> (Arc<sqlx_postgres::PgPool>, Arc<OctoFhirModelProvider>) {
     let infra = get_test_infra().await;
-    let guard = infra.lock().await;
-    (guard.pool.clone(), guard.model_provider.clone())
+    let pool = Arc::new(
+        PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&infra.url)
+            .await
+            .expect("connect to postgres"),
+    );
+
+    // Same pattern as server startup
+    let model_provider = Arc::new(OctoFhirModelProvider::new(
+        pool.as_ref().clone(),
+        TEST_FHIR_VERSION,
+        500, // Same cache size as server
+    ));
+
+    (pool, model_provider)
 }
 
 fn completion_items(response: CompletionResponse) -> Vec<async_lsp::lsp_types::CompletionItem> {
@@ -170,6 +180,41 @@ fn completion_items(response: CompletionResponse) -> Vec<async_lsp::lsp_types::C
         CompletionResponse::List(list) => list.items,
         CompletionResponse::Array(items) => items,
     }
+}
+
+/// Opens `sql` as a document and returns the completion labels at its end.
+async fn complete_at_end(server: &mut PostgresLspServer, name: &str, sql: &str) -> Vec<String> {
+    let uri = Url::parse(&format!("file:///{name}.sql")).expect("uri");
+    let _ = server.did_open(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "sql".to_string(),
+            version: 1,
+            text: sql.to_string(),
+        },
+    });
+
+    let completion = server
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: 0,
+                    character: sql.len() as u32,
+                },
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        })
+        .await
+        .expect("completion")
+        .expect("completion response");
+
+    completion_items(completion)
+        .into_iter()
+        .map(|item| item.label)
+        .collect()
 }
 
 #[tokio::test]
@@ -566,75 +611,16 @@ async fn lsp_completion_suggests_tables_after_join_update_insert() {
         "expected table completion for {table_right}"
     );
 
-    let uri = Url::parse("file:///lsp_completion_update.sql").expect("uri");
-    let sql = "UPDATE ".to_string();
-
-    let _ = server.did_open(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: uri.clone(),
-            language_id: "sql".to_string(),
-            version: 1,
-            text: sql.clone(),
-        },
-    });
-
-    let completion = server
-        .completion(CompletionParams {
-            text_document_position: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                position: Position {
-                    line: 0,
-                    character: sql.len() as u32,
-                },
-            },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: None,
-        })
-        .await
-        .expect("completion")
-        .expect("completion response");
-
-    let items = completion_items(completion);
-    assert!(
-        items.iter().any(|item| item.label == table_left),
-        "expected table completion for {table_left}"
-    );
-
-    let uri = Url::parse("file:///lsp_completion_insert.sql").expect("uri");
-    let sql = "INSERT INTO ".to_string();
-
-    let _ = server.did_open(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: uri.clone(),
-            language_id: "sql".to_string(),
-            version: 1,
-            text: sql.clone(),
-        },
-    });
-
-    let completion = server
-        .completion(CompletionParams {
-            text_document_position: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                position: Position {
-                    line: 0,
-                    character: sql.len() as u32,
-                },
-            },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: None,
-        })
-        .await
-        .expect("completion")
-        .expect("completion response");
-
-    let items = completion_items(completion);
-    assert!(
-        items.iter().any(|item| item.label == table_left),
-        "expected table completion for {table_left}"
-    );
+    for (name, sql) in [
+        ("lsp_completion_update", "UPDATE "),
+        ("lsp_completion_insert", "INSERT INTO "),
+    ] {
+        let labels = complete_at_end(&mut server, name, sql).await;
+        assert!(
+            labels.contains(&table_left),
+            "expected table completion for {table_left} after {sql:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -687,38 +673,10 @@ async fn lsp_completion_suggests_columns_in_where_and_order_by() {
     assert!(items.iter().any(|item| item.label == "id"));
     assert!(items.iter().any(|item| item.label == "name"));
 
-    let uri = Url::parse("file:///lsp_completion_order_by.sql").expect("uri");
     let sql = format!("SELECT * FROM {table} ORDER BY ", table = table_name);
-
-    let _ = server.did_open(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: uri.clone(),
-            language_id: "sql".to_string(),
-            version: 1,
-            text: sql.clone(),
-        },
-    });
-
-    let completion = server
-        .completion(CompletionParams {
-            text_document_position: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                position: Position {
-                    line: 0,
-                    character: sql.len() as u32,
-                },
-            },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: None,
-        })
-        .await
-        .expect("completion")
-        .expect("completion response");
-
-    let items = completion_items(completion);
-    assert!(items.iter().any(|item| item.label == "id"));
-    assert!(items.iter().any(|item| item.label == "name"));
+    let labels = complete_at_end(&mut server, "lsp_completion_order_by", &sql).await;
+    assert!(labels.iter().any(|label| label == "id"), "{labels:?}");
+    assert!(labels.iter().any(|label| label == "name"), "{labels:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

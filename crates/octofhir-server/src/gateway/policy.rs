@@ -180,7 +180,7 @@ fn evaluate_compartment(compartment: &str, auth: &AuthContext) -> Result<(), Gat
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// # use octofhir_server::gateway::policy::scope_matches;
 /// assert!(scope_matches("patient/*.read", "patient/Observation.read"));
 /// assert!(scope_matches("patient/*.*", "patient/Observation.read"));

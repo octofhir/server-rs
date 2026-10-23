@@ -170,6 +170,7 @@ pub async fn create_default_search_indexes(
     }
 
     let mut created = 0usize;
+    let mut registry_updates = Vec::new();
     // Dedup identical index bodies across params. Overlapping params build the same
     // functional index on the same expression (e.g. value-quantity, combo-value-quantity
     // and component-value-quantity all derive a `valueQuantity.value` btree and a shared
@@ -217,7 +218,8 @@ pub async fn create_default_search_indexes(
                             .await
                         {
                             Ok(_) => {
-                                registry.upsert((*param).clone().with_typed_extract_fn(fn_name));
+                                registry_updates
+                                    .push((*param).clone().with_typed_extract_fn(fn_name));
                                 created += 1;
                                 debug!(
                                     resource_type,
@@ -406,6 +408,7 @@ pub async fn create_default_search_indexes(
         }
     }
     info!(created, "functional search indexes ensured");
+    registry.register_all(registry_updates);
     created
 }
 

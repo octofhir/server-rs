@@ -28,6 +28,7 @@ pub struct CanonicalPackageState {
     pub package_store: Arc<PostgresPackageStore>,
     pub model_provider: Arc<crate::model_provider::OctoFhirModelProvider>,
     pub fhirpath_engine: Arc<octofhir_fhirpath::FhirPathEngine>,
+    pub validation_service: crate::validation::ValidationService,
 }
 
 impl axum::extract::FromRef<crate::server::AppState> for CanonicalPackageState {
@@ -37,6 +38,7 @@ impl axum::extract::FromRef<crate::server::AppState> for CanonicalPackageState {
             package_store: app_state.package_store.clone(),
             model_provider: app_state.model_provider.clone(),
             fhirpath_engine: app_state.fhirpath_engine.clone(),
+            validation_service: app_state.validation_service.clone(),
         }
     }
 }
@@ -96,7 +98,12 @@ pub async fn upload_package(
     std::io::copy(&mut data.as_ref(), &mut temp_file)?;
 
     // Get FHIR version from config
-    let fhir_version = &state.config.fhir.version;
+    let release = state
+        .config
+        .fhir
+        .release()
+        .map_err(PackageError::InvalidPackage)?;
+    let fhir_version = release.release_name();
 
     // Extract and load resources
     let (package_name, package_version, count) =
@@ -134,6 +141,7 @@ pub async fn upload_package(
     // Invalidate ModelProvider caches to force reload of new schemas
     info!("Invalidating ModelProvider schema caches");
     state.model_provider.invalidate_schema_caches();
+    state.validation_service.invalidate_caches();
     // Drop the FHIRPath engine's element-type memo: its cached
     // `(type, property) -> TypeInfo` entries derive from the schema set.
     state.fhirpath_engine.clear_element_type_cache();
@@ -159,6 +167,13 @@ async fn extract_and_load_resources(
     package_store: &PostgresPackageStore,
     fhir_version: &str,
 ) -> Result<(String, String, usize), PackageError> {
+    let release: octofhir_core::fhir::FhirVersion =
+        fhir_version
+            .parse()
+            .map_err(|error: octofhir_core::error::CoreError| {
+                PackageError::InvalidPackage(error.to_string())
+            })?;
+    let fhir_version = release.release_name();
     info!("Extracting package from path: {:?}", path);
 
     let file = std::fs::File::open(path)?;

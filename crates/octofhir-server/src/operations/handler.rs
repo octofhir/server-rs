@@ -27,6 +27,10 @@ pub enum OperationError {
     #[error("Operation not supported: {0}")]
     NotSupported(String),
 
+    /// The requested function has no implementation; never return fabricated data.
+    #[error("Operation not implemented: {0}")]
+    NotImplemented(String),
+
     /// Internal server error
     #[error("Internal error: {0}")]
     Internal(String),
@@ -40,6 +44,14 @@ impl OperationError {
     pub(crate) fn is_forbidden(&self) -> bool {
         matches!(self, Self::Api(octofhir_api::ApiError::Forbidden(_)))
     }
+}
+
+/// Invocation level used to describe implemented operation contracts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OperationLevel {
+    System,
+    Type,
+    Instance,
 }
 
 /// Trait for implementing FHIR operations.
@@ -56,6 +68,12 @@ impl OperationError {
 ///   policy does not substitute for authorization of resources it reads/writes.
 #[async_trait]
 pub trait OperationHandler: Send + Sync {
+    /// Advertise only levels with an implementation. Package definitions alone
+    /// do not establish support, and disabled or placeholder handlers return false.
+    fn supports_level(&self, _level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        false
+    }
+
     /// Returns the operation code (without the `$` prefix).
     fn code(&self) -> &str;
 
@@ -118,6 +136,7 @@ impl From<OperationError> for octofhir_api::ApiError {
             OperationError::InvalidParameters(msg) => octofhir_api::ApiError::bad_request(msg),
             OperationError::NotFound(msg) => octofhir_api::ApiError::not_found(msg),
             OperationError::NotSupported(msg) => octofhir_api::ApiError::bad_request(msg),
+            OperationError::NotImplemented(msg) => octofhir_api::ApiError::not_implemented(msg),
             OperationError::Internal(msg) => octofhir_api::ApiError::internal(msg),
             OperationError::ValidationFailed(_outcome) => {
                 // ValidationFailed contains an OperationOutcome - convert to BadRequest

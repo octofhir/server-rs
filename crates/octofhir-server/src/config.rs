@@ -71,6 +71,26 @@ impl AppConfig {
         if self.server.read_timeout_ms == 0 || self.server.write_timeout_ms == 0 {
             return Err("server timeouts must be > 0".into());
         }
+        if self.server.max_conditional_reference_candidates == 0
+            || self.server.max_conditional_reference_assignments == 0
+            || self.server.max_conditional_reference_total_candidates == 0
+        {
+            return Err("conditional reference resolution limits must be > 0".into());
+        }
+        let import = &self.bulk_import;
+        if import.batch_size == 0
+            || import.max_parallel_resources == 0
+            || import.max_concurrent_jobs == 0
+            || import.max_sources == 0
+            || import.max_errors == 0
+            || import.max_source_bytes == 0
+            || import.max_line_bytes == 0
+            || import.max_batch_bytes < import.max_line_bytes
+        {
+            return Err(
+                "bulk_import limits must be positive and max_batch_bytes >= max_line_bytes".into(),
+            );
+        }
         // Search validations
         if self.search.default_count == 0 {
             return Err("search.default_count must be > 0".into());
@@ -92,11 +112,7 @@ impl AppConfig {
             return Err("otel.enabled=true requires otel.endpoint".into());
         }
         // FHIR version validation
-        let v = self.fhir.version.to_ascii_uppercase();
-        let allowed = ["R4", "R4B", "R5", "R6", "4.0.1", "4.3.0", "5.0.0", "6.0.0"];
-        if !allowed.contains(&v.as_str()) {
-            return Err("fhir.version must be one of R4, R4B, R5, R6".into());
-        }
+        self.fhir.release()?;
         // Storage validation - PostgreSQL is required
         if self.storage.postgres.is_none() {
             return Err("storage.postgres config is required".into());
@@ -181,6 +197,15 @@ pub struct ServerConfig {
     pub read_timeout_ms: u32,
     #[serde(default = "default_write_timeout_ms")]
     pub write_timeout_ms: u32,
+    /// Maximum identities per predicate when solving a dependent reference graph.
+    #[serde(default = "default_conditional_reference_candidates")]
+    pub max_conditional_reference_candidates: usize,
+    /// Maximum candidate identities across all predicates in one graph.
+    #[serde(default = "default_conditional_reference_total_candidates")]
+    pub max_conditional_reference_total_candidates: usize,
+    /// Maximum complete graph assignments checked before returning too-costly.
+    #[serde(default = "default_conditional_reference_assignments")]
+    pub max_conditional_reference_assignments: usize,
     #[serde(default = "default_body_limit")]
     pub body_limit_bytes: usize,
     #[serde(default)]
@@ -199,6 +224,15 @@ fn default_read_timeout_ms() -> u32 {
 fn default_write_timeout_ms() -> u32 {
     15_000
 }
+fn default_conditional_reference_candidates() -> usize {
+    256
+}
+fn default_conditional_reference_total_candidates() -> usize {
+    10_000
+}
+fn default_conditional_reference_assignments() -> usize {
+    10_000
+}
 fn default_body_limit() -> usize {
     1024 * 1024
 }
@@ -211,6 +245,10 @@ impl Default for ServerConfig {
             base_url: None,
             read_timeout_ms: default_read_timeout_ms(),
             write_timeout_ms: default_write_timeout_ms(),
+            max_conditional_reference_candidates: default_conditional_reference_candidates(),
+            max_conditional_reference_assignments: default_conditional_reference_assignments(),
+            max_conditional_reference_total_candidates:
+                default_conditional_reference_total_candidates(),
             body_limit_bytes: default_body_limit(),
             compression: false,
         }
@@ -581,6 +619,13 @@ pub struct OtelConfig {
 pub struct FhirSettings {
     #[serde(default = "default_fhir_version")]
     pub version: String,
+}
+impl FhirSettings {
+    pub fn release(&self) -> Result<octofhir_core::fhir::FhirVersion, String> {
+        self.version.parse().map_err(|_| {
+            "fhir.version must be R4 (4.0.1), R4B (4.3.0), R5 (5.0.0), or R6 (6.0.0)".to_string()
+        })
+    }
 }
 fn default_fhir_version() -> String {
     "R4".into()
@@ -1075,6 +1120,22 @@ pub struct BulkImportConfig {
     #[serde(default = "default_bulk_import_parallelism")]
     pub max_parallel_resources: usize,
 
+    /// Maximum bytes downloaded for each source, including blank lines.
+    #[serde(default = "default_bulk_import_source_bytes")]
+    pub max_source_bytes: u64,
+
+    /// Maximum NDJSON line length and native transaction input size.
+    #[serde(default = "default_bulk_import_line_bytes")]
+    pub max_line_bytes: usize,
+    #[serde(default = "default_bulk_import_batch_bytes")]
+    pub max_batch_bytes: usize,
+
+    /// Bound source descriptors and retained partial failure details.
+    #[serde(default = "default_bulk_import_sources")]
+    pub max_sources: usize,
+    #[serde(default = "default_bulk_import_errors")]
+    pub max_errors: usize,
+
     /// Skip FHIR validation for trusted data (can be overridden per-request)
     #[serde(default)]
     pub default_skip_validation: bool,
@@ -1093,6 +1154,22 @@ fn default_bulk_import_parallelism() -> usize {
     32
 }
 
+fn default_bulk_import_source_bytes() -> u64 {
+    1024 * 1024 * 1024
+}
+fn default_bulk_import_line_bytes() -> usize {
+    1024 * 1024
+}
+fn default_bulk_import_batch_bytes() -> usize {
+    16 * 1024 * 1024
+}
+fn default_bulk_import_sources() -> usize {
+    32
+}
+fn default_bulk_import_errors() -> usize {
+    1000
+}
+
 impl Default for BulkImportConfig {
     fn default() -> Self {
         Self {
@@ -1100,6 +1177,11 @@ impl Default for BulkImportConfig {
             batch_size: default_bulk_import_batch_size(),
             max_concurrent_jobs: default_bulk_import_max_concurrent(),
             max_parallel_resources: default_bulk_import_parallelism(),
+            max_source_bytes: default_bulk_import_source_bytes(),
+            max_line_bytes: default_bulk_import_line_bytes(),
+            max_batch_bytes: default_bulk_import_batch_bytes(),
+            max_sources: default_bulk_import_sources(),
+            max_errors: default_bulk_import_errors(),
             default_skip_validation: false,
         }
     }

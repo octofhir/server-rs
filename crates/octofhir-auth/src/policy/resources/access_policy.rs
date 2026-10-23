@@ -385,6 +385,16 @@ impl AccessPolicy {
     ///
     /// Returns an error if the conversion fails.
     pub fn to_internal_policy(&self) -> Result<InternalPolicy, ConversionError> {
+        if let Some(operations) = self
+            .matcher
+            .as_ref()
+            .and_then(|matcher| matcher.operations.as_ref())
+        {
+            for operation in operations {
+                Self::validate_operation(operation)
+                    .map_err(|_| ConversionError::InvalidOperation(operation.clone()))?;
+            }
+        }
         let matchers = self.convert_matchers();
         let engine = self.convert_engine()?;
 
@@ -498,6 +508,8 @@ impl AccessPolicy {
 /// Errors that can occur during conversion to internal policy.
 #[derive(Debug, thiserror::Error)]
 pub enum ConversionError {
+    #[error("Invalid policy operation: {0}")]
+    InvalidOperation(String),
     /// Script is missing for a scripted engine.
     #[error("Missing script for scripted engine")]
     MissingScript,
@@ -510,6 +522,32 @@ pub enum ConversionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_operations_cannot_be_silently_dropped_during_conversion() {
+        let mut policy = AccessPolicy {
+            matcher: Some(MatcherElement {
+                operations: Some(vec!["read".into(), "searchType".into()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            policy.to_internal_policy(),
+            Err(ConversionError::InvalidOperation(_))
+        ));
+        policy.matcher.as_mut().unwrap().operations =
+            Some(vec!["read".into(), "search-type".into()]);
+        assert_eq!(
+            policy
+                .to_internal_policy()
+                .unwrap()
+                .matchers
+                .operations
+                .unwrap(),
+            vec![FhirOperation::Read, FhirOperation::SearchType]
+        );
+    }
 
     // -------------------------------------------------------------------------
     // Validation Tests

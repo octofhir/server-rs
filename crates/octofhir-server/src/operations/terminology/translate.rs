@@ -10,6 +10,8 @@
 //! - Type: `GET/POST /ConceptMap/$translate`
 //! - Instance: `GET/POST /ConceptMap/{id}/$translate`
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -718,6 +720,10 @@ impl Default for TranslateOperation {
 
 #[async_trait]
 impl OperationHandler for TranslateOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        level == OperationLevel::System || resource_type == Some("ConceptMap")
+    }
+
     fn code(&self) -> &str {
         "translate"
     }

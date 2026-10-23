@@ -31,6 +31,8 @@ pub struct NdjsonWriter {
 
     /// Job ID (used for directory naming)
     job_id: Uuid,
+    /// Distinct attempts cannot overwrite or append to a stale worker's files.
+    file_prefix: String,
 
     /// Maximum resources per file before splitting
     max_resources_per_file: usize,
@@ -43,6 +45,7 @@ pub struct NdjsonWriter {
 struct TypeWriter {
     /// Resource type name
     resource_type: String,
+    file_prefix: String,
 
     /// Current file index (for splitting)
     file_index: usize,
@@ -57,7 +60,7 @@ struct TypeWriter {
     writer: Option<BufWriter<File>>,
 
     /// List of generated file paths
-    files: Vec<PathBuf>,
+    files: Vec<(PathBuf, usize)>,
 
     /// Maximum resources per file
     max_per_file: usize,
@@ -67,9 +70,15 @@ struct TypeWriter {
 }
 
 impl TypeWriter {
-    fn new(resource_type: &str, job_dir: PathBuf, max_per_file: usize) -> Self {
+    fn new(
+        resource_type: &str,
+        job_dir: PathBuf,
+        max_per_file: usize,
+        file_prefix: String,
+    ) -> Self {
         Self {
             resource_type: resource_type.to_string(),
+            file_prefix,
             file_index: 0,
             current_count: 0,
             total_count: 0,
@@ -96,14 +105,17 @@ impl TypeWriter {
 
             // Create new file
             let filename = if self.file_index == 0 {
-                format!("{}.ndjson", self.resource_type)
+                format!("{}{}.ndjson", self.file_prefix, self.resource_type)
             } else {
-                format!("{}.{}.ndjson", self.resource_type, self.file_index)
+                format!(
+                    "{}{}.{}.ndjson",
+                    self.file_prefix, self.resource_type, self.file_index
+                )
             };
 
             let file_path = self.job_dir.join(&filename);
             let file = File::create(&file_path).await?;
-            self.files.push(file_path);
+            self.files.push((file_path, 0));
             self.writer = Some(BufWriter::new(file));
         }
 
@@ -121,6 +133,7 @@ impl TypeWriter {
 
         self.current_count += 1;
         self.total_count += 1;
+        self.files.last_mut().expect("opened output file").1 += 1;
 
         Ok(())
     }
@@ -135,12 +148,7 @@ impl TypeWriter {
 
     /// Get list of generated files with their resource counts
     fn get_files(&self) -> Vec<(PathBuf, usize)> {
-        // For simplicity, we report total count for each file
-        // In production, we'd track per-file counts
-        self.files
-            .iter()
-            .map(|p| (p.clone(), self.total_count))
-            .collect()
+        self.files.clone()
     }
 }
 
@@ -152,6 +160,11 @@ impl NdjsonWriter {
         max_resources_per_file: usize,
     ) -> Result<Self, NdjsonWriterError> {
         let base_path = base_path.as_ref().to_path_buf();
+        if max_resources_per_file == 0 {
+            return Err(NdjsonWriterError::InvalidPath(
+                "Export file resource limit must be positive".into(),
+            ));
+        }
 
         // Create job-specific directory
         let job_dir = base_path.join(job_id.to_string());
@@ -160,6 +173,10 @@ impl NdjsonWriter {
         Ok(Self {
             base_path,
             job_id,
+            file_prefix: crate::async_jobs::current_execution_claim()
+                .filter(|claim| claim.job_id == job_id)
+                .map(|claim| format!("{}-", claim.execution_id))
+                .unwrap_or_default(),
             max_resources_per_file,
             writers: std::collections::HashMap::new(),
         })
@@ -176,14 +193,24 @@ impl NdjsonWriter {
         resource_type: &str,
         resource: &Value,
     ) -> Result<(), NdjsonWriterError> {
+        if resource_type.is_empty()
+            || !resource_type
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err(NdjsonWriterError::InvalidPath(
+                "Invalid export resource type".into(),
+            ));
+        }
         // Extract values before borrowing self.writers to avoid borrow conflict
         let job_dir = self.job_dir();
         let max_per_file = self.max_resources_per_file;
+        let file_prefix = self.file_prefix.clone();
 
         let writer = self
             .writers
             .entry(resource_type.to_string())
-            .or_insert_with(|| TypeWriter::new(resource_type, job_dir, max_per_file));
+            .or_insert_with(|| TypeWriter::new(resource_type, job_dir, max_per_file, file_prefix));
 
         writer.write_resource(resource).await
     }
@@ -301,6 +328,31 @@ pub async fn cleanup_expired_exports(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn manifest_counts_match_each_split_file_and_preserve_json() {
+        let temp = tempdir().unwrap();
+        let mut writer = NdjsonWriter::new(temp.path(), Uuid::new_v4(), 2)
+            .await
+            .unwrap();
+        let resources: Vec<_> = (0..5).map(|id| serde_json::json!({"resourceType":"Patient","id":id.to_string(),"name":[{"family":"Иванов"}],"meta":{"versionId":"9007199254740993"}})).collect();
+        writer.write_resources("Patient", &resources).await.unwrap();
+        let files = writer.finish().await.unwrap();
+        let counts: Vec<_> = files["Patient"].iter().map(|(_, count)| *count).collect();
+        assert_eq!(counts, vec![2, 2, 1]);
+        let mut saved = Vec::new();
+        for (path, count) in &files["Patient"] {
+            let contents = fs::read_to_string(path).await.unwrap();
+            assert!(contents.ends_with('\n'));
+            let rows: Vec<Value> = contents
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(rows.len(), *count);
+            saved.extend(rows);
+        }
+        assert_eq!(saved, resources);
+    }
 
     #[tokio::test]
     async fn test_write_single_resource() {

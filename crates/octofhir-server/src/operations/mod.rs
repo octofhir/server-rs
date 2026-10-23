@@ -43,6 +43,7 @@
 
 pub mod auth_session;
 pub mod bulk;
+mod care_dates;
 pub mod context;
 pub mod cql;
 pub mod db_console_api;
@@ -51,6 +52,7 @@ pub mod evaluate_measure;
 pub mod everything;
 pub mod fhirpath;
 pub mod graph;
+pub(crate) mod group;
 pub mod handler;
 pub mod loader;
 pub mod meta;
@@ -62,7 +64,7 @@ pub mod sof;
 pub mod sql;
 pub mod terminology;
 pub mod validate;
-mod validation_reference;
+pub(crate) mod validation_reference;
 mod validation_write;
 
 // Re-export main types for convenience
@@ -261,7 +263,7 @@ pub fn register_core_operations_all(
     // $fhirpath operation
     handlers.insert("fhirpath".to_string(), Arc::new(FhirPathOperation::new()));
 
-    // CQL operations ($cql, $evaluate-measure) - only if enabled
+    // CQL expression operation; measure evaluation retains an explicit 501 contract
     if cql_enabled {
         tracing::info!("Registering CQL operations (cql_enabled=true)");
         handlers.insert("cql".to_string(), Arc::new(CqlOperation::new()));
@@ -269,7 +271,7 @@ pub fn register_core_operations_all(
             "evaluate-measure".to_string(),
             Arc::new(EvaluateMeasureOperation::new()),
         );
-        tracing::info!("CQL operations registered: cql, evaluate-measure");
+        tracing::info!("CQL expression operation registered; measure scoring is unavailable");
     } else {
         tracing::info!("CQL operations NOT registered (cql_enabled=false)");
     }
@@ -284,4 +286,45 @@ pub fn register_core_operations_all(
     handlers.insert("graph".to_string(), Arc::new(GraphOperation::new()));
 
     handlers
+}
+
+/// Bulk operations have distinct standard definitions for their invocation
+/// levels, even though the callable FHIR code is shared.
+pub(crate) fn register_export_definitions(
+    registry: &mut OperationRegistry,
+    bulk_enabled: bool,
+    sof_enabled: bool,
+) {
+    if bulk_enabled {
+        for (name, system, type_level, instance, resource) in [
+            ("export", true, false, false, vec![]),
+            ("patient-export", false, true, false, vec!["Patient".into()]),
+            ("group-export", false, false, true, vec!["Group".into()]),
+        ] {
+            registry.register(OperationDefinition {
+                code: "export".into(),
+                url: format!("http://hl7.org/fhir/uv/bulkdata/OperationDefinition/{name}"),
+                kind: OperationKind::Operation,
+                system,
+                type_level,
+                instance,
+                resource,
+                parameters: vec![],
+                affects_state: false,
+            });
+        }
+        if sof_enabled {
+            registry.register(OperationDefinition {
+                code: "export".into(),
+                url: "http://octofhir.org/OperationDefinition/ViewDefinition-export".into(),
+                kind: OperationKind::Operation,
+                system: false,
+                type_level: true,
+                instance: true,
+                resource: vec!["ViewDefinition".into()],
+                parameters: vec![],
+                affects_state: false,
+            });
+        }
+    }
 }

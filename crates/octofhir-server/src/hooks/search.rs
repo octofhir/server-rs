@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use octofhir_core::events::{HookError, ResourceEvent, ResourceEventType, ResourceHook};
 use octofhir_search::ReloadableSearchConfig;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 /// Hook that updates search parameter registry on SearchParameter changes.
 ///
@@ -58,76 +58,30 @@ impl ResourceHook for SearchParamHook {
 
         let config = self.search_config.config();
 
-        match event.event_type {
+        let version = event.version_id.ok_or_else(|| {
+            HookError::execution("SearchParameter event has no committed revision")
+        })?;
+        let parameter = match event.event_type {
             ResourceEventType::Created | ResourceEventType::Updated => {
-                // Get the resource JSON (required for create/update)
-                let resource = match &event.resource {
-                    Some(r) => r,
-                    None => {
-                        warn!(
-                            resource_id = %event.resource_id,
-                            "SearchParamHook: no resource data in event"
-                        );
-                        return Ok(());
-                    }
-                };
-
-                // Parse the search parameter
-                match octofhir_search::parse_search_parameter(resource) {
-                    Ok(param) => {
-                        let param = param.with_user_defined(true);
-                        let code = param.code.clone();
-
-                        // Upsert into registry
-                        config.registry.upsert(param);
-
-                        // Clear query cache
-                        if let Some(cache) = &config.cache {
-                            cache.clear();
-                        }
-
-                        info!(
-                            code = %code,
-                            resource_id = %event.resource_id,
-                            "Search parameter registered via hook"
-                        );
-                    }
-                    Err(e) => {
-                        error!(
-                            error = %e,
-                            resource_id = %event.resource_id,
-                            "Failed to parse SearchParameter"
-                        );
-                        // Don't fail the hook - the resource was already saved
-                    }
-                }
+                let resource = event
+                    .resource
+                    .as_ref()
+                    .ok_or_else(|| HookError::execution("SearchParameter event has no snapshot"))?;
+                Some(
+                    octofhir_search::parse_search_parameter(resource)
+                        .map_err(|error| HookError::execution(error.to_string()))?,
+                )
             }
-            ResourceEventType::Deleted => {
-                // For deletes, we don't have the resource data (it's already deleted),
-                // so we can't easily remove by URL. Clear the cache and log.
-                // The parameter will be removed when the registry is next fully reloaded.
-                // This is acceptable since SearchParameter deletions are rare.
-                if let Some(cache) = &config.cache {
-                    cache.clear();
-                }
-
-                // Try to remove by URL if the resource_id looks like a URL
-                if event.resource_id.starts_with("http") {
-                    let removed = config.registry.remove_by_url(&event.resource_id);
-                    if removed {
-                        info!(
-                            url = %event.resource_id,
-                            "Search parameter removed via hook"
-                        );
-                    }
-                } else {
-                    warn!(
-                        resource_id = %event.resource_id,
-                        "SearchParameter deleted but cannot remove from registry (no URL). \
-                         Registry will be updated on next reload."
-                    );
-                }
+            ResourceEventType::Deleted => None,
+        };
+        if config
+            .registry
+            .apply_resource(&event.resource_id, version, parameter)
+        {
+            if let Some(cache) = &config.cache {
+                cache.clear();
             }
+            info!(resource_id = %event.resource_id, version, "Committed search parameter revision applied");
         }
 
         Ok(())

@@ -150,13 +150,6 @@ impl<'a> ClientStorage<'a> {
     /// - The database insert fails
     /// - A client with the same ID already exists
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
-        // Create transaction record first (required by foreign key constraint)
-        let txid: i64 = sqlx_core::query_scalar::query_scalar(
-            "SELECT nextval('_transaction_txid_seq') AS txid",
-        )
-        .fetch_one(self.pool)
-        .await?;
-
         let id_str = id.to_string();
         let row: (
             String,
@@ -168,12 +161,11 @@ impl<'a> ClientStorage<'a> {
         ) = query_as(
             r#"
             INSERT INTO client (id, txid, created_at, updated_at, resource, status)
-            VALUES ($1, $2, NOW(), NOW(), $3, 'created')
+            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
         .bind(&id_str)
-        .bind(txid)
         .bind(&resource)
         .fetch_one(self.pool)
         .await
@@ -199,13 +191,6 @@ impl<'a> ClientStorage<'a> {
     /// - The client doesn't exist
     /// - The database update fails
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
-        // Create transaction record first (required by foreign key constraint)
-        let txid: i64 = sqlx_core::query_scalar::query_scalar(
-            "SELECT nextval('_transaction_txid_seq') AS txid",
-        )
-        .fetch_one(self.pool)
-        .await?;
-
         let row: Option<(
             String,
             i64,
@@ -217,7 +202,7 @@ impl<'a> ClientStorage<'a> {
             r#"
             UPDATE client
             SET resource = $2,
-                txid = $3,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
@@ -227,7 +212,6 @@ impl<'a> ClientStorage<'a> {
         )
         .bind(id.to_string())
         .bind(&resource)
-        .bind(txid)
         .fetch_optional(self.pool)
         .await?;
 
@@ -245,25 +229,17 @@ impl<'a> ClientStorage<'a> {
     /// - The client doesn't exist
     /// - The database update fails
     pub async fn delete(&self, id: Uuid) -> StorageResult<()> {
-        // Create transaction record first (required by foreign key constraint)
-        let txid: i64 = sqlx_core::query_scalar::query_scalar(
-            "SELECT nextval('_transaction_txid_seq') AS txid",
-        )
-        .fetch_one(self.pool)
-        .await?;
-
         let result = query(
             r#"
             UPDATE client
             SET status = 'deleted',
-                txid = $2,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW()
             WHERE id = $1
               AND status != 'deleted'
             "#,
         )
         .bind(id.to_string())
-        .bind(txid)
         .execute(self.pool)
         .await?;
 

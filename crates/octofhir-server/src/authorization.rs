@@ -11,6 +11,300 @@ use std::collections::{HashMap, HashSet};
 
 use crate::server::AppState;
 
+mod snapshots;
+pub(crate) use snapshots::PreparedSnapshotSearch;
+
+/// Admission for registered snapshot-returning routes. The response handler
+/// consumes this trusted context and authorizes the exact saved JSON it returns.
+#[derive(Clone, Debug)]
+pub struct AuthorizedRead(pub(crate) PolicyContext);
+
+#[derive(Clone, Debug)]
+pub struct AuthorizedHistory(pub(crate) PolicyContext);
+
+impl AuthorizedHistory {
+    pub(crate) async fn read(
+        &self,
+        state: &AppState,
+        types: &[String],
+        id: Option<&str>,
+        history: &octofhir_storage::HistoryParams,
+    ) -> Result<octofhir_storage::RawHistoryResult, ApiError> {
+        let mut contexts = HashMap::new();
+        let mut constraints = HashMap::new();
+        for resource_type in types {
+            let mut context = self.0.clone();
+            context.request.resource_type = resource_type.clone();
+            context.request.resource_id = id.map(str::to_owned);
+            if !context.scopes.parsed.permits(
+                resource_type,
+                context.request.operation,
+                context.environment.patient_context.as_deref(),
+            ) {
+                continue;
+            }
+            constraints.insert(
+                resource_type.clone(),
+                query_visibility(&context, &state.compartment_registry, &state.base_url)?
+                    .unwrap_or(SearchConstraint::And(Vec::new())),
+            );
+            contexts.insert(
+                resource_type.clone(),
+                PreparedRead {
+                    context,
+                    params: SearchParams::new(),
+                    constrained: false,
+                },
+            );
+        }
+        if contexts.is_empty() {
+            return Err(ApiError::forbidden("No grant allows the requested history"));
+        }
+        let mut types: Vec<_> = contexts.keys().cloned().collect();
+        types.sort();
+        let types: Vec<_> = types.iter().map(String::as_str).collect();
+        let mut params = SearchParams::new();
+        params.type_constraints = Some(constraints);
+        if let Some(id) = id {
+            params = params.with_param("_id", id);
+        }
+        if let Some(since) = history.since {
+            let instant = since
+                .format(&time::format_description::well_known::Rfc3339)
+                .map_err(|e| ApiError::internal(e.to_string()))?;
+            params = params.with_param("_lastUpdated", format!("ge{instant}"));
+        }
+        let at = history
+            .at
+            .map(|at| at.format(&time::format_description::well_known::Rfc3339))
+            .transpose()
+            .map_err(|error| ApiError::internal(error.to_string()))?;
+        let at_end = history
+            .at_end
+            .map(|at| at.format(&time::format_description::well_known::Rfc3339))
+            .transpose()
+            .map_err(|error| ApiError::internal(error.to_string()))?;
+        let registry = state.search_config.config().registry.clone();
+        let params = octofhir_db_postgres::queries::search::prepare_system_search_params(
+            &types,
+            &params,
+            &registry,
+            state.terminology_provider.as_ref(),
+            state.config.search.max_valueset_expansion,
+        )
+        .await
+        .map_err(crate::handlers::map_storage_error)?;
+        let count = history.count.unwrap_or(100) as usize;
+        let offset = history.offset.unwrap_or(0) as usize;
+        let want_total = count == 0 || history.total == Some(octofhir_storage::TotalMode::Accurate);
+        let mut tx = state
+            .db_pool
+            .begin()
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+        sqlx_core::query::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+        let result = tokio::time::timeout(state.config.read_timeout(), async {
+            let mut cursor: Option<(i64, String, String)> = None;
+            let mut visible = 0usize;
+            let mut entries = Vec::new();
+            loop {
+                let rows =
+                    octofhir_db_postgres::queries::search::execute_history_search_raw_with_tx(
+                        &mut tx,
+                        &types,
+                        &params,
+                        &registry,
+                        cursor.as_ref().map(|(version, resource_type, id)| {
+                            (*version, resource_type.as_str(), id.as_str())
+                        }),
+                        256,
+                        at.as_deref().map(|at| (at, at_end.as_deref())),
+                    )
+                    .await
+                    .map_err(crate::handlers::map_storage_error)?;
+                let exhausted = rows.len() < 256;
+                for row in rows {
+                    cursor =
+                        Some((
+                            row.resource.version_id.parse().map_err(
+                                |e: std::num::ParseIntError| ApiError::internal(e.to_string()),
+                            )?,
+                            row.resource.resource_type.clone(),
+                            row.resource.id.clone(),
+                        ));
+                    let body: Value = serde_json::from_str(&row.resource.resource_json)
+                        .map_err(|e| ApiError::internal(e.to_string()))?;
+                    match contexts[&row.resource.resource_type]
+                        .authorize_policy(state, &body)
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(ApiError::Forbidden(_)) => continue,
+                        Err(error) => return Err(error),
+                    }
+                    if visible >= offset && entries.len() < count {
+                        entries.push(row);
+                    }
+                    visible = visible
+                        .checked_add(1)
+                        .ok_or_else(|| ApiError::internal("History count overflow"))?;
+                    if !want_total && visible > offset.saturating_add(count) {
+                        return Ok(octofhir_storage::RawHistoryResult {
+                            entries,
+                            total: None,
+                        });
+                    }
+                }
+                if exhausted {
+                    break;
+                }
+            }
+            if id.is_some() && visible == 0 {
+                return Err(ApiError::not_found("Resource history is unavailable"));
+            }
+            let total = if want_total {
+                Some(
+                    u32::try_from(visible)
+                        .map_err(|_| ApiError::internal("History count exceeds supported range"))?,
+                )
+            } else {
+                None
+            };
+            Ok(octofhir_storage::RawHistoryResult { entries, total })
+        })
+        .await
+        .map_err(|_| {
+            ApiError::internal("History authorization exceeded the configured read timeout")
+        })?;
+        tx.rollback()
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+        result
+    }
+}
+
+pub(crate) struct PreparedRead {
+    context: PolicyContext,
+    params: SearchParams,
+    constrained: bool,
+}
+
+impl AuthorizedRead {
+    pub(crate) async fn prepare(self, state: &AppState) -> Result<PreparedRead, ApiError> {
+        let resource_type = &self.0.request.resource_type;
+        if !self.0.scopes.parsed.permits(
+            resource_type,
+            self.0.request.operation,
+            self.0.environment.patient_context.as_deref(),
+        ) {
+            return Err(ApiError::forbidden(
+                "Insufficient scope for this interaction",
+            ));
+        }
+        let mut params = SearchParams::new().with_count(1);
+        params.constraint =
+            query_visibility(&self.0, &state.compartment_registry, &state.base_url)?;
+        let constrained = params.constraint.is_some();
+        if constrained {
+            params = octofhir_db_postgres::queries::search::prepare_system_search_params(
+                &[resource_type.as_str()],
+                &params,
+                &state.search_config.config().registry,
+                state.terminology_provider.as_ref(),
+                state.config.search.max_valueset_expansion,
+            )
+            .await
+            .map_err(crate::handlers::map_storage_error)?;
+        }
+        Ok(PreparedRead {
+            context: self.0,
+            params,
+            constrained,
+        })
+    }
+}
+
+impl PreparedRead {
+    pub(crate) async fn authorize(&self, state: &AppState, body: &Value) -> Result<(), ApiError> {
+        if self.constrained {
+            let tx = state
+                .storage
+                .begin_transaction()
+                .await
+                .map_err(crate::handlers::map_storage_error)?;
+            let result = self.authorize_with_tx(state, &*tx, body).await;
+            tx.rollback()
+                .await
+                .map_err(crate::handlers::map_storage_error)?;
+            result
+        } else {
+            self.authorize_policy(state, body).await
+        }
+    }
+
+    pub(crate) async fn authorize_with_tx(
+        &self,
+        state: &AppState,
+        tx: &dyn octofhir_storage::Transaction,
+        body: &Value,
+    ) -> Result<(), ApiError> {
+        if self.constrained {
+            let id = body["id"]
+                .as_str()
+                .ok_or_else(|| ApiError::internal("Saved resource has no id"))?;
+            let mut params = self.params.clone();
+            params.parameters.insert("_id".into(), vec![id.to_owned()]);
+            let resource_type = self.context.request.resource_type.clone();
+            let matches = tx
+                .search_proposed_conditional_batch(
+                    &[(resource_type.clone(), params)],
+                    &[octofhir_storage::ProposedResource {
+                        resource_type,
+                        id: id.into(),
+                        resource: Some(body.clone()),
+                    }],
+                )
+                .await
+                .map_err(crate::handlers::map_storage_error)?;
+            if !matches
+                .first()
+                .is_some_and(|rows| rows.iter().any(|row| row.resource == *body))
+            {
+                return Err(ApiError::not_found(
+                    "Resource is unavailable for this interaction",
+                ));
+            }
+        }
+        self.authorize_policy(state, body).await
+    }
+
+    async fn authorize_policy(&self, state: &AppState, body: &Value) -> Result<(), ApiError> {
+        let mut context = self.context.clone();
+        context.resource = Some(octofhir_auth::policy::ResourceContext::from_resource(
+            body.clone(),
+        ));
+        match state.policy_evaluator.evaluate(&context).await {
+            AccessDecision::Allow => Ok(()),
+            AccessDecision::Deny(reason)
+                if matches!(
+                    reason.code.as_str(),
+                    "policy-error" | "script-error" | "script-timeout" | "script-memory-limit"
+                ) =>
+            {
+                tracing::error!(policy_id = ?reason.policy_id, code = %reason.code, "Read snapshot policy failed");
+                Err(ApiError::internal("Resource policy evaluation failed"))
+            }
+            AccessDecision::Deny(reason) => Err(ApiError::forbidden(reason.message)),
+            AccessDecision::Abstain => Err(ApiError::forbidden(
+                "No policy allows this resource snapshot",
+            )),
+        }
+    }
+}
+
 /// Trusted visibility prepared by authorization middleware for a type search.
 #[derive(Clone, Debug)]
 pub struct AuthorizedSearch {
@@ -20,6 +314,14 @@ pub struct AuthorizedSearch {
 }
 
 impl AuthorizedSearch {
+    pub(crate) fn for_prepared_context(context: PolicyContext) -> Self {
+        Self {
+            context,
+            constraint: None,
+            deferred: false,
+        }
+    }
+
     pub(crate) async fn apply(
         &self,
         state: &AppState,
@@ -57,14 +359,17 @@ impl AuthorizedSearch {
                 .iter()
                 .filter_map(|(key, values)| values.last().map(|value| (key.clone(), value.clone())))
                 .collect();
+            let policies = state
+                .policy_evaluator
+                .prepare(resource_type)
+                .await
+                .map_err(|error| ApiError::internal(error.to_string()))?;
             if !context.scopes.parsed.permits(
                 resource_type,
                 context.request.operation,
                 context.environment.patient_context.as_deref(),
-            ) || !matches!(
-                state.policy_evaluator.evaluate(&context).await,
-                AccessDecision::Allow
-            ) {
+            ) || !matches!(policies.evaluate_admission(&context), AccessDecision::Allow)
+            {
                 continue;
             }
             // Expanding a system or wildcard request cannot bypass a policy
@@ -77,7 +382,7 @@ impl AuthorizedSearch {
             type_context.request.compartment_id = None;
             type_context.request.body = None;
             if !matches!(
-                state.policy_evaluator.evaluate(&type_context).await,
+                policies.evaluate_admission(&type_context),
                 AccessDecision::Allow
             ) {
                 continue;
@@ -124,16 +429,19 @@ impl AuthorizedSearch {
             context.request.operation_id = None;
             context.request.method = "GET".into();
             context.request.path = format!("/fhir/{resource_type}");
+            let policies = state
+                .policy_evaluator
+                .prepare(&resource_type)
+                .await
+                .map_err(|error| ApiError::internal(error.to_string()))?;
             // Inline requests are searches of the included resource type. Scopes
             // and underlying access policies both apply, including at each iterate hop.
             if !context.scopes.parsed.permits(
                 &resource_type,
                 FhirOperation::Search,
                 context.environment.patient_context.as_deref(),
-            ) || !matches!(
-                state.policy_evaluator.evaluate(&context).await,
-                AccessDecision::Allow
-            ) {
+            ) || !matches!(policies.evaluate_admission(&context), AccessDecision::Allow)
+            {
                 continue;
             }
             let constraint =
@@ -271,6 +579,37 @@ pub(crate) async fn hydrate_scope_context(
     context: &mut PolicyContext,
 ) -> Result<(), ApiError> {
     let operation = context.request.operation;
+    if matches!(
+        operation,
+        FhirOperation::HistoryInstance | FhirOperation::HistoryType | FhirOperation::HistorySystem
+    ) && matches!(request.method().as_str(), "GET" | "HEAD")
+    {
+        let path = match (operation, &context.request.resource_id) {
+            (FhirOperation::HistorySystem, _) => "/fhir/_history".to_owned(),
+            (FhirOperation::HistoryInstance, Some(id)) => {
+                format!("/fhir/{}/{id}/_history", context.request.resource_type)
+            }
+            (FhirOperation::HistoryType, _) => {
+                format!("/fhir/{}/_history", context.request.resource_type)
+            }
+            _ => String::new(),
+        };
+        if request.uri().path() == path {
+            if operation != FhirOperation::HistorySystem
+                && !context.scopes.parsed.permits(
+                    &context.request.resource_type,
+                    operation,
+                    context.environment.patient_context.as_deref(),
+                )
+            {
+                return Err(ApiError::forbidden("Insufficient scope for history"));
+            }
+            request
+                .extensions_mut()
+                .insert(AuthorizedHistory(context.clone()));
+            return Ok(());
+        }
+    }
     if (operation == FhirOperation::SearchSystem
         && matches!(request.uri().path(), "/fhir" | "/fhir/" | "/fhir/_search"))
         || (matches!(operation, FhirOperation::Search | FhirOperation::SearchType)
@@ -294,6 +633,46 @@ pub(crate) async fn hydrate_scope_context(
         return Err(ApiError::forbidden(
             "Insufficient scope for this interaction",
         ));
+    }
+    let primary_path = match (&context.request.resource_id, operation) {
+        (None, FhirOperation::Create) => Some(format!("/fhir/{}", context.request.resource_type)),
+        (None, FhirOperation::Update | FhirOperation::Patch | FhirOperation::Delete)
+            if matches!(request.method().as_str(), "PUT" | "PATCH" | "DELETE") =>
+        {
+            Some(format!("/fhir/{}", context.request.resource_type))
+        }
+        (Some(id), FhirOperation::Update | FhirOperation::Patch | FhirOperation::Delete)
+            if matches!(request.method().as_str(), "PUT" | "PATCH" | "DELETE") =>
+        {
+            Some(format!("/fhir/{}/{id}", context.request.resource_type))
+        }
+        _ => None,
+    };
+    if primary_path.as_deref() == Some(request.uri().path()) {
+        request
+            .extensions_mut()
+            .insert(crate::write::AuthorizedWrite(context.clone()));
+        return Ok(());
+    }
+    if matches!(operation, FhirOperation::Read | FhirOperation::VRead)
+        && let Some(id) = &context.request.resource_id
+    {
+        let base = format!("/fhir/{}/{id}", context.request.resource_type);
+        let is_registered = match operation {
+            FhirOperation::Read => request.uri().path() == base,
+            FhirOperation::VRead => request
+                .uri()
+                .path()
+                .strip_prefix(&format!("{base}/_history/"))
+                .is_some_and(|version| !version.is_empty() && !version.contains('/')),
+            _ => false,
+        };
+        if is_registered && matches!(request.method().as_str(), "GET" | "HEAD") {
+            request
+                .extensions_mut()
+                .insert(AuthorizedRead(context.clone()));
+            return Ok(());
+        }
     }
     if matches!(operation, FhirOperation::Search | FhirOperation::SearchType)
         && (is_type_search_path(request.uri().path(), &context.request.resource_type)
@@ -400,14 +779,7 @@ fn is_compartment_search_path(path: &str, context: &PolicyContext) -> bool {
             && *resource_type == context.request.resource_type)
 }
 
-pub(crate) async fn authorize_entry(
-    state: &AppState,
-    auth: &AuthContext,
-    entry: &Value,
-) -> Result<Option<AuthorizedSearch>, ApiError> {
-    if state.config.auth.policy.anonymous_access {
-        return Ok(None);
-    }
+fn entry_context(auth: &AuthContext, entry: &Value) -> Result<PolicyContext, ApiError> {
     let request = &entry["request"];
     let method = request["method"]
         .as_str()
@@ -415,13 +787,12 @@ pub(crate) async fn authorize_entry(
     let url = request["url"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("Missing request.url"))?;
-    // Bundle request URLs are relative to this service, not arbitrary hosts.
-    if url.contains("://") || url.starts_with("//") || url.contains('#') {
+    let (path, query) = url.split_once('?').unwrap_or((url, ""));
+    if path.contains("://") || path.starts_with("//") || url.contains('#') {
         return Err(ApiError::bad_request(
             "Bundle request.url must be relative to the FHIR base",
         ));
     }
-    let (path, query) = url.split_once('?').unwrap_or((url, ""));
     let mut context = PolicyContextBuilder::new()
         .with_auth_context(auth)
         .with_request(
@@ -441,6 +812,59 @@ pub(crate) async fn authorize_entry(
     } else {
         format!("/fhir/{}", path.trim_start_matches('/'))
     };
+    Ok(context)
+}
+
+/// Batch mutations enter the same transaction protocol as primary writes.
+/// Build identity exclusively from authenticated server context; actual grants
+/// and policies are enforced against locked resources by the write handlers.
+pub(crate) fn authorize_batch_write(
+    state: &AppState,
+    auth: &AuthContext,
+    entry: &Value,
+) -> Result<Option<crate::write::AuthorizedWrite>, ApiError> {
+    let context = entry_context(auth, entry)?;
+    if state.is_anonymous_context(auth) {
+        return Ok(None);
+    }
+    if !matches!(
+        context.request.operation,
+        FhirOperation::Create
+            | FhirOperation::Update
+            | FhirOperation::Patch
+            | FhirOperation::Delete
+    ) {
+        return Err(ApiError::bad_request("Unsupported batch write interaction"));
+    }
+    if !context.scopes.parsed.permits(
+        &context.request.resource_type,
+        context.request.operation,
+        context.environment.patient_context.as_deref(),
+    ) {
+        return Err(ApiError::forbidden(
+            "Insufficient scope for this Bundle entry",
+        ));
+    }
+    Ok(Some(crate::write::AuthorizedWrite(context)))
+}
+
+pub(crate) async fn authorize_entry(
+    state: &AppState,
+    auth: &AuthContext,
+    entry: &Value,
+) -> Result<Option<AuthorizedSearch>, ApiError> {
+    if state.is_anonymous_context(auth) {
+        return Ok(None);
+    }
+    let request = &entry["request"];
+    let method = request["method"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing request.method"))?;
+    let url = request["url"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing request.url"))?;
+    let path = url.split('?').next().unwrap_or(url);
+    let mut context = entry_context(auth, entry)?;
     if method.eq_ignore_ascii_case("GET")
         && ((context.request.operation == FhirOperation::SearchSystem
             && path.trim_matches('/').is_empty())
@@ -463,6 +887,15 @@ pub(crate) async fn authorize_entry(
             "Insufficient scope for this Bundle entry",
         ));
     }
+    if matches!(
+        context.request.operation,
+        FhirOperation::Read | FhirOperation::VRead
+    ) && matches!(context.request.method.as_str(), "GET" | "HEAD")
+    {
+        // Exact snapshot policies run when the Bundle read is executed, after
+        // preceding transaction mutations and before projecting its response.
+        return Ok(None);
+    }
     if method.eq_ignore_ascii_case("GET")
         && matches!(
             context.request.operation,
@@ -471,9 +904,22 @@ pub(crate) async fn authorize_entry(
         && (is_type_search_path(path, &context.request.resource_type)
             || is_compartment_search_path(path, &context))
     {
-        return match state.policy_evaluator.evaluate(&context).await {
+        let policies = state
+            .policy_evaluator
+            .prepare(&context.request.resource_type)
+            .await
+            .map_err(|error| ApiError::internal(error.to_string()))?;
+        return match policies.evaluate_admission(&context) {
             AccessDecision::Allow => {
                 search_visibility(&context, &state.compartment_registry, &state.base_url).map(Some)
+            }
+            AccessDecision::Deny(reason)
+                if matches!(
+                    reason.code.as_str(),
+                    "policy-error" | "script-error" | "script-timeout" | "script-memory-limit"
+                ) =>
+            {
+                Err(ApiError::internal("Resource policy evaluation failed"))
             }
             AccessDecision::Deny(reason) => Err(ApiError::forbidden(reason.message)),
             AccessDecision::Abstain => {
@@ -512,6 +958,26 @@ pub(crate) async fn authorize_entry(
         AccessDecision::Allow => check_resource_scope(&context, &state.base_url).map(|()| None),
         AccessDecision::Deny(reason) => Err(ApiError::forbidden(reason.message)),
         AccessDecision::Abstain => Err(ApiError::forbidden("No policy allows this Bundle entry")),
+    }
+}
+
+pub(crate) async fn prepare_entry_read(
+    state: &AppState,
+    auth: &AuthContext,
+    entry: &Value,
+) -> Result<Option<PreparedRead>, ApiError> {
+    if state.is_anonymous_context(auth) {
+        return Ok(None);
+    }
+    let context = entry_context(auth, entry)?;
+    if matches!(
+        context.request.operation,
+        FhirOperation::Read | FhirOperation::VRead
+    ) && matches!(context.request.method.as_str(), "GET" | "HEAD")
+    {
+        AuthorizedRead(context).prepare(state).await.map(Some)
+    } else {
+        Ok(None)
     }
 }
 
@@ -601,9 +1067,9 @@ fn normalize_local_references(value: &mut Value, base_url: &str) {
     match value {
         Value::Object(map) => {
             if let Some(Value::String(reference)) = map.get_mut("reference") {
-                let prefix = format!("{}/fhir/", base_url.trim_end_matches('/'));
-                if let Some(relative) = reference.strip_prefix(&prefix) {
-                    *reference = relative.to_string();
+                let base = format!("{}/fhir", base_url.trim_end_matches('/'));
+                if let Ok(parsed) = octofhir_core::parse_reference(reference, Some(&base)) {
+                    *reference = parsed.to_relative();
                 }
             }
             for value in map.values_mut() {
@@ -640,6 +1106,35 @@ mod tests {
     }
 
     use std::sync::Arc;
+
+    #[test]
+    fn bundle_query_uris_do_not_become_absolute_request_paths() {
+        let auth = AuthContext::system_anonymous();
+        for method in ["GET", "PUT", "DELETE"] {
+            for url in [
+                "Patient?identifier=http://example.org/mrn|123",
+                "Patient?identifier=https://example.org/mrn|123",
+                "Patient?identifier=https%3A%2F%2Fexample.org%2Fmrn%231%7C123",
+            ] {
+                let context =
+                    entry_context(&auth, &json!({"request":{"method":method,"url":url}})).unwrap();
+                assert_eq!(context.request.path, "/fhir/Patient");
+                assert_eq!(context.request.resource_type, "Patient");
+                assert!(context.request.resource_id.is_none());
+                assert!(context.request.query_params["identifier"].starts_with("http"));
+            }
+        }
+        for url in [
+            "https://foreign.test/fhir/Patient?identifier=http://example.org/mrn|123",
+            "//foreign.test/Patient?identifier=123",
+            "Patient?identifier=123#fragment",
+        ] {
+            assert!(
+                entry_context(&auth, &json!({"request":{"method":"PUT","url":url}})).is_err(),
+                "{url}"
+            );
+        }
+    }
 
     #[test]
     fn patient_grant_cannot_cross_compartments_or_resource_types() {

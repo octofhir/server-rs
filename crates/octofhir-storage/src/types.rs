@@ -27,6 +27,13 @@ pub struct StoredResource {
     pub created_at: OffsetDateTime,
 }
 
+/// Exact before/after snapshots of one atomic update.
+#[derive(Debug, Clone)]
+pub struct UpdatedResource {
+    pub stored: StoredResource,
+    pub previous: StoredResource,
+}
+
 /// A FHIR resource stored with raw JSON string for zero-copy serialization.
 ///
 /// This is an optimized version of `StoredResource` that keeps the resource
@@ -80,6 +87,31 @@ impl StoredResource {
             created_at: self.created_at,
         }
     }
+}
+
+/// A trusted proposed mutation used only by read-only transaction graph search.
+/// `None` removes an identity; `Some` replaces its body. Never a wire input.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProposedResource {
+    pub resource_type: String,
+    pub id: String,
+    pub resource: Option<Value>,
+}
+
+/// Server-reserved metadata shared by a proposed write graph and its commit.
+/// Versions are opaque to callers; a rolled-back reservation may leave a gap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransactionWriteMetadata {
+    pub version_id: String,
+    pub last_updated: String,
+}
+
+/// Exact live snapshot removed by a mutation and its separate deletion revision.
+#[derive(Debug, Clone)]
+pub struct DeletedResource {
+    pub previous: StoredResource,
+    pub version_id: String,
+    pub last_updated: OffsetDateTime,
 }
 
 /// Result of a search operation.
@@ -137,6 +169,19 @@ impl SearchResult {
     }
 }
 
+/// A trusted snapshot predicate, evaluated on the exact stored JSON before
+/// result pagination or following an inline reference.
+pub type RawSnapshotPredicate<'a> =
+    dyn Fn(&RawStoredResource) -> Result<bool, crate::StorageError> + Send + Sync + 'a;
+
+/// Application policies which cannot be expressed as native search predicates.
+/// SQL grants remain part of SearchParams and are always applied first.
+#[derive(Clone, Copy, Default)]
+pub struct RawSearchAuthorization<'a> {
+    pub main: Option<&'a RawSnapshotPredicate<'a>>,
+    pub included: Option<&'a RawSnapshotPredicate<'a>>,
+}
+
 /// Result of a search operation with raw JSON resources.
 ///
 /// This is an optimized version of `SearchResult` that keeps resources
@@ -153,6 +198,8 @@ pub struct RawSearchResult {
     pub has_more: bool,
     /// Warning messages to include in the response (e.g., unknown parameters ignored).
     pub warnings: Vec<String>,
+    /// Parameter names actually ignored by execution, for honest self links.
+    pub ignored_parameters: Vec<String>,
     /// Optional safe search debug payload, populated only by explicit debug-gated callers.
     pub debug: Option<RawSearchDebug>,
 }
@@ -296,10 +343,14 @@ pub struct HistoryParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]
     pub since: Option<OffsetDateTime>,
-    /// Only include entries from before this time.
+    /// Include versions current at this time (or overlapping `at_end`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]
     pub at: Option<OffsetDateTime>,
+    /// Exclusive upper bound when `_at` specifies a date/time period.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub at_end: Option<OffsetDateTime>,
     /// Maximum number of entries to return.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
@@ -438,6 +489,26 @@ pub enum SearchConstraint {
     Or(Vec<SearchConstraint>),
     /// Search criteria only. Unknown, empty or ignored predicates are rejected.
     Query(HashMap<String, Vec<String>>),
+    /// FHIR Patient compartment membership, including incoming, transitive
+    /// Patient.link edges. This is a search selection, never a SMART grant.
+    LinkedPatient {
+        patient_id: String,
+        fhir_base_url: String,
+        parameters: Vec<String>,
+    },
+    /// A grouped selection of Patient compartments. All roots share one
+    /// recursive membership query; this does not confer SMART launch rights.
+    LinkedPatients {
+        patient_ids: Vec<String>,
+        fhir_base_url: String,
+        parameters: Vec<String>,
+    },
+    /// Select records belonging to any current Patient. This is an internal
+    /// membership predicate, intersected with the caller's independent grants.
+    AllPatients {
+        fhir_base_url: String,
+        parameters: Vec<String>,
+    },
 }
 
 impl SearchParams {

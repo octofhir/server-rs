@@ -3,7 +3,10 @@
 //! This operation executes a ViewDefinition against the FHIR database
 //! and returns the results as tabular data.
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
 use crate::operations::{OperationError, OperationHandler};
@@ -11,9 +14,6 @@ use crate::server::AppState;
 use octofhir_sof::ViewDefinition;
 use octofhir_storage::SearchParams;
 
-/// Safety cap on how many source resources are loaded into memory for an
-/// in-memory `$run`. Large datasets should use `$export` (streamed) instead.
-const MAX_SOURCE_RESOURCES: usize = 10_000;
 /// Page size used when streaming source resources out of storage.
 const FETCH_PAGE_SIZE: u32 = 500;
 
@@ -91,39 +91,55 @@ impl ViewDefinitionRunOperation {
     }
 
     /// Extract limit parameter.
-    fn extract_limit(&self, params: &Value) -> Option<usize> {
-        params
+    fn extract_limit(&self, params: &Value) -> Result<Option<usize>, OperationError> {
+        let mut limits = params
             .get("parameter")
             .and_then(|p| p.as_array())
-            .and_then(|parameters| {
-                parameters.iter().find_map(|param| {
-                    let name = param.get("name").and_then(|n| n.as_str());
-                    if name == Some("limit") || name == Some("_limit") {
-                        param
-                            .get("valueInteger")
-                            .and_then(|v| v.as_i64())
-                            .map(|v| v as usize)
-                    } else {
-                        None
-                    }
-                })
+            .into_iter()
+            .flatten()
+            .filter(|param| matches!(param["name"].as_str(), Some("limit" | "_limit")));
+        let Some(param) = limits.next() else {
+            return Ok(None);
+        };
+        if limits.next().is_some() {
+            return Err(OperationError::InvalidParameters(
+                "Row limit must occur once".into(),
+            ));
+        }
+        param["valueInteger"]
+            .as_u64()
+            .and_then(|limit| usize::try_from(limit).ok())
+            .map(Some)
+            .ok_or_else(|| {
+                OperationError::InvalidParameters("Row limit must be a non-negative integer".into())
             })
     }
 
     /// Extract inline `resource` parameters (run against caller-supplied
     /// resources instead of the database — the SQL-on-FHIR spec `resource[]`).
-    fn extract_inline_resources(&self, params: &Value) -> Vec<Value> {
-        params
+    fn extract_inline_resources(
+        &self,
+        params: &Value,
+    ) -> Result<Option<Vec<Value>>, OperationError> {
+        let mut resources = Vec::new();
+        for param in params
             .get("parameter")
             .and_then(|p| p.as_array())
-            .map(|parameters| {
-                parameters
-                    .iter()
-                    .filter(|param| param.get("name").and_then(|n| n.as_str()) == Some("resource"))
-                    .filter_map(|param| param.get("resource").cloned())
-                    .collect()
-            })
-            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .filter(|param| param["name"].as_str() == Some("resource"))
+        {
+            let resource = param
+                .get("resource")
+                .filter(|resource| resource["resourceType"].is_string())
+                .ok_or_else(|| {
+                    OperationError::InvalidParameters(
+                        "Inline resource requires a FHIR resource".into(),
+                    )
+                })?;
+            resources.push(resource.clone());
+        }
+        Ok((!resources.is_empty()).then_some(resources))
     }
 
     /// Resolve the ViewDefinition from `viewReference` (a saved VD id/reference),
@@ -131,6 +147,7 @@ impl ViewDefinitionRunOperation {
     async fn resolve_view_reference(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         params: &Value,
     ) -> Result<Option<ViewDefinition>, OperationError> {
         let reference = params
@@ -154,18 +171,17 @@ impl ViewDefinitionRunOperation {
             return Ok(None);
         };
 
-        // Accept either a bare id or a "ViewDefinition/{id}" reference.
         let id = reference
-            .rsplit('/')
-            .next()
-            .unwrap_or(reference)
-            .to_string();
-
-        let stored = state
-            .storage
-            .read("ViewDefinition", &id)
-            .await
-            .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
+            .strip_prefix("ViewDefinition/")
+            .unwrap_or(reference);
+        octofhir_core::validate_id(id).map_err(|_| {
+            OperationError::InvalidParameters(
+                "viewReference requires a local ViewDefinition/id or bare id".into(),
+            )
+        })?;
+        let stored = context
+            .read(state, "ViewDefinition", id)
+            .await?
             .ok_or_else(|| OperationError::NotFound(format!("ViewDefinition/{} not found", id)))?;
 
         let view = ViewDefinition::from_json(&stored.resource).map_err(|e| {
@@ -174,40 +190,59 @@ impl ViewDefinitionRunOperation {
         Ok(Some(view))
     }
 
-    /// Load source resources of the view's resource type from storage, paging
-    /// through results up to [`MAX_SOURCE_RESOURCES`].
+    /// Load authorized source pages with an explicit memory budget.
     async fn load_source_resources(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
     ) -> Result<Vec<Value>, OperationError> {
         let mut resources = Vec::new();
         let mut offset: u32 = 0;
+        let mut bytes: usize = 0;
+        let limits = state.config.search.include_limits;
 
         loop {
-            let mut params = SearchParams::new();
+            let mut params = SearchParams::new().with_sort("_id", false);
             params.count = Some(FETCH_PAGE_SIZE);
             params.offset = Some(offset);
 
-            let page = state
-                .storage
-                .search(resource_type, &params)
-                .await
-                .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?;
+            let page = context.search(state, resource_type, &params).await?;
 
             let fetched = page.entries.len();
+            if page.has_more && fetched == 0 {
+                return Err(OperationError::Internal(
+                    "View source pagination made no progress".into(),
+                ));
+            }
+            for entry in &page.entries {
+                bytes = bytes.saturating_add(
+                    serde_json::to_vec(&entry.resource)
+                        .map_err(|error| OperationError::Internal(error.to_string()))?
+                        .len(),
+                );
+            }
+            if bytes > limits.max_bytes
+                || resources.len().saturating_add(fetched) > limits.max_resources
+            {
+                return Err(OperationError::InvalidParameters(
+                    "View source exceeds the configured resource or byte budget".into(),
+                ));
+            }
             resources.extend(page.entries.into_iter().map(|entry| entry.resource));
 
-            if fetched < FETCH_PAGE_SIZE as usize
-                || !page.has_more
-                || resources.len() >= MAX_SOURCE_RESOURCES
-            {
+            if !page.has_more {
                 break;
             }
-            offset += FETCH_PAGE_SIZE;
+            offset = offset
+                .checked_add(u32::try_from(fetched).map_err(|_| {
+                    OperationError::InvalidParameters("View source pagination overflow".into())
+                })?)
+                .ok_or_else(|| {
+                    OperationError::InvalidParameters("View source pagination overflow".into())
+                })?;
         }
 
-        resources.truncate(MAX_SOURCE_RESOURCES);
         Ok(resources)
     }
 
@@ -220,33 +255,82 @@ impl ViewDefinitionRunOperation {
     async fn execute_view(
         &self,
         state: &AppState,
+        context: &crate::operations::OperationContext,
         view_def: &ViewDefinition,
-        inline: Vec<Value>,
+        inline: Option<Vec<Value>>,
         limit: Option<usize>,
     ) -> Result<Value, OperationError> {
-        let resources = if inline.is_empty() {
-            self.load_source_resources(state, &view_def.resource)
-                .await?
-        } else {
-            inline
+        let resources = match inline {
+            None => {
+                self.load_source_resources(state, context, &view_def.resource)
+                    .await?
+            }
+            Some(resources) => resources,
         };
-
-        let result = octofhir_sof::execute(view_def, &resources)
+        let limits = state.config.search.include_limits;
+        let source_bytes = resources
+            .iter()
+            .try_fold(0_usize, |bytes, resource| {
+                serde_json::to_vec(resource).map(|json| bytes.saturating_add(json.len()))
+            })
+            .map_err(|error| OperationError::Internal(error.to_string()))?;
+        if resources.len() > limits.max_resources || source_bytes > limits.max_bytes {
+            return Err(OperationError::InvalidParameters(
+                "View source exceeds the configured resource or byte budget".into(),
+            ));
+        }
+        let compiled = octofhir_sof::CompiledView::compile(view_def)
             .await
-            .map_err(|e| {
-                OperationError::Internal(format!("Failed to execute ViewDefinition: {}", e))
+            .map_err(|error| {
+                OperationError::InvalidParameters(format!("Invalid ViewDefinition: {error}"))
             })?;
-
-        // Apply row limit if specified
-        let rows: Vec<Value> = if let Some(limit) = limit {
-            result.to_json_array().into_iter().take(limit).collect()
-        } else {
-            result.to_json_array()
-        };
+        let mut rows = Vec::new();
+        let mut output_bytes: usize = 0;
+        for resource in &resources {
+            if limit.is_some_and(|limit| rows.len() >= limit) {
+                break;
+            }
+            let data = compiled.execute_resource(resource).await.map_err(|error| {
+                OperationError::InvalidParameters(format!(
+                    "Failed to execute ViewDefinition: {error}"
+                ))
+            })?;
+            let result = octofhir_sof::ViewResult {
+                row_count: data.len(),
+                data,
+                columns: compiled.columns().to_vec(),
+            };
+            for row in result.to_json_array() {
+                if limit.is_some_and(|limit| rows.len() >= limit) {
+                    break;
+                }
+                output_bytes = output_bytes.saturating_add(
+                    serde_json::to_vec(&row)
+                        .map_err(|error| OperationError::Internal(error.to_string()))?
+                        .len(),
+                );
+                if rows.len() >= limits.max_resources || output_bytes > limits.max_bytes {
+                    return Err(OperationError::InvalidParameters(
+                        "View output exceeds the configured resource or byte budget".into(),
+                    ));
+                }
+                rows.push(row);
+            }
+            tokio::task::yield_now().await;
+        }
+        let data = serde_json::to_vec(&rows)
+            .map_err(|error| OperationError::Internal(error.to_string()))?;
+        if rows.len() > state.config.search.include_limits.max_resources
+            || data.len() > state.config.search.include_limits.max_bytes
+        {
+            return Err(OperationError::InvalidParameters(
+                "View output exceeds the configured resource or byte budget".into(),
+            ));
+        }
 
         // Build response with metadata
-        let columns: Vec<Value> = result
-            .columns
+        let columns: Vec<Value> = compiled
+            .columns()
             .iter()
             .map(|c| {
                 json!({
@@ -277,7 +361,7 @@ impl ViewDefinitionRunOperation {
                     "resource": {
                         "resourceType": "Binary",
                         "contentType": "application/json",
-                        "data": serde_json::to_string(&rows).unwrap_or_default()
+                        "data": STANDARD.encode(data)
                     }
                 }
             ]
@@ -287,6 +371,10 @@ impl ViewDefinitionRunOperation {
 
 #[async_trait]
 impl OperationHandler for ViewDefinitionRunOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        self.enabled && level != OperationLevel::System && resource_type == Some("ViewDefinition")
+    }
+
     fn code(&self) -> &str {
         "run"
     }
@@ -294,7 +382,7 @@ impl OperationHandler for ViewDefinitionRunOperation {
     async fn handle_type(
         &self,
         state: &AppState,
-        _context: &crate::operations::OperationContext,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -309,20 +397,21 @@ impl OperationHandler for ViewDefinitionRunOperation {
         }
 
         // Resolve the ViewDefinition: inline `viewDefinition` or `viewReference`.
-        let view_def = match self.resolve_view_reference(state, params).await? {
+        let view_def = match self.resolve_view_reference(state, context, params).await? {
             Some(view) => view,
             None => self.extract_view_definition(params)?,
         };
-        let inline = self.extract_inline_resources(params);
-        let limit = self.extract_limit(params);
+        let inline = self.extract_inline_resources(params)?;
+        let limit = self.extract_limit(params)?;
 
-        self.execute_view(state, &view_def, inline, limit).await
+        self.execute_view(state, context, &view_def, inline, limit)
+            .await
     }
 
     async fn handle_instance(
         &self,
         state: &AppState,
-        _context: &crate::operations::OperationContext,
+        context: &crate::operations::OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,
@@ -338,20 +427,19 @@ impl OperationHandler for ViewDefinitionRunOperation {
         }
 
         // Load the ViewDefinition from storage
-        let storage = &state.storage;
-        let stored = storage
-            .read("ViewDefinition", id)
-            .await
-            .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
+        let stored = context
+            .read(state, "ViewDefinition", id)
+            .await?
             .ok_or_else(|| OperationError::NotFound(format!("ViewDefinition/{} not found", id)))?;
 
         let view_def = ViewDefinition::from_json(&stored.resource).map_err(|e| {
             OperationError::Internal(format!("Invalid stored ViewDefinition: {}", e))
         })?;
 
-        let inline = self.extract_inline_resources(params);
-        let limit = self.extract_limit(params);
-        self.execute_view(state, &view_def, inline, limit).await
+        let inline = self.extract_inline_resources(params)?;
+        let limit = self.extract_limit(params)?;
+        self.execute_view(state, context, &view_def, inline, limit)
+            .await
     }
 }
 
@@ -401,14 +489,19 @@ mod tests {
             ]
         });
 
-        assert_eq!(op.extract_limit(&params), Some(100));
+        assert_eq!(op.extract_limit(&params).unwrap(), Some(100));
 
         let params_no_limit = json!({
             "resourceType": "Parameters",
             "parameter": []
         });
 
-        assert_eq!(op.extract_limit(&params_no_limit), None);
+        assert_eq!(op.extract_limit(&params_no_limit).unwrap(), None);
+        assert!(
+            op.extract_limit(&json!({"parameter":[{"name":"_limit","valueInteger":-1}]}))
+                .is_err()
+        );
+        assert!(op.extract_limit(&json!({"parameter":[{"name":"limit","valueInteger":1},{"name":"_limit","valueInteger":2}]})).is_err());
     }
 
     #[test]

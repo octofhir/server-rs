@@ -90,6 +90,7 @@ pub async fn get_history(
         id_str.is_some(),
         &since_chrono,
         &at_chrono,
+        params.at_end.map(time_to_chrono).as_ref(),
     );
 
     // Add ordering and pagination
@@ -97,10 +98,10 @@ pub async fn get_history(
         r#"WITH all_versions AS ({sql})
            SELECT id, txid, created_at, updated_at, resource, status
            FROM all_versions
-           ORDER BY txid DESC
+           ORDER BY txid DESC, id ASC
            LIMIT {limit} OFFSET {offset}"#
     );
-    let total = if matches!(params.total, Some(TotalMode::Accurate)) {
+    let total = if params.count == Some(0) || matches!(params.total, Some(TotalMode::Accurate)) {
         let count_sql = format!(
             r#"WITH all_versions AS ({sql})
                SELECT COUNT(*)::bigint FROM all_versions"#
@@ -195,12 +196,15 @@ pub async fn get_system_history(
     let mut param_idx = 1;
 
     if since_chrono.is_some() {
-        where_conditions.push(format!("updated_at > ${param_idx}"));
+        where_conditions.push(format!("updated_at >= ${param_idx}"));
         param_idx += 1;
     }
 
     if at_chrono.is_some() {
-        where_conditions.push(format!("updated_at <= ${param_idx}"));
+        where_conditions.push(at_condition(
+            param_idx,
+            params.at_end.map(time_to_chrono).as_ref(),
+        ));
     }
 
     let where_clause = if where_conditions.is_empty() {
@@ -213,14 +217,9 @@ pub async fn get_system_history(
     let mut unions = Vec::new();
     for table in &tables {
         let history_table = format!("{}_history", table);
-        // Include resource_type from the JSONB resource field
+        let source = history_source(table, &history_table, at_chrono.is_some());
         unions.push(format!(
-            r#"SELECT id, txid, created_at, updated_at, resource, status::text, resource->>'resourceType' as resource_type
-               FROM "{table}" {where_clause}"#
-        ));
-        unions.push(format!(
-            r#"SELECT id, txid, created_at, updated_at, resource, status::text, resource->>'resourceType' as resource_type
-               FROM "{history_table}" {where_clause}"#
+            "SELECT id, txid, created_at, updated_at, resource, status, resource->>'resourceType' as resource_type FROM {source} AS revisions {where_clause}"
         ));
     }
 
@@ -228,11 +227,11 @@ pub async fn get_system_history(
         r#"WITH all_versions AS ({})
            SELECT id, txid, created_at, updated_at, resource, status, resource_type
            FROM all_versions
-           ORDER BY txid DESC
+           ORDER BY txid DESC, id ASC
            LIMIT {limit} OFFSET {offset}"#,
         unions.join(" UNION ALL ")
     );
-    let total = if matches!(params.total, Some(TotalMode::Accurate)) {
+    let total = if params.count == Some(0) || matches!(params.total, Some(TotalMode::Accurate)) {
         let count_sql = format!(
             r#"WITH all_versions AS ({})
                SELECT COUNT(*)::bigint FROM all_versions"#,
@@ -340,16 +339,17 @@ pub async fn get_history_raw(
         id_str.is_some(),
         &since_chrono,
         &at_chrono,
+        params.at_end.map(time_to_chrono).as_ref(),
     );
 
     let full_sql = format!(
         r#"WITH all_versions AS ({sql})
            SELECT id, txid, created_at, updated_at, resource_text, status
            FROM all_versions
-           ORDER BY txid DESC
+           ORDER BY txid DESC, id ASC
            LIMIT {limit} OFFSET {offset}"#
     );
-    let total = if matches!(params.total, Some(TotalMode::Accurate)) {
+    let total = if params.count == Some(0) || matches!(params.total, Some(TotalMode::Accurate)) {
         let count_sql = format!(
             r#"WITH all_versions AS ({sql})
                SELECT COUNT(*)::bigint FROM all_versions"#
@@ -435,12 +435,15 @@ pub async fn get_system_history_raw(
     let mut param_idx = 1;
 
     if since_chrono.is_some() {
-        where_conditions.push(format!("updated_at > ${param_idx}"));
+        where_conditions.push(format!("updated_at >= ${param_idx}"));
         param_idx += 1;
     }
 
     if at_chrono.is_some() {
-        where_conditions.push(format!("updated_at <= ${param_idx}"));
+        where_conditions.push(at_condition(
+            param_idx,
+            params.at_end.map(time_to_chrono).as_ref(),
+        ));
     }
 
     let where_clause = if where_conditions.is_empty() {
@@ -452,13 +455,9 @@ pub async fn get_system_history_raw(
     let mut unions = Vec::new();
     for table in &tables {
         let history_table = format!("{}_history", table);
+        let source = history_source(table, &history_table, at_chrono.is_some());
         unions.push(format!(
-            r#"SELECT id, txid, created_at, updated_at, resource::text as resource_text, status::text, resource->>'resourceType' as resource_type
-               FROM "{table}" {where_clause}"#
-        ));
-        unions.push(format!(
-            r#"SELECT id, txid, created_at, updated_at, resource::text as resource_text, status::text, resource->>'resourceType' as resource_type
-               FROM "{history_table}" {where_clause}"#
+            "SELECT id, txid, created_at, updated_at, resource::text as resource_text, status, resource->>'resourceType' as resource_type FROM {source} AS revisions {where_clause}"
         ));
     }
 
@@ -466,11 +465,11 @@ pub async fn get_system_history_raw(
         r#"WITH all_versions AS ({})
            SELECT id, txid, created_at, updated_at, resource_text, status, resource_type
            FROM all_versions
-           ORDER BY txid DESC
+           ORDER BY txid DESC, id ASC
            LIMIT {limit} OFFSET {offset}"#,
         unions.join(" UNION ALL ")
     );
-    let total = if matches!(params.total, Some(TotalMode::Accurate)) {
+    let total = if params.count == Some(0) || matches!(params.total, Some(TotalMode::Accurate)) {
         let count_sql = format!(
             r#"WITH all_versions AS ({})
                SELECT COUNT(*)::bigint FROM all_versions"#,
@@ -534,88 +533,92 @@ pub async fn get_system_history_raw(
     Ok(RawHistoryResult { entries, total })
 }
 
-/// Builds a UNION ALL query with `resource::text` for raw history.
+/// Periods are evaluated before grant or time filters so a hidden successor
+/// still ends a prior revision's validity. Timestamps are trusted typed values.
+fn at_condition(parameter: usize, end: Option<&DateTime<Utc>>) -> String {
+    let upper = match end {
+        Some(end) => format!("updated_at < '{}'::timestamptz", end.to_rfc3339()),
+        None => format!("updated_at <= ${parameter}"),
+    };
+    format!("({upper} AND (valid_until IS NULL OR valid_until > ${parameter}))")
+}
+
+fn history_source(table: &str, history: &str, at: bool) -> String {
+    let source = format!(
+        r#"(SELECT id, txid, created_at, updated_at, resource, status::text FROM "{table}" UNION ALL SELECT id, txid, created_at, updated_at, resource, status::text FROM "{history}")"#
+    );
+    if at {
+        format!(
+            "(SELECT versions.*, lead(updated_at) OVER (PARTITION BY id ORDER BY updated_at, txid) AS valid_until FROM {source} AS versions)"
+        )
+    } else {
+        source
+    }
+}
+
 fn build_raw_union_query(
     table: &str,
     history_table: &str,
     has_id: bool,
     since: &Option<DateTime<Utc>>,
     at: &Option<DateTime<Utc>>,
+    at_end: Option<&DateTime<Utc>>,
 ) -> (String, bool, bool, bool) {
-    let mut conditions = Vec::new();
-    let mut param_idx = 1;
-
-    if has_id {
-        conditions.push(format!("id = ${param_idx}"));
-        param_idx += 1;
-    }
-
-    let has_since = since.is_some();
-    if has_since {
-        conditions.push(format!("updated_at > ${param_idx}"));
-        param_idx += 1;
-    }
-
-    let has_at = at.is_some();
-    if has_at {
-        conditions.push(format!("updated_at <= ${param_idx}"));
-    }
-
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-
-    let sql = format!(
-        r#"SELECT id, txid, created_at, updated_at, resource::text as resource_text, status::text FROM "{table}" {where_clause}
-           UNION ALL
-           SELECT id, txid, created_at, updated_at, resource::text as resource_text, status::text FROM "{history_table}" {where_clause}"#
-    );
-
-    (sql, has_id, has_since, has_at)
+    build_history_union(table, history_table, has_id, since, at, at_end, true)
 }
 
-/// Builds a UNION ALL query for combining current and history tables.
 fn build_union_query(
     table: &str,
     history_table: &str,
     has_id: bool,
     since: &Option<DateTime<Utc>>,
     at: &Option<DateTime<Utc>>,
+    at_end: Option<&DateTime<Utc>>,
+) -> (String, bool, bool, bool) {
+    build_history_union(table, history_table, has_id, since, at, at_end, false)
+}
+
+fn build_history_union(
+    table: &str,
+    history_table: &str,
+    has_id: bool,
+    since: &Option<DateTime<Utc>>,
+    at: &Option<DateTime<Utc>>,
+    at_end: Option<&DateTime<Utc>>,
+    raw: bool,
 ) -> (String, bool, bool, bool) {
     let mut conditions = Vec::new();
-    let mut param_idx = 1;
-
+    let mut parameter = 1;
     if has_id {
-        conditions.push(format!("id = ${param_idx}"));
-        param_idx += 1;
+        conditions.push(format!("id = ${parameter}"));
+        parameter += 1;
     }
-
-    let has_since = since.is_some();
-    if has_since {
-        conditions.push(format!("updated_at > ${param_idx}"));
-        param_idx += 1;
+    if since.is_some() {
+        conditions.push(format!("updated_at >= ${parameter}"));
+        parameter += 1;
     }
-
-    let has_at = at.is_some();
-    if has_at {
-        conditions.push(format!("updated_at <= ${param_idx}"));
+    if at.is_some() {
+        conditions.push(at_condition(parameter, at_end));
     }
-
-    let where_clause = if conditions.is_empty() {
+    let condition = if conditions.is_empty() {
         String::new()
     } else {
         format!("WHERE {}", conditions.join(" AND "))
     };
-
-    let sql = format!(
-        r#"SELECT id, txid, created_at, updated_at, resource, status::text FROM "{table}" {where_clause}
-           UNION ALL
-           SELECT id, txid, created_at, updated_at, resource, status::text FROM "{history_table}" {where_clause}"#
-    );
-
-    (sql, has_id, has_since, has_at)
+    let resource = if raw {
+        "resource::text AS resource_text"
+    } else {
+        "resource"
+    };
+    let source = history_source(table, history_table, at.is_some());
+    (
+        format!(
+            "SELECT id, txid, created_at, updated_at, {resource}, status FROM {source} AS revisions {condition}"
+        ),
+        has_id,
+        since.is_some(),
+        at.is_some(),
+    )
 }
 
 /// Executes a history COUNT query with the same dynamic bindings as the page query.
@@ -905,7 +908,7 @@ mod tests {
     #[test]
     fn test_build_union_query_no_filters() {
         let (sql, has_id, has_since, has_at) =
-            build_union_query("patient", "patient_history", false, &None, &None);
+            build_union_query("patient", "patient_history", false, &None, &None, None);
         assert!(!has_id);
         assert!(!has_since);
         assert!(!has_at);
@@ -917,7 +920,7 @@ mod tests {
     #[test]
     fn test_build_union_query_with_id() {
         let (sql, has_id, has_since, has_at) =
-            build_union_query("patient", "patient_history", true, &None, &None);
+            build_union_query("patient", "patient_history", true, &None, &None, None);
         assert!(has_id);
         assert!(!has_since);
         assert!(!has_at);

@@ -40,7 +40,7 @@ async fn observation_fixture() -> (
     PostgresStorage,
 ) {
     let container = Postgres::default()
-        .with_tag("16-alpine")
+        .with_tag("17-alpine")
         .start()
         .await
         .unwrap();
@@ -180,7 +180,7 @@ async fn count_only_uses_count_without_reading_resources_or_includes() {
             .unwrap();
     }
     sqlx_core::raw_sql::raw_sql(sqlx_core::sql_str::AssertSqlSafe(
-        "UPDATE observation SET status='deleted' WHERE id='deleted'; CREATE ROLE count_reader; GRANT USAGE ON SCHEMA public TO count_reader; GRANT SELECT(id,status) ON observation TO count_reader; SET ROLE count_reader".to_owned(),
+        "UPDATE observation SET txid=nextval('_transaction_txid_seq'), status='deleted' WHERE id='deleted'; CREATE ROLE count_reader; GRANT USAGE ON SCHEMA public TO count_reader; GRANT SELECT(id,status) ON observation TO count_reader; SET ROLE count_reader".to_owned(),
     )).execute(&pool).await.unwrap();
     let registry = registry();
     registry.register(

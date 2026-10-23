@@ -90,12 +90,20 @@ fn dispatch_search_inner(
     registry: Option<&SearchParameterRegistry>,
 ) -> Result<(), SqlBuilderError> {
     // Get the FHIRPath expression and convert to JSONB path
-    let expression = definition.expression.as_deref().ok_or_else(|| {
-        SqlBuilderError::InvalidPath(format!(
-            "No expression for search parameter: {}",
-            definition.code
-        ))
-    })?;
+    let expression = match definition.expression.as_deref() {
+        Some(expression) => expression,
+        None if definition.param_type == SearchParameterType::Special
+            && definition.is_runnable() =>
+        {
+            ""
+        }
+        None => {
+            return Err(SqlBuilderError::InvalidPath(format!(
+                "No expression for search parameter: {}",
+                definition.code,
+            )));
+        }
+    };
 
     let path_segments = fhirpath_to_jsonb_path(expression, resource_type);
 

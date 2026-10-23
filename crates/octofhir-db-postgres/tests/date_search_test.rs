@@ -15,7 +15,7 @@ async fn fixture() -> (
     Arc<SearchParameterRegistry>,
 ) {
     let container = Postgres::default()
-        .with_tag("16-alpine")
+        .with_tag("17-alpine")
         .start()
         .await
         .unwrap();

@@ -16,6 +16,8 @@
 //!    - **Reverse links** (params set): search for resources referencing the current one
 //! 4. Return a Bundle of type "collection" with all discovered resources
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
@@ -34,27 +36,31 @@ use octofhir_storage::{SearchParams, StoredResource};
 struct GraphDefinitionModel {
     /// The resource type where the graph starts (e.g. "Patient").
     start: String,
+    profile: Option<String>,
     /// Top-level link definitions.
     links: Vec<LinkModel>,
 }
 
 /// A single link in a GraphDefinition.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct LinkModel {
     /// Dot-notation path to follow (e.g. "Patient.managingOrganization").
     /// `None` means this is a reverse-reference link resolved via `target.params`.
     path: Option<String>,
+    min: Option<usize>,
+    max: Option<usize>,
     /// Target specifications.
     targets: Vec<TargetModel>,
 }
 
 /// A target resource type for a link.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct TargetModel {
     /// Target resource type (e.g. "Organization").
     resource_type: String,
     /// Search parameter name for reverse references (e.g. "patient").
     params: Option<String>,
+    profile: Option<String>,
     /// Nested links for recursive traversal.
     links: Vec<LinkModel>,
 }
@@ -74,25 +80,123 @@ fn parse_graph_definition(value: &Value) -> Result<GraphDefinitionModel, Operati
         })?
         .to_string();
 
-    let links = value
-        .get("link")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|l| parse_link(l).ok()).collect())
-        .unwrap_or_default();
+    let links = array(value, "link")?
+        .iter()
+        .map(parse_link)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(GraphDefinitionModel { start, links })
+    Ok(GraphDefinitionModel {
+        start,
+        profile: optional_string(value, "profile")?,
+        links,
+    })
+}
+
+fn optional_string(value: &Value, name: &str) -> Result<Option<String>, OperationError> {
+    value
+        .get(name)
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(String::from)
+                .ok_or_else(|| {
+                    OperationError::InvalidParameters(format!(
+                        "GraphDefinition {name} must be a nonempty string"
+                    ))
+                })
+        })
+        .transpose()
+}
+
+fn array<'a>(value: &'a Value, name: &str) -> Result<&'a [Value], OperationError> {
+    match value.get(name) {
+        None => Ok(&[]),
+        Some(Value::Array(values)) => Ok(values),
+        Some(_) => Err(OperationError::InvalidParameters(format!(
+            "GraphDefinition {name} must be an array"
+        ))),
+    }
 }
 
 fn parse_link(value: &Value) -> Result<LinkModel, OperationError> {
-    let path = value.get("path").and_then(|v| v.as_str()).map(String::from);
+    let path = optional_string(value, "path")?;
+    if let Some(path) = &path
+        && path != "*"
+    {
+        let ast = octofhir_fhirpath::parse_expression(path).map_err(|error| {
+            OperationError::InvalidParameters(format!("Invalid GraphDefinition path: {error}"))
+        })?;
+        if contains_resolve(&ast) {
+            return Err(OperationError::InvalidParameters(
+                "GraphDefinition path must not invoke resolve()".into(),
+            ));
+        }
+    }
+    // These constraints require slice and compartment rule evaluation; never
+    // return a successful graph after silently ignoring them.
+    if value.get("sliceName").is_some() {
+        return Err(OperationError::NotImplemented(
+            "GraphDefinition sliceName constraints are unsupported".into(),
+        ));
+    }
+    let min = value
+        .get("min")
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| {
+                    OperationError::InvalidParameters(
+                        "GraphDefinition min requires a nonnegative integer".into(),
+                    )
+                })
+        })
+        .transpose()?;
+    let max = optional_string(value, "max")?
+        .map(|value| {
+            if value == "*" {
+                Ok(None)
+            } else {
+                value.parse::<usize>().map(Some).map_err(|_| {
+                    OperationError::InvalidParameters(
+                        "GraphDefinition max requires a nonnegative integer or *".into(),
+                    )
+                })
+            }
+        })
+        .transpose()?
+        .flatten();
+    if min.zip(max).is_some_and(|(min, max)| min > max) {
+        return Err(OperationError::InvalidParameters(
+            "GraphDefinition min exceeds max".into(),
+        ));
+    }
 
-    let targets = value
-        .get("target")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|t| parse_target(t).ok()).collect())
-        .unwrap_or_default();
+    let targets = array(value, "target")?
+        .iter()
+        .map(parse_target)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(LinkModel { path, targets })
+    if path.is_none()
+        && targets.iter().any(|target| {
+            target
+                .params
+                .as_deref()
+                .is_none_or(|params| !params.contains("{ref}"))
+        })
+    {
+        return Err(OperationError::InvalidParameters(
+            "GraphDefinition reverse link requires target.params containing {ref}".into(),
+        ));
+    }
+
+    Ok(LinkModel {
+        path,
+        min,
+        max,
+        targets,
+    })
 }
 
 fn parse_target(value: &Value) -> Result<TargetModel, OperationError> {
@@ -104,22 +208,54 @@ fn parse_target(value: &Value) -> Result<TargetModel, OperationError> {
         })?
         .to_string();
 
-    let params = value
-        .get("params")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let params = optional_string(value, "params")?;
+    if value
+        .get("compartment")
+        .is_some_and(|value| !value.as_array().is_some_and(Vec::is_empty))
+    {
+        return Err(OperationError::NotImplemented(
+            "GraphDefinition compartment constraints are unsupported".into(),
+        ));
+    }
 
-    let links = value
-        .get("link")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|l| parse_link(l).ok()).collect())
-        .unwrap_or_default();
+    let links = array(value, "link")?
+        .iter()
+        .map(parse_link)
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(TargetModel {
         resource_type,
         params,
+        profile: optional_string(value, "profile")?,
         links,
     })
+}
+
+fn contains_resolve(node: &octofhir_fhirpath::ast::ExpressionNode) -> bool {
+    use octofhir_fhirpath::ast::ExpressionNode as E;
+    match node {
+        E::FunctionCall(node) => {
+            node.name == "resolve" || node.arguments.iter().any(contains_resolve)
+        }
+        E::MethodCall(node) => {
+            node.method == "resolve"
+                || contains_resolve(&node.object)
+                || node.arguments.iter().any(contains_resolve)
+        }
+        E::PropertyAccess(node) => contains_resolve(&node.object),
+        E::IndexAccess(node) => contains_resolve(&node.object) || contains_resolve(&node.index),
+        E::BinaryOperation(node) => contains_resolve(&node.left) || contains_resolve(&node.right),
+        E::UnaryOperation(node) => contains_resolve(&node.operand),
+        E::Lambda(node) => contains_resolve(&node.body),
+        E::Collection(node) => node.elements.iter().any(contains_resolve),
+        E::Parenthesized(node) => contains_resolve(node),
+        E::TypeCast(node) => contains_resolve(&node.expression),
+        E::Filter(node) => contains_resolve(&node.base) || contains_resolve(&node.condition),
+        E::Union(node) => contains_resolve(&node.left) || contains_resolve(&node.right),
+        E::TypeCheck(node) => contains_resolve(&node.expression),
+        E::Path(node) => contains_resolve(&node.base),
+        E::Literal(_) | E::Identifier(_) | E::Variable(_) | E::TypeInfo(_) => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +265,7 @@ fn parse_target(value: &Value) -> Result<TargetModel, OperationError> {
 /// Navigate a dot-separated path in a JSON value, flattening arrays at each level.
 ///
 /// Returns all terminal values reached by following the path.
+#[cfg(test)]
 fn resolve_json_path<'a>(value: &'a Value, path: &str) -> Vec<&'a Value> {
     let mut current = vec![value];
 
@@ -167,6 +304,7 @@ fn resolve_json_path<'a>(value: &'a Value, path: &str) -> Vec<&'a Value> {
 ///
 /// The path may start with a `ResourceType.` prefix (e.g. `"Patient.managingOrganization"`)
 /// which is stripped before navigating the JSON.
+#[cfg(test)]
 fn collect_references_at_path(resource: &Value, path: &str, base_url: &str) -> Vec<FhirReference> {
     // Strip leading ResourceType. prefix if present
     let field_path = if let Some(dot_pos) = path.find('.') {
@@ -196,6 +334,88 @@ fn collect_references_at_path(resource: &Value, path: &str, base_url: &str) -> V
         }
     }
     refs
+}
+
+async fn link_references(
+    state: &AppState,
+    resource: &Value,
+    path: &str,
+    remapper: &mut crate::bundle_references::BundleReferenceRemapper,
+) -> Result<Vec<FhirReference>, OperationError> {
+    let references = if path == "*" {
+        remapper
+            .references(state.model_provider.as_ref(), resource)
+            .await?
+    } else {
+        let collection = octofhir_fhirpath::Collection::from_json_resource(
+            resource.clone(),
+            Some(state.model_provider.clone()),
+        )
+        .await
+        .map_err(|error| {
+            OperationError::InvalidParameters(format!("Cannot evaluate graph path: {error}"))
+        })?;
+        let evaluation = octofhir_fhirpath::EvaluationContext::new(
+            collection,
+            state.model_provider.clone(),
+            None,
+            None,
+            None,
+        );
+        let result = state
+            .fhirpath_engine
+            .evaluate(path, &evaluation)
+            .await
+            .map_err(|error| {
+                OperationError::InvalidParameters(format!("Cannot evaluate graph path: {error}"))
+            })?;
+        let mut references = Vec::new();
+        for value in result.value {
+            let octofhir_fhirpath::FhirPathValue::Resource(resource, info, _) = value else {
+                return Err(OperationError::InvalidParameters(
+                    "GraphDefinition path must select References".into(),
+                ));
+            };
+            if info.name.as_deref().unwrap_or(&info.type_name) != "Reference" {
+                return Err(OperationError::InvalidParameters(
+                    "GraphDefinition path must select References".into(),
+                ));
+            }
+            if let Some(reference) = resource.to_json()["reference"].as_str() {
+                references.push(reference.to_owned());
+            }
+        }
+        references
+    };
+    Ok(references
+        .into_iter()
+        .filter_map(|reference| parse_reference(&reference, Some(&state.fhir_base_url())).ok())
+        .collect())
+}
+
+async fn matches_profile(
+    state: &AppState,
+    resource: &Value,
+    profile: Option<&str>,
+) -> Result<bool, OperationError> {
+    let Some(profile) = profile else {
+        return Ok(true);
+    };
+    if state
+        .model_provider
+        .get_schema_by_url(profile)
+        .await
+        .is_none()
+    {
+        return Err(OperationError::NotImplemented(format!(
+            "GraphDefinition profile is unavailable: {profile}"
+        )));
+    }
+    Ok(state
+        .validation_service
+        .validate_against_profiles(resource, &[profile.to_owned()])
+        .await
+        .valid)
 }
 
 // ---------------------------------------------------------------------------
@@ -234,31 +454,48 @@ async fn resolve_graph_by_string(
     context: &crate::operations::OperationContext,
     value: &str,
 ) -> Result<GraphDefinitionModel, OperationError> {
-    // First try as a direct ID
-    if !value.contains('/')
-        && !value.starts_with("http")
-        && let Ok(Some(stored)) = context.read(state, "GraphDefinition", value).await
+    if let Some(id) = value
+        .strip_prefix("GraphDefinition/")
+        .or_else(|| (!value.contains(['/', ':', '|'])).then_some(value))
     {
-        return parse_graph_definition(&stored.resource);
+        return context
+            .read(state, "GraphDefinition", id)
+            .await?
+            .map(|stored| parse_graph_definition(&stored.resource))
+            .transpose()?
+            .ok_or_else(|| OperationError::NotFound("GraphDefinition not found".into()));
     }
 
-    // Try as a canonical URL
-    if value.starts_with("http") {
-        let search_params = SearchParams::new().with_count(1).with_param("url", value);
-        if let Ok(result) = context
-            .search(state, "GraphDefinition", &search_params)
-            .await
-            && let Some(entry) = result.entries.first()
-        {
-            return parse_graph_definition(&entry.resource);
+    let (canonical, version) = value
+        .split_once('|')
+        .map_or((value, None), |(url, version)| (url, Some(version)));
+    url::Url::parse(canonical).map_err(|_| {
+        OperationError::InvalidParameters(
+            "graph requires a GraphDefinition ID or absolute canonical URI".into(),
+        )
+    })?;
+    let mut search_params = SearchParams::new()
+        .with_count(2)
+        .with_param("url", canonical);
+    if let Some(version) = version {
+        if version.is_empty() || version.contains('|') {
+            return Err(OperationError::InvalidParameters(
+                "Invalid graph canonical version".into(),
+            ));
         }
+        search_params = search_params.with_param("version", version);
     }
-
-    // Try stripping "GraphDefinition/" prefix
-    if let Some(id) = value.strip_prefix("GraphDefinition/")
-        && let Ok(Some(stored)) = context.read(state, "GraphDefinition", id).await
-    {
-        return parse_graph_definition(&stored.resource);
+    let result = context
+        .search(state, "GraphDefinition", &search_params)
+        .await?;
+    if result.entries.len() > 1 || result.has_more {
+        return Err(OperationError::InvalidParameters(
+            "GraphDefinition canonical matches multiple resources; supply an unambiguous version"
+                .into(),
+        ));
+    }
+    if let Some(entry) = result.entries.first() {
+        return parse_graph_definition(&entry.resource);
     }
 
     Err(OperationError::NotFound(format!(
@@ -291,9 +528,6 @@ fn extract_param_value(params: &Value, name: &str) -> Option<Value> {
 // Graph traversal (iterative BFS)
 // ---------------------------------------------------------------------------
 
-const MAX_DEPTH: usize = 10;
-const MAX_RESOURCES: usize = 10_000;
-
 /// A work item for BFS traversal.
 struct WorkItem {
     resource: StoredResource,
@@ -308,12 +542,27 @@ async fn traverse(
     focal: StoredResource,
     graph_def: &GraphDefinitionModel,
 ) -> Result<Vec<StoredResource>, OperationError> {
-    let mut visited: HashSet<(String, String)> = HashSet::new();
+    let mut visited: HashSet<(String, String, String)> = HashSet::new();
+    let mut visited_links = HashSet::new();
     let mut results: Vec<StoredResource> = Vec::new();
     let mut queue: VecDeque<WorkItem> = VecDeque::new();
+    let mut remapper = crate::bundle_references::BundleReferenceRemapper::default();
+    let limits = state.config.search.include_limits;
+    let mut bytes = serde_json::to_vec(&focal.resource)
+        .map_err(|error| OperationError::Internal(error.to_string()))?
+        .len();
+    if limits.max_resources == 0 || bytes > limits.max_bytes {
+        return Err(OperationError::InvalidParameters(
+            "$graph exceeds the configured resource or byte budget".into(),
+        ));
+    }
 
     // Seed with focal resource
-    visited.insert((focal.resource_type.clone(), focal.id.clone()));
+    visited.insert((
+        focal.resource_type.clone(),
+        focal.id.clone(),
+        focal.version_id.clone(),
+    ));
     results.push(focal.clone());
     queue.push_back(WorkItem {
         resource: focal,
@@ -322,22 +571,25 @@ async fn traverse(
     });
 
     while let Some(work) = queue.pop_front() {
-        if work.depth >= MAX_DEPTH || results.len() >= MAX_RESOURCES {
-            if work.depth >= MAX_DEPTH {
-                tracing::warn!(depth = work.depth, "Graph traversal depth limit reached");
-            } else {
-                tracing::warn!(
-                    count = results.len(),
-                    "Graph traversal resource limit reached"
-                );
-            }
-            break;
-        }
-
         for link in &work.links {
+            if !visited_links.insert((
+                work.resource.resource_type.clone(),
+                work.resource.id.clone(),
+                work.resource.version_id.clone(),
+                link.clone(),
+            )) {
+                continue;
+            }
+            if work.depth >= limits.max_depth {
+                return Err(OperationError::InvalidParameters(
+                    "$graph traversal exceeds the depth budget".into(),
+                ));
+            }
+            let mut linked = HashSet::new();
             for target in &link.targets {
                 let resolved = if let Some(ref path) = link.path {
-                    resolve_forward(state, context, &work.resource, path, target).await?
+                    resolve_forward(state, context, &work.resource, path, target, &mut remapper)
+                        .await?
                 } else if let Some(ref params) = target.params {
                     resolve_reverse(
                         state,
@@ -352,22 +604,43 @@ async fn traverse(
                 };
 
                 for res in resolved {
-                    let key = (res.resource_type.clone(), res.id.clone());
-                    if visited.insert(key) {
-                        results.push(res.clone());
-                        if !target.links.is_empty() {
-                            queue.push_back(WorkItem {
-                                resource: res,
-                                links: target.links.clone(),
-                                depth: work.depth + 1,
-                            });
-                        }
+                    if !matches_profile(state, &res.resource, target.profile.as_deref()).await? {
+                        continue;
                     }
-
-                    if results.len() >= MAX_RESOURCES {
-                        break;
+                    let key = (
+                        res.resource_type.clone(),
+                        res.id.clone(),
+                        res.version_id.clone(),
+                    );
+                    linked.insert(key.clone());
+                    if visited.insert(key) {
+                        bytes = bytes.saturating_add(
+                            serde_json::to_vec(&res.resource)
+                                .map_err(|error| OperationError::Internal(error.to_string()))?
+                                .len(),
+                        );
+                        if results.len() >= limits.max_resources || bytes > limits.max_bytes {
+                            return Err(OperationError::InvalidParameters(
+                                "$graph traversal exceeds the resource budget".into(),
+                            ));
+                        }
+                        results.push(res.clone());
+                    }
+                    if !target.links.is_empty() {
+                        queue.push_back(WorkItem {
+                            resource: res,
+                            links: target.links.clone(),
+                            depth: work.depth + 1,
+                        });
                     }
                 }
+            }
+            if link.min.is_some_and(|min| linked.len() < min)
+                || link.max.is_some_and(|max| linked.len() > max)
+            {
+                return Err(OperationError::InvalidParameters(
+                    "Authorized graph does not satisfy link cardinality".into(),
+                ));
             }
         }
     }
@@ -382,18 +655,27 @@ async fn resolve_forward(
     resource: &StoredResource,
     path: &str,
     target: &TargetModel,
+    remapper: &mut crate::bundle_references::BundleReferenceRemapper,
 ) -> Result<Vec<StoredResource>, OperationError> {
-    let refs = collect_references_at_path(&resource.resource, path, &state.base_url);
+    let refs = link_references(state, &resource.resource, path, remapper).await?;
 
     let mut results = Vec::new();
+    let mut current_ids = Vec::new();
+    let mut seen = HashSet::new();
     for fhir_ref in refs {
-        if fhir_ref.resource_type != target.resource_type {
+        if fhir_ref.resource_type != target.resource_type
+            || !seen.insert((fhir_ref.id.clone(), fhir_ref.version.clone()))
+        {
             continue;
         }
-        match context
-            .read(state, &fhir_ref.resource_type, &fhir_ref.id)
-            .await
-        {
+        let Some(version) = &fhir_ref.version else {
+            current_ids.push(fhir_ref.id);
+            continue;
+        };
+        let stored = context
+            .vread_reference(state, &fhir_ref.resource_type, &fhir_ref.id, version)
+            .await;
+        match stored {
             Ok(Some(stored)) => results.push(stored),
             Ok(None) => {
                 tracing::debug!(
@@ -413,6 +695,13 @@ async fn resolve_forward(
             }
         }
     }
+    for ids in current_ids.chunks(1000) {
+        match context.read_many(state, &target.resource_type, ids).await {
+            Ok(resources) => results.extend(resources),
+            Err(error) if error.is_forbidden() => {}
+            Err(error) => return Err(error),
+        }
+    }
     Ok(results)
 }
 
@@ -426,7 +715,7 @@ async fn resolve_reverse(
 ) -> Result<Vec<StoredResource>, OperationError> {
     let reference_value = format!("{}/{}", resource.resource_type, resource.id);
 
-    let search_params = if params.contains('=') {
+    let mut search_params = if params.contains('=') {
         let encoded: String =
             url::form_urlencoded::byte_serialize(reference_value.as_bytes()).collect();
         let query = params.replace("{ref}", &encoded);
@@ -437,19 +726,53 @@ async fn resolve_reverse(
             .with_param(params, &reference_value)
     };
 
-    match context.search(state, target_type, &search_params).await {
-        Ok(result) => Ok(result.entries),
-        Err(e) => {
-            if !e.is_forbidden() {
-                return Err(e);
+    let mut resources = Vec::new();
+    loop {
+        match context.search(state, target_type, &search_params).await {
+            Ok(result) => {
+                let count = result.entries.len();
+                resources.extend(result.entries);
+                if resources.len() > state.config.search.include_limits.max_resources {
+                    return Err(OperationError::InvalidParameters(
+                        "$graph reverse traversal exceeds the resource budget".into(),
+                    ));
+                }
+                if !result.has_more {
+                    return Ok(resources);
+                }
+                if count == 0 {
+                    return Err(OperationError::Internal(
+                        "$graph reverse search made no progress".into(),
+                    ));
+                }
+                search_params.offset = Some(
+                    search_params
+                        .offset
+                        .unwrap_or(0)
+                        .checked_add(u32::try_from(count).map_err(|_| {
+                            OperationError::InvalidParameters(
+                                "$graph search offset overflow".into(),
+                            )
+                        })?)
+                        .ok_or_else(|| {
+                            OperationError::InvalidParameters(
+                                "$graph search offset overflow".into(),
+                            )
+                        })?,
+                );
             }
-            tracing::debug!(
-                target_type,
-                params,
-                error = %e,
-                "Error searching reverse references during $graph traversal"
-            );
-            Ok(Vec::new())
+            Err(e) => {
+                if !e.is_forbidden() {
+                    return Err(e);
+                }
+                tracing::debug!(
+                    target_type,
+                    params,
+                    error = %e,
+                    "Error searching reverse references during $graph traversal"
+                );
+                return Ok(Vec::new());
+            }
         }
     }
 }
@@ -504,6 +827,10 @@ impl GraphOperation {
 
 #[async_trait]
 impl OperationHandler for GraphOperation {
+    fn supports_level(&self, level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        level == OperationLevel::Instance
+    }
+
     fn code(&self) -> &str {
         "graph"
     }
@@ -534,6 +861,11 @@ impl OperationHandler for GraphOperation {
             .ok_or_else(|| {
                 OperationError::NotFound(format!("{}/{} not found", resource_type, id))
             })?;
+        if !matches_profile(state, &focal.resource, graph_def.profile.as_deref()).await? {
+            return Err(OperationError::InvalidParameters(
+                "Focal resource does not satisfy GraphDefinition.profile".into(),
+            ));
+        }
 
         // 4. Traverse the graph
         let resources = traverse(state, context, focal, &graph_def).await?;
@@ -712,19 +1044,50 @@ mod tests {
             "link": [{
                 "target": [{
                     "type": "Observation",
-                    "params": "patient"
+                    "params": "patient={ref}"
                 }]
             }]
         });
         let model = parse_graph_definition(&gd).unwrap();
         assert!(model.links[0].path.is_none());
-        assert_eq!(model.links[0].targets[0].params.as_deref(), Some("patient"));
+        assert_eq!(
+            model.links[0].targets[0].params.as_deref(),
+            Some("patient={ref}")
+        );
     }
 
     #[test]
     fn test_parse_missing_start() {
         let gd = json!({"resourceType": "GraphDefinition"});
         assert!(parse_graph_definition(&gd).is_err());
+    }
+
+    #[test]
+    fn malformed_graph_rules_are_never_dropped() {
+        for link in [
+            json!({"target":[{}]}),
+            json!({"target":[{"type":"Observation","params":"status=final"}]}),
+            json!({"path":"Patient.link.other.resolve()","target":[{"type":"Patient"}]}),
+            json!({"path":"Patient.link.where(other.resolve().active).other","target":[{"type":"Patient"}]}),
+            json!({"path":"Patient.link.other","min":2,"max":"1"}),
+            json!({"path":"Patient.link.other","min":-1}),
+            json!({"path":"Patient.link.other","max":"invalid"}),
+            json!({"path":"Patient.link.other","target":"Patient"}),
+            json!({"path":"Patient.link.other","target":[{"type":"Patient","link":[{"target":[{}]}]}]}),
+        ] {
+            assert!(parse_graph_definition(&json!({"start":"Patient","link":[link]})).is_err());
+        }
+        assert!(parse_graph_definition(&json!({"start":"Patient","link":{}})).is_err());
+        assert!(parse_graph_definition(&json!({"start":"Patient","link":[{"path":"Patient.link.where(other.display = 'resolve()').other","min":0,"max":"*","target":[{"type":"Patient"}]}]})).is_ok());
+        for link in [
+            json!({"path":"Patient.link.other","sliceName":"linked"}),
+            json!({"path":"Patient.link.other","target":[{"type":"Patient","compartment":[{"use":"requirement","code":"Patient","rule":"identical"}]}]}),
+        ] {
+            assert!(matches!(
+                parse_graph_definition(&json!({"start":"Patient","link":[link]})),
+                Err(OperationError::NotImplemented(_))
+            ));
+        }
     }
 
     // -- extract_param_value tests --

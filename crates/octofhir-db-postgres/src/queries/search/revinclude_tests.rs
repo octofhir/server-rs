@@ -37,6 +37,7 @@ fn revinclude_guards_regexp_and_does_not_multiply_source_rows() {
                 registry: &registry,
                 limits: IncludeLimits::default(),
                 visibility: None,
+                snapshot: None,
             },
             raw,
         )
@@ -57,7 +58,7 @@ fn revinclude_guards_regexp_and_does_not_multiply_source_rows() {
 #[ignore = "manual isolated PostgreSQL revinclude SQL A/B benchmark"]
 async fn revinclude_sql_ab() {
     let container = Postgres::default()
-        .with_tag("16-alpine")
+        .with_tag("17-alpine")
         .start()
         .await
         .unwrap();

@@ -1137,18 +1137,24 @@ mod tests {
 
         // Create a search registry with Patient parameters
         let registry = SearchParameterRegistry::new();
-        registry.register(SearchParameter::new(
-            "name",
-            "http://hl7.org/fhir/SearchParameter/Patient-name",
-            SearchParameterType::String,
-            vec!["Patient".to_string()],
-        ));
-        registry.register(SearchParameter::new(
-            "birthdate",
-            "http://hl7.org/fhir/SearchParameter/Patient-birthdate",
-            SearchParameterType::Date,
-            vec!["Patient".to_string()],
-        ));
+        registry.register(
+            SearchParameter::new(
+                "name",
+                "http://hl7.org/fhir/SearchParameter/Patient-name",
+                SearchParameterType::String,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.name"),
+        );
+        registry.register(
+            SearchParameter::new(
+                "birthdate",
+                "http://hl7.org/fhir/SearchParameter/Patient-birthdate",
+                SearchParameterType::Date,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.birthDate"),
+        );
 
         let model_provider = test_model_provider();
         let builder = FhirSchemaBuilder::new(

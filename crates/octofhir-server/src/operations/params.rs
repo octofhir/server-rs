@@ -4,8 +4,6 @@
 //! HTTP requests (both GET and POST) and converting them to FHIR Parameters
 //! resources.
 
-use std::collections::HashMap;
-
 use axum::{
     Json,
     extract::{FromRequest, FromRequestParts, Query, Request},
@@ -21,8 +19,8 @@ use serde_json::{Value, json};
 /// - POST request body (either Parameters resource or single resource)
 #[derive(Debug, Clone)]
 pub enum OperationParams {
-    /// Parameters from query string (GET request)
-    Get(HashMap<String, String>),
+    /// Parameters from query string (GET request), preserving repeats and order.
+    Get(Vec<(String, String)>),
     /// Parameters from request body (POST request)
     Post(Value),
 }
@@ -30,7 +28,7 @@ pub enum OperationParams {
 impl OperationParams {
     /// POST operations may carry primitive parameters in the query, including
     /// the standard $validate?profile=... form with a direct resource body.
-    pub fn post_with_query(value: Value, query: HashMap<String, String>) -> Self {
+    pub fn post_with_query(value: Value, query: Vec<(String, String)>) -> Self {
         if query.is_empty() {
             return Self::Post(value);
         }
@@ -205,7 +203,7 @@ where
         if method == axum::http::Method::GET {
             // Extract query parameters from parts
             let (mut parts, body) = req.into_parts();
-            let Query(params): Query<HashMap<String, String>> =
+            let Query(params): Query<Vec<(String, String)>> =
                 Query::from_request_parts(&mut parts, state)
                     .await
                     .map_err(|e| OperationParamsRejection {
@@ -217,7 +215,7 @@ where
         } else {
             // Extract JSON body for POST
             let (mut parts, body) = req.into_parts();
-            let Query(query): Query<HashMap<String, String>> =
+            let Query(query): Query<Vec<(String, String)>> =
                 Query::from_request_parts(&mut parts, state)
                     .await
                     .map_err(|e| OperationParamsRejection {
@@ -239,12 +237,71 @@ where
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn get_extractor_preserves_repeated_primitives_and_decoding() {
+        let request = Request::builder()
+            .uri("/Observation/$stats?statistic=average&code=a%2Cb&statistic=min&statistic=average&empty=&text=a%2Bb+c")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let params = OperationParams::from_request(request, &()).await.unwrap();
+        assert_eq!(
+            params.get_parameters("statistic"),
+            vec![json!("average"), json!("min"), json!("average")]
+        );
+        assert_eq!(params.get_parameters("code"), vec![json!("a,b")]);
+        assert_eq!(params.get_parameters("empty"), vec![json!("")]);
+        assert_eq!(params.get_string("text"), Some("a+b c".into()));
+        assert_eq!(params.to_value()["parameter"][1]["name"], "code");
+    }
+
+    #[tokio::test]
+    async fn post_extractor_preserves_query_repeats_and_body_values() {
+        let body = json!({"resourceType":"Parameters", "parameter":[
+            {"name":"profile", "valueUri":"urn:test:body"},
+            {"name":"resource", "resource":{"resourceType":"Patient"}}
+        ]});
+        let request = Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/Patient/$validate?profile=urn%3Atest%3Afirst&profile=urn%3Atest%3Asecond")
+            .header(axum::http::header::CONTENT_TYPE, "application/fhir+json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        let params = OperationParams::from_request(request, &()).await.unwrap();
+        assert_eq!(
+            params.get_parameters("profile"),
+            vec![
+                json!("urn:test:body"),
+                json!("urn:test:first"),
+                json!("urn:test:second")
+            ]
+        );
+        assert_eq!(params.to_value()["parameter"][0], body["parameter"][0]);
+        assert_eq!(params.to_value()["parameter"][1], body["parameter"][1]);
+    }
+
+    #[tokio::test]
+    async fn post_extractor_preserves_direct_resource_and_repeated_query() {
+        let body = json!({"resourceType":"Patient", "active":true});
+        let request = Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/Patient/$validate?mode=create&mode=update")
+            .header(axum::http::header::CONTENT_TYPE, "application/fhir+json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        let params = OperationParams::from_request(request, &()).await.unwrap();
+        assert_eq!(params.get_resource("resource"), Some(body));
+        assert_eq!(
+            params.get_parameters("mode"),
+            vec![json!("create"), json!("update")]
+        );
+    }
+
     #[test]
     fn post_query_retains_body_and_requested_profile() {
         let resource = json!({"resourceType":"Patient","active":true});
         let params = OperationParams::post_with_query(
             resource.clone(),
-            HashMap::from([("profile".into(), "http://example.org/profile".into())]),
+            vec![("profile".into(), "http://example.org/profile".into())],
         )
         .to_value();
         assert_eq!(params["parameter"][0]["resource"], resource);
@@ -253,9 +310,10 @@ mod tests {
 
     #[test]
     fn test_get_params_to_value() {
-        let mut params = HashMap::new();
-        params.insert("code".to_string(), "123".to_string());
-        params.insert("system".to_string(), "http://example.com".to_string());
+        let params = vec![
+            ("code".to_string(), "123".to_string()),
+            ("system".to_string(), "http://example.com".to_string()),
+        ];
 
         let op_params = OperationParams::Get(params);
         let value = op_params.to_value();
@@ -315,8 +373,7 @@ mod tests {
 
     #[test]
     fn test_get_string() {
-        let mut params = HashMap::new();
-        params.insert("name".to_string(), "test".to_string());
+        let params = vec![("name".to_string(), "test".to_string())];
 
         let op_params = OperationParams::Get(params);
         let name = op_params.get_string("name");
@@ -365,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_is_empty() {
-        let empty_get = OperationParams::Get(HashMap::new());
+        let empty_get = OperationParams::Get(Vec::new());
         assert!(empty_get.is_empty());
 
         let empty_post = OperationParams::Post(json!({
@@ -374,11 +431,7 @@ mod tests {
         }));
         assert!(empty_post.is_empty());
 
-        let non_empty_get = OperationParams::Get({
-            let mut m = HashMap::new();
-            m.insert("a".to_string(), "b".to_string());
-            m
-        });
+        let non_empty_get = OperationParams::Get(vec![("a".to_string(), "b".to_string())]);
         assert!(!non_empty_get.is_empty());
     }
 }

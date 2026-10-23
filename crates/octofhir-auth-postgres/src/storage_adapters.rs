@@ -275,8 +275,6 @@ impl UserStorageTrait for ArcUserStorage {
                     user_id = %user_id,
                     username = %u.username,
                     has_password_hash = u.password_hash.is_some(),
-                    hash_len = u.password_hash.as_ref().map(|h| h.len()),
-                    hash_prefix = ?u.password_hash.as_ref().map(|h| h.chars().take(30).collect::<String>()),
                     "verify_password: user found"
                 );
                 match u.password_hash {
@@ -431,16 +429,18 @@ impl SessionStorageTrait for ArcSessionStorage {
         // Mark as used
         let id = Uuid::parse_str(&row.id)
             .map_err(|e| AuthError::storage(format!("Invalid session ID: {}", e)))?;
-        let updated_row = storage
-            .mark_used(id)
-            .await
-            .map_err(|e| AuthError::storage(e.to_string()))?;
+        let updated_row = storage.mark_used(id).await.map_err(|error| {
+            if error.is_not_found() {
+                AuthError::invalid_grant("Authorization code expired or already used")
+            } else {
+                AuthError::storage(error.to_string())
+            }
+        })?;
 
-        // Return the updated session with consumed_at set
-        let mut consumed_session: AuthorizationSession =
+        // Return the exact persisted consumption timestamp
+        let consumed_session: AuthorizationSession =
             serde_json::from_value(updated_row.resource)
                 .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))?;
-        consumed_session.consumed_at = Some(OffsetDateTime::now_utc());
         Ok(consumed_session)
     }
 

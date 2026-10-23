@@ -49,6 +49,11 @@ pub struct RefreshToken {
     /// Granted scopes (space-separated).
     pub scope: String,
 
+    /// Resource audience from the original authorization grant.
+    /// Legacy records used the configured default audience on refresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+
     /// SMART on FHIR launch context.
     /// Preserved from the original authorization for subsequent token refreshes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -80,7 +85,7 @@ impl RefreshToken {
     #[must_use]
     pub fn is_expired(&self) -> bool {
         self.expires_at
-            .map(|exp| OffsetDateTime::now_utc() > exp)
+            .map(|exp| OffsetDateTime::now_utc() >= exp)
             .unwrap_or(false)
     }
 
@@ -238,6 +243,7 @@ mod tests {
             client_id: "test-client".to_string(),
             user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid offline_access".to_string(),
+            audience: None,
             launch_context: None,
             created_at: OffsetDateTime::now_utc(),
             expires_at,

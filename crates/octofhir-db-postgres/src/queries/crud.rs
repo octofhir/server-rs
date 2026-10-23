@@ -16,10 +16,50 @@ use octofhir_storage::{RawStoredResource, StorageError, StoredResource};
 
 use crate::schema::SchemaManager;
 
+fn mutation_error(error: sqlx_core::error::Error, context: &str) -> StorageError {
+    if error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .as_deref()
+        == Some("40001")
+    {
+        return StorageError::WriteConflict {
+            message: "Resource changed after transaction planning; retry the request".into(),
+        };
+    }
+    StorageError::internal(format!("{context}: {error}"))
+}
+
+/// Ordinary mutations share a database-wide gate; conditional interactions take
+/// it exclusively before searching. A shared gate preserves ordinary write
+/// concurrency while covering overlapping predicates and chained dependencies.
+pub(crate) async fn lock_resource_writes(
+    tx: &mut PgTransaction<'_>,
+    exclusive: bool,
+) -> Result<(), StorageError> {
+    let sql = if exclusive {
+        "SELECT pg_advisory_xact_lock(1330006098, 1)"
+    } else {
+        "SELECT pg_advisory_xact_lock_shared(1330006098, 1)"
+    };
+    query(sql).execute(&mut **tx).await.map_err(|error| {
+        StorageError::transaction_error(format!("Write coordination failed: {error}"))
+    })?;
+    Ok(())
+}
+
 /// Converts chrono DateTime to time OffsetDateTime.
 fn chrono_to_time(dt: DateTime<Utc>) -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp(dt.timestamp()).unwrap_or(OffsetDateTime::UNIX_EPOCH)
         + time::Duration::nanoseconds(dt.timestamp_subsec_nanos() as i64)
+}
+
+/// This backend issues canonical decimal BIGINT versions. Reject other spellings
+/// without a database lookup, while keeping comparisons on the indexed column.
+/// FHIR clients still treat versions as opaque: `01` must never alias `1`.
+fn stored_version(version: &str) -> Option<i64> {
+    let value = version.parse::<i64>().ok()?;
+    (value.to_string() == version).then_some(value)
 }
 
 /// Creates a new transaction entry and returns its ID.
@@ -104,7 +144,7 @@ pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, S
                 if e.to_string().contains("duplicate key") {
                     StorageError::already_exists(resource_type, &id)
                 } else {
-                    StorageError::internal(format!("Failed to create resource: {e}"))
+                    mutation_error(e, "Failed to create resource")
                 }
             })?;
 
@@ -181,7 +221,7 @@ pub async fn create_raw(
                 if e.to_string().contains("duplicate key") {
                     StorageError::already_exists(resource_type, &id)
                 } else {
-                    StorageError::internal(format!("Failed to create resource: {e}"))
+                    mutation_error(e, "Failed to create resource")
                 }
             })?;
 
@@ -330,6 +370,179 @@ pub async fn exists_many_grouped(
 ///
 /// The caller keeps this transaction for the following create/update, so
 /// reference validation and the write consume one pool checkout.
+/// Hold references stable through the following write. Sort lock acquisition
+/// across tables and rows; shared locks also protect soft-delete status changes.
+pub async fn lock_references_with_tx(
+    tx: &mut PgTransaction<'_>,
+    groups: &[(String, Vec<String>)],
+) -> Result<std::collections::HashSet<String>, StorageError> {
+    lock_resource_writes(tx, false).await?;
+    let mut groups: Vec<_> = groups.iter().filter(|(_, ids)| !ids.is_empty()).collect();
+    groups.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut found = std::collections::HashSet::new();
+    for (resource_type, ids) in groups {
+        let table = octofhir_search::sql_builder::escape_identifier(&SchemaManager::table_name(
+            resource_type,
+        ))
+        .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+        let sql = format!(
+            r#"SELECT id FROM {table} WHERE id = ANY($1) AND status != 'deleted'
+               ORDER BY id FOR SHARE"#
+        );
+        let rows: Vec<String> = query_scalar(AssertSqlSafe(sql))
+            .bind(ids)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|error| {
+                StorageError::internal(format!("Failed to lock references: {error}"))
+            })?;
+        found.extend(rows.into_iter().map(|id| format!("{resource_type}/{id}")));
+    }
+    Ok(found)
+}
+
+/// An exact historical version remains a valid target after the live row has
+/// changed or been deleted. Lock either its current row or retained history,
+/// preserving exact opaque version spelling rather than accepting numeric aliases.
+pub async fn lock_reference_versions_with_tx(
+    tx: &mut PgTransaction<'_>,
+    references: &[octofhir_core::FhirReference],
+) -> Result<std::collections::HashSet<String>, StorageError> {
+    if references
+        .iter()
+        .any(|reference| reference.version.is_none())
+    {
+        return Err(StorageError::invalid_resource(
+            "Versioned reference requires a version",
+        ));
+    }
+    Ok(lock_reference_snapshots_with_tx(tx, references)
+        .await?
+        .into_keys()
+        .collect())
+}
+
+/// Compare the actual locked JSON with the body used for targetProfile checks.
+/// Also covers direct SQL changes which need not allocate a new FHIR version.
+pub async fn lock_reference_snapshot_with_tx(
+    tx: &mut PgTransaction<'_>,
+    reference: &octofhir_core::FhirReference,
+) -> Result<Option<Value>, StorageError> {
+    Ok(
+        lock_reference_snapshots_with_tx(tx, std::slice::from_ref(reference))
+            .await?
+            .remove(&reference.to_versioned()),
+    )
+}
+
+/// Each type uses one set-based live-row query and, when needed, one history
+/// query. Duplicate references never produce an additional round trip.
+pub async fn lock_reference_snapshots_with_tx(
+    tx: &mut PgTransaction<'_>,
+    references: &[octofhir_core::FhirReference],
+) -> Result<std::collections::HashMap<String, Value>, StorageError> {
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    let mut groups: BTreeMap<&str, BTreeSet<(&str, Option<i64>)>> = BTreeMap::new();
+    for reference in references {
+        let requested = groups.entry(&reference.resource_type).or_default();
+        octofhir_core::validate_id(&reference.id)
+            .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+        let version = if let Some(version) = &reference.version {
+            octofhir_core::validate_id(version)
+                .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+            let Some(value) = stored_version(version) else {
+                continue;
+            };
+            Some(value)
+        } else {
+            None
+        };
+        requested.insert((&reference.id, version));
+    }
+    let mut snapshots = HashMap::new();
+    let mut locked = false;
+    for (resource_type, requested) in groups {
+        let table_name = SchemaManager::table_name(resource_type);
+        let table = octofhir_search::sql_builder::escape_identifier(&table_name)
+            .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+        if requested.is_empty() {
+            continue;
+        }
+        if !locked {
+            lock_resource_writes(tx, false).await?;
+            locked = true;
+        }
+        let ids: Vec<_> = requested.iter().map(|(id, _)| *id).collect();
+        let versions: Vec<_> = requested.iter().map(|(_, version)| *version).collect();
+        let sql = format!(
+            "SELECT r.id, wanted.version, r.resource FROM {table} r
+             JOIN UNNEST($1::text[], $2::bigint[]) AS wanted(id, version)
+               ON r.id=wanted.id AND (wanted.version IS NULL OR r.txid=wanted.version)
+             WHERE r.status!='deleted' ORDER BY r.id, r.txid FOR SHARE OF r"
+        );
+        let rows: Vec<(String, Option<i64>, Value)> = query_as(AssertSqlSafe(sql))
+            .bind(&ids)
+            .bind(&versions)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|error| {
+                StorageError::internal(format!("Failed to lock reference bodies: {error}"))
+            })?;
+        for (id, version, body) in rows {
+            let reference = octofhir_core::FhirReference {
+                resource_type: resource_type.into(),
+                id,
+                version: version.map(|value| value.to_string()),
+            };
+            snapshots.insert(reference.to_versioned(), body);
+        }
+        let missing: Vec<_> = requested
+            .iter()
+            .filter_map(|(id, version)| {
+                let version = (*version)?;
+                (!snapshots.contains_key(&format!("{resource_type}/{id}/_history/{version}")))
+                    .then_some((*id, version))
+            })
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let history =
+            octofhir_search::sql_builder::escape_identifier(&format!("{table_name}_history"))
+                .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+        let exists: bool = query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(format!("public.{history}"))
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|error| {
+                StorageError::internal(format!("Failed to locate reference history: {error}"))
+            })?;
+        if !exists {
+            continue;
+        }
+        let ids: Vec<_> = missing.iter().map(|(id, _)| *id).collect();
+        let versions: Vec<_> = missing.iter().map(|(_, version)| *version).collect();
+        let sql = format!(
+            "SELECT r.id, r.txid::text, r.resource FROM {history} r
+             JOIN UNNEST($1::text[], $2::bigint[]) AS wanted(id, version)
+               ON r.id=wanted.id AND r.txid=wanted.version
+             WHERE r.status!='deleted' ORDER BY r.id, r.txid FOR SHARE OF r"
+        );
+        let rows: Vec<(String, String, Value)> = query_as(AssertSqlSafe(sql))
+            .bind(&ids)
+            .bind(&versions)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|error| {
+                StorageError::internal(format!("Failed to lock reference history: {error}"))
+            })?;
+        for (id, version, body) in rows {
+            snapshots.insert(format!("{resource_type}/{id}/_history/{version}"), body);
+        }
+    }
+    Ok(snapshots)
+}
+
 pub async fn exists_many_grouped_with_tx(
     tx: &mut PgTransaction<'_>,
     groups: &[(String, Vec<String>)],
@@ -438,8 +651,8 @@ pub async fn profiles_many_grouped(
 }
 
 /// Batch read of live (non-deleted) resources for `ids` in `{resource_type}`.
-/// One `id = ANY($1)` round-trip; missing/deleted ids are omitted. Meta
-/// (versionId/lastUpdated) is merged into each returned resource.
+/// One `id = ANY($1)` round-trip; missing/deleted ids are omitted. Each returned
+/// resource preserves its saved JSON, including versionId and lastUpdated.
 pub async fn read_many(
     pool: &PgPool,
     resource_type: &str,
@@ -469,21 +682,10 @@ pub async fn read_many(
 
     let out = rows
         .into_iter()
-        .map(|(row_id, txid, created_at, updated_at, mut resource)| {
+        .map(|(row_id, txid, created_at, updated_at, resource)| {
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
-            if let Some(meta_obj) = resource.get_mut("meta").and_then(Value::as_object_mut) {
-                meta_obj.insert("versionId".to_string(), serde_json::json!(txid.to_string()));
-                meta_obj.insert(
-                    "lastUpdated".to_string(),
-                    serde_json::json!(updated_at.to_rfc3339()),
-                );
-            } else {
-                resource["meta"] = serde_json::json!({
-                    "versionId": txid.to_string(),
-                    "lastUpdated": updated_at.to_rfc3339()
-                });
-            }
+            // Preserve the JSON of this stored version, including its metadata.
             StoredResource {
                 id: row_id,
                 version_id: txid.to_string(),
@@ -530,7 +732,7 @@ pub async fn read(
             })?;
 
     match row {
-        Some((row_id, txid, created_at, updated_at, mut resource, status)) => {
+        Some((row_id, txid, created_at, updated_at, resource, status)) => {
             // Check if the resource is soft-deleted
             if status == "deleted" {
                 return Err(StorageError::deleted(resource_type, id));
@@ -539,22 +741,7 @@ pub async fn read(
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
 
-            // Merge timestamps into meta field
-            if let Some(meta) = resource.get_mut("meta") {
-                if let Some(meta_obj) = meta.as_object_mut() {
-                    meta_obj.insert("versionId".to_string(), serde_json::json!(txid.to_string()));
-                    meta_obj.insert(
-                        "lastUpdated".to_string(),
-                        serde_json::json!(updated_at.to_rfc3339()),
-                    );
-                }
-            } else {
-                resource["meta"] = serde_json::json!({
-                    "versionId": txid.to_string(),
-                    "lastUpdated": updated_at.to_rfc3339()
-                });
-            }
-
+            // The stored JSON already contains this version's server metadata.
             Ok(Some(StoredResource {
                 id: row_id,
                 version_id: txid.to_string(),
@@ -732,7 +919,7 @@ pub async fn update(
             .bind(now)
             .fetch_optional(pool)
             .await
-            .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
+            .map_err(|e| mutation_error(e, "Failed to update resource"))?;
 
     match row {
         Some((
@@ -864,7 +1051,7 @@ pub async fn update_raw(
             .bind(now)
             .fetch_optional(pool)
             .await
-            .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
+            .map_err(|e| mutation_error(e, "Failed to update resource"))?;
 
     match row {
         Some((_returned_id, returned_txid, created_at, updated_at, resource_json, _old_txid)) => {
@@ -931,7 +1118,7 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!("Table does not exist: {e}"));
             }
-            StorageError::internal(format!("Failed to delete resource: {e}"))
+            mutation_error(e, "Failed to delete resource")
         })?;
 
     // Per FHIR spec: delete is idempotent, so success regardless of whether
@@ -939,178 +1126,147 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
     Ok(())
 }
 
-/// Reads a specific version of a FHIR resource.
-///
-/// First checks the current table, then falls back to the history table.
+/// Internal retained snapshot, including deletion attributes for exact policy
+/// checks. Deletion snapshots are not representations returned by vread.
+pub async fn version_snapshot<'c, E>(
+    executor: E,
+    resource_type: &str,
+    id: &str,
+    version: &str,
+) -> Result<Option<octofhir_storage::RawHistoryEntry>, StorageError>
+where
+    E: sqlx_core::executor::Executor<'c, Database = sqlx_postgres::Postgres>,
+{
+    resource_snapshot(executor, resource_type, id, Some(version)).await
+}
+
+pub async fn resource_snapshot<'c, E>(
+    executor: E,
+    resource_type: &str,
+    id: &str,
+    version: Option<&str>,
+) -> Result<Option<octofhir_storage::RawHistoryEntry>, StorageError>
+where
+    E: sqlx_core::executor::Executor<'c, Database = sqlx_postgres::Postgres>,
+{
+    if let Some(version) = version {
+        octofhir_core::validate_id(version).map_err(|error| {
+            StorageError::invalid_resource(format!("Invalid version ID: {error}"))
+        })?;
+    }
+    let stored = version.and_then(stored_version);
+    if version.is_some() && stored.is_none() {
+        return Ok(None);
+    }
+    let table = SchemaManager::table_name(resource_type);
+    let sql = if version.is_none() {
+        format!(
+            r#"SELECT id, txid, created_at, updated_at, resource::text, status FROM (
+        SELECT id, txid, created_at, updated_at, resource, status::text, true AS current FROM "{table}" WHERE id=$1
+        UNION ALL SELECT id, txid, created_at, updated_at, resource, 'deleted'::text AS status, false AS current FROM "{table}_history" WHERE id=$1
+        ) AS snapshots ORDER BY current DESC, txid DESC LIMIT 1"#
+        )
+    } else {
+        format!(
+            r#"SELECT id, txid, created_at, updated_at, resource::text, status::text FROM "{table}" WHERE id=$1 AND txid=$2
+        UNION ALL SELECT id, txid, created_at, updated_at, resource::text, status::text FROM "{table}_history" WHERE id=$1 AND txid=$2 LIMIT 1"#
+        )
+    };
+    type Row = (String, i64, DateTime<Utc>, DateTime<Utc>, String, String);
+    let query = query_as(AssertSqlSafe(sql)).bind(id);
+    let query = if let Some(version) = stored {
+        query.bind(version)
+    } else {
+        query
+    };
+    let row: Option<Row> = query.fetch_optional(executor).await.map_err(|error| {
+        StorageError::internal(format!("Version snapshot read failed: {error}"))
+    })?;
+    Ok(row.map(
+        |(id, txid, created_at, updated_at, resource_json, status)| {
+            octofhir_storage::RawHistoryEntry {
+                resource: RawStoredResource {
+                    id,
+                    version_id: txid.to_string(),
+                    resource_type: resource_type.into(),
+                    resource_json,
+                    last_updated: chrono_to_time(updated_at),
+                    created_at: chrono_to_time(created_at),
+                },
+                method: match status.as_str() {
+                    "created" => octofhir_storage::HistoryMethod::Create,
+                    "deleted" => octofhir_storage::HistoryMethod::Delete,
+                    _ => octofhir_storage::HistoryMethod::Update,
+                },
+            }
+        },
+    ))
+}
+
+fn live_version(
+    snapshot: Option<octofhir_storage::RawHistoryEntry>,
+    resource_type: &str,
+    id: &str,
+) -> Result<Option<RawStoredResource>, StorageError> {
+    match snapshot {
+        Some(snapshot) if snapshot.method == octofhir_storage::HistoryMethod::Delete => {
+            Err(StorageError::deleted(resource_type, id))
+        }
+        Some(snapshot) => Ok(Some(snapshot.resource)),
+        None => Ok(None),
+    }
+}
+
+fn typed_version(raw: Option<RawStoredResource>) -> Result<Option<StoredResource>, StorageError> {
+    raw.map(|row| {
+        Ok(StoredResource {
+            resource: serde_json::from_str(&row.resource_json)
+                .map_err(|error| StorageError::internal(error.to_string()))?,
+            id: row.id,
+            version_id: row.version_id,
+            resource_type: row.resource_type,
+            last_updated: row.last_updated,
+            created_at: row.created_at,
+        })
+    })
+    .transpose()
+}
+
+/// Read an exact retained live revision; deletion revisions return Gone.
 pub async fn vread(
     pool: &PgPool,
     resource_type: &str,
     id: &str,
     version: &str,
 ) -> Result<Option<StoredResource>, StorageError> {
-    let table = SchemaManager::table_name(resource_type);
-    let history_table = format!("{}_history", table);
-
-    // Parse version as i64
-    let version_id: i64 = version
-        .parse()
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid version ID: {e}")))?;
-
-    // First check current table
-    let current_sql = format!(
-        r#"SELECT id, txid, created_at, updated_at, resource
-           FROM "{table}"
-           WHERE id = $1 AND txid = $2"#
-    );
-
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> =
-        query_as(AssertSqlSafe(current_sql.to_string()))
-            .bind(id)
-            .bind(version_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!("Table does not exist: {e}"));
-                }
-                StorageError::internal(format!("Failed to read version: {e}"))
-            })?;
-
-    if let Some((row_id, txid, created_at, updated_at, resource)) = row {
-        let created_at_time = chrono_to_time(created_at);
-        let updated_at_time = chrono_to_time(updated_at);
-        return Ok(Some(StoredResource {
-            id: row_id,
-            version_id: txid.to_string(),
-            resource_type: resource_type.to_string(),
-            resource,
-            last_updated: updated_at_time,
-            created_at: created_at_time,
-        }));
-    }
-
-    // Check history table
-    let history_sql = format!(
-        r#"SELECT id, txid, created_at, updated_at, resource
-           FROM "{history_table}"
-           WHERE id = $1 AND txid = $2"#
-    );
-
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> =
-        query_as(AssertSqlSafe(history_sql.to_string()))
-            .bind(id)
-            .bind(version_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!("History table does not exist: {e}"));
-                }
-                StorageError::internal(format!("Failed to read version from history: {e}"))
-            })?;
-
-    match row {
-        Some((row_id, txid, created_at, updated_at, resource)) => {
-            let created_at_time = chrono_to_time(created_at);
-            let updated_at_time = chrono_to_time(updated_at);
-            Ok(Some(StoredResource {
-                id: row_id,
-                version_id: txid.to_string(),
-                resource_type: resource_type.to_string(),
-                resource,
-                last_updated: updated_at_time,
-                created_at: created_at_time,
-            }))
-        }
-        None => Ok(None),
-    }
+    typed_version(vread_raw(pool, resource_type, id, version).await?)
 }
 
-/// Reads a specific version of a FHIR resource as raw JSON string.
-///
-/// Like `vread()` but uses `resource::text` to avoid the JSONB → Value round-trip.
-/// First checks the current table, then falls back to the history table.
+pub async fn vread_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    id: &str,
+    version: &str,
+) -> Result<Option<StoredResource>, StorageError> {
+    typed_version(live_version(
+        version_snapshot(&mut **tx, resource_type, id, version).await?,
+        resource_type,
+        id,
+    )?)
+}
+
+/// Raw JSON remains exactly as saved, including historical revisions.
 pub async fn vread_raw(
     pool: &PgPool,
     resource_type: &str,
     id: &str,
     version: &str,
 ) -> Result<Option<RawStoredResource>, StorageError> {
-    let table = SchemaManager::table_name(resource_type);
-    let history_table = format!("{}_history", table);
-
-    let version_id: i64 = version
-        .parse()
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid version ID: {e}")))?;
-
-    // First check current table
-    let current_sql = format!(
-        r#"SELECT id, txid, created_at, updated_at, resource::text
-           FROM "{table}"
-           WHERE id = $1 AND txid = $2"#
-    );
-
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
-        query_as(AssertSqlSafe(current_sql.to_string()))
-            .bind(id)
-            .bind(version_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!("Table does not exist: {e}"));
-                }
-                StorageError::internal(format!("Failed to read version: {e}"))
-            })?;
-
-    if let Some((row_id, txid, created_at, updated_at, resource_json)) = row {
-        let created_at_time = chrono_to_time(created_at);
-        let updated_at_time = chrono_to_time(updated_at);
-        return Ok(Some(RawStoredResource {
-            id: row_id,
-            version_id: txid.to_string(),
-            resource_type: resource_type.to_string(),
-            resource_json,
-            last_updated: updated_at_time,
-            created_at: created_at_time,
-        }));
-    }
-
-    // Check history table
-    let history_sql = format!(
-        r#"SELECT id, txid, created_at, updated_at, resource::text
-           FROM "{history_table}"
-           WHERE id = $1 AND txid = $2"#
-    );
-
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
-        query_as(AssertSqlSafe(history_sql.to_string()))
-            .bind(id)
-            .bind(version_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!("History table does not exist: {e}"));
-                }
-                StorageError::internal(format!("Failed to read version from history: {e}"))
-            })?;
-
-    match row {
-        Some((row_id, txid, created_at, updated_at, resource_json)) => {
-            let created_at_time = chrono_to_time(created_at);
-            let updated_at_time = chrono_to_time(updated_at);
-            Ok(Some(RawStoredResource {
-                id: row_id,
-                version_id: txid.to_string(),
-                resource_type: resource_type.to_string(),
-                resource_json,
-                last_updated: updated_at_time,
-                created_at: created_at_time,
-            }))
-        }
-        None => Ok(None),
-    }
+    live_version(
+        version_snapshot(pool, resource_type, id, version).await?,
+        resource_type,
+        id,
+    )
 }
 
 // ============================================================================
@@ -1133,6 +1289,7 @@ pub async fn create_with_tx(
     resource: &Value,
     txid: Option<i64>,
 ) -> Result<StoredResource, StorageError> {
+    lock_resource_writes(tx, false).await?;
     let resource_type = resource["resourceType"]
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
@@ -1201,7 +1358,7 @@ pub async fn create_with_tx(
                 if e.to_string().contains("duplicate key") {
                     StorageError::already_exists(resource_type, &id)
                 } else {
-                    StorageError::internal(format!("Failed to create resource: {e}"))
+                    mutation_error(e, "Failed to create resource")
                 }
             })?;
 
@@ -1234,6 +1391,7 @@ pub async fn create_batch_with_tx(
     txid: i64,
     resources: &[Value],
 ) -> Result<Vec<StoredResource>, StorageError> {
+    lock_resource_writes(tx, false).await?;
     if resources.is_empty() {
         return Ok(Vec::new());
     }
@@ -1279,42 +1437,42 @@ pub async fn create_batch_with_tx(
            FROM UNNEST($1::text[], $2::jsonb[]) AS t(id, resource)"#
     );
 
-    let result = query(AssertSqlSafe(sql.to_string()))
-        .bind(&ids)
-        .bind(&payloads)
-        .bind(now)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("duplicate key") {
-                StorageError::already_exists(resource_type, "<batch>")
-            } else {
-                StorageError::internal(format!("Failed to batch-create resources: {e}"))
-            }
-        })?;
-
-    if result.rows_affected() as usize != ids.len() {
+    // Return the actual trigger-normalized JSON and timestamps from the same
+    // native INSERT. Rendering/events must never use a fabricated batch body.
+    let sql = format!("{sql} RETURNING id, txid, created_at, updated_at, resource");
+    let rows: Vec<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> =
+        query_as(AssertSqlSafe(sql))
+            .bind(&ids)
+            .bind(&payloads)
+            .bind(now)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("duplicate key") {
+                    StorageError::already_exists(resource_type, "<batch>")
+                } else {
+                    mutation_error(e, "Failed to batch-create resources")
+                }
+            })?;
+    if rows.len() != ids.len() {
         return Err(StorageError::internal(format!(
-            "Batch insert affected {} rows, expected {}",
-            result.rows_affected(),
+            "Batch insert returned {} rows, expected {}",
+            rows.len(),
             ids.len()
         )));
     }
-
-    let last_updated_time = chrono_to_time(now);
-    let created_at_time = chrono_to_time(now);
-
-    let out = ids
+    let out = rows
         .into_iter()
-        .zip(payloads)
-        .map(|(id, resource)| StoredResource {
-            id,
-            version_id: version_id.clone(),
-            resource_type: resource_type.to_string(),
-            resource,
-            last_updated: last_updated_time,
-            created_at: created_at_time,
-        })
+        .map(
+            |(id, version, created_at, updated_at, resource)| StoredResource {
+                id,
+                version_id: version.to_string(),
+                resource_type: resource_type.to_owned(),
+                resource,
+                created_at: chrono_to_time(created_at),
+                last_updated: chrono_to_time(updated_at),
+            },
+        )
         .collect();
 
     Ok(out)
@@ -1338,9 +1496,10 @@ pub async fn update_batch_with_tx(
     resource_type: &str,
     txid: i64,
     resources: &[Value],
-) -> Result<(Vec<StoredResource>, Vec<String>), StorageError> {
+) -> Result<(Vec<StoredResource>, Vec<StoredResource>, Vec<String>), StorageError> {
+    lock_resource_writes(tx, false).await?;
     if resources.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
     }
 
     let mut ids: Vec<String> = Vec::with_capacity(resources.len());
@@ -1359,7 +1518,11 @@ pub async fn update_batch_with_tx(
     // `updated_at` is maintained by the `{table}_update_timestamp` BEFORE UPDATE
     // trigger; the same trigger chain archives the previous version to history.
     let sql = format!(
-        r#"UPDATE "{table}" t
+        r#"WITH previous AS MATERIALIZED (
+               SELECT id, txid, created_at, updated_at, resource FROM "{table}"
+               WHERE id = ANY($1::text[]) AND status != 'deleted' ORDER BY id FOR UPDATE
+           )
+           UPDATE "{table}" t
            SET txid = {txid}::bigint,
                resource = u.resource || jsonb_build_object(
                    'meta', COALESCE(u.resource -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
@@ -1368,21 +1531,28 @@ pub async fn update_batch_with_tx(
                    )
                ),
                status = 'updated'
-           FROM UNNEST($1::text[], $2::jsonb[]) AS u(id, resource)
-           WHERE t.id = u.id
-           RETURNING t.id, t.created_at, t.updated_at, t.resource"#
+           FROM UNNEST($1::text[], $2::jsonb[]) AS u(id, resource), previous p
+           WHERE t.id = u.id AND t.id = p.id
+           RETURNING t.id, t.created_at, t.updated_at, t.resource, p.txid, p.created_at, p.updated_at, p.resource"#
     );
 
-    let rows: Vec<(String, DateTime<Utc>, DateTime<Utc>, Value)> =
-        query_as(AssertSqlSafe(sql.to_string()))
-            .bind(&ids)
-            .bind(&payloads)
-            .bind(now)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(|e| {
-                StorageError::internal(format!("Failed to batch-update resources: {e}"))
-            })?;
+    type UpdateRow = (
+        String,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        Value,
+        i64,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        Value,
+    );
+    let rows: Vec<UpdateRow> = query_as(AssertSqlSafe(sql.to_string()))
+        .bind(&ids)
+        .bind(&payloads)
+        .bind(now)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| mutation_error(e, "Failed to batch-update resources"))?;
 
     let matched: std::collections::HashSet<&str> = rows.iter().map(|r| r.0.as_str()).collect();
     let missing: Vec<String> = ids
@@ -1392,19 +1562,37 @@ pub async fn update_batch_with_tx(
         .collect();
 
     let version_id = txid.to_string();
-    let updated = rows
-        .into_iter()
-        .map(|(id, created_at, updated_at, resource)| StoredResource {
+    let mut updated = Vec::with_capacity(rows.len());
+    let mut previous = Vec::with_capacity(rows.len());
+    for (
+        id,
+        created_at,
+        updated_at,
+        resource,
+        old_txid,
+        old_created_at,
+        old_updated_at,
+        old_resource,
+    ) in rows
+    {
+        previous.push(StoredResource {
+            id: id.clone(),
+            version_id: old_txid.to_string(),
+            resource_type: resource_type.into(),
+            resource: old_resource,
+            last_updated: chrono_to_time(old_updated_at),
+            created_at: chrono_to_time(old_created_at),
+        });
+        updated.push(StoredResource {
             id,
             version_id: version_id.clone(),
-            resource_type: resource_type.to_string(),
+            resource_type: resource_type.into(),
             resource,
             last_updated: chrono_to_time(updated_at),
             created_at: chrono_to_time(created_at),
-        })
-        .collect();
-
-    Ok((updated, missing))
+        });
+    }
+    Ok((updated, previous, missing))
 }
 
 /// Bulk-deletes many resources of the same type within a transaction.
@@ -1413,30 +1601,72 @@ pub async fn update_batch_with_tx(
 /// deletes. As with [`delete_with_tx`], the live row is physically removed and
 /// the BEFORE DELETE trigger archives the final version to history. Ids that
 /// do not exist are ignored — FHIR delete is idempotent.
+/// RETURNING supplies actual deleted identities without a separate lookup.
 pub async fn delete_batch_with_tx(
     tx: &mut PgTransaction<'_>,
     resource_type: &str,
     ids: &[String],
-) -> Result<(), StorageError> {
+) -> Result<Vec<String>, StorageError> {
+    Ok(delete_batch_snapshots_with_tx(tx, resource_type, ids)
+        .await?
+        .into_iter()
+        .map(|deleted| deleted.previous.id)
+        .collect())
+}
+
+pub async fn delete_batch_snapshots_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    ids: &[String],
+) -> Result<Vec<octofhir_storage::DeletedResource>, StorageError> {
     if ids.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+    lock_resource_writes(tx, false).await?;
 
     let table = SchemaManager::table_name(resource_type);
-    let sql = format!(r#"DELETE FROM "{table}" WHERE id = ANY($1::text[])"#);
+    let sql = format!(
+        r#"DELETE FROM "{table}" WHERE id = ANY($1::text[]) RETURNING id, txid, created_at, updated_at, resource, current_setting('octofhir.write_version')::bigint, octofhir_resource_timestamp()"#
+    );
 
-    query(AssertSqlSafe(sql.to_string()))
+    type DeletedRow = (
+        String,
+        i64,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        Value,
+        i64,
+        DateTime<Utc>,
+    );
+    let rows: Vec<DeletedRow> = query_as(AssertSqlSafe(sql))
         .bind(ids)
-        .execute(&mut **tx)
+        .fetch_all(&mut **tx)
         .await
         .map_err(|e| {
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!("Table does not exist: {e}"));
             }
-            StorageError::internal(format!("Failed to batch-delete resources: {e}"))
+            mutation_error(e, "Failed to batch-delete resources")
         })?;
-
-    Ok(())
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, txid, created_at, updated_at, resource, deletion_version, deletion_timestamp)| {
+                octofhir_storage::DeletedResource {
+                    previous: StoredResource {
+                        id,
+                        version_id: txid.to_string(),
+                        resource_type: resource_type.into(),
+                        resource,
+                        created_at: chrono_to_time(created_at),
+                        last_updated: chrono_to_time(updated_at),
+                    },
+                    version_id: deletion_version.to_string(),
+                    last_updated: chrono_to_time(deletion_timestamp),
+                }
+            },
+        )
+        .collect())
 }
 
 /// Updates a resource within a transaction.
@@ -1461,176 +1691,110 @@ pub async fn update_with_tx_if_match(
     if_match: Option<&str>,
     txid: Option<i64>,
 ) -> Result<StoredResource, StorageError> {
+    Ok(update_with_tx_snapshot(tx, resource, if_match, txid)
+        .await?
+        .stored)
+}
+
+/// The materialized, locked source returns the actual preceding snapshot in
+/// the same native UPDATE statement, independent of authorization prefetches.
+pub async fn update_with_tx_snapshot(
+    tx: &mut PgTransaction<'_>,
+    resource: &Value,
+    if_match: Option<&str>,
+    txid: Option<i64>,
+) -> Result<octofhir_storage::UpdatedResource, StorageError> {
+    lock_resource_writes(tx, false).await?;
     let resource_type = resource["resourceType"]
         .as_str()
-        .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
-
+        .ok_or_else(|| StorageError::invalid_resource("Missing resourceType"))?;
     let id = resource["id"]
         .as_str()
-        .ok_or_else(|| StorageError::invalid_resource("Missing id field"))?;
-
+        .ok_or_else(|| StorageError::invalid_resource("Missing id"))?;
     let table = SchemaManager::table_name(resource_type);
-    let now = Utc::now();
-
-    let (update_sql, has_version_check) = match (if_match, txid) {
-        (Some(expected_version), Some(t)) => {
-            let expected_txid: i64 = expected_version.parse().map_err(|_| {
-                StorageError::invalid_resource(format!(
-                    "Invalid version format: {expected_version}"
-                ))
-            })?;
-            (
-                format!(
-                    r#"WITH current AS (
-                           SELECT id, txid, created_at FROM "{table}"
-                           WHERE id = $1 AND status != 'deleted'
-                       )
-                       UPDATE "{table}" t
-                       SET txid = {t}::bigint,
-                           resource = $2::jsonb || jsonb_build_object(
-                               'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
-                                   'versionId', '{t}',
-                                   'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                               )
-                           ),
-                           status = 'updated'
-                       FROM current
-                       WHERE t.id = $1
-                         AND t.status != 'deleted'
-                         AND t.txid = {expected_txid}
-                       RETURNING t.id, t.txid, t.created_at, t.updated_at, t.resource,
-                                 (SELECT txid FROM current) as old_txid"#
-                ),
-                true,
-            )
-        }
-        (Some(expected_version), None) => {
-            let expected_txid: i64 = expected_version.parse().map_err(|_| {
-                StorageError::invalid_resource(format!(
-                    "Invalid version format: {expected_version}"
-                ))
-            })?;
-            (
-                format!(
-                    r#"WITH new_tx AS (
-                           SELECT nextval('_transaction_txid_seq') AS txid
-                       ),
-                       current AS (
-                           SELECT id, txid, created_at FROM "{table}"
-                           WHERE id = $1 AND status != 'deleted'
-                       )
-                       UPDATE "{table}" t
-                       SET txid = new_tx.txid,
-                           resource = $2::jsonb || jsonb_build_object(
-                               'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
-                                   'versionId', new_tx.txid::text,
-                                   'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                               )
-                           ),
-                           status = 'updated'
-                       FROM new_tx, current
-                       WHERE t.id = $1
-                         AND t.status != 'deleted'
-                         AND t.txid = {expected_txid}
-                       RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource,
-                                 (SELECT txid FROM current) as old_txid"#
-                ),
-                true,
-            )
-        }
-        (None, Some(t)) => (
-            format!(
-                r#"UPDATE "{table}" t
-                   SET txid = {t}::bigint,
-                       resource = $2::jsonb || jsonb_build_object(
-                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
-                               'versionId', '{t}',
-                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                           )
-                       ),
-                       status = 'updated'
-                   WHERE t.id = $1
-                   RETURNING t.id, t.txid, t.created_at, t.updated_at, t.resource,
-                             0::bigint as old_txid"#
-            ),
-            false,
-        ),
-        (None, None) => (
-            format!(
-                r#"WITH new_tx AS (
-                       SELECT nextval('_transaction_txid_seq') AS txid
-                   )
-                   UPDATE "{table}" t
-                   SET txid = new_tx.txid,
-                       resource = $2::jsonb || jsonb_build_object(
-                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
-                               'versionId', new_tx.txid::text,
-                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                           )
-                       ),
-                       status = 'updated'
-                   FROM new_tx
-                   WHERE t.id = $1
-                   RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource,
-                             0::bigint as old_txid"#
-            ),
-            false,
-        ),
+    let version_check = match if_match {
+        Some(version) => match stored_version(version) {
+            Some(version) => format!("AND p.txid = {version}::bigint"),
+            None => "AND FALSE".into(),
+        },
+        None => String::new(),
     };
-
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> =
-        query_as(AssertSqlSafe(update_sql.to_string()))
-            .bind(id)
-            .bind(resource)
-            .bind(now)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
-
-    match row {
-        Some((
-            _returned_id,
-            returned_txid,
-            created_at,
-            updated_at,
-            updated_resource,
-            _old_txid,
-        )) => {
-            let created_at_time = chrono_to_time(created_at);
-            let updated_at_time = chrono_to_time(updated_at);
-            Ok(StoredResource {
-                id: id.to_string(),
-                version_id: returned_txid.to_string(),
-                resource_type: resource_type.to_string(),
-                resource: updated_resource,
-                last_updated: updated_at_time,
-                created_at: created_at_time,
-            })
-        }
-        None => {
-            if has_version_check {
-                let check_sql =
-                    format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
-                let current: Option<i64> = query_scalar(AssertSqlSafe(check_sql.to_string()))
-                    .bind(id)
-                    .fetch_optional(&mut **tx)
-                    .await
-                    .map_err(|e| {
-                        StorageError::internal(format!("Failed to check resource: {e}"))
-                    })?;
-
-                match current {
-                    Some(v) => Err(StorageError::version_conflict(
-                        if_match.unwrap_or(""),
-                        v.to_string(),
-                    )),
-                    None => Err(StorageError::not_found(resource_type, id)),
-                }
-            } else {
-                Err(StorageError::not_found(resource_type, id))
-            }
+    let version = txid
+        .map(|version| format!("{version}::bigint"))
+        .unwrap_or_else(|| "nextval('_transaction_txid_seq')".into());
+    let sql = format!(
+        r#"WITH previous AS MATERIALIZED (
+        SELECT id, txid, created_at, updated_at, resource FROM "{table}" WHERE id=$1 AND status!='deleted' FOR UPDATE
+    ), new_tx AS MATERIALIZED (SELECT {version} AS txid FROM previous)
+    UPDATE "{table}" AS t SET txid=new_tx.txid,
+        resource = $2::jsonb, status = 'updated'
+    FROM previous AS p, new_tx WHERE t.id=p.id {version_check}
+    RETURNING t.id, t.txid, t.created_at, t.updated_at, t.resource, p.txid, p.created_at, p.updated_at, p.resource"#
+    );
+    type Row = (
+        String,
+        i64,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        Value,
+        i64,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        Value,
+    );
+    let row: Option<Row> = query_as(AssertSqlSafe(sql))
+        .bind(id)
+        .bind(resource)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|error| mutation_error(error, "Failed to update resource"))?;
+    if let Some((
+        id,
+        version,
+        created,
+        updated,
+        resource,
+        old_version,
+        old_created,
+        old_updated,
+        old_resource,
+    )) = row
+    {
+        return Ok(octofhir_storage::UpdatedResource {
+            previous: StoredResource {
+                id: id.clone(),
+                version_id: old_version.to_string(),
+                resource_type: resource_type.into(),
+                resource: old_resource,
+                created_at: chrono_to_time(old_created),
+                last_updated: chrono_to_time(old_updated),
+            },
+            stored: StoredResource {
+                id,
+                version_id: version.to_string(),
+                resource_type: resource_type.into(),
+                resource,
+                created_at: chrono_to_time(created),
+                last_updated: chrono_to_time(updated),
+            },
+        });
+    }
+    if let Some(expected) = if_match {
+        let current: Option<i64> = query_scalar(AssertSqlSafe(format!(
+            r#"SELECT txid FROM "{table}" WHERE id=$1 AND status!='deleted'"#
+        )))
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|error| mutation_error(error, "Failed to check update target"))?;
+        if let Some(current) = current {
+            return Err(StorageError::version_conflict(
+                expected,
+                current.to_string(),
+            ));
         }
     }
+    Err(StorageError::not_found(resource_type, id))
 }
 
 /// Deletes a resource within a transaction.
@@ -1643,6 +1807,7 @@ pub async fn delete_with_tx(
     id: &str,
     txid: Option<i64>,
 ) -> Result<(), StorageError> {
+    lock_resource_writes(tx, false).await?;
     let table = SchemaManager::table_name(resource_type);
 
     // Physically remove the live row; the BEFORE DELETE trigger archives the
@@ -1660,7 +1825,7 @@ pub async fn delete_with_tx(
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!("Table does not exist: {e}"));
             }
-            StorageError::internal(format!("Failed to delete resource: {e}"))
+            mutation_error(e, "Failed to delete resource")
         })?;
 
     // Per FHIR spec: delete is idempotent
@@ -1684,7 +1849,47 @@ pub async fn read_with_tx_for_update(
     resource_type: &str,
     id: &str,
 ) -> Result<Option<StoredResource>, StorageError> {
+    lock_resource_writes(tx, false).await?;
     read_with_tx_lock(tx, resource_type, id, true).await
+}
+
+pub async fn read_many_with_tx_for_update(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    ids: &[String],
+) -> Result<Vec<StoredResource>, StorageError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let table =
+        octofhir_search::sql_builder::escape_identifier(&SchemaManager::table_name(resource_type))
+            .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+    lock_resource_writes(tx, false).await?;
+    let sql = format!(
+        "SELECT id, txid, created_at, updated_at, resource FROM {table}
+         WHERE id=ANY($1::text[]) AND status!='deleted' ORDER BY id FOR UPDATE"
+    );
+    let rows: Vec<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> =
+        query_as(AssertSqlSafe(sql))
+            .bind(ids)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|error| {
+                StorageError::internal(format!("Failed to lock write snapshots: {error}"))
+            })?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, txid, created_at, updated_at, resource)| StoredResource {
+                id,
+                version_id: txid.to_string(),
+                resource_type: resource_type.into(),
+                resource,
+                last_updated: chrono_to_time(updated_at),
+                created_at: chrono_to_time(created_at),
+            },
+        )
+        .collect())
 }
 
 async fn read_with_tx_lock(

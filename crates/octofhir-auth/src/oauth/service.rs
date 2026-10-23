@@ -79,6 +79,9 @@ pub struct AuthorizationConfig {
     /// Whether to require the `aud` parameter.
     /// Default: true (required for SMART on FHIR).
     pub require_aud: bool,
+
+    /// Trusted resource audiences. Empty leaves a reusable service unconfigured.
+    pub accepted_audiences: Vec<String>,
 }
 
 impl Default for AuthorizationConfig {
@@ -87,11 +90,19 @@ impl Default for AuthorizationConfig {
             code_lifetime: Duration::minutes(10),
             min_state_entropy_bits: 122,
             require_aud: true,
+            accepted_audiences: Vec::new(),
         }
     }
 }
 
 impl AuthorizationConfig {
+    /// Configure resource audiences from server configuration, never a request Host.
+    #[must_use]
+    pub fn with_audiences(mut self, audiences: Vec<String>) -> Self {
+        self.accepted_audiences = audiences;
+        self
+    }
+
     /// Creates a new configuration with custom code lifetime.
     #[must_use]
     pub fn with_code_lifetime(mut self, lifetime: Duration) -> Self {
@@ -263,6 +274,12 @@ impl AuthorizationService {
             return Err(AuthError::invalid_request(
                 "Missing required parameter: aud",
             ));
+        }
+
+        if !self.config.accepted_audiences.is_empty()
+            && !self.config.accepted_audiences.contains(&request.aud)
+        {
+            return Err(AuthError::invalid_request("Unknown FHIR audience"));
         }
 
         // 9. Validate scopes are allowed for this client
@@ -769,6 +786,22 @@ mod tests {
         );
 
         (service, client_storage, session_storage)
+    }
+
+    #[tokio::test]
+    async fn authorize_rejects_an_unconfigured_resource_audience() {
+        let (mut service, client_storage, session_storage) = create_service();
+        client_storage.add_client(create_test_client());
+        service.config.accepted_audiences = vec!["https://fhir.example.com/r4".into()];
+        let mut request = create_test_request();
+        request.aud = "https://another-resource.example/r4".into();
+        assert!(matches!(
+            service.authorize(&request).await,
+            Err(AuthError::InvalidRequest { .. })
+        ));
+        assert!(session_storage.sessions.read().unwrap().is_empty());
+        request.aud = "https://fhir.example.com/r4".into();
+        assert!(service.authorize(&request).await.is_ok());
     }
 
     #[tokio::test]

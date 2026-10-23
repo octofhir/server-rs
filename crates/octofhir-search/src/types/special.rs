@@ -83,8 +83,9 @@ pub fn build_near_search(
 /// Build SQL for _text search on narrative.
 pub fn build_text_search(builder: &mut SqlBuilder, value: &str) -> Result<(), SqlBuilderError> {
     let p = builder.add_text_param(value);
+    let resource = builder.resource_column();
     builder.add_raw_condition(format!(
-        "to_tsvector('english', regexp_replace(resource->'text'->>'div', '<[^>]*>', '', 'g')) \
+        "to_tsvector('english', regexp_replace({resource}->'text'->>'div', '<[^>]*>', '', 'g')) \
          @@ plainto_tsquery('english', ${p})"
     ));
     Ok(())
@@ -93,8 +94,9 @@ pub fn build_text_search(builder: &mut SqlBuilder, value: &str) -> Result<(), Sq
 /// Build SQL for _content search on entire resource.
 pub fn build_content_search(builder: &mut SqlBuilder, value: &str) -> Result<(), SqlBuilderError> {
     let p = builder.add_text_param(value);
+    let resource = builder.resource_column();
     builder.add_raw_condition(format!(
-        "to_tsvector('english', resource::text) @@ plainto_tsquery('english', ${p})"
+        "to_tsvector('english', {resource}::text) @@ plainto_tsquery('english', ${p})"
     ));
     Ok(())
 }
@@ -137,8 +139,8 @@ pub fn build_list_search(
         "EXISTS (SELECT 1 FROM list l, jsonb_array_elements(l.resource->'entry') AS entry \
          WHERE l.id::text = ${p} AND l.status != 'deleted' \
          AND fhir_ref_type(entry->'item'->>'reference') = ${type_p} \
-         AND fhir_ref_id(entry->'item'->>'reference') = {}.id::text)",
-        builder.resource_column()
+         AND fhir_ref_id(entry->'item'->>'reference') = {}::text)",
+        builder.id_column()
     ));
 
     Ok(())
@@ -243,5 +245,18 @@ mod tests {
         build_list_search(&mut builder, "list123", "Patient").unwrap();
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("EXISTS") && clause.contains("entry"));
+    }
+
+    #[test]
+    fn full_text_and_list_use_the_actual_resource_alias() {
+        let mut builder = SqlBuilder::with_resource_column("snapshot.resource");
+        build_text_search(&mut builder, "headache").unwrap();
+        build_content_search(&mut builder, "patient").unwrap();
+        build_list_search(&mut builder, "list-id", "Patient").unwrap();
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("snapshot.resource->'text'"), "{clause}");
+        assert!(clause.contains("snapshot.resource::text"), "{clause}");
+        assert!(clause.contains("snapshot.id::text"), "{clause}");
+        assert!(!clause.contains("snapshot.resource.id"), "{clause}");
     }
 }

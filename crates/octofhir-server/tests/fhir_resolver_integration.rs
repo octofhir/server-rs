@@ -13,12 +13,13 @@ use octofhir_fhir_model::provider::FhirVersion;
 use octofhir_server::lsp::{FhirResolver, LoadingState};
 use octofhir_server::model_provider::OctoFhirModelProvider;
 use std::sync::Arc;
-use testcontainers::{ContainerAsync, runners::AsyncRunner};
+use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 
 /// Helper to start a PostgreSQL container and return the connection URL
 async fn start_postgres() -> (ContainerAsync<Postgres>, sqlx_postgres::PgPool) {
     let container = Postgres::default()
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("start postgres container");

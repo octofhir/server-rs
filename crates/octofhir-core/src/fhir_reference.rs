@@ -175,64 +175,64 @@ pub fn parse_reference(
         return Err(UnresolvableReference::Urn(reference.to_string()));
     }
 
-    // Determine the path to parse
+    // Match a complete service-base segment, never just a host/path prefix.
+    // FHIR REST identity treats HTTP and HTTPS as the same resource identity
+    // when the server, explicit port and path agree.
     let path = if reference.contains("://") {
-        // Absolute URL
-        match base_url {
-            Some(base) => {
-                let normalized_base = base.trim_end_matches('/');
-                if let Some(suffix) = reference.strip_prefix(normalized_base) {
-                    // Same server - strip base URL
-                    suffix.trim_start_matches('/')
-                } else {
-                    // Different server - cannot resolve
-                    return Err(UnresolvableReference::External(reference.to_string()));
-                }
-            }
-            None => {
-                // No base URL configured - treat all absolute URLs as external
-                return Err(UnresolvableReference::External(reference.to_string()));
-            }
-        }
+        let Some(base) = base_url else {
+            return Err(UnresolvableReference::External(reference.to_owned()));
+        };
+        let base = base.trim_end_matches('/');
+        let prefix = format!("{base}/");
+        let alternate = base
+            .strip_prefix("http://")
+            .map(|rest| format!("https://{rest}/"))
+            .or_else(|| {
+                base.strip_prefix("https://")
+                    .map(|rest| format!("http://{rest}/"))
+            });
+        reference
+            .strip_prefix(&prefix)
+            .or_else(|| {
+                alternate
+                    .as_deref()
+                    .and_then(|prefix| reference.strip_prefix(prefix))
+            })
+            .ok_or_else(|| UnresolvableReference::External(reference.to_owned()))?
     } else {
-        // Relative reference
         reference
     };
-
-    // Parse "ResourceType/id" or "ResourceType/id/_history/version"
+    // REST identity ignores the query component; conditional references have
+    // no Type/id path and remain outside this literal-reference parser.
+    let path = path.split('?').next().unwrap_or(path);
     let parts: Vec<&str> = path.split('/').collect();
-
-    if parts.len() < 2 {
+    if parts.len() != 2 && !(parts.len() == 4 && parts[2] == "_history") {
         return Err(UnresolvableReference::Invalid(format!(
-            "reference must contain at least Type/id: {reference}"
+            "expected Type/id or Type/id/_history/version: {reference}"
         )));
     }
-
     let resource_type = parts[0];
     let id = parts[1];
-
-    // Validate resource type (must start with uppercase letter)
+    // Include logical-model names while keeping the type a safe identifier.
+    // In particular, untrusted Reference strings must not supply SQL syntax
+    // when a storage resolver selects the corresponding resource table.
     if !resource_type
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_uppercase())
-        .unwrap_or(false)
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_uppercase)
+        || !resource_type
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
     {
         return Err(UnresolvableReference::Invalid(format!(
-            "resource type must start with uppercase letter: {resource_type}"
+            "invalid resource type: {resource_type}"
         )));
     }
-
-    // Validate ID is not empty
-    if id.is_empty() {
-        return Err(UnresolvableReference::Invalid(
-            "resource id cannot be empty".to_string(),
-        ));
-    }
-
-    // Check for versioned reference
-    let version = if parts.len() >= 4 && parts[2] == "_history" {
-        Some(parts[3].to_string())
+    crate::validate_id(id).map_err(|error| UnresolvableReference::Invalid(error.to_string()))?;
+    let version = if parts.len() == 4 {
+        crate::validate_id(parts[3])
+            .map_err(|error| UnresolvableReference::Invalid(error.to_string()))?;
+        Some(parts[3].to_owned())
     } else {
         None
     };
@@ -400,5 +400,72 @@ mod tests {
         let (rtype, id) = result.unwrap();
         assert_eq!(rtype, "Patient");
         assert_eq!(id, "123");
+    }
+
+    #[test]
+    fn literal_references_preserve_valid_opaque_identity_and_reject_extra_paths() {
+        for reference in ["Patient/.abc", "Patient/abc.", "Patient/./_history/.."] {
+            assert!(parse_reference(reference, None).is_ok(), "{reference}");
+        }
+        let parsed = parse_reference("Patient/1/_history/01", None).unwrap();
+        assert_eq!(parsed.version.as_deref(), Some("01"));
+        for reference in [
+            "Patient/1/extra",
+            "Patient/1/_history",
+            "Patient/1/_history/",
+            "Patient/1/_history/2/extra",
+            "Patient/1//2",
+            "Patient/1#contained",
+            "Patient/1%2F2",
+            "Patient/1/_history/2%2F3",
+            "Patient\"/1",
+            "Patient;DROP/1",
+            "Patient name/1",
+        ] {
+            assert!(
+                matches!(
+                    parse_reference(reference, None),
+                    Err(UnresolvableReference::Invalid(_))
+                ),
+                "{reference}"
+            );
+        }
+        assert!(parse_reference(&format!("Patient/{}", "x".repeat(65)), None).is_err());
+        assert!(parse_reference(&format!("Patient/1/_history/{}", "x".repeat(65)), None).is_err());
+    }
+
+    #[test]
+    fn absolute_references_require_the_complete_service_base() {
+        let base = "http://example.test:8888/fhir";
+        for reference in [
+            "http://example.test:8888/fhir/Patient/p1",
+            "https://example.test:8888/fhir/Patient/p1",
+        ] {
+            assert_eq!(
+                parse_reference(reference, Some(base)).unwrap(),
+                FhirReference::new("Patient", "p1")
+            );
+        }
+        for reference in [
+            "http://example.test:8888/fhir-evil/Patient/p1",
+            "http://example.test:8888/fhirOther/Patient/p1",
+            "http://example.test.evil:8888/fhir/Patient/p1",
+            "http://example.test:9999/fhir/Patient/p1",
+        ] {
+            assert!(
+                matches!(
+                    parse_reference(reference, Some(base)),
+                    Err(UnresolvableReference::External(_))
+                ),
+                "{reference}"
+            );
+        }
+        assert!(parse_reference("http://example.test:8888/fhir//Patient/p1", Some(base)).is_err());
+        let versioned = parse_reference(
+            "https://example.test:8888/fhir/Patient/p1/_history/v1?_format=json",
+            Some(base),
+        )
+        .unwrap();
+        assert_eq!(versioned.to_versioned(), "Patient/p1/_history/v1");
     }
 }

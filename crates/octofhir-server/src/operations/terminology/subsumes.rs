@@ -14,6 +14,8 @@
 //! - For locally loaded CodeSystems (ICD-10, CPT, custom): local hierarchy traversal
 //! - For large terminologies (SNOMED CT, LOINC, RxNorm): delegate to tx.fhir.org
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use octofhir_fhir_model::TerminologyProvider;
 use serde::Deserialize;
@@ -508,6 +510,10 @@ impl Default for SubsumesOperation {
 
 #[async_trait]
 impl OperationHandler for SubsumesOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        level == OperationLevel::System || resource_type == Some("CodeSystem")
+    }
+
     fn code(&self) -> &str {
         "subsumes"
     }

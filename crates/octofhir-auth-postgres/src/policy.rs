@@ -198,7 +198,7 @@ impl<'a> PolicyStorage<'a> {
             r#"
             UPDATE accesspolicy
             SET resource = $2,
-                txid = txid + 1,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
@@ -225,7 +225,7 @@ impl<'a> PolicyStorage<'a> {
             r#"
             UPDATE accesspolicy
             SET status = 'deleted',
-                txid = txid + 1,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW()
             WHERE id = $1
               AND status != 'deleted'
@@ -713,6 +713,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
             ON CONFLICT (id) DO UPDATE SET
                 resource = EXCLUDED.resource,
+                txid = EXCLUDED.txid,
                 updated_at = NOW(),
                 status = 'updated'
             RETURNING id, txid, created_at, updated_at, resource, status::text

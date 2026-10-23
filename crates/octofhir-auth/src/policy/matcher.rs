@@ -478,7 +478,12 @@ impl PatternMatcher {
 
         // Check if accessing Patient resource directly
         if context.request.resource_type == "Patient"
-            && context.request.resource_id.as_deref() == Some(compartment_id)
+            && context
+                .resource
+                .as_ref()
+                .map(|resource| resource.id.as_str())
+                .or(context.request.resource_id.as_deref())
+                == Some(compartment_id)
         {
             return true;
         }
@@ -504,7 +509,12 @@ impl PatternMatcher {
 
         // Check if accessing Practitioner resource directly
         context.request.resource_type == "Practitioner"
-            && context.request.resource_id.as_deref() == Some(compartment_id)
+            && context
+                .resource
+                .as_ref()
+                .map(|resource| resource.id.as_str())
+                .or(context.request.resource_id.as_deref())
+                == Some(compartment_id)
     }
 
     fn reference_matches(&self, reference: &Option<String>, resource_type: &str, id: &str) -> bool {

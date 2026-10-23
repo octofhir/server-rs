@@ -40,6 +40,25 @@ pub fn apply_json_patch(resource: &Value, patch_bytes: &[u8]) -> Result<Value, A
     patch(&mut patched, &operations)
         .map_err(|e| ApiError::bad_request(format!("Patch operation failed: {e}")))?;
 
+    finish_patch(resource, patched)
+}
+
+/// R4 requires the narrative to remain clinically safe after PATCH. Preserve
+/// no-op narratives, reject changes to resources with authored narratives, and
+/// discard generated text rather than retaining a stale description of the data.
+fn finish_patch(resource: &Value, mut patched: Value) -> Result<Value, ApiError> {
+    if &patched == resource {
+        return Ok(patched);
+    }
+    if resource.get("text").is_some() && resource["text"]["status"].as_str() != Some("generated") {
+        return Err(ApiError::UnprocessableEntity {
+            message: "PATCH cannot safely update a resource with an authored narrative".into(),
+            operation_outcome: None,
+        });
+    }
+    if let Some(object) = patched.as_object_mut() {
+        object.remove("text");
+    }
     Ok(patched)
 }
 
@@ -76,10 +95,26 @@ pub async fn apply_bundle_patch(
     resource: &Value,
     patch: &Value,
 ) -> Result<Value, ApiError> {
+    let (media_type, bytes) = decode_bundle_patch(patch)?;
+    if media_type == "application/json-patch+json" {
+        apply_json_patch(resource, &bytes)
+    } else {
+        apply_fhirpath_patch(engine, model_provider, resource, &bytes).await
+    }
+}
+
+pub(crate) fn decode_bundle_patch(patch: &Value) -> Result<(&'static str, Vec<u8>), ApiError> {
     match patch["resourceType"].as_str() {
         Some("Binary") => {
             use base64::{Engine, engine::general_purpose::STANDARD};
-            if patch["contentType"].as_str() != Some("application/json-patch+json") {
+            if !patch["contentType"].as_str().is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .eq_ignore_ascii_case("application/json-patch+json")
+            }) {
                 return Err(ApiError::unsupported_media_type(
                     "Bundle Binary PATCH requires application/json-patch+json",
                 ));
@@ -90,12 +125,12 @@ pub async fn apply_bundle_patch(
             let bytes = STANDARD
                 .decode(data)
                 .map_err(|e| ApiError::bad_request(format!("Invalid Binary PATCH data: {e}")))?;
-            apply_json_patch(resource, &bytes)
+            Ok(("application/json-patch+json", bytes))
         }
         Some("Parameters") => {
             let bytes =
                 serde_json::to_vec(patch).map_err(|e| ApiError::bad_request(e.to_string()))?;
-            apply_fhirpath_patch(engine, model_provider, resource, &bytes).await
+            Ok(("application/fhir+json", bytes))
         }
         _ => Err(ApiError::bad_request(
             "Bundle PATCH requires Binary or FHIRPath Parameters",
@@ -251,7 +286,7 @@ pub async fn apply_fhirpath_patch(
             "Patch cannot change resource identity",
         ));
     }
-    Ok(patched)
+    finish_patch(resource, patched)
 }
 
 fn nonnegative_index(value: i64) -> Result<usize, ApiError> {
@@ -515,6 +550,42 @@ async fn fhirpath_move(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn changed_data_does_not_retain_generated_narrative() {
+        let resource = json!({"resourceType":"Patient", "id":"p1", "active":true,
+            "text":{"status":"generated", "div":"<div xmlns=\"http://www.w3.org/1999/xhtml\">Active</div>"}});
+        let patched = apply_json_patch(
+            &resource,
+            br#"[{"op":"replace","path":"/active","value":false}]"#,
+        )
+        .unwrap();
+        assert_eq!(patched["active"], false);
+        assert!(patched.get("text").is_none());
+        assert!(resource.get("text").is_some());
+    }
+
+    #[test]
+    fn authored_narrative_rejects_mutation_but_allows_noop() {
+        for status in ["additional", "extensions", "empty"] {
+            let resource = json!({"resourceType":"Patient", "id":"p1", "active":true,
+                "text":{"status":status, "div":"<div xmlns=\"http://www.w3.org/1999/xhtml\">Clinical context</div>"}});
+            assert_eq!(
+                apply_json_patch(
+                    &resource,
+                    br#"[{"op":"test","path":"/active","value":true}]"#
+                )
+                .unwrap(),
+                resource
+            );
+            let error = apply_json_patch(
+                &resource,
+                br#"[{"op":"replace","path":"/active","value":false}]"#,
+            )
+            .unwrap_err();
+            assert!(matches!(error, ApiError::UnprocessableEntity { .. }));
+        }
+    }
 
     #[test]
     fn test_apply_json_patch_add() {

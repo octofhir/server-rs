@@ -267,6 +267,75 @@ pub struct PolicyEvaluator {
     config: PolicyEvaluatorConfig,
 }
 
+/// A single policy-cache generation for a request's actual resource snapshots.
+/// Compiled scripts remain shared; evaluating a batch does not reload policies.
+pub struct PreparedPolicyEvaluation<'a> {
+    evaluator: &'a PolicyEvaluator,
+    policies: Vec<InternalPolicy>,
+}
+
+impl PreparedPolicyEvaluation<'_> {
+    pub fn requires_snapshots(&self, context: &PolicyContext) -> bool {
+        self.policies.iter().any(|policy| {
+            (matches!(policy.engine, PolicyEngineType::QuickJs { .. })
+                || policy.matchers.compartments.is_some())
+                && {
+                    // Compartment matching depends on the eventual resource.
+                    // An admission context has no snapshot and cannot establish
+                    // that a compartment-specific script is irrelevant.
+                    let mut matchers = policy.matchers.clone();
+                    matchers.compartments = None;
+                    self.evaluator.pattern_matcher.matches(&matchers, context)
+                }
+        })
+    }
+
+    pub fn evaluate(&self, context: &PolicyContext) -> AccessDecision {
+        self.evaluator
+            .evaluate_policies(context, &self.policies, false)
+    }
+
+    /// Scripts may inspect fields absent from a search admission request. Their
+    /// decisions are deferred until each fetched snapshot is checked. Static
+    /// denials and scope checks still apply before querying.
+    pub fn evaluate_admission(&self, context: &PolicyContext) -> AccessDecision {
+        self.evaluator
+            .evaluate_policies(context, &self.policies, true)
+    }
+}
+
+/// Prepared policies which can be retained before acquiring a Bundle/read
+/// connection. The evaluator and compiled scripts remain shared; snapshots do
+/// not reload or clone the policy set.
+pub struct OwnedPreparedPolicyEvaluation {
+    evaluator: Arc<PolicyEvaluator>,
+    policies: Vec<InternalPolicy>,
+}
+
+impl OwnedPreparedPolicyEvaluation {
+    pub fn requires_snapshots(&self, context: &PolicyContext) -> bool {
+        self.policies.iter().any(|policy| {
+            (matches!(policy.engine, PolicyEngineType::QuickJs { .. })
+                || policy.matchers.compartments.is_some())
+                && {
+                    let mut matchers = policy.matchers.clone();
+                    matchers.compartments = None;
+                    self.evaluator.pattern_matcher.matches(&matchers, context)
+                }
+        })
+    }
+
+    pub fn evaluate(&self, context: &PolicyContext) -> AccessDecision {
+        self.evaluator
+            .evaluate_policies(context, &self.policies, false)
+    }
+
+    pub fn evaluate_admission(&self, context: &PolicyContext) -> AccessDecision {
+        self.evaluator
+            .evaluate_policies(context, &self.policies, true)
+    }
+}
+
 impl PolicyEvaluator {
     /// Create a new policy evaluator.
     ///
@@ -303,6 +372,50 @@ impl PolicyEvaluator {
     /// 3. Evaluate policies in priority order
     /// 4. Return first deny or allow; use default if no match
     pub async fn evaluate(&self, context: &PolicyContext) -> AccessDecision {
+        if self.config.evaluate_scopes_first
+            && let Some(decision) = self.check_smart_scopes(context)
+            && decision.is_denied()
+        {
+            return decision;
+        }
+        match self.prepare(&context.request.resource_type).await {
+            Ok(prepared) => prepared.evaluate(context),
+            Err(error) => {
+                tracing::error!(error = %error, "Failed to get policies from cache");
+                AccessDecision::Deny(DenyReason::policy_error(
+                    "Failed to evaluate access policies",
+                ))
+            }
+        }
+    }
+
+    pub async fn prepare(&self, resource_type: &str) -> AuthResult<PreparedPolicyEvaluation<'_>> {
+        Ok(PreparedPolicyEvaluation {
+            evaluator: self,
+            policies: self
+                .policy_cache
+                .get_applicable_policies(resource_type)
+                .await?,
+        })
+    }
+
+    pub async fn prepare_owned(
+        self: &Arc<Self>,
+        resource_type: &str,
+    ) -> AuthResult<OwnedPreparedPolicyEvaluation> {
+        let prepared = self.prepare(resource_type).await?;
+        Ok(OwnedPreparedPolicyEvaluation {
+            evaluator: self.clone(),
+            policies: prepared.policies,
+        })
+    }
+
+    fn evaluate_policies(
+        &self,
+        context: &PolicyContext,
+        policies: &[InternalPolicy],
+        admission: bool,
+    ) -> AccessDecision {
         // Step 1: Check SMART scopes first (if enabled)
         if self.config.evaluate_scopes_first
             && let Some(decision) = self.check_smart_scopes(context)
@@ -311,27 +424,28 @@ impl PolicyEvaluator {
             return decision;
         }
 
-        // Step 2: Get applicable policies
-        let policies = match self
-            .policy_cache
-            .get_applicable_policies(&context.request.resource_type)
-            .await
-        {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to get policies from cache");
-                return AccessDecision::Deny(DenyReason::policy_error(
-                    "Failed to evaluate access policies",
-                ));
-            }
-        };
-
         // Step 3: Evaluate policies in priority order
         let mut has_allow = false;
+        let mut deferred = false;
 
-        for policy in &policies {
+        for policy in policies {
+            if admission && context.resource.is_none() && policy.matchers.compartments.is_some() {
+                let mut matchers = policy.matchers.clone();
+                matchers.compartments = None;
+                if self.pattern_matcher.matches(&matchers, context) {
+                    deferred = true;
+                }
+                continue;
+            }
             // Check if policy matches this context
             if !self.pattern_matcher.matches(&policy.matchers, context) {
+                continue;
+            }
+            if admission
+                && self.quickjs_runtime.is_some()
+                && matches!(policy.engine, PolicyEngineType::QuickJs { .. })
+            {
+                deferred = true;
                 continue;
             }
 
@@ -368,7 +482,7 @@ impl PolicyEvaluator {
         }
 
         // Step 4: Return result
-        if has_allow {
+        if has_allow || deferred {
             AccessDecision::Allow
         } else {
             match self.config.default_decision {
@@ -548,7 +662,9 @@ impl PolicyEvaluator {
                         policy_id = %policy.id,
                         "QuickJS policy but QuickJS is disabled"
                     );
-                    AccessDecision::Abstain
+                    AccessDecision::Deny(DenyReason::policy_error(
+                        "QuickJS policy engine is unavailable",
+                    ))
                 }
             }
         }
@@ -751,6 +867,132 @@ mod tests {
     // -------------------------------------------------------------------------
     // Tests
     // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn prepared_scripts_authorize_snapshots_and_keep_their_policy_generation() {
+        use crate::policy::context::ResourceContext;
+        let storage = Arc::new(MockPolicyStorage::new());
+        storage.add_policy(AccessPolicy {
+            id: Some("snapshot".into()), name: "Snapshot policy".into(),
+            engine: EngineElement { engine_type: ResourcePolicyEngineType::QuickJs,
+                script: Some("if (resource && resource.resource.active === true) return allow(); return deny('inactive');".into()) },
+            ..Default::default()
+        });
+        let cache = Arc::new(PolicyCache::new(storage.clone(), Duration::minutes(5)));
+        cache.refresh().await.unwrap();
+        let engine = PolicyEvaluator::new(
+            cache.clone(),
+            PolicyEvaluatorConfig {
+                quickjs_enabled: true,
+                default_decision: DefaultDecision::Deny,
+                ..Default::default()
+            },
+        );
+        let mut context = create_test_context("Patient", FhirOperation::Search);
+        let prepared = engine.prepare("Patient").await.unwrap();
+        assert!(prepared.requires_snapshots(&context));
+        assert!(prepared.evaluate_admission(&context).is_allowed());
+        context.resource = Some(ResourceContext::from_resource(
+            serde_json::json!({"resourceType":"Patient","id":"p","active":true}),
+        ));
+        assert!(prepared.evaluate(&context).is_allowed());
+        context.resource = Some(ResourceContext::from_resource(
+            serde_json::json!({"resourceType":"Patient","id":"p","active":false}),
+        ));
+        assert!(prepared.evaluate(&context).is_denied());
+        storage.add_policy(AccessPolicy {
+            id: Some("deny-all".into()),
+            name: "Deny all".into(),
+            engine: EngineElement {
+                engine_type: ResourcePolicyEngineType::Deny,
+                script: None,
+            },
+            ..Default::default()
+        });
+        cache.refresh().await.unwrap();
+        context.resource = Some(ResourceContext::from_resource(
+            serde_json::json!({"resourceType":"Patient","id":"p","active":true}),
+        ));
+        assert!(prepared.evaluate(&context).is_allowed());
+        assert!(
+            engine
+                .prepare("Patient")
+                .await
+                .unwrap()
+                .evaluate_admission(&context)
+                .is_denied()
+        );
+    }
+
+    #[tokio::test]
+    async fn compartment_admission_defers_native_policies_and_checks_snapshot_root() {
+        use crate::policy::context::ResourceContext;
+        use crate::policy::matcher::{CompartmentIdSource, CompartmentMatcher};
+        let storage = Arc::new(MockPolicyStorage::new());
+        storage.add_policy(AccessPolicy {
+            id: Some("compartment-allow".into()),
+            engine: EngineElement {
+                engine_type: ResourcePolicyEngineType::Allow,
+                script: None,
+            },
+            ..Default::default()
+        });
+        let engine = Arc::new(create_test_engine(storage).await);
+        let mut owned = engine.prepare_owned("Patient").await.unwrap();
+        owned.policies[0].matchers.compartments = Some(vec![CompartmentMatcher {
+            compartment_type: "Patient".into(),
+            compartment_id: CompartmentIdSource::Fixed { value: "p".into() },
+        }]);
+        let borrowed = PreparedPolicyEvaluation {
+            evaluator: &engine,
+            policies: owned.policies.clone(),
+        };
+        let mut context = create_test_context("Patient", FhirOperation::Search);
+        assert!(owned.requires_snapshots(&context));
+        assert!(borrowed.requires_snapshots(&context));
+        assert!(owned.evaluate_admission(&context).is_allowed());
+        assert!(borrowed.evaluate_admission(&context).is_allowed());
+        for (id, allowed) in [("p", true), ("other", false)] {
+            context.resource = Some(ResourceContext::from_resource(
+                serde_json::json!({"resourceType":"Patient","id":id}),
+            ));
+            assert_eq!(owned.evaluate(&context).is_allowed(), allowed);
+            assert_eq!(borrowed.evaluate(&context).is_allowed(), allowed);
+        }
+    }
+
+    #[tokio::test]
+    async fn unavailable_script_engine_cannot_ignore_a_deny_policy() {
+        let storage = Arc::new(MockPolicyStorage::new());
+        storage.add_policy(AccessPolicy {
+            id: Some("script".into()),
+            name: "Must enforce".into(),
+            engine: EngineElement {
+                engine_type: ResourcePolicyEngineType::QuickJs,
+                script: Some("return deny('protected');".into()),
+            },
+            ..Default::default()
+        });
+        let cache = Arc::new(PolicyCache::new(storage, Duration::minutes(5)));
+        cache.refresh().await.unwrap();
+        let engine = PolicyEvaluator::new(
+            cache,
+            PolicyEvaluatorConfig {
+                default_decision: DefaultDecision::Allow,
+                ..Default::default()
+            },
+        );
+        let context = create_test_context("Patient", FhirOperation::Search);
+        assert!(engine.evaluate(&context).await.is_denied());
+        assert!(
+            engine
+                .prepare("Patient")
+                .await
+                .unwrap()
+                .evaluate_admission(&context)
+                .is_denied()
+        );
+    }
 
     #[tokio::test]
     async fn test_allow_policy() {

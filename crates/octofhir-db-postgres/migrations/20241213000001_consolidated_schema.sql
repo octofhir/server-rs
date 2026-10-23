@@ -284,6 +284,10 @@ CREATE TABLE IF NOT EXISTS async_jobs (
     request_url TEXT NOT NULL,
     request_body JSONB,
     request_headers JSONB,
+    execution_id UUID,
+    lease_expires_at TIMESTAMPTZ,
+    attempts BIGINT NOT NULL DEFAULT 0,
+    checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb,
     result JSONB,
     progress FLOAT DEFAULT 0,
     error_message TEXT,
@@ -301,6 +305,10 @@ CREATE INDEX IF NOT EXISTS idx_async_jobs_status ON async_jobs(status) WHERE sta
 CREATE INDEX IF NOT EXISTS idx_async_jobs_client ON async_jobs(client_id, created_at DESC) WHERE client_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_async_jobs_expires ON async_jobs(expires_at) WHERE status IN ('queued', 'in_progress', 'completed', 'failed');
 CREATE INDEX IF NOT EXISTS idx_async_jobs_created ON async_jobs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_async_jobs_recovery
+    ON async_jobs (lease_expires_at, created_at, id) WHERE status = 'in_progress';
+CREATE INDEX IF NOT EXISTS idx_async_jobs_queued_claim
+    ON async_jobs (created_at, id) WHERE status = 'queued';
 
 CREATE OR REPLACE FUNCTION update_async_jobs_updated_at()
 RETURNS TRIGGER AS $func$

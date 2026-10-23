@@ -31,7 +31,6 @@ pub fn generate_id() -> String {
 /// FHIR IDs must:
 /// - Be between 1 and 64 characters
 /// - Contain only: A-Z, a-z, 0-9, -, .
-/// - Not start or end with a period
 ///
 /// See: http://hl7.org/fhir/datatypes.html#id
 pub fn validate_id(id: &str) -> Result<(), IdError> {
@@ -48,17 +47,7 @@ pub fn validate_id(id: &str) -> Result<(), IdError> {
     // '-' and '.', with a length limit of 64 characters. (This might be an integer, an un-prefixed OID, UUID or any other identifier pattern that meets these constraints.)
     for (idx, ch) in id.chars().enumerate() {
         match ch {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' => {
-                // These are always allowed
-            }
-            '.' => {
-                // Period is allowed but not at start or end
-                if idx == 0 || idx == id.len() - 1 {
-                    return Err(IdError::Invalid(
-                        "ID cannot start or end with a period".to_string(),
-                    ));
-                }
-            }
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '.' => {}
             _ => {
                 return Err(IdError::Invalid(format!(
                     "Invalid character '{}' at position {}. Only A-Z, a-z, 0-9, -, and . are allowed",
@@ -100,5 +89,17 @@ mod tests {
             assert!(next > prev, "{next} should sort after {prev}");
             prev = next;
         }
+    }
+
+    #[test]
+    fn ids_follow_the_fhir_character_and_length_contract() {
+        for id in [".", "..", ".a", "a.", "A-Z.09", "-"] {
+            assert!(validate_id(id).is_ok(), "{id}");
+        }
+        assert!(validate_id(&"x".repeat(64)).is_ok());
+        for id in ["", "a/b", "a_b", "a b", "а", "a%2Fb"] {
+            assert!(validate_id(id).is_err(), "{id}");
+        }
+        assert!(validate_id(&"x".repeat(65)).is_err());
     }
 }

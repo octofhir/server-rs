@@ -860,6 +860,168 @@ impl FhirQueryBuilder {
         Ok(BuiltQuery { sql, params })
     }
 
+    /// Select saved revisions using each type's native grant predicates. The
+    /// historical source exposes deletion revisions to those predicates while
+    /// retaining their actual method separately from the live-search status.
+    pub fn build_history(
+        builders: &[Self],
+        count: usize,
+        after: Option<(i64, &str, &str)>,
+        at: Option<(&str, Option<&str>)>,
+    ) -> Result<BuiltQuery, SqlBuilderError> {
+        let mut params = Vec::new();
+        let mut branches = Vec::new();
+        for builder in builders {
+            builder.validate()?;
+            let schema = escape_identifier(&builder.schema)?;
+            let table = escape_identifier(&builder.resource_type.to_lowercase())?;
+            let history =
+                escape_identifier(&format!("{}_history", builder.resource_type.to_lowercase()))?;
+            let alias = builder.table_alias.as_deref().unwrap_or("r");
+            let col = format!("{alias}.resource");
+            let from = format!(
+                "(SELECT id, txid, created_at, updated_at, resource, 'updated'::text AS status, status::text AS history_status FROM {schema}.{table} UNION ALL SELECT id, txid, created_at, updated_at, resource, 'updated'::text AS status, status::text AS history_status FROM {schema}.{history})"
+            );
+            let from = if at.is_some() {
+                format!(
+                    "(SELECT revisions.*, lead(updated_at) OVER (PARTITION BY id ORDER BY updated_at, txid) AS valid_until FROM {from} AS revisions)"
+                )
+            } else {
+                from
+            };
+            let from = builder.build_from_clause(&from, alias)?;
+            let resource_type = builder.resource_type.replace('\'', "''");
+            let mut sql = format!(
+                "SELECT {col}::text AS resource_json, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at, '{resource_type}'::text AS resource_type, {alias}.history_status FROM {from}"
+            );
+            let mut conditions = Vec::new();
+            if let Some(condition) = builder.build_where_clause(&col, &mut params)? {
+                conditions.push(condition);
+            }
+            if let Some((start, end)) = at {
+                params.push(SqlValue::Timestamp(start.into()));
+                let start_param = params.len();
+                let end_condition = if let Some(end) = end {
+                    params.push(SqlValue::Timestamp(end.into()));
+                    format!("{alias}.updated_at < ${}::text::timestamptz", params.len())
+                } else {
+                    format!("{alias}.updated_at <= ${start_param}::text::timestamptz")
+                };
+                conditions.push(format!("({end_condition} AND ({alias}.valid_until IS NULL OR {alias}.valid_until > ${start_param}::text::timestamptz))"));
+            }
+            if !conditions.is_empty() {
+                sql.push_str(&format!(" WHERE {}", conditions.join(" AND ")));
+            }
+            branches.push(sql);
+        }
+        if branches.is_empty() {
+            return Err(SqlBuilderError::InvalidSearchValue(
+                "History requires resource types".into(),
+            ));
+        }
+        let mut sql = format!(
+            "SELECT resource_json, id, txid, created_at, updated_at, resource_type, history_status FROM ({}) AS revisions",
+            branches.join(" UNION ALL ")
+        );
+        if let Some((txid, resource_type, id)) = after {
+            let n = params.len();
+            params.extend([
+                SqlValue::Integer(txid),
+                SqlValue::Text(resource_type.into()),
+                SqlValue::Text(id.into()),
+            ]);
+            sql.push_str(&format!(
+                " WHERE txid < ${} OR (txid = ${} AND (resource_type, id) > (${}, ${}))",
+                n + 1,
+                n + 1,
+                n + 2,
+                n + 3
+            ));
+        }
+        sql.push_str(&format!(
+            " ORDER BY txid DESC, resource_type ASC, id ASC LIMIT {count}"
+        ));
+        Ok(BuiltQuery { sql, params })
+    }
+
+    /// Keep the independent zero/one/many cardinality of every conditional
+    /// predicate while sharing one statement and bind sequence. Client paging,
+    /// ordering and projection must not influence conditional identity selection.
+    pub fn build_conditional_batch(builders: &[Self]) -> Result<BuiltQuery, SqlBuilderError> {
+        Self::build_conditional_batch_with_sources(builders, &std::collections::BTreeSet::new())
+    }
+
+    /// CTE sources shadow the saved relation for the proposed resource types.
+    /// Native IR chain/reverse-chain subqueries use those same unqualified CTEs.
+    pub fn build_conditional_batch_with_sources(
+        builders: &[Self],
+        proposed_types: &std::collections::BTreeSet<String>,
+    ) -> Result<BuiltQuery, SqlBuilderError> {
+        Self::build_conditional_branches(builders, proposed_types, 2, false)
+    }
+
+    /// Candidate identities for cyclic graph solving. Fetch one extra identity
+    /// so a caller can reject an exceeded domain instead of silently truncating.
+    pub fn build_conditional_candidate_batch_with_sources(
+        builders: &[Self],
+        proposed_types: &std::collections::BTreeSet<String>,
+        max_candidates: usize,
+    ) -> Result<BuiltQuery, SqlBuilderError> {
+        let limit = max_candidates
+            .checked_add(1)
+            .filter(|_| max_candidates > 0)
+            .ok_or_else(|| SqlBuilderError::InvalidSearchValue("Invalid candidate limit".into()))?;
+        Self::build_conditional_branches(builders, proposed_types, limit, true)
+    }
+
+    fn build_conditional_branches(
+        builders: &[Self],
+        proposed_types: &std::collections::BTreeSet<String>,
+        limit: usize,
+        identities_only: bool,
+    ) -> Result<BuiltQuery, SqlBuilderError> {
+        let mut params = Vec::new();
+        let mut branches = Vec::with_capacity(builders.len());
+        for (index, builder) in builders.iter().enumerate() {
+            builder.validate()?;
+            let alias = builder.table_alias.as_deref().unwrap_or("r");
+            let col = format!("{alias}.resource");
+            let table = format!(
+                "{}.{}",
+                escape_identifier(&builder.schema)?,
+                escape_identifier(&builder.resource_type.to_lowercase())?,
+            );
+            let table = if proposed_types.contains(&builder.resource_type) {
+                escape_identifier(&builder.resource_type.to_lowercase())?
+            } else {
+                table
+            };
+            let from = builder.build_from_clause(&table, alias)?;
+            let resource_type = builder.resource_type.replace('\'', "''");
+            let mut branch = if identities_only {
+                format!("SELECT {index}::bigint AS predicate_index, {alias}.id FROM {from}")
+            } else {
+                format!(
+                    "SELECT {index}::bigint AS predicate_index, {col}::text AS resource_json, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at, '{resource_type}'::text AS resource_type FROM {from}"
+                )
+            };
+            if let Some(condition) = builder.build_where_clause(&col, &mut params)? {
+                branch.push_str(&format!(" WHERE {condition}"));
+            }
+            branch.push_str(&format!(" ORDER BY {alias}.id LIMIT {limit}"));
+            branches.push(format!("({branch})"));
+        }
+        if branches.is_empty() {
+            return Err(SqlBuilderError::InvalidSearchValue(
+                "Conditional search requires predicates".into(),
+            ));
+        }
+        Ok(BuiltQuery {
+            sql: branches.join(" UNION ALL "),
+            params,
+        })
+    }
+
     /// Build COUNT query for _total=accurate.
     pub fn build_count(&self) -> Result<BuiltQuery, SqlBuilderError> {
         self.validate()?;
@@ -1973,6 +2135,29 @@ mod tests {
         assert_eq!(query.params.len(), 2);
         assert_eq!(query.sql.matches("LIMIT ").count(), 1);
         assert!(query.sql.ends_with("LIMIT 3 OFFSET 1"));
+    }
+
+    #[test]
+    fn conditional_batches_keep_independent_limits_and_bind_sequences() {
+        let branch = |rt: &str| {
+            FhirQueryBuilder::new(rt, "public").where_condition(SearchCondition::Raw {
+                sql: "r.id = $1 AND '$1' = '$1' AND 'it''s $12' = 'it''s $12'".into(),
+                params: vec![SqlValue::Text("value".into())],
+            })
+        };
+        let query =
+            FhirQueryBuilder::build_conditional_batch(&[branch("Patient"), branch("Observation")])
+                .unwrap();
+        assert_eq!(query.sql.matches("LIMIT 2").count(), 2);
+        assert_eq!(query.sql.matches("UNION ALL").count(), 1);
+        assert!(query.sql.contains("0::bigint AS predicate_index"));
+        assert!(query.sql.contains("1::bigint AS predicate_index"));
+        assert!(query.sql.contains("r.id = $1"));
+        assert!(query.sql.contains("r.id = $2"));
+        assert_eq!(query.sql.matches("'$1' = '$1'").count(), 2);
+        assert_eq!(query.sql.matches("'it''s $12' = 'it''s $12'").count(), 2);
+        assert_eq!(query.params.len(), 2);
+        assert!(FhirQueryBuilder::build_conditional_batch(&[]).is_err());
     }
 
     #[test]

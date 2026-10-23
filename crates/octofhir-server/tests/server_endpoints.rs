@@ -1,20 +1,43 @@
 use std::sync::Arc;
 
 use octofhir_config::ConfigurationManager;
-use octofhir_server::{AppConfig, build_app};
+use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::Value;
+use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
+use testcontainers_modules::postgres::Postgres;
 use tokio::task::JoinHandle;
 
-async fn start_server() -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
+async fn start_server() -> (
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    JoinHandle<()>,
+    ContainerAsync<Postgres>,
+) {
+    let postgres = Postgres::default()
+        .with_tag("17-alpine")
+        .start()
+        .await
+        .expect("start postgres container");
+    let port = postgres.get_host_port_ipv4(5432).await.expect("get port");
+
+    let mut config = AppConfig::default();
+    config.storage.postgres = Some(PostgresStorageConfig {
+        url: Some(format!(
+            "postgres://postgres:postgres@127.0.0.1:{port}/postgres"
+        )),
+        pool_size: 5,
+        connect_timeout_ms: 10000,
+        ..Default::default()
+    });
+    config.auth.policy.anonymous_access = true;
+
     let config_manager = Arc::new(
         ConfigurationManager::builder()
             .build()
             .await
             .expect("build config manager"),
     );
-    let app = build_app(&AppConfig::default(), config_manager)
-        .await
-        .expect("build app");
+    let app = build_app(&config, config_manager).await.expect("build app");
 
     // Bind to an ephemeral port
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -31,12 +54,12 @@ async fn start_server() -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle
             .await;
     });
 
-    (format!("http://{addr}"), tx, server)
+    (format!("http://{addr}"), tx, server, postgres)
 }
 
 #[tokio::test]
 async fn server_endpoints_work() {
-    let (base, shutdown_tx, handle) = start_server().await;
+    let (base, shutdown_tx, handle, _postgres) = start_server().await;
     let client = reqwest::Client::new();
     let fhir_base = format!("{base}/fhir");
 

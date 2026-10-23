@@ -1,196 +1,240 @@
-//! Search parameter registry for indexing and lookup.
+//! Deterministic search parameter registry with immutable lookup snapshots.
 //!
-//! This module provides a registry that stores search parameters indexed by:
-//! - Resource type and code (for efficient lookup)
-//! - Canonical URL (for resolving references)
-//! - Common parameters (applicable to all resources)
-//!
-//! Uses DashMap for lock-free concurrent access, allowing incremental updates
-//! without blocking readers.
+//! Readers use ArcSwap without a lock. Writers rebuild all indices together;
+//! bootstrap registers a batch so loading packages does not copy per parameter.
 
-use dashmap::DashMap;
-use std::sync::Arc;
+use arc_swap::ArcSwap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use crate::parameters::SearchParameter;
 
-/// Registry for search parameters loaded from FHIR packages.
-///
-/// Provides efficient lookup of search parameters by resource type, code,
-/// and canonical URL. Also tracks common parameters that apply to all resources.
-///
-/// Thread-safe with lock-free reads using DashMap.
+#[derive(Debug, Default, Clone)]
+struct RegistryData {
+    declarations: HashMap<String, Arc<SearchParameter>>,
+    resources: HashMap<String, (i64, Option<Arc<SearchParameter>>)>,
+    by_url: HashMap<String, Arc<SearchParameter>>,
+    by_resource: HashMap<(String, String), Arc<SearchParameter>>,
+    by_type: HashMap<String, Vec<Arc<SearchParameter>>>,
+    common: HashMap<String, Arc<SearchParameter>>,
+    declared: HashSet<(String, String)>,
+}
+
+impl RegistryData {
+    fn rebuild(&mut self) {
+        self.by_url.clone_from(&self.declarations);
+        let mut resources: Vec<_> = self.resources.iter().collect();
+        resources.sort_by(|a, b| a.1.0.cmp(&b.1.0).then_with(|| a.0.cmp(b.0)));
+        for (_, (_, parameter)) in resources {
+            if let Some(parameter) = parameter {
+                self.by_url.insert(parameter.url.clone(), parameter.clone());
+            }
+        }
+        self.by_resource.clear();
+        self.by_type.clear();
+        self.common.clear();
+        self.declared.clear();
+        for parameter in self.by_url.values() {
+            for base in &parameter.base {
+                self.declared.insert((base.clone(), parameter.code.clone()));
+            }
+        }
+        let mut definitions: Vec<_> = self.by_url.values().cloned().collect();
+        // A runtime conformance declaration with no executable expression must
+        // not erase a package's runnable definition of the same canonical URL.
+        definitions.extend(
+            self.declarations
+                .values()
+                .filter(|parameter| {
+                    self.by_url
+                        .get(&parameter.url)
+                        .is_some_and(|effective| !effective.is_runnable())
+                })
+                .cloned(),
+        );
+        // Explicit runtime definitions override packages. Among package aliases,
+        // prefer the base FHIR definition, then canonical URL. This does not
+        // depend on database row order or hash-map iteration order.
+        definitions.sort_by_key(|p| {
+            (
+                !p.user_defined,
+                !p.url.starts_with("http://hl7.org/fhir/SearchParameter/"),
+                p.url.clone(),
+            )
+        });
+        for param in definitions {
+            if !param.is_runnable() {
+                continue;
+            }
+            if param.is_common() {
+                self.common
+                    .entry(param.code.clone())
+                    .or_insert_with(|| param.clone());
+            }
+            for base in &param.base {
+                let key = (base.clone(), param.code.clone());
+                self.by_resource.entry(key).or_insert_with(|| param.clone());
+            }
+        }
+        for ((base, _), param) in &self.by_resource {
+            self.by_type
+                .entry(base.clone())
+                .or_default()
+                .push(param.clone());
+        }
+        for params in self.by_type.values_mut() {
+            params.sort_by(|a, b| a.code.cmp(&b.code));
+        }
+    }
+}
+
+/// Package declarations remain available by URL. Executable indices contain
+/// runnable definitions only, with deterministic collision selection.
 #[derive(Debug, Default)]
 pub struct SearchParameterRegistry {
-    /// Parameters indexed by (resource_type, code) as composite key
-    by_resource: DashMap<(String, String), Arc<SearchParameter>>,
-    /// Parameters grouped by resource type. Built at registration time so
-    /// `get_all_for_type` is O(params for type) instead of O(total params).
-    by_type: DashMap<String, Vec<Arc<SearchParameter>>>,
-    /// All parameters by canonical URL
-    by_url: DashMap<String, Arc<SearchParameter>>,
-    /// Common parameters (apply to all resources: base includes "Resource" or "DomainResource")
-    common: DashMap<String, Arc<SearchParameter>>,
+    data: ArcSwap<RegistryData>,
+    writer: Mutex<()>,
 }
 
 impl SearchParameterRegistry {
-    /// Create a new empty registry.
     pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Keep one published generation for all query resolution, without copying
+    /// indices. Later mutations publish independently in either registry.
+    pub fn snapshot(&self) -> Self {
         Self {
-            by_resource: DashMap::new(),
-            by_type: DashMap::new(),
-            by_url: DashMap::new(),
-            common: DashMap::new(),
+            data: ArcSwap::from(self.data.load_full()),
+            writer: Mutex::new(()),
         }
     }
 
-    /// Register a search parameter in the registry.
-    ///
-    /// The parameter will be indexed by:
-    /// - Canonical URL
-    /// - Each base resource type + code
-    /// - Common parameters if base includes "Resource" or "DomainResource"
-    ///
-    /// Thread-safe - can be called concurrently from multiple threads.
     pub fn register(&self, param: SearchParameter) {
-        let param = Arc::new(param);
-
-        // Store by URL
-        self.by_url.insert(param.url.clone(), param.clone());
-
-        // Check if common parameter (base includes "Resource" or "DomainResource")
-        if param.is_common() {
-            self.common.insert(param.code.clone(), param.clone());
-        }
-
-        // Store by resource type with composite key (resource_type, code),
-        // and also by base type alone so `get_all_for_type` is O(1).
-        // Replace (not append) on re-registration of the same (base, code).
-        for base in &param.base {
-            self.by_resource
-                .insert((base.clone(), param.code.clone()), param.clone());
-            let mut entry = self.by_type.entry(base.clone()).or_default();
-            if let Some(slot) = entry.iter_mut().find(|p| p.code == param.code) {
-                *slot = param.clone();
-            } else {
-                entry.push(param.clone());
-            }
-        }
+        self.register_all(std::iter::once(param));
     }
 
-    /// Add or update a single search parameter (thread-safe, incremental).
-    ///
-    /// This is an alias for `register()` for clarity when doing incremental updates.
+    /// Publish one complete snapshot for a bootstrap or configuration batch.
+    pub fn register_all(&self, params: impl IntoIterator<Item = SearchParameter>) {
+        let _writer = self.writer.lock().expect("search registry writer poisoned");
+        let mut data = (**self.data.load()).clone();
+        for param in params {
+            data.declarations.insert(param.url.clone(), Arc::new(param));
+        }
+        data.rebuild();
+        self.data.store(Arc::new(data));
+    }
+
+    /// Apply a committed runtime revision. Retain deletion revision markers so
+    /// delayed or retried events cannot resurrect a deleted definition. Runtime
+    /// resources overlay package declarations, which reappear after deletion.
+    pub fn apply_resource(&self, id: &str, version: i64, param: Option<SearchParameter>) -> bool {
+        self.apply_resources(std::iter::once((id.to_owned(), version, param)))
+    }
+
+    /// Restore committed definitions and deletion markers with one publication.
+    pub fn apply_resources(
+        &self,
+        resources: impl IntoIterator<Item = (String, i64, Option<SearchParameter>)>,
+    ) -> bool {
+        let _writer = self.writer.lock().expect("search registry writer poisoned");
+        let mut data = (**self.data.load()).clone();
+        let mut changed = false;
+        for (id, version, param) in resources {
+            if data
+                .resources
+                .get(&id)
+                .is_some_and(|(previous, _)| *previous >= version)
+            {
+                continue;
+            }
+            data.resources.insert(
+                id,
+                (
+                    version,
+                    param.map(|param| Arc::new(param.with_user_defined(true))),
+                ),
+            );
+            changed = true;
+        }
+        if changed {
+            data.rebuild();
+            self.data.store(Arc::new(data));
+        }
+        changed
+    }
+
     pub fn upsert(&self, param: SearchParameter) {
         self.register(param);
     }
 
-    /// Remove a search parameter by its canonical URL (thread-safe).
-    ///
-    /// Returns true if the parameter was found and removed.
     pub fn remove_by_url(&self, url: &str) -> bool {
-        if let Some((_, param)) = self.by_url.remove(url) {
-            for base in &param.base {
-                if base == "Resource" || base == "DomainResource" {
-                    self.common.remove(&param.code);
-                } else {
-                    self.by_resource.remove(&(base.clone(), param.code.clone()));
-                }
-                if let Some(mut entry) = self.by_type.get_mut(base) {
-                    entry.retain(|p| p.url != param.url);
-                }
-            }
-            true
-        } else {
-            false
+        let _writer = self.writer.lock().expect("search registry writer poisoned");
+        let mut data = (**self.data.load()).clone();
+        if data.declarations.remove(url).is_none() {
+            return false;
         }
+        // Removing a losing alias must not remove a different winner. Removing
+        // the winner exposes the next runnable candidate rather than losing it.
+        data.rebuild();
+        self.data.store(Arc::new(data));
+        true
     }
 
-    /// Get a search parameter for a specific resource type and code.
-    ///
-    /// First checks resource-specific parameters, then falls back to common parameters.
     pub fn get(&self, resource_type: &str, code: &str) -> Option<Arc<SearchParameter>> {
-        // Check resource-specific first with composite key
-        let key = (resource_type.to_string(), code.to_string());
-        if let Some(param) = self.by_resource.get(&key) {
-            return Some(param.clone());
-        }
-
-        // Check common parameters
-        self.common.get(code).map(|p| p.clone())
+        let data = self.data.load();
+        data.by_resource
+            .get(&(resource_type.into(), code.into()))
+            .or_else(|| data.common.get(code))
+            .cloned()
     }
 
-    /// Get all search parameters applicable to a resource type.
-    ///
-    /// Returns resource-specific parameters merged with common parameters,
-    /// deduplicated by `code` (resource-specific wins on collision). O(1)
-    /// lookup for the resource-specific group via the `by_type` index.
     pub fn get_all_for_type(&self, resource_type: &str) -> Vec<Arc<SearchParameter>> {
-        let type_specific = self
-            .by_type
-            .get(resource_type)
-            .map(|entry| entry.value().clone())
-            .unwrap_or_default();
-
-        let mut seen: std::collections::HashSet<String> =
-            std::collections::HashSet::with_capacity(type_specific.len() + self.common.len());
-        let mut params = Vec::with_capacity(type_specific.len() + self.common.len());
-
-        for p in type_specific {
-            if seen.insert(p.code.clone()) {
-                params.push(p);
+        let data = self.data.load();
+        let mut params = data.by_type.get(resource_type).cloned().unwrap_or_default();
+        for param in data.common.values() {
+            if !params.iter().any(|p| p.code == param.code) {
+                params.push(param.clone());
             }
         }
-        for entry in self.common.iter() {
-            let p = entry.value().clone();
-            if seen.insert(p.code.clone()) {
-                params.push(p);
-            }
-        }
+        params.sort_by(|a, b| a.code.cmp(&b.code));
         params
     }
 
-    /// Get a search parameter by its canonical URL.
+    /// Distinguish an unsupported declared filter from an unknown lenient one.
+    pub fn has_declaration(&self, resource_type: &str, code: &str) -> bool {
+        let data = self.data.load();
+        [resource_type, "Resource", "DomainResource"]
+            .iter()
+            .any(|base| data.declared.contains(&((*base).into(), code.into())))
+    }
+
     pub fn get_by_url(&self, url: &str) -> Option<Arc<SearchParameter>> {
-        self.by_url.get(url).map(|entry| entry.value().clone())
+        self.data.load().by_url.get(url).cloned()
     }
 
-    /// Get all common parameters (applicable to all resources).
     pub fn get_common_parameters(&self) -> Vec<Arc<SearchParameter>> {
-        self.common
-            .iter()
-            .map(|entry| entry.value().clone())
-            .collect()
+        let data = self.data.load();
+        let mut params: Vec<_> = data.common.values().cloned().collect();
+        params.sort_by(|a, b| a.code.cmp(&b.code));
+        params
     }
 
-    /// Get the total number of registered parameters.
     pub fn len(&self) -> usize {
-        self.by_url.len()
+        self.data.load().by_url.len()
     }
 
-    /// Check if the registry is empty.
     pub fn is_empty(&self) -> bool {
-        self.by_url.is_empty()
+        self.data.load().by_url.is_empty()
     }
 
-    /// Get the number of parameters for a specific resource type.
     pub fn count_for_type(&self, resource_type: &str) -> usize {
-        let type_count = self
-            .by_type
-            .get(resource_type)
-            .map(|entry| entry.value().len())
-            .unwrap_or(0);
-        type_count + self.common.len()
+        self.get_all_for_type(resource_type).len()
     }
 
-    /// List all resource types that have specific parameters.
     pub fn list_resource_types(&self) -> Vec<String> {
-        let mut types: Vec<String> = self
-            .by_resource
-            .iter()
-            .map(|entry| entry.key().0.clone())
-            .collect();
+        let mut types: Vec<_> = self.data.load().by_type.keys().cloned().collect();
         types.sort();
-        types.dedup();
         types
     }
 }
@@ -198,7 +242,179 @@ impl SearchParameterRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn captured_registry_generation_survives_runtime_changes() {
+        let registry = SearchParameterRegistry::new();
+        let original = SearchParameter::new(
+            "name",
+            "http://example.test/name",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        )
+        .with_expression("Patient.name");
+        registry.register(original.clone());
+        let snapshot = registry.snapshot();
+        assert!(Arc::ptr_eq(
+            &registry.get("Patient", "name").unwrap(),
+            &snapshot.get("Patient", "name").unwrap()
+        ));
+        let updated = original.with_expression("Patient.name.family");
+        registry.apply_resource("runtime-name", 2, Some(updated));
+        assert_eq!(
+            snapshot
+                .get("Patient", "name")
+                .unwrap()
+                .expression
+                .as_deref(),
+            Some("Patient.name")
+        );
+        assert_eq!(
+            registry
+                .get("Patient", "name")
+                .unwrap()
+                .expression
+                .as_deref(),
+            Some("Patient.name.family")
+        );
+        registry.apply_resource("runtime-name", 3, None);
+        assert_eq!(
+            snapshot
+                .get("Patient", "name")
+                .unwrap()
+                .expression
+                .as_deref(),
+            Some("Patient.name")
+        );
+    }
     use crate::parameters::SearchParameterType;
+
+    #[test]
+    fn committed_revisions_ignore_reordered_events_and_restore_packages_after_deletion() {
+        let registry = SearchParameterRegistry::new();
+        let core = SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        )
+        .with_expression("Patient.name");
+        registry.register(core.clone());
+        let custom = core.clone().with_expression("Patient.name.family");
+        assert!(registry.apply_resource("runtime", 2, Some(custom.clone())));
+        assert_eq!(
+            registry
+                .get("Patient", "name")
+                .unwrap()
+                .expression
+                .as_deref(),
+            Some("Patient.name.family")
+        );
+        let mut renamed = custom.clone();
+        renamed.url = "http://example.org/renamed".into();
+        renamed.code = "family".into();
+        assert!(registry.apply_resource("runtime", 3, Some(renamed.clone())));
+        assert_eq!(
+            registry.get("Patient", "name").unwrap().expression,
+            core.expression
+        );
+        assert!(!registry.apply_resource("runtime", 2, Some(custom)));
+        assert!(registry.get("Patient", "family").is_some());
+        assert!(registry.apply_resource("runtime", 4, None));
+        assert!(!registry.apply_resource("runtime", 3, Some(renamed)));
+        assert!(registry.get("Patient", "family").is_none());
+        assert_eq!(registry.get("Patient", "name").unwrap().url, core.url);
+    }
+
+    #[test]
+    fn aliases_are_order_independent_and_deletions_restore_the_next_candidate() {
+        let core = SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        )
+        .with_expression("Patient.name");
+        let alias = SearchParameter::new(
+            "name",
+            "http://example.org/name",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        )
+        .with_expression("Patient.name.family");
+        for reverse in [false, true] {
+            let registry = SearchParameterRegistry::new();
+            let mut params = vec![core.clone(), alias.clone()];
+            if reverse {
+                params.reverse();
+            }
+            registry.register_all(params);
+            assert_eq!(registry.get("Patient", "name").unwrap().url, core.url);
+            assert!(registry.remove_by_url(&alias.url));
+            assert_eq!(registry.get("Patient", "name").unwrap().url, core.url);
+            registry.register(alias.clone());
+            assert!(registry.remove_by_url(&core.url));
+            assert_eq!(registry.get("Patient", "name").unwrap().url, alias.url);
+        }
+    }
+
+    #[test]
+    fn runtime_definitions_win_and_replacement_removes_old_bases_and_codes() {
+        let registry = SearchParameterRegistry::new();
+        let core = SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        )
+        .with_expression("Patient.name");
+        let custom = SearchParameter::new(
+            "name",
+            "http://example.org/runtime",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        )
+        .with_expression("Patient.name.family")
+        .with_user_defined(true);
+        registry.register_all([core.clone(), custom.clone()]);
+        assert_eq!(registry.get("Patient", "name").unwrap().url, custom.url);
+        let mut updated = custom;
+        updated.base = vec!["Practitioner".into()];
+        updated.code = "family".into();
+        registry.upsert(updated.clone());
+        assert_eq!(registry.get("Patient", "name").unwrap().url, core.url);
+        assert_eq!(
+            registry.get("Practitioner", "family").unwrap().url,
+            updated.url
+        );
+        assert_eq!(registry.get_all_for_type("Patient").len(), 1);
+        assert!(registry.remove_by_url(&updated.url));
+        assert!(registry.get("Practitioner", "family").is_none());
+    }
+
+    #[test]
+    fn conformance_declarations_do_not_shadow_executable_definitions() {
+        let registry = SearchParameterRegistry::new();
+        let executable = SearchParameter::new(
+            "name",
+            "http://example.org/runnable",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        )
+        .with_expression("Patient.name");
+        let declaration = SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        );
+        registry.register_all([executable.clone(), declaration.clone()]);
+        assert_eq!(registry.get("Patient", "name").unwrap().url, executable.url);
+        assert!(registry.get_by_url(&declaration.url).is_some());
+        registry.remove_by_url(&executable.url);
+        assert!(registry.get("Patient", "name").is_none());
+        assert_eq!(registry.count_for_type("Patient"), 0);
+    }
 
     #[test]
     fn test_register_and_get() {
@@ -250,20 +466,26 @@ mod tests {
         let registry = SearchParameterRegistry::new();
 
         // Register common parameter
-        registry.register(SearchParameter::new(
-            "_id",
-            "http://hl7.org/fhir/SearchParameter/Resource-id",
-            SearchParameterType::Token,
-            vec!["Resource".to_string()],
-        ));
+        registry.register(
+            SearchParameter::new(
+                "_id",
+                "http://hl7.org/fhir/SearchParameter/Resource-id",
+                SearchParameterType::Token,
+                vec!["Resource".to_string()],
+            )
+            .with_expression("Resource.id"),
+        );
 
         // Register resource-specific parameter
-        registry.register(SearchParameter::new(
-            "name",
-            "http://hl7.org/fhir/SearchParameter/Patient-name",
-            SearchParameterType::String,
-            vec!["Patient".to_string()],
-        ));
+        registry.register(
+            SearchParameter::new(
+                "name",
+                "http://hl7.org/fhir/SearchParameter/Patient-name",
+                SearchParameterType::String,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.name"),
+        );
 
         let patient_params = registry.get_all_for_type("Patient");
         assert_eq!(patient_params.len(), 2);
@@ -276,12 +498,15 @@ mod tests {
     fn test_get_by_url() {
         let registry = SearchParameterRegistry::new();
 
-        registry.register(SearchParameter::new(
-            "name",
-            "http://hl7.org/fhir/SearchParameter/Patient-name",
-            SearchParameterType::String,
-            vec!["Patient".to_string()],
-        ));
+        registry.register(
+            SearchParameter::new(
+                "name",
+                "http://hl7.org/fhir/SearchParameter/Patient-name",
+                SearchParameterType::String,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.name"),
+        );
 
         let found = registry.get_by_url("http://hl7.org/fhir/SearchParameter/Patient-name");
         assert!(found.is_some());
@@ -299,7 +524,8 @@ mod tests {
             "http://example.org/SearchParameter/custom",
             SearchParameterType::String,
             vec!["Patient".to_string()],
-        );
+        )
+        .with_expression("Patient.name");
 
         // Upsert (insert)
         registry.upsert(param);

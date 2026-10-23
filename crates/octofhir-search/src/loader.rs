@@ -73,6 +73,7 @@ pub async fn load_search_parameters(
     let mut loaded_count = 0;
     let mut skipped_count = 0;
     let mut total_fetched = 0;
+    let mut parameters = Vec::new();
 
     loop {
         let results = manager
@@ -110,7 +111,7 @@ pub async fn load_search_parameters(
                         element_type_hint = ?param.element_type_hint,
                         "Loaded search parameter"
                     );
-                    registry.register(param);
+                    parameters.push(param);
                     loaded_count += 1;
                 }
                 Err(e) => {
@@ -137,6 +138,7 @@ pub async fn load_search_parameters(
         offset += PAGE_SIZE;
     }
 
+    registry.register_all(parameters);
     tracing::info!(
         loaded = loaded_count,
         skipped = skipped_count,

@@ -279,6 +279,12 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         .await
         .map_err(|e| format!("failed to create FCM PostgreSQL pool: {e}"))?;
 
+    // Package install and schema conversion check-then-write shared tables;
+    // other instances booting against this database wait until we finish.
+    let _bootstrap_lock = octofhir_db_postgres::BootstrapLock::acquire(&pg_pool)
+        .await
+        .map_err(|e| format!("failed to acquire bootstrap lock: {e}"))?;
+
     // Create PostgresPackageStore (implements both PackageStore and SearchStorage)
     let postgres_store = Arc::new(PostgresPackageStore::new(pg_pool));
 
@@ -364,7 +370,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Install configured packages (manager handles dependencies)
     // Only install packages that aren't already in the database
-    let fhir_version_str = &cfg.fhir.version;
+    let fhir_version_str = desired.release_name();
 
     // Collect packages to install (filter out already installed)
     let packages_to_install: Vec<&LoadedPackage> = install_specs
@@ -527,7 +533,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Load embedded packages: octofhir-auth and octofhir-app
     // These packages are split for better organization: auth resources vs app resources
-    let fhir_version = &cfg.fhir.version;
+    let fhir_version = desired.release_name();
 
     // Helper function to load an embedded package
     async fn load_embedded_package(
@@ -762,13 +768,16 @@ pub async fn convert_and_store_package_schemas(
     package_version: &str,
     fhir_version: &str,
 ) -> Result<usize, String> {
+    let release = parse_fhir_version(fhir_version)
+        .ok_or_else(|| format!("unsupported fhir.version: {fhir_version}"))?;
+    let fhir_version = release.release_name();
     // Warm-DB fast path: if this package already has FHIRSchemas stored, the
     // expensive translate+serialize+INSERT pipeline is wasted work.
     // FHIRSchemas are invalidated when a package is reinstalled (DELETE in
     // load_from_embedded / canonical-manager paths), so non-zero count means
     // the cache is current.
     if let Ok(existing) = postgres_store
-        .count_fhirschemas_for_package(package_name, package_version)
+        .count_fhirschemas_for_package_version(package_name, package_version, fhir_version)
         .await
         && existing > 0
     {
@@ -1031,25 +1040,15 @@ async fn preflight_validate_all(
 }
 
 fn parse_fhir_version(s: &str) -> Option<FhirVersion> {
-    let up = s.trim();
-    FhirVersion::from_str(up).ok().or_else(|| {
-        // allow numeric forms
-        if up.starts_with("4.0") {
-            Some(FhirVersion::R4)
-        } else if up.starts_with("4.3") {
-            Some(FhirVersion::R4B)
-        } else if up.starts_with("5.0") {
-            Some(FhirVersion::R5)
-        } else if up.starts_with("6.0") {
-            Some(FhirVersion::R6)
-        } else {
-            None
-        }
-    })
+    FhirVersion::from_str(s).ok()
 }
 
 fn map_metadata_version(s: &str) -> FhirVersion {
-    // Map registry metadata version to enum by prefix
+    // Registries publish either release names ("R4B") or versions ("4.3.0")
+    if let Some(version) = parse_fhir_version(s) {
+        return version;
+    }
+    // Map remaining registry metadata versions (e.g. "4.0.0") to enum by prefix
     if s.starts_with("4.0") {
         FhirVersion::R4
     } else if s.starts_with("4.3") {
@@ -1134,12 +1133,7 @@ https://confluence.hl7.org/display/FHIR/NPM+Package+Specification
 }
 
 fn display_fhir(v: FhirVersion) -> &'static str {
-    match v {
-        FhirVersion::R4 => "R4",
-        FhirVersion::R4B => "R4B",
-        FhirVersion::R5 => "R5",
-        FhirVersion::R6 => "R6",
-    }
+    v.release_name()
 }
 
 fn default_core_for(v: FhirVersion) -> (String, String) {

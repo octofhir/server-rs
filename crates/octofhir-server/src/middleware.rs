@@ -28,6 +28,35 @@ use crate::bootstrap::DEFAULT_UI_CLIENT_ID;
 use crate::cache::{AuthContextCache, JwtVerificationCache};
 use crate::operation_registry::OperationRegistryService;
 
+#[derive(Clone, Copy)]
+pub(crate) struct RequestTimeouts {
+    pub read: std::time::Duration,
+    pub write: std::time::Duration,
+}
+
+/// Bound request processing, including extraction and storage futures. Dropping
+/// a timed-out handler also drops uncommitted checked-out transactions.
+pub(crate) async fn request_timeout_middleware(
+    State(timeouts): State<RequestTimeouts>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let read = matches!(
+        *request.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+    ) || (request.method() == axum::http::Method::POST
+        && request.uri().path().ends_with("/_search"));
+    let duration = if read { timeouts.read } else { timeouts.write };
+    match tokio::time::timeout(duration, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            [(axum::http::header::CONTENT_TYPE, "application/fhir+json")],
+            Json(json!({"resourceType":"OperationOutcome", "issue":[{"severity":"error", "code":"timeout", "diagnostics":"Request exceeded the configured processing timeout"}]})),
+        ).into_response(),
+    }
+}
+
 // =============================================================================
 // Extended Auth State
 // =============================================================================
@@ -332,9 +361,8 @@ async fn handle_basic_auth(
 /// Cache lookup flow:
 /// 1. Check JWT cache by token hash -> get verified claims if cached
 /// 2. If not cached, decode JWT (signature verification)
-/// 3. Check auth cache by JTI -> return cached context if found
-/// 4. Check revocation and load client/user from DB
-/// 5. Cache the result for future requests
+/// 3. Check authoritative revocation, current client permissions and user state
+/// 4. Cache the resulting context for consumers, never as an authorization proof
 async fn validate_token(
     state: &AuthState,
     auth_cache: &Arc<dyn AuthContextCache>,
@@ -368,71 +396,19 @@ async fn validate_token(
         decoded_claims
     };
 
-    // Check expiration
-    let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    if claims.exp < now {
-        return Err(octofhir_auth::AuthError::TokenExpired);
-    }
-
-    // Revocation is authoritative across server instances. Check it even when
-    // JWT verification and identity are cached, including after logout.
+    state.validate_access_claims(&claims)?;
     if state.revoked_token_storage.is_revoked(&claims.jti).await? {
         auth_cache.invalidate(&claims.jti).await;
         jwt_cache.invalidate(token);
         return Err(octofhir_auth::AuthError::TokenRevoked);
     }
-
-    // Check auth context cache (avoids client/user DB queries)
-    if let Some(cached_ctx) = auth_cache.get(&claims.jti).await {
-        tracing::trace!(jti = %claims.jti, "Auth context cache hit");
-        return Ok(cached_ctx);
-    }
-
-    // Cache miss - perform DB lookups
-    tracing::trace!(jti = %claims.jti, "Auth context cache miss");
-
-    // Load client
-    let client = state
-        .client_storage
-        .find_by_client_id(&claims.client_id)
-        .await?
-        .ok_or_else(|| octofhir_auth::AuthError::invalid_token("Unknown client"))?;
-
-    if !client.active {
-        return Err(octofhir_auth::AuthError::invalid_token(
-            "Client is inactive",
-        ));
-    }
-
-    // Load user context if subject is not empty
-    let user = if !claims.sub.is_empty() {
-        match state.user_storage.find_by_id(&claims.sub).await? {
-            Some(user) if user.active => Some(octofhir_auth::middleware::UserContext {
-                id: user.id,
-                username: user.username,
-                name: user.name,
-                email: user.email,
-                fhir_user: user.fhir_user.or_else(|| claims.fhir_user.clone()),
-                roles: user.roles,
-                attributes: user.attributes,
-            }),
-            Some(_) => {
-                return Err(octofhir_auth::AuthError::invalid_token("User is inactive"));
-            }
-            None => None,
+    let jti = claims.jti.clone();
+    let auth_context = match state.load_current_context(claims).await {
+        Ok(context) => context,
+        Err(error) => {
+            auth_cache.invalidate(&jti).await;
+            return Err(error);
         }
-    } else {
-        None
-    };
-
-    // Build auth context - Arc::clone is cheap (just reference counting)
-    let jti = claims.jti.clone(); // Clone jti before moving claims
-    let auth_context = AuthContext {
-        patient: claims.patient.clone(),
-        encounter: claims.encounter.clone(),
-        token_claims: claims, // Move Arc, no clone of AccessTokenClaims
-        client,
-        user,
     };
 
     // Cache the result and get Arc back (avoids extra allocation)
@@ -467,6 +443,30 @@ fn extract_token_from_cookie(req: &Request<Body>, cookie_config: &CookieConfig) 
     }
 
     None
+}
+
+fn has_request_credentials(req: &Request<Body>, cookie_config: &CookieConfig) -> bool {
+    if req.headers().contains_key(AUTHORIZATION) {
+        return true;
+    }
+    if cookie_config.enabled
+        && req.headers().get_all(COOKIE).iter().any(|header| {
+            header.to_str().map_or(true, |cookies| {
+                cookies.split(';').any(|cookie| {
+                    cookie
+                        .trim()
+                        .split_once('=')
+                        .is_some_and(|(name, _)| name.trim() == cookie_config.name)
+                })
+            })
+        })
+    {
+        return true;
+    }
+    is_websocket_upgrade(req)
+        && req.uri().query().is_some_and(|query| {
+            url::form_urlencoded::parse(query.as_bytes()).any(|(name, _)| name == "token")
+        })
 }
 
 /// Check if the request is a WebSocket upgrade request.
@@ -734,7 +734,7 @@ fn error_response(status: StatusCode, msg: &str) -> Response {
 ///
 /// ## FHIR Specification
 /// Per FHIR spec, the client sends:
-/// ```
+/// ```text
 /// Prefer: respond-async
 /// ```
 ///
@@ -800,8 +800,8 @@ pub struct CombinedAuthState {
     pub jwt_cache: Arc<JwtVerificationCache>,
     /// Policy evaluator for access control.
     pub policy_evaluator: Arc<PolicyEvaluator>,
-    /// When `true`, requests bypass authentication and authorization with a
-    /// synthetic system context. Intended for benchmarks and trusted networks.
+    /// When `true`, requests without credentials use a synthetic system context.
+    /// Presented credentials retain their own grants and policies.
     pub anonymous_access: bool,
     /// Shared anonymous AuthContext used when `anonymous_access` is true.
     pub anonymous_context: Arc<AuthContext>,
@@ -937,8 +937,10 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    // Inject the shared anonymous AuthContext; Arc::clone is one atomic.
-    if state.config.auth.policy.anonymous_access {
+    // Only credential-free development requests use the shared anonymous context.
+    if state.config.auth.policy.anonymous_access
+        && !has_request_credentials(&req, &state.auth_state.cookie_config)
+    {
         req.extensions_mut()
             .insert(Arc::clone(&state.anonymous_auth_context));
         return next.run(req).await;
@@ -946,6 +948,13 @@ pub async fn auth_middleware(
 
     // --- Authentication phase ---
     let auth_state = &state.auth_state;
+
+    if req.headers().contains_key(AUTHORIZATION)
+        && (req.headers().get_all(AUTHORIZATION).iter().count() != 1
+            || req.headers()[AUTHORIZATION].to_str().is_err())
+    {
+        return unauthorized_response("Invalid Authorization header format");
+    }
 
     // 1. Try Authorization header first
     let auth_header = req
@@ -1054,6 +1063,11 @@ pub async fn auth_middleware(
     };
 
     // --- Authorization phase ---
+    if is_owned_job_request(&req) {
+        // These handlers authorize persisted job ownership and delegated grants;
+        // the path's _async-status/_bulk-files segment is not a resource type.
+        return next.run(req).await;
+    }
     let auth_context = match req.extensions().get::<Arc<AuthContext>>() {
         Some(ctx) => Arc::clone(ctx),
         None => {
@@ -1076,12 +1090,42 @@ pub async fn auth_middleware(
     }
     let decision = if req
         .extensions()
-        .get::<crate::authorization::AuthorizedSearch>()
-        .is_some_and(|search| search.is_deferred())
+        .get::<crate::write::AuthorizedWrite>()
+        .is_some()
+        || req
+            .extensions()
+            .get::<crate::authorization::AuthorizedRead>()
+            .is_some()
+        || req
+            .extensions()
+            .get::<crate::authorization::AuthorizedHistory>()
+            .is_some()
+        || req
+            .extensions()
+            .get::<crate::authorization::AuthorizedSearch>()
+            .is_some_and(|search| search.is_deferred())
     {
-        // Aggregate handlers evaluate scopes and policies for every concrete
-        // type before SQL. A wildcard check here would lose narrow grants.
+        // Aggregate handlers evaluate concrete types before SQL. Primary write
+        // handlers evaluate the exact locked and proposed rows in their transaction.
         AccessDecision::Allow
+    } else if req
+        .extensions()
+        .get::<crate::authorization::AuthorizedSearch>()
+        .is_some()
+    {
+        // Type searches also defer resource-dependent policies until their
+        // exact rows are selected. Static denials still gate admission here.
+        match state
+            .policy_evaluator
+            .prepare(&policy_context.request.resource_type)
+            .await
+        {
+            Ok(policies) => policies.evaluate_admission(&policy_context),
+            Err(error) => {
+                tracing::error!(%error, "Cannot prepare search policies");
+                return internal_error_response("Policy evaluation failed");
+            }
+        }
     } else {
         state.policy_evaluator.evaluate(&policy_context).await
     };
@@ -1092,6 +1136,18 @@ pub async fn auth_middleware(
                 .extensions()
                 .get::<crate::authorization::AuthorizedSearch>()
                 .is_none()
+                && req
+                    .extensions()
+                    .get::<crate::write::AuthorizedWrite>()
+                    .is_none()
+                && req
+                    .extensions()
+                    .get::<crate::authorization::AuthorizedRead>()
+                    .is_none()
+                && req
+                    .extensions()
+                    .get::<crate::authorization::AuthorizedHistory>()
+                    .is_none()
                 && let Err(error) =
                     crate::authorization::check_resource_scope(&policy_context, &state.base_url)
             {
@@ -1099,6 +1155,15 @@ pub async fn auth_middleware(
             }
             req.extensions_mut().insert(policy_context);
             next.run(req).await
+        }
+        AccessDecision::Deny(reason)
+            if matches!(
+                reason.code.as_str(),
+                "policy-error" | "script-error" | "script-timeout" | "script-memory-limit"
+            ) =>
+        {
+            tracing::error!(policy_id = ?reason.policy_id, code = %reason.code, "Request policy evaluation failed");
+            internal_error_response("Policy evaluation failed")
         }
         AccessDecision::Deny(reason) => {
             tracing::info!(
@@ -1250,6 +1315,10 @@ async fn handle_basic_auth_then_authorize(
 
     req.extensions_mut().insert(auth_context.clone());
 
+    if is_owned_job_request(&req) {
+        return next.run(req).await;
+    }
+
     // --- Inline authorization ---
     let policy_context = match build_policy_context(&req, &auth_context) {
         Ok(ctx) => ctx,
@@ -1293,6 +1362,23 @@ async fn handle_basic_auth_then_authorize(
 /// Check if a request should skip both authentication and authorization.
 ///
 /// Uses the operation registry's public paths cache plus static UI paths.
+fn is_owned_job_request(req: &Request<Body>) -> bool {
+    let path = req
+        .extensions()
+        .get::<axum::extract::OriginalUri>()
+        .map_or(req.uri().path(), |uri| uri.0.path());
+    let path = path
+        .strip_prefix("/fhir/")
+        .unwrap_or(path.trim_start_matches('/'));
+    let parts: Vec<_> = path.split('/').collect();
+    match (req.method().as_str(), parts.as_slice()) {
+        ("GET" | "DELETE", ["_async-status", id])
+        | ("GET", ["_async-status", id, "result"])
+        | ("GET", ["_bulk-files", id, _]) => uuid::Uuid::parse_str(id).is_ok(),
+        _ => false,
+    }
+}
+
 fn should_skip_auth(req: &Request<Body>, registry: &OperationRegistryService) -> bool {
     let path = req.uri().path();
 
@@ -1711,4 +1797,90 @@ fn build_preflight_response(origin: Option<&str>) -> Response {
     );
 
     response
+}
+
+#[cfg(test)]
+mod request_timeout_tests {
+    use super::*;
+    use axum::{
+        Router, middleware,
+        routing::{get, post},
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tower::ServiceExt;
+
+    struct Dropped(Arc<AtomicBool>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn processing_deadline_drops_handler_and_keeps_post_search_a_read() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let flag = dropped.clone();
+        let app = Router::new()
+            .route(
+                "/Patient",
+                get(move || {
+                    let flag = flag.clone();
+                    async move {
+                        let _guard = Dropped(flag);
+                        std::future::pending::<StatusCode>().await
+                    }
+                })
+                .post(|| async { StatusCode::CREATED }),
+            )
+            .route(
+                "/Patient/_search",
+                post(|| async {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    StatusCode::OK
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                RequestTimeouts {
+                    read: std::time::Duration::from_millis(5),
+                    write: std::time::Duration::from_secs(1),
+                },
+                request_timeout_middleware,
+            ));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/Patient")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(response.headers()["content-type"], "application/fhir+json");
+        assert!(dropped.load(Ordering::SeqCst));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/Patient")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/Patient/_search")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    }
 }

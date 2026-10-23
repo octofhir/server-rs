@@ -58,6 +58,8 @@ fn create_config(postgres_url: &str) -> AppConfig {
         idle_timeout_ms: Some(60000),
         ..Default::default()
     });
+    // Requests in these tests are unauthenticated
+    config.auth.policy.anonymous_access = true;
     config
 }
 
@@ -77,9 +79,6 @@ async fn init_canonical_once() {
                 idle_timeout_ms: Some(60000),
                 ..Default::default()
             });
-
-            // Set FHIR version to R4B to match the test expectations
-            config.fhir.version = "R4B".to_string();
 
             match octofhir_server::canonical::init_from_config_async(&config).await {
                 Ok(registry) => {

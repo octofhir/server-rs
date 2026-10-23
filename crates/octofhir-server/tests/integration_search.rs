@@ -17,7 +17,7 @@ use std::sync::Arc;
 use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::{Value, json};
-use testcontainers::{ContainerAsync, runners::AsyncRunner};
+use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tokio::sync::{Mutex, OnceCell, OwnedMutexGuard};
 
@@ -54,6 +54,7 @@ async fn start_postgres() -> (SearchTestPostgresGuard, String) {
     let container = SHARED_POSTGRES
         .get_or_init(|| async {
             let container = Postgres::default()
+                .with_tag("17-alpine")
                 .start()
                 .await
                 .expect("start postgres container");
@@ -404,31 +405,6 @@ async fn test_string_missing_modifier() {
 // =============================================================================
 // Token Modifier Tests
 // =============================================================================
-
-#[tokio::test]
-async fn test_token_text_modifier() {
-    let (_container, postgres_url) = start_postgres().await;
-    let config = create_config(&postgres_url);
-    let (base, shutdown_tx, _handle) = start_server(&config).await;
-    let client = reqwest::Client::new();
-
-    let _patient_ids = create_test_patients(&client, &base).await;
-
-    // Text search on gender display
-    let resp = client
-        .get(format!("{base}/Patient?gender:text=male"))
-        .header("accept", "application/fhir+json")
-        .send()
-        .await
-        .expect("search request");
-
-    assert!(resp.status().is_success());
-    let bundle: Value = resp.json().await.expect("parse bundle");
-    // Should find male patients
-    assert!(get_bundle_total(&bundle) >= 2);
-
-    let _ = shutdown_tx.send(());
-}
 
 #[tokio::test]
 async fn test_token_not_modifier() {

@@ -57,6 +57,12 @@ pub struct ResourceEvent {
     /// The resource data as JSON (None for deletions).
     /// Wrapped in Arc to avoid deep clones through the event pipeline.
     pub resource: Option<Arc<serde_json::Value>>,
+    /// Exact preceding snapshot for update/delete filtering and audit delivery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_resource: Option<Arc<serde_json::Value>>,
+    /// Trusted transport marker: imported events must not be republished.
+    #[serde(skip)]
+    pub remote: bool,
     /// Timestamp of the event
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
@@ -76,6 +82,8 @@ impl ResourceEvent {
             resource_id: resource_id.into(),
             version_id: None,
             resource,
+            previous_resource: None,
+            remote: false,
             timestamp: OffsetDateTime::now_utc(),
         }
     }
@@ -116,6 +124,11 @@ impl ResourceEvent {
     /// Set the version ID.
     pub fn with_version(mut self, version_id: i64) -> Self {
         self.version_id = Some(version_id);
+        self
+    }
+
+    pub fn with_previous(mut self, previous: serde_json::Value) -> Self {
+        self.previous_resource = Some(Arc::new(previous));
         self
     }
 

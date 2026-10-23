@@ -3,11 +3,50 @@ use serde_json::Value;
 use tokio::task::JoinHandle;
 
 use octofhir_config::ConfigurationManager;
-use octofhir_server::{AppConfig, build_app, config};
+use octofhir_server::{AppConfig, PostgresStorageConfig, build_app, config};
+use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
+use testcontainers_modules::postgres::Postgres;
+use tokio::sync::{Mutex, MutexGuard};
+
+// Shared config and the canonical manager are process-global; one server at a time.
+static SERIAL: Mutex<()> = Mutex::const_new(());
+
+/// Keeps the database and the serial lock alive for the duration of a test.
+struct Fixture {
+    _serial: MutexGuard<'static, ()>,
+    _postgres: ContainerAsync<Postgres>,
+}
 
 async fn start_server_with_cfg(
-    cfg: AppConfig,
-) -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
+    mut cfg: AppConfig,
+) -> (
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    JoinHandle<()>,
+    Fixture,
+) {
+    let serial = SERIAL.lock().await;
+    let postgres = Postgres::default()
+        .with_tag("17-alpine")
+        .start()
+        .await
+        .expect("start postgres container");
+    let port = postgres.get_host_port_ipv4(5432).await.expect("get port");
+    cfg.storage.postgres = Some(PostgresStorageConfig {
+        url: Some(format!(
+            "postgres://postgres:postgres@127.0.0.1:{port}/postgres"
+        )),
+        pool_size: 5,
+        connect_timeout_ms: 10000,
+        ..Default::default()
+    });
+    cfg.auth.policy.anonymous_access = true;
+    if octofhir_server::canonical::get_manager().is_some() {
+        octofhir_server::canonical::rebuild_from_config_async(&cfg)
+            .await
+            .expect("rebuild canonical registry for fixture database");
+    }
+
     // Set shared config so handlers can read fhir.version
     let shared = std::sync::Arc::new(std::sync::RwLock::new(cfg.clone()));
     config::shared::set_shared(shared);
@@ -31,14 +70,18 @@ async fn start_server_with_cfg(
             })
             .await;
     });
-    (format!("http://{addr}"), tx, server)
+    let fixture = Fixture {
+        _serial: serial,
+        _postgres: postgres,
+    };
+    (format!("http://{addr}"), tx, server, fixture)
 }
 
 #[tokio::test]
 async fn metadata_reports_configured_fhir_version_r4() {
     let mut cfg = AppConfig::default();
     cfg.fhir.version = "R4".to_string();
-    let (base, shutdown_tx, handle) = start_server_with_cfg(cfg).await;
+    let (base, shutdown_tx, handle, _fixture) = start_server_with_cfg(cfg).await;
     let fhir_base = format!("{base}/fhir");
 
     let client = reqwest::Client::new();
@@ -70,7 +113,7 @@ async fn metadata_reports_configured_fhir_version_r4() {
 async fn metadata_reports_configured_fhir_version_r5() {
     let mut cfg = AppConfig::default();
     cfg.fhir.version = "R5".to_string();
-    let (base, shutdown_tx, handle) = start_server_with_cfg(cfg).await;
+    let (base, shutdown_tx, handle, _fixture) = start_server_with_cfg(cfg).await;
     let fhir_base = format!("{base}/fhir");
 
     let client = reqwest::Client::new();

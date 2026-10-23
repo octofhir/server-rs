@@ -15,12 +15,15 @@ async fn debug_humanname_in_schema() {
 
     // Create search registry with Patient (which uses HumanName)
     let registry = SearchParameterRegistry::new();
-    registry.register(SearchParameter::new(
-        "name",
-        "http://hl7.org/fhir/SearchParameter/Patient-name",
-        SearchParameterType::String,
-        vec!["Patient".to_string()],
-    ));
+    registry.register(
+        SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name"),
+    );
 
     // Build schema
     let builder = FhirSchemaBuilder::new(

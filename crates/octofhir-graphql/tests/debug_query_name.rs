@@ -15,24 +15,33 @@ async fn debug_patient_name_introspection() {
 
     // Create search registry with Patient
     let registry = SearchParameterRegistry::new();
-    registry.register(SearchParameter::new(
-        "name",
-        "http://hl7.org/fhir/SearchParameter/Patient-name",
-        SearchParameterType::String,
-        vec!["Patient".to_string()],
-    ));
-    registry.register(SearchParameter::new(
-        "given",
-        "http://hl7.org/fhir/SearchParameter/Patient-given",
-        SearchParameterType::String,
-        vec!["Patient".to_string()],
-    ));
-    registry.register(SearchParameter::new(
-        "gender",
-        "http://hl7.org/fhir/SearchParameter/Patient-gender",
-        SearchParameterType::Token,
-        vec!["Patient".to_string()],
-    ));
+    registry.register(
+        SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name"),
+    );
+    registry.register(
+        SearchParameter::new(
+            "given",
+            "http://hl7.org/fhir/SearchParameter/Patient-given",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name.given"),
+    );
+    registry.register(
+        SearchParameter::new(
+            "gender",
+            "http://hl7.org/fhir/SearchParameter/Patient-gender",
+            SearchParameterType::Token,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.gender"),
+    );
 
     // Build schema
     let builder = FhirSchemaBuilder::new(

@@ -102,6 +102,11 @@ fn build_missing_condition(
 /// - any of the above with `Z`, `+HH:MM`, `-HH:MM`, `+HHMM`
 pub fn parse_date_range(date_str: &str) -> Result<DateRange, SqlBuilderError> {
     let trimmed = date_str.trim();
+    if !trimmed.is_ascii() {
+        return Err(SqlBuilderError::InvalidSearchValue(format!(
+            "Invalid FHIR date: {trimmed}"
+        )));
+    }
 
     // Year only: 2028
     if trimmed.len() == 4 && trimmed.chars().all(|c| c.is_ascii_digit()) {
@@ -584,6 +589,9 @@ mod tests {
     fn test_invalid_date_returns_error() {
         let result = parse_date_range("not-a-date");
         assert!(result.is_err());
+        for value in ["255é-1", "2025-01-01T00:0é", "2025-01-01T00:00:00+0é00"] {
+            assert!(parse_date_range(value).is_err(), "{value}");
+        }
     }
 
     #[test]

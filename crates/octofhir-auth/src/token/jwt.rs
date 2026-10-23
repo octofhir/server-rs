@@ -812,6 +812,11 @@ impl JwtService {
         let mut validation = Validation::new(self.signing_key.algorithm.to_jwt_algorithm());
         validation.set_issuer(&[&self.issuer]);
         validation.validate_exp = true;
+        // NumericDate is measured in whole seconds; exp == now is expired.
+        // Keep the library's default 60-second skew from extending our tokens.
+        validation.leeway = 0;
+        validation.reject_tokens_expiring_in_less_than = 1;
+        validation.validate_nbf = true;
         validation.validate_aud = false; // Audience validated at application layer
 
         decode(token, &self.signing_key.decoding_key, &validation).map_err(JwtError::from)
@@ -1021,6 +1026,34 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), JwtError::Expired));
+    }
+
+    #[test]
+    fn expiration_boundary_and_not_before_are_enforced() {
+        let key_pair = SigningKeyPair::generate_ec().unwrap();
+        let service = JwtService::new(key_pair, "https://fhir.example.com");
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        for expires in [now - 1, now] {
+            let body = serde_json::json!({"iss":"https://fhir.example.com","exp":expires});
+            let token = service.encode(&body).unwrap();
+            assert!(matches!(
+                service.decode::<serde_json::Value>(&token),
+                Err(JwtError::Expired)
+            ));
+        }
+        let future =
+            serde_json::json!({"iss":"https://fhir.example.com","exp":now+120,"nbf":now+60});
+        assert!(
+            service
+                .decode::<serde_json::Value>(&service.encode(&future).unwrap())
+                .is_err()
+        );
+        let active = serde_json::json!({"iss":"https://fhir.example.com","exp":now+120,"nbf":now});
+        assert!(
+            service
+                .decode::<serde_json::Value>(&service.encode(&active).unwrap())
+                .is_ok()
+        );
     }
 
     #[test]

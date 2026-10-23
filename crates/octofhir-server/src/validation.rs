@@ -13,18 +13,74 @@
 //!
 //! Schemas are loaded on-demand from the `OctoFhirModelProvider` which has
 //! an internal Moka LRU cache for efficient schema reuse.
-//! Named `$validate` calls with reference checks use an invocation-local
-//! validator/resolver, retaining the shared model caches but isolating caller
-//! identity and authorized reference snapshots.
+//! Reference resolvers are invocation-local; compiled schemas and FHIRPath
+//! plans remain shared across concurrent calls.
 
 use std::sync::Arc;
 
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::{
-    SchemaProvider, reference::ReferenceResolver, terminology::TerminologyService,
-    types::ValidationError as FhirSchemaValidationError, types::ValidationResult,
+    SchemaProvider,
+    reference::{ReferenceResolutionResult, ReferenceResolver, ReferenceResult},
+    terminology::TerminologyService,
+    types::ValidationError as FhirSchemaValidationError,
+    types::ValidationResult,
     validation::FhirValidator,
 };
+
+tokio::task_local! {
+    static INVOCATION_RESOLVER: Arc<dyn ReferenceResolver>;
+}
+
+/// The validator retains this dispatcher while each validation future retains
+/// its own resolver. Task-local scope survives yields and cannot mix callers;
+/// the validator performs reference work on that future, without spawning it.
+struct ScopedReferenceResolver {
+    fallback: Arc<dyn ReferenceResolver>,
+}
+
+impl ScopedReferenceResolver {
+    fn current(&self) -> Arc<dyn ReferenceResolver> {
+        INVOCATION_RESOLVER
+            .try_with(Arc::clone)
+            .unwrap_or_else(|_| self.fallback.clone())
+    }
+}
+
+#[async_trait::async_trait]
+impl ReferenceResolver for ScopedReferenceResolver {
+    async fn resource_exists(&self, resource_type: &str, id: &str) -> ReferenceResult<bool> {
+        self.current().resource_exists(resource_type, id).await
+    }
+
+    async fn resolve_reference(
+        &self,
+        reference: &str,
+    ) -> ReferenceResult<ReferenceResolutionResult> {
+        self.current().resolve_reference(reference).await
+    }
+
+    async fn fetch_resource(&self, reference: &str) -> ReferenceResult<Option<Arc<JsonValue>>> {
+        self.current().fetch_resource(reference).await
+    }
+
+    async fn resolve_references_batch(
+        &self,
+        references: &[String],
+    ) -> Vec<ReferenceResult<ReferenceResolutionResult>> {
+        self.current().resolve_references_batch(references).await
+    }
+
+    async fn fetch_resources_batch(
+        &self,
+        references: &[String],
+    ) -> Vec<ReferenceResult<Option<Arc<JsonValue>>>> {
+        self.current().fetch_resources_batch(references).await
+    }
+
+    // A declared meta.profile is not proof of conformance. Keep the empty
+    // profile map so the validator checks the invocation's actual target body.
+}
 use serde_json::Value as JsonValue;
 
 use crate::model_provider::OctoFhirModelProvider;
@@ -159,6 +215,11 @@ pub struct ValidationService {
 }
 
 impl ValidationService {
+    /// Package replacement changes compiled schemas as well as model records.
+    pub(crate) fn invalidate_caches(&self) {
+        self.validator.invalidate_caches();
+    }
+
     /// Create a new validation service with a shared validator.
     ///
     /// Uses `FhirValidator` with `SchemaCompiler` for high-performance
@@ -213,7 +274,8 @@ impl ValidationService {
             FhirValidator::new_with_fhirpath(model_provider.clone(), fhirpath_engine);
 
         if let Some(resolver) = reference_resolver {
-            validator = validator.with_reference_resolver(resolver);
+            validator = validator
+                .with_reference_resolver(Arc::new(ScopedReferenceResolver { fallback: resolver }));
         }
 
         if let Some(terminology) = terminology_service {
@@ -430,6 +492,21 @@ impl ValidationService {
         self.run_validation(resource, profile_urls.to_vec(), None)
             .await
     }
+
+    pub(crate) async fn validate_profiles_with_resolver(
+        &self,
+        resource: &JsonValue,
+        profiles: &[String],
+        known_refs: Option<&std::collections::HashSet<String>>,
+        resolver: Arc<dyn ReferenceResolver>,
+    ) -> ValidationOutcome {
+        INVOCATION_RESOLVER
+            .scope(
+                resolver,
+                self.run_validation(resource, profiles.to_vec(), known_refs),
+            )
+            .await
+    }
 }
 
 /// Resource rules that are not encoded as base-schema FHIRPath invariants.
@@ -484,6 +561,172 @@ pub fn validate_resource(
 #[cfg(test)]
 mod outcome_tests {
     use super::*;
+
+    struct CountedSchemas {
+        inner: octofhir_fhirschema::validation::InMemorySchemaProvider,
+        compilations: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl SchemaProvider for CountedSchemas {
+        async fn get_schema(&self, name: &str) -> Option<Arc<octofhir_fhirschema::FhirSchema>> {
+            if name == "Observation" {
+                self.compilations
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            self.inner.get_schema(name).await
+        }
+
+        async fn get_schema_by_url(
+            &self,
+            url: &str,
+        ) -> Option<Arc<octofhir_fhirschema::FhirSchema>> {
+            // Compilation loads its root through this method. Count the bare
+            // root name, excluding routine target-profile metadata reads.
+            if url == "Observation" {
+                self.compilations
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            self.inner.get_schema_by_url(url).await
+        }
+    }
+
+    struct InvocationPatient(bool);
+
+    #[async_trait::async_trait]
+    impl ReferenceResolver for InvocationPatient {
+        async fn resource_exists(&self, _: &str, _: &str) -> ReferenceResult<bool> {
+            Ok(true)
+        }
+
+        async fn resolve_reference(&self, _: &str) -> ReferenceResult<ReferenceResolutionResult> {
+            Ok(ReferenceResolutionResult::found(
+                "Patient".into(),
+                "same-target".into(),
+            ))
+        }
+
+        async fn fetch_resource(&self, _: &str) -> ReferenceResult<Option<Arc<JsonValue>>> {
+            tokio::task::yield_now().await;
+            let mut body = serde_json::json!({"resourceType":"Patient","id":"same-target"});
+            if self.0 {
+                body["birthDate"] = serde_json::json!("2000-01-01");
+            }
+            Ok(Some(Arc::new(body)))
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_reference_validation_isolates_callers_and_reuses_compiled_schemas() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut schemas = octofhir_fhirschema::embedded::get_schemas(
+            octofhir_fhirschema::embedded::FhirVersion::R4,
+        )
+        .clone();
+        let mut patient = schemas["Patient"].clone();
+        patient.url = "urn:test:cached-patient-birth".into();
+        patient.name = "CachedPatientBirth".into();
+        patient.base = Some("http://hl7.org/fhir/StructureDefinition/Patient".into());
+        patient.derivation = Some("constraint".into());
+        patient
+            .required
+            .get_or_insert_with(Vec::new)
+            .push("birthDate".into());
+        patient
+            .elements
+            .as_mut()
+            .unwrap()
+            .get_mut("birthDate")
+            .unwrap()
+            .min = Some(1);
+        let mut observation = schemas["Observation"].clone();
+        observation
+            .elements
+            .as_mut()
+            .unwrap()
+            .get_mut("subject")
+            .unwrap()
+            .refers = Some(vec![patient.url.clone()]);
+        schemas.insert(patient.url.clone(), patient);
+        schemas.insert("Observation".into(), observation);
+        let provider = Arc::new(CountedSchemas {
+            inner: octofhir_fhirschema::validation::InMemorySchemaProvider::from_map(
+                schemas
+                    .into_iter()
+                    .map(|(name, schema)| (name, Arc::new(schema)))
+                    .collect(),
+            ),
+            compilations: AtomicUsize::new(0),
+        });
+        let service = Arc::new(ValidationService {
+            validator: Arc::new(
+                FhirValidator::new(provider.clone())
+                    .with_reference_resolver(Arc::new(ScopedReferenceResolver {
+                        fallback: Arc::new(InvocationPatient(false)),
+                    }))
+                    .with_target_profile_validation(true),
+            ),
+            schema_provider: provider.clone(),
+        });
+        let body = serde_json::json!({"resourceType":"Observation", "status":"final", "code":{"text":"isolation"},
+            "subject":{"reference":"Patient/same-target"}});
+        let profiles = vec!["Observation".into()];
+        for valid in [false, true] {
+            let outcome = service
+                .validate_profiles_with_resolver(
+                    &body,
+                    &profiles,
+                    None,
+                    Arc::new(InvocationPatient(valid)),
+                )
+                .await;
+            assert_eq!(outcome.valid, valid, "{:?}", outcome.issues);
+        }
+        let compiled = provider.compilations.load(Ordering::SeqCst);
+        assert!(compiled > 0, "the root compilation must be observed");
+        let mut tasks = Vec::new();
+        for index in 0..16 {
+            let service = service.clone();
+            let body = body.clone();
+            let profiles = profiles.clone();
+            tasks.push(tokio::spawn(async move {
+                let valid = index % 2 == 0;
+                let outcome = service
+                    .validate_profiles_with_resolver(
+                        &body,
+                        &profiles,
+                        None,
+                        Arc::new(InvocationPatient(valid)),
+                    )
+                    .await;
+                assert_eq!(outcome.valid, valid, "{:?}", outcome.issues);
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(
+            provider.compilations.load(Ordering::SeqCst),
+            compiled,
+            "warm concurrent requests must reuse compiled schemas"
+        );
+        service.invalidate_caches();
+        assert!(
+            service
+                .validate_profiles_with_resolver(
+                    &body,
+                    &profiles,
+                    None,
+                    Arc::new(InvocationPatient(true))
+                )
+                .await
+                .valid
+        );
+        assert!(
+            provider.compilations.load(Ordering::SeqCst) > compiled,
+            "package invalidation must discard compiled schemas"
+        );
+    }
 
     #[test]
     fn operation_outcome_always_has_at_least_one_issue() {

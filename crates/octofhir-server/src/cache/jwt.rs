@@ -11,12 +11,13 @@
 //! - The JTI is still checked against revocation after cache hit
 //! - Cache entries expire before the token's exp claim
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use octofhir_auth::token::jwt::AccessTokenClaims;
+use sha2::{Digest, Sha256};
 
 /// Default maximum cache size to prevent unbounded memory growth.
 const DEFAULT_MAX_SIZE: usize = 10_000;
@@ -30,9 +31,12 @@ const DEFAULT_MAX_SIZE: usize = 10_000;
 /// could exhaust memory by sending many unique tokens.
 pub struct JwtVerificationCache {
     /// Cache entries keyed by token hash
-    cache: DashMap<u64, CachedClaims>,
+    cache: DashMap<[u8; 32], CachedClaims>,
     /// Secondary index: JTI -> token hashes for O(1) invalidation by JTI
-    jti_index: DashMap<String, Vec<u64>>,
+    jti_index: DashMap<String, Vec<[u8; 32]>>,
+    /// Serialize mutations of both maps and the capacity check. Cache hits do
+    /// not acquire this lock.
+    mutation: Mutex<()>,
     /// Time-to-live for cache entries
     ttl: Duration,
     /// Maximum number of entries to prevent unbounded growth
@@ -65,6 +69,7 @@ impl JwtVerificationCache {
         Self {
             cache: DashMap::new(),
             jti_index: DashMap::new(),
+            mutation: Mutex::new(()),
             ttl,
             max_size,
             hits: AtomicU64::new(0),
@@ -100,7 +105,13 @@ impl JwtVerificationCache {
             }
             // Entry expired, remove it
             drop(entry);
-            self.cache.remove(&hash);
+            let _mutation = self.mutation.lock().expect("JWT cache mutation lock");
+            if let Some((_, expired)) = self
+                .cache
+                .remove_if(&hash, |_, entry| entry.expires_at <= now)
+            {
+                self.remove_index(&expired.claims.jti, &hash);
+            }
         }
 
         self.misses.fetch_add(1, Ordering::Relaxed);
@@ -119,7 +130,9 @@ impl JwtVerificationCache {
         let now = Instant::now();
 
         // Calculate expiration: min of TTL and token exp
-        let token_exp_secs = claims.exp - time::OffsetDateTime::now_utc().unix_timestamp();
+        let token_exp_secs = claims
+            .exp
+            .saturating_sub(time::OffsetDateTime::now_utc().unix_timestamp());
         let token_exp_duration = if token_exp_secs > 0 {
             Duration::from_secs(token_exp_secs as u64)
         } else {
@@ -127,9 +140,10 @@ impl JwtVerificationCache {
             return;
         };
 
+        let _mutation = self.mutation.lock().expect("JWT cache mutation lock");
         // Check size limit and cleanup if needed
         if self.cache.len() >= self.max_size {
-            let removed = self.cleanup_expired();
+            let removed = self.cleanup_expired_locked();
             self.evictions.fetch_add(removed as u64, Ordering::Relaxed);
 
             // If still at capacity after cleanup, skip insertion
@@ -146,7 +160,7 @@ impl JwtVerificationCache {
         let cache_ttl = self.ttl.min(token_exp_duration);
         let jti = claims.jti.clone();
 
-        self.cache.insert(
+        let previous = self.cache.insert(
             hash,
             CachedClaims {
                 claims,
@@ -154,8 +168,14 @@ impl JwtVerificationCache {
             },
         );
 
-        // Update JTI index for O(1) invalidation by JTI
-        self.jti_index.entry(jti).or_default().push(hash);
+        if let Some(previous) = previous {
+            self.remove_index(&previous.claims.jti, &hash);
+        }
+        // Repeated insertion of one token must not grow its secondary index.
+        let mut hashes = self.jti_index.entry(jti).or_default();
+        if !hashes.contains(&hash) {
+            hashes.push(hash);
+        }
     }
 
     /// Invalidate cache entry for a token.
@@ -163,11 +183,9 @@ impl JwtVerificationCache {
     /// Called when a token is revoked to ensure it's removed from cache.
     pub fn invalidate(&self, token: &str) {
         let hash = Self::hash_token(token);
+        let _mutation = self.mutation.lock().expect("JWT cache mutation lock");
         if let Some((_, entry)) = self.cache.remove(&hash) {
-            // Also remove from JTI index
-            if let Some(mut hashes) = self.jti_index.get_mut(&entry.claims.jti) {
-                hashes.retain(|h| *h != hash);
-            }
+            self.remove_index(&entry.claims.jti, &hash);
         }
     }
 
@@ -175,6 +193,7 @@ impl JwtVerificationCache {
     ///
     /// Uses a secondary index for O(1) lookup instead of O(n) scan.
     pub fn invalidate_by_jti(&self, jti: &str) {
+        let _mutation = self.mutation.lock().expect("JWT cache mutation lock");
         if let Some((_, hashes)) = self.jti_index.remove(jti) {
             for hash in hashes {
                 self.cache.remove(&hash);
@@ -197,10 +216,15 @@ impl JwtVerificationCache {
     ///
     /// Returns the number of entries removed.
     pub fn cleanup_expired(&self) -> usize {
+        let _mutation = self.mutation.lock().expect("JWT cache mutation lock");
+        self.cleanup_expired_locked()
+    }
+
+    fn cleanup_expired_locked(&self) -> usize {
         let now = Instant::now();
 
         // Collect expired entries: (hash, jti)
-        let expired: Vec<(u64, String)> = self
+        let expired: Vec<([u8; 32], String)> = self
             .cache
             .iter()
             .filter(|entry| entry.expires_at <= now)
@@ -210,9 +234,7 @@ impl JwtVerificationCache {
         // Remove from cache and update JTI index
         for (hash, jti) in &expired {
             self.cache.remove(hash);
-            if let Some(mut hashes) = self.jti_index.get_mut(jti) {
-                hashes.retain(|h| h != hash);
-            }
+            self.remove_index(jti, hash);
         }
 
         // Clean up empty JTI index entries
@@ -221,16 +243,20 @@ impl JwtVerificationCache {
         expired.len()
     }
 
+    fn remove_index(&self, jti: &str, hash: &[u8; 32]) {
+        if let Some(mut hashes) = self.jti_index.get_mut(jti) {
+            hashes.retain(|entry| entry != hash);
+        }
+        self.jti_index.remove_if(jti, |_, hashes| hashes.is_empty());
+    }
+
     /// Hash a token to use as cache key.
     ///
-    /// Uses a fast non-cryptographic hash since we're not protecting
-    /// against adversarial inputs - we just need a quick lookup key.
+    /// Use a cryptographic digest because cache keys come from unverified,
+    /// adversarial tokens and a hit skips signature verification.
     #[inline]
-    fn hash_token(token: &str) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        token.hash(&mut hasher);
-        hasher.finish()
+    fn hash_token(token: &str) -> [u8; 32] {
+        Sha256::digest(token.as_bytes()).into()
     }
 }
 
@@ -281,6 +307,72 @@ mod tests {
             fhir_user: None,
             sid: None,
         })
+    }
+
+    #[test]
+    fn concurrent_mutations_keep_capacity_and_jti_index_consistent() {
+        let cache = Arc::new(JwtVerificationCache::new(Duration::from_secs(60), 16));
+        std::thread::scope(|scope| {
+            for worker in 0..16 {
+                let cache = cache.clone();
+                scope.spawn(move || {
+                    for index in 0..200 {
+                        let token = format!("shared-token-{}", index % 32);
+                        let jti = format!("shared-jti-{}", index % 8);
+                        cache.insert(&token, create_test_claims(&jti, 3600));
+                        if worker % 2 == 0 {
+                            cache.invalidate(&token);
+                        } else {
+                            cache.invalidate_by_jti(&jti);
+                        }
+                        cache.cleanup_expired();
+                    }
+                });
+            }
+        });
+        assert!(cache.cache.len() <= cache.max_size);
+        for entry in &cache.cache {
+            let hashes = cache.jti_index.get(&entry.claims.jti).unwrap();
+            assert_eq!(hashes.iter().filter(|hash| *hash == entry.key()).count(), 1);
+        }
+        for entry in &cache.jti_index {
+            assert!(!entry.is_empty());
+            for hash in entry.value() {
+                assert_eq!(cache.cache.get(hash).unwrap().claims.jti, *entry.key());
+            }
+        }
+        let identifiers: Vec<_> = cache
+            .jti_index
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+        for jti in identifiers {
+            cache.invalidate_by_jti(&jti);
+        }
+        assert!(cache.cache.is_empty());
+        assert!(cache.jti_index.is_empty());
+    }
+
+    #[test]
+    fn repeated_and_expired_tokens_do_not_leak_secondary_index_entries() {
+        let cache = JwtVerificationCache::new(Duration::from_secs(60), 100);
+        for _ in 0..1000 {
+            cache.insert("one-token", create_test_claims("same-jti", 3600));
+        }
+        assert_eq!(cache.jti_index.get("same-jti").unwrap().len(), 1);
+        cache.invalidate("one-token");
+        assert!(cache.jti_index.is_empty());
+        let expired = JwtVerificationCache::new(Duration::ZERO, 100);
+        for index in 0..1000 {
+            let token = format!("expired-{index}");
+            expired.insert(&token, create_test_claims(&token, 3600));
+            assert!(expired.get(&token).is_none());
+        }
+        assert!(expired.cache.is_empty());
+        assert!(
+            expired.jti_index.is_empty(),
+            "Read-time expiry must remove the secondary index"
+        );
     }
 
     #[test]

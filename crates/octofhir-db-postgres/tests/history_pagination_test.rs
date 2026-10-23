@@ -1,12 +1,13 @@
 use octofhir_db_postgres::{PostgresStorage, migrations};
-use octofhir_storage::{FhirStorage, HistoryParams};
+use octofhir_storage::{FhirStorage, HistoryParams, TotalMode};
 use serde_json::json;
 use sqlx_postgres::PgPoolOptions;
-use testcontainers::runners::AsyncRunner;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 
 async fn setup_storage() -> (testcontainers::ContainerAsync<Postgres>, PostgresStorage) {
     let container = Postgres::default()
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("Failed to start PostgreSQL container");
@@ -63,7 +64,10 @@ async fn paged_history_reports_total_matching_versions() {
         .await
         .expect("second update should succeed");
 
-    let params = HistoryParams::new().count(1).offset(1);
+    let params = HistoryParams::new()
+        .count(1)
+        .offset(1)
+        .total(TotalMode::Accurate);
     let history = storage
         .history_raw("Patient", Some("history-patient"), &params)
         .await
@@ -97,7 +101,10 @@ async fn paged_type_history_reports_total_matching_versions() {
         .await
         .expect("update should succeed");
 
-    let params = HistoryParams::new().count(1).offset(1);
+    let params = HistoryParams::new()
+        .count(1)
+        .offset(1)
+        .total(TotalMode::Accurate);
     let history = storage
         .history_raw("Patient", None, &params)
         .await

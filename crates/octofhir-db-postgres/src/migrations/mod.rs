@@ -2,7 +2,7 @@
 //!
 //! This module uses embedded migrations for single-binary deployment.
 
-use sqlx_core::migrate::{Migration, MigrationType};
+use sqlx_core::migrate::{Migrate, MigrateError, Migration, MigrationType};
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_postgres::PgPool;
 use std::borrow::Cow;
@@ -16,14 +16,16 @@ use crate::error::Result;
 /// Each migration is a tuple of (version, description, sql_path)
 macro_rules! embedded_migrations {
     () => {
-        &[
-            // Single consolidated schema; DB is always created from scratch.
-            (
-                20241213000001i64,
-                "consolidated_schema",
+        &[(
+            20241213000001i64,
+            "consolidated_schema",
+            concat!(
                 include_str!("../../migrations/20241213000001_consolidated_schema.sql"),
+                include_str!("../../sql/resource_write_gate.sql"),
+                include_str!("../../sql/resource_write_metadata.sql"),
+                include_str!("../../sql/resource_history.sql"),
             ),
-        ]
+        )]
     };
 }
 
@@ -31,13 +33,14 @@ macro_rules! embedded_migrations {
 fn build_migrations() -> Vec<Migration> {
     embedded_migrations!()
         .iter()
-        .map(|(version, description, sql)| Migration {
-            version: *version,
-            description: Cow::Borrowed(description),
-            migration_type: MigrationType::Simple,
-            sql: AssertSqlSafe(sql.to_string()).into_sql_str(),
-            checksum: Cow::Borrowed(&[]), // Empty checksum for embedded migrations
-            no_tx: false,                 // Run in transaction
+        .map(|(version, description, sql)| {
+            Migration::new(
+                *version,
+                Cow::Borrowed(description),
+                MigrationType::Simple,
+                AssertSqlSafe(sql.to_string()).into_sql_str(),
+                false,
+            )
         })
         .collect()
 }
@@ -66,19 +69,31 @@ pub async fn run(pool: &PgPool, _db_url: &str) -> Result<()> {
     let migrations = build_migrations();
     info!("Found {} migration(s) to apply", migrations.len());
 
-    // Create migrator with all embedded migrations
-    let migrator = sqlx_core::migrate::Migrator {
-        migrations: Cow::Owned(migrations),
-        ignore_missing: false,
-        locking: true,
-        no_tx: false, // Run in transaction
-        ..sqlx_core::migrate::Migrator::DEFAULT
+    // Hold SQLx's database-specific migration lock through validation and setup. Closing this dedicated connection on drop also
+    // releases a session lock when startup is cancelled or migration fails.
+    let mut connection = pool.acquire().await?;
+    connection.close_on_drop();
+    let migration_error = |error: MigrateError| {
+        crate::error::PostgresError::Migration(format!("Migration failed: {error}"))
     };
-
-    migrator
-        .run(pool)
-        .await
-        .map_err(|e| crate::error::PostgresError::Migration(format!("Migration failed: {}", e)))?;
+    connection.lock().await.map_err(migration_error)?;
+    let result: std::result::Result<(), MigrateError> = async {
+        connection
+            .ensure_migrations_table("_sqlx_migrations")
+            .await?;
+        let migrator = sqlx_core::migrate::Migrator {
+            migrations: Cow::Owned(migrations),
+            ignore_missing: false,
+            locking: false, // The same SQLx migration lock is already held.
+            no_tx: false,
+            ..sqlx_core::migrate::Migrator::DEFAULT
+        };
+        migrator.run_direct(None, &mut *connection, false).await
+    }
+    .await;
+    let unlocked = connection.unlock().await;
+    result.map_err(migration_error)?;
+    unlocked.map_err(migration_error)?;
 
     info!("Database migrations completed successfully");
 

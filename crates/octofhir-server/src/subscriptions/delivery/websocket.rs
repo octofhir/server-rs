@@ -27,6 +27,11 @@ pub enum WebSocketMessage {
     Close,
 }
 
+/// The client's connection task has ended; the message was not delivered.
+#[derive(Debug, thiserror::Error)]
+#[error("WebSocket connection closed")]
+pub struct ConnectionClosed;
+
 /// Handle for sending messages to a connected WebSocket client.
 #[derive(Clone)]
 pub struct WebSocketHandle {
@@ -35,21 +40,25 @@ pub struct WebSocketHandle {
 
 impl WebSocketHandle {
     /// Send a subscription event to the client.
-    pub async fn send_event(
-        &self,
-        event: SubscriptionEvent,
-    ) -> Result<(), mpsc::error::SendError<WebSocketMessage>> {
-        self.sender.send(WebSocketMessage::Event(event)).await
+    pub async fn send_event(&self, event: SubscriptionEvent) -> Result<(), ConnectionClosed> {
+        self.send(WebSocketMessage::Event(event)).await
     }
 
     /// Send a heartbeat to the client.
-    pub async fn send_heartbeat(&self) -> Result<(), mpsc::error::SendError<WebSocketMessage>> {
-        self.sender.send(WebSocketMessage::Heartbeat).await
+    pub async fn send_heartbeat(&self) -> Result<(), ConnectionClosed> {
+        self.send(WebSocketMessage::Heartbeat).await
     }
 
     /// Close the connection.
-    pub async fn close(&self) -> Result<(), mpsc::error::SendError<WebSocketMessage>> {
-        self.sender.send(WebSocketMessage::Close).await
+    pub async fn close(&self) -> Result<(), ConnectionClosed> {
+        self.send(WebSocketMessage::Close).await
+    }
+
+    async fn send(&self, message: WebSocketMessage) -> Result<(), ConnectionClosed> {
+        self.sender
+            .send(message)
+            .await
+            .map_err(|_| ConnectionClosed)
     }
 }
 

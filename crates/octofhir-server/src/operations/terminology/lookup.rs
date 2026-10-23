@@ -10,6 +10,8 @@
 //! - Type: `GET/POST /CodeSystem/$lookup` with system/url and code parameters
 //! - Instance: `GET/POST /CodeSystem/{id}/$lookup` with code parameter
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -662,6 +664,10 @@ impl Default for LookupOperation {
 
 #[async_trait]
 impl OperationHandler for LookupOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        level == OperationLevel::System || resource_type == Some("CodeSystem")
+    }
+
     fn code(&self) -> &str {
         "lookup"
     }

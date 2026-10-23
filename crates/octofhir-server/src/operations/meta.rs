@@ -3,6 +3,8 @@
 //! This module implements the FHIR meta operations for retrieving and
 //! managing resource metadata (profiles, tags, security labels).
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use octofhir_api::ApiError;
 use octofhir_core::ResourceType;
@@ -273,6 +275,10 @@ pub struct MetaOperation;
 
 #[async_trait]
 impl OperationHandler for MetaOperation {
+    fn supports_level(&self, level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        level == OperationLevel::Instance
+    }
+
     fn code(&self) -> &str {
         "meta"
     }
@@ -339,6 +345,10 @@ pub struct MetaAddOperation;
 
 #[async_trait]
 impl OperationHandler for MetaAddOperation {
+    fn supports_level(&self, level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        level == OperationLevel::Instance
+    }
+
     fn code(&self) -> &str {
         "meta-add"
     }
@@ -414,6 +424,10 @@ pub struct MetaDeleteOperation;
 
 #[async_trait]
 impl OperationHandler for MetaDeleteOperation {
+    fn supports_level(&self, level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        level == OperationLevel::Instance
+    }
+
     fn code(&self) -> &str {
         "meta-delete"
     }

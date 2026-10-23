@@ -148,7 +148,7 @@ impl<'a> TokenStorage<'a> {
         ) = query_as(
             r#"
             INSERT INTO refreshtoken (id, txid, created_at, updated_at, resource, status)
-            VALUES ($1, 1, NOW(), NOW(), $2, 'created')
+            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
@@ -187,8 +187,8 @@ impl<'a> TokenStorage<'a> {
         )> = query_as(
             r#"
             UPDATE refreshtoken
-            SET resource = jsonb_set(resource, '{lastUsedAt}', to_jsonb(NOW()::text)),
-                txid = txid + 1,
+            SET resource = jsonb_set(resource, '{lastUsedAt}', to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))),
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
@@ -213,8 +213,8 @@ impl<'a> TokenStorage<'a> {
         let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             UPDATE refreshtoken
-            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', NOW()::text),
-                txid = txid + 1,
+            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
@@ -240,7 +240,7 @@ impl<'a> TokenStorage<'a> {
             r#"
             UPDATE refreshtoken
             SET status = 'deleted',
-                txid = txid + 1,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW()
             WHERE id = $1
               AND status != 'deleted'
@@ -267,7 +267,7 @@ impl<'a> TokenStorage<'a> {
             r#"
             UPDATE refreshtoken
             SET status = 'deleted',
-                txid = txid + 1,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW()
             WHERE status != 'deleted'
               AND (resource->>'expiresAt')::timestamptz < NOW()
@@ -288,8 +288,8 @@ impl<'a> TokenStorage<'a> {
         let result = query(
             r#"
             UPDATE refreshtoken
-            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', NOW()::text),
-                txid = txid + 1,
+            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE resource->>'userId' = $1
@@ -314,8 +314,8 @@ impl<'a> TokenStorage<'a> {
         let result = query(
             r#"
             UPDATE refreshtoken
-            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', NOW()::text),
-                txid = txid + 1,
+            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE resource->>'tokenHash' = $1
@@ -339,8 +339,8 @@ impl<'a> TokenStorage<'a> {
         let result = query(
             r#"
             UPDATE refreshtoken
-            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', NOW()::text),
-                txid = txid + 1,
+            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE resource->>'clientId' = $1
@@ -360,8 +360,8 @@ impl<'a> TokenStorage<'a> {
         let result = query(
             r#"
             UPDATE refreshtoken
-            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', NOW()::text),
-                txid = txid + 1,
+            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE resource->>'userId' = $1

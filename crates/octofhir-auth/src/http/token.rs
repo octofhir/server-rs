@@ -94,13 +94,16 @@ impl TokenState {
         client_storage: Arc<dyn ClientStorage>,
         config: TokenConfig,
     ) -> Self {
-        let token_service = Arc::new(TokenService::new(
-            jwt_service,
-            session_storage,
-            refresh_token_storage,
-            revoked_token_storage,
-            config,
-        ));
+        let token_service = Arc::new(
+            TokenService::new(
+                jwt_service,
+                session_storage,
+                refresh_token_storage,
+                revoked_token_storage,
+                config,
+            )
+            .with_client_storage(client_storage.clone()),
+        );
 
         Self {
             token_service,
@@ -119,6 +122,11 @@ impl TokenState {
         token_service: Arc<TokenService>,
         client_storage: Arc<dyn ClientStorage>,
     ) -> Self {
+        let token_service = Arc::new(
+            (*token_service)
+                .clone()
+                .with_client_storage(client_storage.clone()),
+        );
         Self {
             token_service,
             client_storage,
@@ -136,9 +144,7 @@ impl TokenState {
     pub fn with_user_storage(mut self, user_storage: Arc<dyn UserStorage>) -> Self {
         // Also set user storage on the inner TokenService so it can look up
         // fhir_user claims when generating ID tokens.
-        if let Some(ts) = Arc::get_mut(&mut self.token_service) {
-            ts.set_user_storage(user_storage.clone());
-        }
+        Arc::make_mut(&mut self.token_service).set_user_storage(user_storage.clone());
         self.user_storage = Some(user_storage);
         self
     }

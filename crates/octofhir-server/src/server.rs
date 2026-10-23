@@ -71,6 +71,14 @@ impl AppState {
     pub fn fhir_base_url(&self) -> String {
         format!("{}/fhir", self.base_url.trim_end_matches('/'))
     }
+
+    pub(crate) fn is_anonymous_context(
+        &self,
+        auth: &octofhir_auth::middleware::AuthContext,
+    ) -> bool {
+        self.config.auth.policy.anonymous_access
+            && std::ptr::eq(auth, self.anonymous_auth_context.as_ref())
+    }
 }
 
 impl std::ops::Deref for AppState {
@@ -254,6 +262,7 @@ impl FromRef<AppState> for crate::automations::AutomationState {
 pub struct OctofhirServer {
     addr: SocketAddr,
     app: Router,
+    background: crate::lifecycle::BackgroundRuntime,
 }
 
 /// Handler for WebSocket subscription events endpoint.
@@ -359,11 +368,10 @@ async fn bootstrap_conformance_if_postgres(
                 "Ensured database tables for FHIR resource types from FCM"
             );
         }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "Failed to ensure database tables for FHIR resource types"
-            );
+        Err(error) => {
+            return Err(anyhow::anyhow!(
+                "Failed to ensure FHIR resource tables: {error}"
+            ));
         }
     }
 
@@ -377,8 +385,13 @@ async fn bootstrap_conformance_if_postgres(
         match crate::bootstrap::bootstrap_default_ui_client(&client_storage, issuer).await {
             Ok(true) => tracing::info!("Default UI client bootstrapped successfully"),
             Ok(false) => tracing::debug!("Default UI client already exists"),
-            Err(e) => tracing::warn!(error = %e, "Failed to bootstrap default UI client"),
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to bootstrap default UI client: {error}"
+                ));
+            }
         }
+        Ok::<(), anyhow::Error>(())
     };
 
     let admin_user_fut = async {
@@ -393,16 +406,15 @@ async fn bootstrap_conformance_if_postgres(
                     username = %admin_config.username,
                     "Admin user already exists"
                 ),
-                Err(e) => tracing::warn!(
-                    error = %e,
-                    username = %admin_config.username,
-                    "Failed to bootstrap admin user"
-                ),
+                Err(error) => {
+                    return Err(anyhow::anyhow!("Failed to bootstrap admin user: {error}"));
+                }
             }
         }
+        Ok::<(), anyhow::Error>(())
     };
 
-    let _ = tokio::join!(ui_client_fut, admin_user_fut);
+    tokio::try_join!(ui_client_fut, admin_user_fut)?;
 
     // Backend client + its access policy are sequentially dependent (policy
     // references the client_id) but independent of the admin policy, so we
@@ -413,8 +425,13 @@ async fn bootstrap_conformance_if_postgres(
             match crate::bootstrap::bootstrap_admin_access_policy(&policy_storage).await {
                 Ok(true) => tracing::info!("Admin access policy bootstrapped successfully"),
                 Ok(false) => tracing::debug!("Admin access policy already exists"),
-                Err(e) => tracing::warn!(error = %e, "Failed to bootstrap admin access policy"),
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to bootstrap admin access policy: {error}"
+                    ));
+                }
             }
+            Ok::<(), anyhow::Error>(())
         }
     };
 
@@ -465,12 +482,10 @@ async fn bootstrap_conformance_if_postgres(
                         "Backend service client already exists"
                     );
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        client_id = %backend_config.client_id,
-                        "Failed to bootstrap backend service client"
-                    );
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to bootstrap backend service client: {error}"
+                    ));
                 }
             }
 
@@ -494,18 +509,17 @@ async fn bootstrap_conformance_if_postgres(
                         "Backend access policy already exists"
                     );
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        client_id = %backend_config.client_id,
-                        "Failed to bootstrap backend access policy"
-                    );
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to bootstrap backend access policy: {error}"
+                    ));
                 }
             }
         }
+        Ok::<(), anyhow::Error>(())
     };
 
-    let _ = tokio::join!(backend_fut, admin_policy_fut);
+    tokio::try_join!(backend_fut, admin_policy_fut)?;
 
     Ok(())
 }
@@ -605,6 +619,29 @@ pub async fn build_app(
     cfg: &AppConfig,
     config_manager: Arc<octofhir_config::ConfigurationManager>,
 ) -> Result<Router, anyhow::Error> {
+    build_app_with_runtime(
+        cfg,
+        config_manager,
+        crate::lifecycle::BackgroundRuntime::default(),
+    )
+    .await
+}
+
+async fn build_app_with_runtime(
+    cfg: &AppConfig,
+    config_manager: Arc<octofhir_config::ConfigurationManager>,
+    background: crate::lifecycle::BackgroundRuntime,
+) -> Result<Router, anyhow::Error> {
+    let owner = background.owner();
+    let release = cfg.fhir.release().map_err(anyhow::Error::msg)?;
+    let fhir_version_key = release.release_name();
+    let fhir_version = match release {
+        octofhir_core::fhir::FhirVersion::R4 => FhirVersion::R4,
+        octofhir_core::fhir::FhirVersion::R4B => FhirVersion::R4B,
+        octofhir_core::fhir::FhirVersion::R5 => FhirVersion::R5,
+        octofhir_core::fhir::FhirVersion::R6 => FhirVersion::R6,
+    };
+
     let body_limit = cfg.server.body_limit_bytes;
     let (pg_storage, db_pool, read_db_pool) = create_storage(cfg).await?;
 
@@ -630,15 +667,6 @@ pub async fn build_app(
     let package_store = Arc::new(octofhir_db_postgres::PostgresPackageStore::new(
         (*db_pool).clone(),
     ));
-
-    // Parse FHIR version early - used by both model provider and GraphQL
-    let fhir_version = match cfg.fhir.version.as_str() {
-        "R4" | "4.0" | "4.0.1" => FhirVersion::R4,
-        "R4B" | "4.3" | "4.3.0" => FhirVersion::R4B,
-        "R5" | "5.0" | "5.0.0" => FhirVersion::R5,
-        "R6" | "6.0" => FhirVersion::R6,
-        _ => FhirVersion::R4, // Default to R4
-    };
 
     // ── Phase 1: Create lightweight components (instant, no I/O) ──
 
@@ -698,11 +726,14 @@ pub async fn build_app(
     let policy_cache = Arc::new(PolicyCache::new(policy_storage, Duration::minutes(5)));
 
     // Async job manager (instant)
-    let async_job_config = crate::async_jobs::AsyncJobConfig::default();
-    let async_job_manager = Arc::new(crate::async_jobs::AsyncJobManager::new(
-        db_pool.clone(),
-        async_job_config,
-    ));
+    let async_job_config = crate::async_jobs::AsyncJobConfig {
+        max_concurrent_imports: cfg.bulk_import.max_concurrent_jobs,
+        ..Default::default()
+    };
+    let async_job_manager = Arc::new(
+        crate::async_jobs::AsyncJobManager::new(db_pool.clone(), async_job_config)
+            .with_background_runtime(background.clone()),
+    );
     tracing::info!("Async job manager initialized");
 
     // Gateway router (creation is instant, route loading is async — done in Phase 2)
@@ -721,6 +752,21 @@ pub async fn build_app(
     let canonical_manager = crate::canonical::get_manager()
         .ok_or_else(|| anyhow::anyhow!("Canonical manager required for initialization"))?;
 
+    // Table DDL, auth seeding and the operations sync below check existing
+    // state and then write it. Instances booting concurrently against one
+    // database take turns; the guard is held until operations are synced.
+    let bootstrap_lock = octofhir_db_postgres::BootstrapLock::acquire(&db_pool)
+        .await
+        .context("failed to acquire bootstrap lock")?;
+
+    // Schema creation holds connections for multi-statement DDL and populates
+    // the tables used by auth, policies and gateway routes. Finish it before
+    // starting pool-backed readers; reserving a few DDL slots alone cannot make
+    // their acquire timeouts independent of cold schema creation.
+    bootstrap_conformance_if_postgres(cfg, db_pool.clone())
+        .await
+        .context("FHIR/auth bootstrap failed; refusing to serve an incomplete configuration")?;
+
     // Prime the schema LRU before parallel_init: SearchParameter loader
     // calls `resolver.resolve()` ~1400×, each a SELECT against
     // `fcm.fhirschemas` if the cache is cold. A single bulk load knocks
@@ -736,13 +782,8 @@ pub async fn build_app(
     // Launch all heavy init operations concurrently
     let parallel_start = std::time::Instant::now();
     tracing::info!("Starting parallel initialization of 7 component groups...");
-    // The initial policy snapshot depends on bootstrap writes. Loading them
-    // concurrently can cache an empty policy set for the entire cache TTL.
-    let bootstrap_and_policy_fut = async {
-        let bootstrap = bootstrap_conformance_if_postgres(cfg, db_pool.clone()).await;
-        let policies = policy_cache.refresh().await;
-        (bootstrap, policies)
-    };
+    // Bootstrap has completed, so this snapshot includes its initial policies.
+    let policy_refresh_fut = policy_cache.refresh();
     // SearchParameter registry build (was the slowest future at 2.7s cold).
     // Replaces `ReloadableSearchConfig::new(canonical_manager, …)` which
     // walked `canonical-manager`'s text-search engine: one `SELECT *` over
@@ -752,7 +793,7 @@ pub async fn build_app(
     // parse + register in-process.
     let search_config_fut = build_search_registry_fast(
         db_pool.clone(),
-        cfg.fhir.version.clone(),
+        fhir_version_key.to_string(),
         model_provider.clone(),
         search_options.clone(),
     );
@@ -764,7 +805,7 @@ pub async fn build_app(
     let resource_types_fut = model_provider.get_resource_types();
 
     let (
-        (bootstrap_result, policy_refresh_result),
+        policy_refresh_result,
         search_config_result,
         auth_state_result,
         operations_result,
@@ -772,7 +813,7 @@ pub async fn build_app(
         gateway_routes_result,
         resource_types_result,
     ) = tokio::join!(
-        bootstrap_and_policy_fut,
+        policy_refresh_fut,
         search_config_fut,
         auth_state_fut,
         operations_fut,
@@ -787,10 +828,6 @@ pub async fn build_app(
     );
 
     // Process results from parallel operations
-    if let Err(e) = bootstrap_result {
-        tracing::warn!(error = %e, "Failed to bootstrap database tables and auth resources");
-    }
-
     let search_config = search_config_result
         .map_err(|e| anyhow::anyhow!("Failed to create reloadable search config: {}", e))?;
 
@@ -867,12 +904,12 @@ pub async fn build_app(
         {
             let lazy_schema_clone = lazy_schema.clone();
             let pool = db_pool.as_ref().clone();
-            let fhir_version_str = cfg.fhir.version.clone();
+            let fhir_version_str = fhir_version_key.to_string();
             let search_registry = search_config.config().registry.clone();
             let config = schema_builder_config;
             let fhir_version_enum = fhir_version.clone();
 
-            tokio::spawn(async move {
+            background.spawn(async move {
                 let total_start = std::time::Instant::now();
                 tracing::info!("Starting early background GraphQL schema build...");
 
@@ -1099,6 +1136,11 @@ pub async fn build_app(
             });
             tracing::info!("Registered $import operation");
 
+            crate::operations::register_export_definitions(
+                &mut registry,
+                cfg.bulk_export.enabled,
+                cfg.sql_on_fhir.enabled,
+            );
             Arc::new(registry)
         }
         Err(e) => {
@@ -1208,6 +1250,11 @@ pub async fn build_app(
                 affects_state: true,
             });
 
+            crate::operations::register_export_definitions(
+                &mut registry,
+                cfg.bulk_export.enabled,
+                cfg.sql_on_fhir.enabled,
+            );
             Arc::new(registry)
         }
     };
@@ -1245,7 +1292,7 @@ pub async fn build_app(
             }
             Some(Arc::new(StorageReferenceResolver::with_options(
                 storage.clone(),
-                cfg.base_url(),
+                format!("{}/fhir", cfg.base_url().trim_end_matches('/')),
                 cfg.validation.check_target_profile && cfg.validation.fetch_external_references,
                 cfg.validation.reference_fetch_timeout_ms,
             )))
@@ -1310,7 +1357,7 @@ pub async fn build_app(
     if cfg.bulk_export.enabled {
         let export_path = cfg.bulk_export.export_path.clone();
         let retention_hours = cfg.bulk_export.retention_hours;
-        let _export_cleanup_handle = tokio::spawn(async move {
+        let _export_cleanup_handle = background.spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
             loop {
                 interval.tick().await;
@@ -1349,7 +1396,7 @@ pub async fn build_app(
 
     // Start the reload service
     let reload_service_clone = policy_reload_service.clone();
-    tokio::spawn(async move {
+    background.spawn(async move {
         reload_service_clone.run().await;
     });
     tracing::info!("Policy reload service started");
@@ -1371,6 +1418,7 @@ pub async fn build_app(
         crate::bootstrap::bootstrap_operations(db_pool.as_ref(), &storage, cfg)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to bootstrap operations registry: {}", e))?;
+    drop(bootstrap_lock);
 
     tracing::info!("Operations registry bootstrapped with in-memory indexes");
 
@@ -1474,7 +1522,7 @@ pub async fn build_app(
     {
         let auth_cache_for_cleanup = auth_cache.clone();
         let jwt_cache_for_cleanup = jwt_cache.clone();
-        tokio::spawn(async move {
+        background.spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
@@ -1491,7 +1539,7 @@ pub async fn build_app(
     // Spawn background SSO session cleanup task (runs every hour)
     {
         let storage_for_cleanup = storage.clone();
-        tokio::spawn(async move {
+        background.spawn(async move {
             use octofhir_auth::storage::sso_session::SsoSessionStorage;
             use octofhir_auth_postgres::PostgresSsoSessionStorage;
 
@@ -1535,13 +1583,15 @@ pub async fn build_app(
     // Build CapabilityStatement at startup (cached for /metadata requests)
     // Reuses the search registry that was already loaded by ReloadableSearchConfig
     let mut capability_statement = handlers::build_capability_statement(
-        &cfg.fhir.version,
+        release,
         &cfg.base_url(),
-        &db_pool,
         &resource_types,
         &search_config.config().registry,
+        &fhir_operations,
+        &operation_handlers,
+        graphql_state.is_some(),
     )
-    .await;
+    .await?;
 
     // Add SMART on FHIR security extensions (oauth-uris) to CapabilityStatement
     if let Ok(base_url) = url::Url::parse(&cfg.base_url())
@@ -1553,6 +1603,21 @@ pub async fn build_app(
 
     let capability_statement = Arc::new(capability_statement);
     tracing::info!("CapabilityStatement built and cached");
+
+    let resource_cache = (cfg.cache.resource_ttl_secs > 0).then(|| {
+        Arc::new(crate::cache::ResourceCache::new(
+            cfg.cache.local_cache_max_entries as u64,
+            std::time::Duration::from_secs(cfg.cache.resource_ttl_secs),
+        ))
+    });
+    if let Some(cache) = &resource_cache {
+        if cfg.redis.enabled {
+            cache.suspend();
+        }
+        let receiver = event_broadcaster.subscribe();
+        let cache = cache.clone();
+        background.spawn(async move { cache.listen(receiver).await });
+    }
 
     // Register hooks for unified event system
     // Hooks run asynchronously with isolation (timeout + panic recovery)
@@ -1663,7 +1728,7 @@ pub async fn build_app(
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let shutdown_handle = Arc::new(shutdown_tx);
 
-        tokio::spawn(async move {
+        background.spawn(async move {
             if let Err(e) = processor.run(shutdown_rx).await {
                 tracing::error!(error = %e, "Subscription delivery processor failed");
             }
@@ -1694,7 +1759,8 @@ pub async fn build_app(
                     .with_pool(redis_pool)
                     .with_broadcaster(event_broadcaster.clone())
                     .with_redis_url(&cfg.redis.url)
-                    .start()
+                    .with_resource_cache(resource_cache.clone())
+                    .start_tracked(&background)
                 {
                     Ok(_handle) => {
                         tracing::info!("Redis event sync enabled for multi-instance deployment");
@@ -1719,7 +1785,7 @@ pub async fn build_app(
     // Start the event dispatcher - subscribes to broadcaster and dispatches to hooks
     let hook_registry = Arc::new(hook_registry);
     let dispatcher = octofhir_core::events::HookDispatcher::new(hook_registry.clone());
-    tokio::spawn(dispatcher.run(event_broadcaster.subscribe()));
+    background.spawn(dispatcher.run(event_broadcaster.subscribe()));
     tracing::info!(
         "Unified event system: {} hooks registered, dispatcher started",
         hook_registry.hook_count().await
@@ -1738,7 +1804,7 @@ pub async fn build_app(
     let state = AppState(Arc::new(AppStateInner {
         storage,
         search_config,
-        fhir_version: cfg.fhir.version.clone(),
+        fhir_version: fhir_version_key.to_string(),
         base_url: cfg.base_url(),
         fhirpath_engine,
         model_provider,
@@ -1762,14 +1828,7 @@ pub async fn build_app(
         auth_cache,
         jwt_cache,
         json_schema_cache: Arc::new(dashmap::DashMap::new()),
-        resource_cache: if cfg.cache.resource_ttl_secs > 0 {
-            Some(Arc::new(crate::cache::ResourceCache::new(
-                cfg.cache.local_cache_max_entries as u64,
-                std::time::Duration::from_secs(cfg.cache.resource_ttl_secs),
-            )))
-        } else {
-            None
-        },
+        resource_cache,
         query_cache: Some(Arc::new(octofhir_search::QueryCache::new(
             cfg.search.cache_capacity,
         ))),
@@ -1787,16 +1846,78 @@ pub async fn build_app(
     }));
 
     // Configure async job executor to handle bulk export and ViewDefinition export jobs
-    let state_for_executor = state.clone();
+    let state_for_executor = Arc::downgrade(&state.0);
     let executor: crate::async_jobs::JobExecutor = Arc::new(
         move |job_id: uuid::Uuid,
               request_type: String,
               _method: String,
               _url: String,
               body: Option<serde_json::Value>| {
-            let state = state_for_executor.clone();
+            let state = state_for_executor.upgrade().map(AppState);
             Box::pin(async move {
+                let state = state.ok_or_else(|| "Server is shutting down".to_owned())?;
                 match request_type.as_str() {
+                    "bundle-transaction" | "bundle-batch" => {
+                        let job = state
+                            .async_job_manager
+                            .get_job(job_id)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        let context = crate::operations::OperationContext::for_job(&state, job_id)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        let auth = context
+                            .auth()
+                            .cloned()
+                            .map(Arc::new)
+                            .unwrap_or_else(|| state.anonymous_auth_context.clone());
+                        let mut headers = axum::http::HeaderMap::new();
+                        if let Some(http) = job
+                            .request_headers
+                            .as_ref()
+                            .and_then(|headers| headers.get("http"))
+                            .and_then(|http| http.as_object())
+                        {
+                            for (name, value) in http {
+                                let Some(value) = value.as_str() else {
+                                    continue;
+                                };
+                                let value = if name == "prefer" {
+                                    value
+                                        .split(',')
+                                        .filter(|part| {
+                                            !part.trim().eq_ignore_ascii_case("respond-async")
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(",")
+                                } else {
+                                    value.to_owned()
+                                };
+                                headers.insert(
+                                    axum::http::HeaderName::from_bytes(name.as_bytes())
+                                        .map_err(|error| error.to_string())?,
+                                    axum::http::HeaderValue::from_str(&value)
+                                        .map_err(|error| error.to_string())?,
+                                );
+                            }
+                        }
+                        let response = crate::handlers::transaction_handler(
+                            axum::extract::State(state.clone()),
+                            axum::Extension(auth),
+                            headers,
+                            axum::Json(body.ok_or("Missing Bundle")?),
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .into_response();
+                        let bytes = axum::body::to_bytes(
+                            response.into_body(),
+                            state.config.search.include_limits.max_bytes,
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?;
+                        serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+                    }
                     "bulk_export" => {
                         // Extract job parameters from body
                         let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
@@ -1827,7 +1948,7 @@ pub async fn build_app(
     state.async_job_manager.set_executor(executor);
     tracing::info!("Async job executor configured for bulk export and ViewDefinition export");
 
-    Ok(build_router(state, body_limit, cfg.server.compression))
+    Ok(build_router(state, body_limit, cfg.server.compression).layer(axum::Extension(owner)))
 }
 
 /// Creates routes for internal administrative resources.
@@ -1856,6 +1977,10 @@ fn internal_resource_routes() -> Router<AppState> {
 }
 
 fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router {
+    let request_timeouts = app_middleware::RequestTimeouts {
+        read: state.config.read_timeout(),
+        write: state.config.write_timeout(),
+    };
     // Build OAuth routes if auth is enabled (these are merged AFTER middleware, as they're public)
     let oauth_routes = build_oauth_routes(&state);
 
@@ -2212,11 +2337,15 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
     // OAuth routes have their own state and are not subject to FHIR content negotiation
     // Note: OAuth routes intentionally bypass auth middleware as they're public
 
-    if let Some(oauth) = oauth_routes {
+    let router = if let Some(oauth) = oauth_routes {
         router.merge(oauth)
     } else {
         router
-    }
+    };
+    router.layer(middleware::from_fn_with_state(
+        request_timeouts,
+        app_middleware::request_timeout_middleware,
+    ))
 }
 
 /// Build OAuth routes.
@@ -2287,30 +2416,59 @@ impl ServerBuilder {
 
     /// Builds the server asynchronously.
     pub async fn build(self) -> Result<OctofhirServer, anyhow::Error> {
-        let app = build_app(&self.config, self.config_manager).await?;
+        let background = crate::lifecycle::BackgroundRuntime::default();
+        let app =
+            build_app_with_runtime(&self.config, self.config_manager, background.clone()).await?;
 
         Ok(OctofhirServer {
             addr: self.addr,
             app,
+            background,
         })
     }
 }
 
 impl OctofhirServer {
     pub async fn run(self) -> anyhow::Result<()> {
+        let shutdown = shutdown_signal()?;
         let listener = tokio::net::TcpListener::bind(self.addr).await?;
         tracing::info!("listening on {}", self.addr);
-        axum::serve(listener, self.app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await?;
+        let background = self.background;
+        let signal_background = background.clone();
+        let result = axum::serve(listener, self.app)
+            .with_graceful_shutdown(async move {
+                shutdown.await;
+                signal_background.stop();
+            })
+            .await;
+        background.stop();
+        background.wait().await;
+        result?;
         Ok(())
     }
 }
 
-async fn shutdown_signal() {
-    // Wait for Ctrl+C
-    let _ = tokio::signal::ctrl_c().await;
-    tracing::info!("shutdown signal received");
+fn shutdown_signal() -> std::io::Result<impl std::future::Future<Output = ()> + Send> {
+    #[cfg(unix)]
+    {
+        let mut interrupt =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        Ok(async move {
+            tokio::select! { _ = interrupt.recv() => {}, _ = terminate.recv() => {} }
+            tracing::info!("shutdown signal received");
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(async {
+            if let Err(error) = tokio::signal::ctrl_c().await {
+                tracing::error!(%error, "Shutdown signal handler failed");
+            }
+            tracing::info!("shutdown signal received");
+        })
+    }
 }
 
 /// Initializes authentication state.
@@ -2395,7 +2553,11 @@ async fn initialize_auth_state(
         revoked_token_storage,
         user_storage,
     )
-    .with_cookie_config(cfg.auth.cookie.clone()))
+    .with_cookie_config(cfg.auth.cookie.clone())
+    .with_audiences(vec![
+        cfg.base_url(),
+        format!("{}/fhir", cfg.base_url().trim_end_matches('/')),
+    ]))
 }
 
 /// Build the `SearchParameter` registry without going through
@@ -2428,19 +2590,13 @@ async fn build_search_registry_fast(
     // a previous config). Pass BOTH forms of the currently-configured
     // version so the SQL filter accepts both kinds of rows yet still
     // rejects rows pinned to a different FHIR version.
-    let short = fhir_version_str.as_str();
-    let long = match short {
-        "R4" | "4.0" | "4.0.1" => "4.0.1",
-        "R4B" | "4.3" | "4.3.0" => "4.3.0",
-        "R5" | "5.0" | "5.0.0" => "5.0.0",
-        "R6" | "6.0" | "6.0.0" => "6.0.0",
-        other => other,
-    };
-    let versions: Vec<&str> = if short == long {
-        vec![short]
-    } else {
-        vec![short, long]
-    };
+    let release: octofhir_core::fhir::FhirVersion =
+        fhir_version_str
+            .parse()
+            .map_err(|error: octofhir_core::error::CoreError| {
+                octofhir_search::LoaderError::QueryError(error.to_string())
+            })?;
+    let versions = [release.release_name(), release.version()];
     let store = PostgresPackageStore::new((*db_pool).clone());
     let rows = store
         .find_resources_by_type_bulk("SearchParameter", Some(&versions))
@@ -2453,16 +2609,50 @@ async fn build_search_registry_fast(
 
     let mut loaded = 0usize;
     let mut skipped = 0usize;
+    let mut parameters = Vec::with_capacity(rows.len());
     for content in rows {
         match parse_search_parameter(&content) {
             Ok(mut param) => {
                 param.element_type_hint =
                     resolve_element_type_for_param_public(&param, model_provider.as_ref()).await;
-                registry.register(param);
+                parameters.push(param);
                 loaded += 1;
             }
             Err(_) => skipped += 1,
         }
+    }
+    registry.register_all(parameters);
+    // Runtime SearchParameters survive restart. Restore live revisions and
+    // deletion markers together; no per-resource fetch is needed.
+    let runtime_table: bool =
+        sqlx_core::query_scalar::query_scalar("SELECT to_regclass('searchparameter') IS NOT NULL")
+            .fetch_one(db_pool.as_ref())
+            .await
+            .map_err(|error| octofhir_search::LoaderError::QueryError(error.to_string()))?;
+    if runtime_table {
+        let revisions: Vec<(String, i64, Option<serde_json::Value>)> = sqlx_core::query_as::query_as(
+            "SELECT id, txid, CASE WHEN status = 'deleted' THEN NULL ELSE resource END FROM searchparameter \
+             UNION ALL SELECT id, txid, NULL::jsonb FROM (\
+                 SELECT DISTINCT ON (h.id) h.id, h.txid FROM searchparameter_history h \
+                 WHERE h.status = 'deleted' AND NOT EXISTS (SELECT 1 FROM searchparameter r WHERE r.id = h.id) \
+                 ORDER BY h.id, h.txid DESC\
+             ) deleted"
+        ).fetch_all(db_pool.as_ref()).await.map_err(|error| octofhir_search::LoaderError::QueryError(error.to_string()))?;
+        let mut runtime = Vec::with_capacity(revisions.len());
+        for (id, version, resource) in revisions {
+            let parameter = match resource {
+                Some(resource) => {
+                    let mut parameter = parse_search_parameter(&resource)?;
+                    parameter.element_type_hint =
+                        resolve_element_type_for_param_public(&parameter, model_provider.as_ref())
+                            .await;
+                    Some(parameter)
+                }
+                None => None,
+            };
+            runtime.push((id, version, parameter));
+        }
+        registry.apply_resources(runtime);
     }
     tracing::info!(
         loaded,
@@ -2475,4 +2665,56 @@ async fn build_search_registry_fast(
         Arc::new(registry),
         options,
     ))
+}
+
+#[cfg(all(test, unix))]
+mod shutdown_tests {
+    use super::shutdown_signal;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    #[tokio::test]
+    async fn termination_and_interrupt_are_graceful() {
+        if std::env::var_os("OCTOFHIR_TEST_SIGNAL_CHILD").is_some() {
+            let shutdown = shutdown_signal().unwrap();
+            println!("SIGNAL_HANDLERS_READY");
+            shutdown.await;
+            return;
+        }
+        for signal in ["-TERM", "-INT"] {
+            let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "server::shutdown_tests::termination_and_interrupt_are_graceful",
+                    "--nocapture",
+                ])
+                .env("OCTOFHIR_TEST_SIGNAL_CHILD", "1")
+                .stdout(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let mut output = BufReader::new(child.stdout.take().unwrap()).lines();
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                while let Some(line) = output.next_line().await.unwrap() {
+                    if line.contains("SIGNAL_HANDLERS_READY") {
+                        return;
+                    }
+                }
+                panic!("Signal fixture exited before registering handlers");
+            })
+            .await
+            .unwrap();
+            let status = tokio::process::Command::new("/bin/kill")
+                .arg(signal)
+                .arg(child.id().unwrap().to_string())
+                .status()
+                .await
+                .unwrap();
+            assert!(status.success());
+            let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(status.success(), "{signal}: {status}");
+        }
+    }
 }

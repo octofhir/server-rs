@@ -271,7 +271,7 @@ impl<'a> IdentityProviderStorage<'a> {
         ) = query_as(
             r#"
             INSERT INTO identityprovider (id, txid, created_at, updated_at, resource, status)
-            VALUES ($1, 1, NOW(), NOW(), $2, 'created')
+            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
@@ -317,7 +317,7 @@ impl<'a> IdentityProviderStorage<'a> {
             r#"
             UPDATE identityprovider
             SET resource = $2,
-                txid = txid + 1,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
@@ -346,7 +346,7 @@ impl<'a> IdentityProviderStorage<'a> {
             r#"
             UPDATE identityprovider
             SET status = 'deleted',
-                txid = txid + 1,
+                txid = nextval('_transaction_txid_seq'),
                 updated_at = NOW()
             WHERE id = $1
               AND status != 'deleted'

@@ -4,7 +4,7 @@
 
 use sqlx_core::sql_str::AssertSqlSafe;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
     time::Instant,
 };
@@ -27,8 +27,8 @@ use octofhir_search::{
     build_native_ir_query_from_params_with_config, fhirpath_to_jsonb_path,
 };
 use octofhir_storage::{
-    IncludeVisibility, RawSearchDebug, RawSearchResult, RawStoredResource, SearchParams,
-    SearchResult, StorageError, StoredResource, TotalMode,
+    IncludeVisibility, ProposedResource, RawSearchDebug, RawSearchResult, RawStoredResource,
+    SearchParams, SearchResult, StorageError, StoredResource, TotalMode,
 };
 
 /// Re-export UnknownParamHandling for convenience.
@@ -38,6 +38,11 @@ use crate::error::is_undefined_table;
 use crate::schema::SchemaManager;
 
 pub use octofhir_storage::IncludeLimits;
+
+mod authorized;
+pub use authorized::{
+    execute_system_search_raw_authorized, execute_system_search_raw_authorized_with_tx,
+};
 
 mod source;
 use source::SearchSource;
@@ -213,6 +218,7 @@ pub async fn execute_search(
                 registry,
                 limits: IncludeLimits::default(),
                 visibility: params.included_visibility.as_ref(),
+                snapshot: None,
             },
         )
         .await?;
@@ -487,6 +493,199 @@ pub async fn execute_system_search_raw_with_tx(
     .await
 }
 
+/// Bounded independent conditional searches on the checked-out primary
+/// connection. Predicates have already had terminology and grants prepared.
+/// No count/include query or pool checkout is permitted here.
+pub async fn execute_conditional_search_batch_with_tx(
+    tx: &mut PgTransaction<'_>,
+    predicates: &[(String, SearchParams)],
+    registry: &Arc<SearchParameterRegistry>,
+) -> Result<Vec<Vec<StoredResource>>, StorageError> {
+    execute_proposed_conditional_search_batch_with_tx(tx, predicates, &[], registry).await
+}
+
+/// A read-only CTE overlay. The original rows are excluded by identity, while
+/// native IR chains and reverse chains see the replaced relations too. No
+/// speculative writes, history, events, temporary tables or schema changes.
+pub async fn execute_proposed_conditional_search_batch_with_tx(
+    tx: &mut PgTransaction<'_>,
+    predicates: &[(String, SearchParams)],
+    proposed: &[ProposedResource],
+    registry: &Arc<SearchParameterRegistry>,
+) -> Result<Vec<Vec<StoredResource>>, StorageError> {
+    let (proposed_types, graph_json) = proposed_conditional_source(proposed)?;
+    let registry = Arc::new(registry.snapshot());
+    type ConditionalRow = (
+        i64,
+        String,
+        String,
+        i64,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        String,
+    );
+    let mut results = vec![Vec::new(); predicates.len()];
+    // Bound statement planning and binds independently of the Bundle size.
+    for (chunk_index, chunk) in predicates.chunks(128).enumerate() {
+        let query = prepare_proposed_conditional_query(
+            chunk,
+            &proposed_types,
+            &graph_json,
+            &registry,
+            None,
+        )
+        .await?;
+        let rows: Vec<ConditionalRow> = query_as(AssertSqlSafe(query.sql.clone()))
+            .bind_all_params_raw(&query.params)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|error| {
+                StorageError::internal(format!("Conditional search failed: {error}"))
+            })?;
+        for (index, resource_json, id, txid, created_at, updated_at, resource_type) in rows {
+            let index = usize::try_from(index)
+                .ok()
+                .filter(|index| *index < chunk.len())
+                .ok_or_else(|| StorageError::internal("Invalid conditional predicate index"))?;
+            let resource = serde_json::from_str(&resource_json)
+                .map_err(|error| StorageError::internal(format!("Invalid stored JSON: {error}")))?;
+            results[chunk_index * 128 + index].push(StoredResource {
+                id,
+                version_id: txid.to_string(),
+                resource_type,
+                resource,
+                created_at: chrono_to_time(created_at),
+                last_updated: chrono_to_time(updated_at),
+            });
+        }
+    }
+    Ok(results)
+}
+
+fn proposed_conditional_source(
+    proposed: &[ProposedResource],
+) -> Result<(BTreeSet<String>, String), StorageError> {
+    let mut identities = HashSet::new();
+    let mut proposed_types = BTreeSet::new();
+    for row in proposed {
+        // Validate all SQL identifiers and graph identities before rendering.
+        octofhir_search::escape_identifier(&row.resource_type.to_lowercase())
+            .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+        if row.id.is_empty() || !identities.insert((&row.resource_type, &row.id)) {
+            return Err(StorageError::invalid_resource(
+                "Duplicate or empty graph identity",
+            ));
+        }
+        if let Some(body) = &row.resource
+            && (body["id"].as_str() != Some(row.id.as_str())
+                || body["resourceType"].as_str() != Some(row.resource_type.as_str()))
+        {
+            return Err(StorageError::invalid_resource(
+                "Proposed graph body identity mismatch",
+            ));
+        }
+        proposed_types.insert(row.resource_type.clone());
+    }
+    let graph_json = serde_json::to_string(proposed)
+        .map_err(|error| StorageError::internal(error.to_string()))?;
+    Ok((proposed_types, graph_json))
+}
+
+async fn prepare_proposed_conditional_query(
+    chunk: &[(String, SearchParams)],
+    proposed_types: &BTreeSet<String>,
+    graph_json: &str,
+    registry: &Arc<SearchParameterRegistry>,
+    candidate_limit: Option<usize>,
+) -> Result<octofhir_search::BuiltQuery, StorageError> {
+    let mut builders = Vec::with_capacity(chunk.len());
+    for (resource_type, params) in chunk {
+        let scoped_params = params.for_resource_type(resource_type);
+        let (converted, _) = prepare_raw_query(
+            resource_type,
+            &scoped_params,
+            registry,
+            None,
+            RawSearchOptions::default(),
+        )
+        .await?;
+        builders.push(converted.builder);
+    }
+    let mut query = if let Some(limit) = candidate_limit {
+        octofhir_search::FhirQueryBuilder::build_conditional_candidate_batch_with_sources(
+            &builders,
+            proposed_types,
+            limit,
+        )
+    } else {
+        octofhir_search::FhirQueryBuilder::build_conditional_batch_with_sources(
+            &builders,
+            proposed_types,
+        )
+    }
+    .map_err(|error| {
+        StorageError::invalid_resource(format!("Invalid conditional search: {error}"))
+    })?;
+    if !proposed_types.is_empty() {
+        let parameter = query.params.len() + 1;
+        let mut ctes = vec![format!(
+            "octofhir_proposed_rows AS MATERIALIZED (SELECT item->>'resource_type' AS resource_type, item->>'id' AS id, item->'resource' AS resource FROM jsonb_array_elements(${parameter}::jsonb) AS item)"
+        )];
+        for resource_type in proposed_types {
+            let table = octofhir_search::escape_identifier(&resource_type.to_lowercase())
+                .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+            let type_literal = resource_type.replace('\'', "''");
+            // Populate the actual table's composite type: installations may
+            // have the optional generated profile column or omit it. Saved
+            // branches retain their real columns and indexes.
+            ctes.push(format!(
+                    "{table} AS NOT MATERIALIZED (SELECT saved.* FROM public.{table} AS saved WHERE NOT EXISTS (SELECT 1 FROM octofhir_proposed_rows AS g WHERE g.resource_type = '{type_literal}' AND g.id = saved.id) UNION ALL SELECT (jsonb_populate_record(NULL::public.{table}, jsonb_build_object('id', g.id, 'txid', COALESCE((g.resource#>>'{{meta,versionId}}')::bigint, txid_current()), 'created_at', octofhir_resource_timestamp(), 'updated_at', COALESCE((g.resource#>>'{{meta,lastUpdated}}')::timestamptz, octofhir_resource_timestamp()), 'resource', g.resource, 'status', 'created', 'profile', to_jsonb(octofhir_meta_profiles(g.resource))))).* FROM octofhir_proposed_rows AS g WHERE g.resource_type = '{type_literal}' AND g.resource IS NOT NULL AND g.resource != 'null'::jsonb)"
+                ));
+        }
+        query.sql = format!("WITH {} {}", ctes.join(", "), query.sql);
+        query.params.push(SqlValue::Json(graph_json.to_owned()));
+    }
+    Ok(query)
+}
+
+/// Identity-only domains, preserving grouped SQL and a lookahead per predicate.
+pub async fn execute_proposed_conditional_candidates_with_tx(
+    tx: &mut PgTransaction<'_>,
+    predicates: &[(String, SearchParams)],
+    proposed: &[ProposedResource],
+    registry: &Arc<SearchParameterRegistry>,
+    max_candidates: usize,
+) -> Result<Vec<Vec<String>>, StorageError> {
+    let (proposed_types, graph_json) = proposed_conditional_source(proposed)?;
+    let registry = Arc::new(registry.snapshot());
+    let mut results = vec![Vec::new(); predicates.len()];
+    for (chunk_index, chunk) in predicates.chunks(128).enumerate() {
+        let query = prepare_proposed_conditional_query(
+            chunk,
+            &proposed_types,
+            &graph_json,
+            &registry,
+            Some(max_candidates),
+        )
+        .await?;
+        let rows: Vec<(i64, String)> = query_as(AssertSqlSafe(query.sql.clone()))
+            .bind_all_params_raw(&query.params)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|error| {
+                StorageError::internal(format!("Conditional candidate search failed: {error}"))
+            })?;
+        for (index, id) in rows {
+            let index = usize::try_from(index)
+                .ok()
+                .filter(|index| *index < chunk.len())
+                .ok_or_else(|| StorageError::internal("Invalid conditional candidate index"))?;
+            results[chunk_index * 128 + index].push(id);
+        }
+    }
+    Ok(results)
+}
+
 async fn execute_system_search_raw_source(
     source: &SearchSource<'_>,
     resource_types: &[&str],
@@ -495,6 +694,8 @@ async fn execute_system_search_raw_source(
     terminology: Option<&Arc<HybridTerminologyProvider>>,
     options: RawSearchOptions,
 ) -> Result<RawSearchResult, StorageError> {
+    let registry_snapshot = Arc::new(registry.snapshot());
+    let registry = &registry_snapshot;
     let prepared = prepare_system_search_params(
         resource_types,
         params,
@@ -517,6 +718,7 @@ async fn execute_system_search_raw_source(
     let mut includes = Vec::new();
     let mut revincludes = Vec::new();
     let mut warnings = Vec::new();
+    let mut ignored_parameters = std::collections::BTreeSet::new();
     for resource_type in types {
         let scoped_params = params.for_resource_type(resource_type);
         let (converted, _) =
@@ -528,6 +730,7 @@ async fn execute_system_search_raw_source(
             revincludes = converted.revincludes;
         }
         warnings.extend(converted.unknown_params.into_iter().map(|p| {
+            ignored_parameters.insert(p.name.clone());
             format!(
                 "Unknown search parameter '{}' was ignored for {resource_type}",
                 p.name
@@ -560,6 +763,7 @@ async fn execute_system_search_raw_source(
     let execute_started = Instant::now();
     let mut result = RawSearchResult {
         warnings,
+        ignored_parameters: ignored_parameters.into_iter().collect(),
         ..Default::default()
     };
     if count_only {
@@ -597,6 +801,7 @@ async fn execute_system_search_raw_source(
                     registry,
                     limits: options.include_limits,
                     visibility: params.included_visibility.as_ref(),
+                    snapshot: None,
                 },
             )
             .await?;
@@ -733,6 +938,9 @@ async fn expand_constraint(
 ) -> Result<(), StorageError> {
     use octofhir_storage::SearchConstraint;
     match constraint {
+        SearchConstraint::LinkedPatient { .. }
+        | SearchConstraint::LinkedPatients { .. }
+        | SearchConstraint::AllPatients { .. } => {}
         SearchConstraint::And(parts) | SearchConstraint::Or(parts) => {
             for part in parts {
                 Box::pin(expand_constraint(
@@ -844,6 +1052,69 @@ async fn prepare_raw_query(
     Ok((converted, build_started))
 }
 
+/// Native history page on the caller's repeatable-read connection. Authorization
+/// and terminology are prepared before checkout; every revision retains its JSON.
+pub async fn execute_history_search_raw_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_types: &[&str],
+    params: &SearchParams,
+    registry: &SearchParameterRegistry,
+    after: Option<(i64, &str, &str)>,
+    count: usize,
+    at: Option<(&str, Option<&str>)>,
+) -> Result<Vec<octofhir_storage::RawHistoryEntry>, StorageError> {
+    let mut builders = Vec::new();
+    for resource_type in resource_types {
+        let (converted, _) = prepare_raw_query(
+            resource_type,
+            &params.for_resource_type(resource_type),
+            registry,
+            None,
+            RawSearchOptions::default(),
+        )
+        .await?;
+        builders.push(converted.builder);
+    }
+    let query = octofhir_search::FhirQueryBuilder::build_history(&builders, count, after, at)
+        .map_err(|error| StorageError::invalid_resource(error.to_string()))?;
+    type Row = (
+        String,
+        String,
+        i64,
+        DateTime<Utc>,
+        DateTime<Utc>,
+        String,
+        String,
+    );
+    let rows: Vec<Row> = query_as(AssertSqlSafe(query.sql))
+        .bind_all_params_raw(&query.params)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|error| StorageError::internal(format!("Scoped history failed: {error}")))?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(resource_json, id, txid, created_at, updated_at, resource_type, status)| {
+                octofhir_storage::RawHistoryEntry {
+                    resource: RawStoredResource {
+                        resource_json,
+                        id,
+                        version_id: txid.to_string(),
+                        resource_type,
+                        created_at: chrono_to_time(created_at),
+                        last_updated: chrono_to_time(updated_at),
+                    },
+                    method: match status.as_str() {
+                        "created" => octofhir_storage::HistoryMethod::Create,
+                        "deleted" => octofhir_storage::HistoryMethod::Delete,
+                        _ => octofhir_storage::HistoryMethod::Update,
+                    },
+                }
+            },
+        )
+        .collect())
+}
+
 async fn execute_search_raw_with_config_inner(
     pool: &PgPool,
     resource_type: &str,
@@ -857,7 +1128,8 @@ async fn execute_search_raw_with_config_inner(
 
     // Use default registry if none provided
     let empty_registry = Arc::new(SearchParameterRegistry::new());
-    let registry_arc = registry.unwrap_or(&empty_registry);
+    let registry_snapshot = registry.map(|registry| Arc::new(registry.snapshot()));
+    let registry_arc = registry_snapshot.as_ref().unwrap_or(&empty_registry);
     let registry = registry_arc.as_ref();
 
     let prepared = prepare_system_search_params(
@@ -886,6 +1158,11 @@ async fn execute_search_raw_with_config_inner(
     }
 
     // Collect unknown parameters as warnings
+    let ignored_parameters = converted
+        .unknown_params
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
     let warnings: Vec<String> = converted
         .unknown_params
         .iter()
@@ -936,6 +1213,7 @@ async fn execute_search_raw_with_config_inner(
             total: Some(total),
             has_more: false,
             warnings,
+            ignored_parameters,
             debug,
         });
     }
@@ -1046,6 +1324,7 @@ async fn execute_search_raw_with_config_inner(
                 registry,
                 limits: options.include_limits,
                 visibility: params.included_visibility.as_ref(),
+                snapshot: None,
             },
         )
         .await?
@@ -1071,6 +1350,7 @@ async fn execute_search_raw_with_config_inner(
         total,
         has_more,
         warnings,
+        ignored_parameters,
         debug,
     })
 }
@@ -1334,6 +1614,7 @@ struct IncludeExecution<'a> {
     registry: &'a SearchParameterRegistry,
     limits: IncludeLimits,
     visibility: Option<&'a IncludeVisibility>,
+    snapshot: Option<&'a octofhir_storage::RawSnapshotPredicate<'a>>,
 }
 
 fn build_inline_query(
@@ -1791,6 +2072,11 @@ async fn resolve_includes_revincludes_raw(
         let mut next = Vec::new();
         while let Some(batch) = pending.try_next().await? {
             for entry in batch {
+                if let Some(predicate) = execution.snapshot
+                    && !predicate(&entry)?
+                {
+                    continue;
+                }
                 if seen.insert((entry.resource_type.clone(), entry.id.clone())) {
                     bytes = bytes.saturating_add(entry.resource_json.len());
                     limits.check(included.len() + 1, bytes)?;

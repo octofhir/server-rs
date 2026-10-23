@@ -18,11 +18,74 @@ use crate::{reference_resolver::StorageReferenceResolver, server::AppState};
 #[async_trait]
 trait ReferenceRead: Send + Sync {
     async fn read(&self, reference: &FhirReference) -> Result<Option<Arc<Value>>, OperationError>;
+
+    async fn read_many(
+        &self,
+        references: &[FhirReference],
+    ) -> Vec<Result<Option<Arc<Value>>, OperationError>> {
+        let mut result = Vec::with_capacity(references.len());
+        for reference in references {
+            result.push(self.read(reference).await);
+        }
+        result
+    }
 }
 
 struct InvocationRead {
     state: AppState,
     context: OperationContext,
+}
+
+struct WriteRead {
+    storage: Arc<StorageReferenceResolver>,
+    candidates: Arc<HashMap<String, Arc<Value>>>,
+}
+
+#[async_trait]
+impl ReferenceRead for WriteRead {
+    async fn read(&self, reference: &FhirReference) -> Result<Option<Arc<Value>>, OperationError> {
+        if let Some(candidate) = self.candidates.get(&reference.to_versioned()) {
+            return Ok(Some(candidate.clone()));
+        }
+        self.storage
+            .fetch_resource(&reference.to_versioned())
+            .await
+            .map_err(|_| OperationError::Internal("Reference integrity lookup failed".into()))
+    }
+
+    async fn read_many(
+        &self,
+        references: &[FhirReference],
+    ) -> Vec<Result<Option<Arc<Value>>, OperationError>> {
+        let unresolved: Vec<_> = references
+            .iter()
+            .filter(|reference| !self.candidates.contains_key(&reference.to_versioned()))
+            .map(FhirReference::to_versioned)
+            .collect();
+        let mut stored = self
+            .storage
+            .fetch_resources_batch(&unresolved)
+            .await
+            .into_iter();
+        references
+            .iter()
+            .map(|reference| {
+                if let Some(candidate) = self.candidates.get(&reference.to_versioned()) {
+                    return Ok(Some(candidate.clone()));
+                }
+                stored
+                    .next()
+                    .unwrap_or_else(|| {
+                        Err(ReferenceError::ServiceUnavailable {
+                            message: "Incomplete reference batch".into(),
+                        })
+                    })
+                    .map_err(|_| {
+                        OperationError::Internal("Reference integrity lookup failed".into())
+                    })
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -61,6 +124,68 @@ pub(crate) struct ValidationReferenceResolver {
 }
 
 impl ValidationReferenceResolver {
+    /// Write integrity reads do not expose target bodies to the caller and do
+    /// not require r in addition to c/u. Their snapshots are checked under the
+    /// write transaction's locks before any changes can commit.
+    pub(crate) fn for_write(state: &AppState, candidate: &Value) -> Self {
+        let candidates = match (candidate["resourceType"].as_str(), candidate["id"].as_str()) {
+            (Some(resource_type), Some(id)) => {
+                HashMap::from([(format!("{resource_type}/{id}"), Arc::new(candidate.clone()))])
+            }
+            _ => HashMap::new(),
+        };
+        Self::for_write_graph(state, Arc::new(candidates))
+    }
+
+    /// Transaction siblings are validated against their proposed bodies. An
+    /// assigned identity alone cannot prove a targetProfile constraint.
+    pub(crate) fn for_write_graph(
+        state: &AppState,
+        candidates: Arc<HashMap<String, Arc<Value>>>,
+    ) -> Self {
+        let base = format!("{}/fhir", state.base_url.trim_end_matches('/'));
+        let storage = Arc::new(StorageReferenceResolver::with_options(
+            state.storage.clone(),
+            base.clone(),
+            state.config.validation.check_target_profile
+                && state.config.validation.fetch_external_references,
+            state.config.validation.reference_fetch_timeout_ms,
+        ));
+        Self {
+            reader: Arc::new(WriteRead {
+                storage: storage.clone(),
+                candidates,
+            }),
+            base,
+            external: storage,
+            snapshots: tokio::sync::Mutex::new(HashMap::new()),
+            error: Mutex::new(None),
+        }
+    }
+
+    pub(crate) async fn write_snapshots(
+        &self,
+        candidate: &Value,
+    ) -> Vec<(FhirReference, Option<Arc<Value>>)> {
+        self.snapshots
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(key, body)| {
+                let reference = parse_reference(key, None).ok()?;
+                // A self-reference uses the proposed body, whose authorization and
+                // persistence are checked by the primary write itself.
+                if reference.version.is_none()
+                    && candidate["resourceType"].as_str() == Some(&reference.resource_type)
+                    && candidate["id"].as_str() == Some(&reference.id)
+                {
+                    return None;
+                }
+                Some((reference, body.clone()))
+            })
+            .collect()
+    }
+
     pub(crate) fn new(state: &AppState, context: &OperationContext) -> Self {
         let base = format!("{}/fhir", state.base_url.trim_end_matches('/'));
         Self {
@@ -107,6 +232,35 @@ impl ValidationReferenceResolver {
         snapshots.insert(key, snapshot.clone());
         Ok(snapshot)
     }
+
+    async fn prefetch(&self, references: &[String]) -> ReferenceResult<()> {
+        let mut snapshots = self.snapshots.lock().await;
+        let mut missing: Vec<_> = references
+            .iter()
+            .filter_map(|reference| {
+                let reference = parse_reference(reference, Some(&self.base)).ok()?;
+                (!snapshots.contains_key(&reference.to_versioned())).then_some(reference)
+            })
+            .collect();
+        missing.sort_by_key(FhirReference::to_versioned);
+        missing.dedup();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let results = self.reader.read_many(&missing).await;
+        if results.len() != missing.len() {
+            return Err(self.failure(OperationError::Internal(
+                "Incomplete reference integrity batch".into(),
+            )));
+        }
+        for (reference, result) in missing.iter().zip(results) {
+            snapshots.insert(
+                reference.to_versioned(),
+                result.map_err(|error| self.failure(error))?,
+            );
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -145,6 +299,48 @@ impl ReferenceResolver for ValidationReferenceResolver {
                 .map_err(|error| self.failure(OperationError::Internal(error.to_string()))),
             Err(_) => Ok(None),
         }
+    }
+
+    async fn fetch_resources_batch(
+        &self,
+        references: &[String],
+    ) -> Vec<ReferenceResult<Option<Arc<Value>>>> {
+        if let Err(error) = self.prefetch(references).await {
+            return references
+                .iter()
+                .map(|_| {
+                    Err(ReferenceError::ServiceUnavailable {
+                        message: error.to_string(),
+                    })
+                })
+                .collect();
+        }
+        let mut result = Vec::with_capacity(references.len());
+        for reference in references {
+            result.push(self.fetch_resource(reference).await);
+        }
+        result
+    }
+
+    async fn resolve_references_batch(
+        &self,
+        references: &[String],
+    ) -> Vec<ReferenceResult<ReferenceResolutionResult>> {
+        if let Err(error) = self.prefetch(references).await {
+            return references
+                .iter()
+                .map(|_| {
+                    Err(ReferenceError::ServiceUnavailable {
+                        message: error.to_string(),
+                    })
+                })
+                .collect();
+        }
+        let mut result = Vec::with_capacity(references.len());
+        for reference in references {
+            result.push(self.resolve_reference(reference).await);
+        }
+        result
     }
 
     // Do not use declared meta.profile as proof of actual conformance: writes

@@ -5,26 +5,40 @@ use std::str::FromStr;
 
 /// FHIR version enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(try_from = "String", into = "String")]
 pub enum FhirVersion {
-    #[serde(rename = "4.1.0")]
     R4,
-    #[serde(rename = "4.3.0")]
     #[default]
     R4B,
-    #[serde(rename = "5.0.0")]
     R5,
-    #[serde(rename = "6.0.0")]
     R6,
+}
+
+impl FhirVersion {
+    /// Stable release key used by the model and schema caches.
+    pub const fn release_name(self) -> &'static str {
+        match self {
+            Self::R4 => "R4",
+            Self::R4B => "R4B",
+            Self::R5 => "R5",
+            Self::R6 => "R6",
+        }
+    }
+
+    /// Version identifier used in FHIR metadata and package manifests.
+    pub const fn version(self) -> &'static str {
+        match self {
+            Self::R4 => "4.0.1",
+            Self::R4B => "4.3.0",
+            Self::R5 => "5.0.0",
+            Self::R6 => "6.0.0",
+        }
+    }
 }
 
 impl fmt::Display for FhirVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FhirVersion::R4B => write!(f, "4.3.0"),
-            FhirVersion::R5 => write!(f, "5.0.0"),
-            FhirVersion::R6 => write!(f, "6.0.0"),
-            &FhirVersion::R4 => write!(f, "4.1.0"),
-        }
+        f.write_str(self.version())
     }
 }
 
@@ -32,15 +46,29 @@ impl FromStr for FhirVersion {
     type Err = CoreError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "4.1.0" | "R4" => Ok(FhirVersion::R4),
-            "4.3.0" | "R4B" => Ok(FhirVersion::R4B),
-            "5.0.0" | "R5" => Ok(FhirVersion::R5),
-            "6.0.0" | "R6" => Ok(FhirVersion::R6),
+        match s.trim().to_ascii_uppercase().as_str() {
+            "4.0.1" | "4.0" | "R4" => Ok(FhirVersion::R4),
+            "4.3.0" | "4.3" | "R4B" => Ok(FhirVersion::R4B),
+            "5.0.0" | "5.0" | "R5" => Ok(FhirVersion::R5),
+            "6.0.0" | "6.0" | "R6" => Ok(FhirVersion::R6),
             _ => Err(CoreError::invalid_resource_type(format!(
                 "Unknown FHIR version: {s}",
             ))),
         }
+    }
+}
+
+impl TryFrom<String> for FhirVersion {
+    type Error = CoreError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl From<FhirVersion> for String {
+    fn from(value: FhirVersion) -> Self {
+        value.to_string()
     }
 }
 
@@ -151,6 +179,7 @@ mod tests {
 
     #[test]
     fn test_fhir_version_display() {
+        assert_eq!(FhirVersion::R4.to_string(), "4.0.1");
         assert_eq!(FhirVersion::R4B.to_string(), "4.3.0");
         assert_eq!(FhirVersion::R5.to_string(), "5.0.0");
     }
@@ -164,6 +193,36 @@ mod tests {
 
         assert!(FhirVersion::from_str("invalid").is_err());
         assert!(FhirVersion::from_str("4.0.0").is_err());
+    }
+
+    #[test]
+    fn fhir_version_aliases_share_canonical_metadata_and_cache_keys() {
+        for (release, name, version, minor) in [
+            (FhirVersion::R4, "R4", "4.0.1", "4.0"),
+            (FhirVersion::R4B, "R4B", "4.3.0", "4.3"),
+            (FhirVersion::R5, "R5", "5.0.0", "5.0"),
+            (FhirVersion::R6, "R6", "6.0.0", "6.0"),
+        ] {
+            assert_eq!(release.release_name(), name);
+            for alias in [
+                name.to_owned(),
+                name.to_ascii_lowercase(),
+                version.into(),
+                minor.into(),
+                format!(" {name} "),
+            ] {
+                assert_eq!(alias.parse::<FhirVersion>().unwrap(), release);
+                let decoded: FhirVersion =
+                    serde_json::from_value(serde_json::json!(alias)).unwrap();
+                assert_eq!(decoded, release);
+                assert_eq!(serde_json::to_value(decoded).unwrap(), version);
+                assert_eq!(decoded.to_string(), version);
+            }
+        }
+        for invalid in ["4.1.0", "4.0.10", "4.0.0", "5.0.0-preview", "", "R7"] {
+            assert!(invalid.parse::<FhirVersion>().is_err());
+            assert!(serde_json::from_value::<FhirVersion>(serde_json::json!(invalid)).is_err());
+        }
     }
 
     #[test]

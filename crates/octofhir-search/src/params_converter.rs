@@ -141,6 +141,8 @@ pub fn build_native_ir_query_from_params_with_config(
     schema: &str,
     config: &SearchConfig,
 ) -> Result<ConvertedQuery, SqlBuilderError> {
+    let registry_snapshot = registry.snapshot();
+    let registry = &registry_snapshot;
     let mut builder = FhirQueryBuilder::new(resource_type, schema).with_alias("r");
 
     // Use SqlBuilder to accumulate conditions, then convert to SearchCondition::Raw
@@ -330,9 +332,26 @@ fn append_parameter_conditions(
             // Convert one `&`-occurrence to ParsedParam (single-value entry,
             // possibly comma-split into multiple ParsedValue for OR).
             let mut parsed = convert_to_parsed_param(key, value_entry);
+            if matches!(
+                parsed.modifier,
+                Some(crate::parameters::SearchModifier::Missing)
+            ) && (parsed.values.is_empty()
+                || parsed.values.iter().any(|value| {
+                    value.prefix.is_some() || !matches!(value.raw.as_str(), "true" | "false")
+                }))
+            {
+                return Err(SqlBuilderError::InvalidSearchValue(format!(
+                    "{key} requires true or false"
+                )));
+            }
 
             // Look up parameter definition in registry
             let Some(param_def) = registry.get(resource_type, &parsed.name) else {
+                if registry.has_declaration(resource_type, &parsed.name) {
+                    return Err(SqlBuilderError::NotImplemented(format!(
+                        "Search parameter '{key}' has no executable definition"
+                    )));
+                }
                 // Unknown parameter - handle based on policy
                 match config.unknown_param_handling {
                     UnknownParamHandling::Strict => {
@@ -360,6 +379,23 @@ fn append_parameter_conditions(
                     "Modifier ':{:?}' is not valid for {} parameter '{}' (type: {:?})",
                     modifier, resource_type, parsed.name, param_def.param_type
                 )));
+            }
+
+            if matches!(
+                parsed.modifier,
+                Some(crate::parameters::SearchModifier::Missing)
+            ) && parsed.values.iter().any(|value| value.raw == "true")
+                && parsed.values.iter().any(|value| value.raw == "false")
+            {
+                // Simplification requires a known executable parameter and valid
+                // modifier. Unknown grant predicates still fail closed.
+                crate::types::reject_unsupported_production_path(
+                    &parsed,
+                    &param_def,
+                    resource_type,
+                )?;
+                sql_builder.add_raw_condition("TRUE");
+                continue;
             }
 
             // Validate prefix compatibility with parameter type.
@@ -451,6 +487,50 @@ fn append_constraint(
     use octofhir_storage::SearchConstraint;
     let start = sql_builder.conditions().len();
     let disjunction = match constraint {
+        SearchConstraint::LinkedPatient {
+            patient_id,
+            fhir_base_url,
+            parameters,
+        } => {
+            append_linked_patient_membership(
+                resource_type,
+                Some(std::slice::from_ref(patient_id)),
+                fhir_base_url,
+                parameters,
+                registry,
+                sql_builder,
+            )?;
+            false
+        }
+        SearchConstraint::LinkedPatients {
+            patient_ids,
+            fhir_base_url,
+            parameters,
+        } => {
+            append_linked_patient_membership(
+                resource_type,
+                Some(patient_ids),
+                fhir_base_url,
+                parameters,
+                registry,
+                sql_builder,
+            )?;
+            false
+        }
+        SearchConstraint::AllPatients {
+            fhir_base_url,
+            parameters,
+        } => {
+            append_linked_patient_membership(
+                resource_type,
+                None,
+                fhir_base_url,
+                parameters,
+                registry,
+                sql_builder,
+            )?;
+            false
+        }
         SearchConstraint::And(children) | SearchConstraint::Or(children) => {
             for child in children {
                 append_constraint(resource_type, child, registry, schema, builder, sql_builder)?;
@@ -504,6 +584,119 @@ fn append_constraint(
     Ok(())
 }
 
+fn append_linked_patient_membership(
+    resource_type: &str,
+    patient_ids: Option<&[String]>,
+    fhir_base_url: &str,
+    parameters: &[String],
+    registry: &SearchParameterRegistry,
+    builder: &mut SqlBuilder,
+) -> Result<(), SqlBuilderError> {
+    use crate::sql_builder::{fhirpath_to_jsonb_paths, paths_to_jsonpath_array};
+    let reference_paths = |owner: &str, names: &[String]| {
+        let mut paths = Vec::new();
+        for name in names {
+            let definition = registry.get(owner, name).ok_or_else(|| {
+                SqlBuilderError::InvalidPath(format!(
+                    "Compartment parameter {owner}.{name} missing"
+                ))
+            })?;
+            if definition.param_type != SearchParameterType::Reference {
+                return Err(SqlBuilderError::InvalidPath(format!(
+                    "Compartment parameter {owner}.{name} is not a reference"
+                )));
+            }
+            let branches = fhirpath_to_jsonb_paths(
+                definition.expression.as_deref().unwrap_or_default(),
+                owner,
+            );
+            if branches.is_empty() {
+                return Err(SqlBuilderError::InvalidPath(format!(
+                    "Compartment expression {owner}.{name} cannot be applied"
+                )));
+            }
+            for mut path in branches {
+                path.push("reference".into());
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+        Ok(paths_to_jsonpath_array(&paths))
+    };
+    let base = builder.add_text_param(fhir_base_url.trim_end_matches('/'));
+    let alternate = fhir_base_url
+        .strip_prefix("http://")
+        .map(|rest| format!("https://{rest}"))
+        .or_else(|| {
+            fhir_base_url
+                .strip_prefix("https://")
+                .map(|rest| format!("http://{rest}"))
+        });
+    let mut aliases = vec![
+        "'Patient/' || m.id".to_string(),
+        format!("${base} || '/Patient/' || m.id"),
+    ];
+    let mut prefixes = vec!["'Patient/'".to_string(), format!("${base} || '/Patient/'")];
+    if let Some(alternate) = alternate {
+        let parameter = builder.add_text_param(alternate.trim_end_matches('/'));
+        aliases.push(format!("${parameter} || '/Patient/' || m.id"));
+        prefixes.push(format!("${parameter} || '/Patient/'"));
+    }
+    let aliases = format!("ARRAY[{}]", aliases.join(", "));
+    // UNION deduplicates identities, so cycles terminate without truncating
+    // valid membership at an arbitrary traversal depth. Incoming links are
+    // directed: A -> B puts A's records in B's compartment, not vice versa.
+    let closure = if let Some(patient_ids) = patient_ids {
+        let links = reference_paths("Patient", &["link".into()])?;
+        let patient = builder.add_json_param(
+            serde_json::to_string(patient_ids)
+                .map_err(|error| SqlBuilderError::InvalidSearchValue(error.to_string()))?,
+        );
+        format!(
+            "WITH RECURSIVE members(id) AS (SELECT jsonb_array_elements_text(${patient}::jsonb) UNION \
+             SELECT p.id FROM \"patient\" p JOIN members m \
+             ON fhir_extract_ref(p.resource, {links}) && {aliases} \
+             WHERE p.status != 'deleted')"
+        )
+    } else {
+        "WITH members(id) AS (SELECT id FROM \"patient\" WHERE status != 'deleted')".into()
+    };
+    let col = builder.resource_column();
+    let predicate = if resource_type == "Patient" {
+        let alias = col.strip_suffix(".resource").ok_or_else(|| {
+            SqlBuilderError::InvalidIdentifier(
+                "Patient membership requires a resource alias".into(),
+            )
+        })?;
+        format!("{alias}.id IN ({closure} SELECT id FROM members)")
+    } else if parameters.is_empty() {
+        "FALSE".into()
+    } else {
+        let paths = reference_paths(resource_type, parameters)?;
+        if patient_ids.is_none() {
+            // All-patient exports must not aggregate the whole population into
+            // one array. Each literal reference resolves via the Patient PK.
+            let identity = prefixes.iter().map(|prefix| format!(
+                "WHEN starts_with(refs.reference, {prefix}) THEN substr(refs.reference, length({prefix}) + 1)"
+            )).collect::<Vec<_>>().join(" ");
+            format!(
+                "EXISTS (SELECT 1 FROM unnest(fhir_extract_ref({col}, {paths})) AS refs(reference) \
+                 JOIN \"patient\" m ON m.id = CASE {identity} ELSE NULL END \
+                 WHERE m.status != 'deleted' AND refs.reference = ANY({aliases}))"
+            )
+        } else {
+            format!(
+                "fhir_extract_ref({col}, {paths}) && ({closure} \
+                 SELECT COALESCE(array_agg(reference), ARRAY[]::text[]) FROM members m \
+                 CROSS JOIN LATERAL unnest({aliases}) AS refs(reference))"
+            )
+        }
+    };
+    builder.add_raw_condition(predicate);
+    Ok(())
+}
+
 /// Check if a parameter is a control parameter.
 fn is_control_param(name: &str) -> bool {
     CONTROL_PARAMS.contains(&name) || is_include_parameter(name) || is_revinclude_parameter(name)
@@ -526,6 +719,15 @@ pub fn validate_system_search_parameters(
             .iter()
             .filter_map(|rtype| registry.get(rtype, name))
             .collect();
+        if definitions.is_empty()
+            && resource_types
+                .iter()
+                .any(|rtype| registry.has_declaration(rtype, name))
+        {
+            return Err(SqlBuilderError::NotImplemented(format!(
+                "Search parameter '{key}' has no executable definition"
+            )));
+        }
         let shared = definitions.len() == resource_types.len()
             && definitions.iter().all(|definition| {
                 definition.base.iter().any(|base| matches!(base.as_str(), "Resource" | "DomainResource"))
@@ -1121,6 +1323,32 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
+    fn declared_but_unimplemented_filters_are_not_silently_ignored() {
+        let registry = representative_registry();
+        registry.register(SearchParameter::new(
+            "documented",
+            "http://example.org/documented",
+            SearchParameterType::String,
+            vec!["Patient".into()],
+        ));
+        let params = SearchParams::new().with_param("documented", "value");
+        let error = build_native_ir_query_from_params_with_config(
+            "Patient",
+            &params,
+            &registry,
+            "public",
+            &SearchConfig {
+                unknown_param_handling: UnknownParamHandling::Lenient,
+                collect_debug_plan: false,
+            },
+        )
+        .err()
+        .expect("a declared but unimplemented filter must fail even in lenient mode");
+        assert!(matches!(error, SqlBuilderError::NotImplemented(_)));
+        assert!(validate_system_search_parameters(&["Patient"], &params, &registry).is_err());
+    }
+
+    #[test]
     fn aggregate_criteria_must_be_shared_but_type_grants_need_not_be() {
         use octofhir_storage::SearchConstraint;
         let registry = representative_registry();
@@ -1168,7 +1396,8 @@ mod tests {
                 SearchParameterType::String,
                 types.iter().map(|rtype| (*rtype).into()).collect(),
             )
-            .with_expression("name"),
+            .with_expression("name")
+            .with_user_defined(true),
         );
         assert!(validate_system_search_parameters(&types, &params, &registry).is_ok());
         // Unknown criteria are still handled by the native strict/lenient converter.
@@ -2108,6 +2337,58 @@ mod tests {
             rendered_params.contains("1975-01-01T00:00:00Z")
                 && rendered_params.contains("2005-01-01T00:00:00Z"),
             "date bounds should be bound independently per OR value, params: {rendered_params}"
+        );
+    }
+
+    #[test]
+    fn missing_booleans_preserve_or_and_reject_invalid_values() {
+        let registry = date_registry_with_expression();
+        for query in [
+            "birthdate:missing=invalid",
+            "birthdate:missing=TRUE",
+            "birthdate:missing=1",
+            "birthdate:missing=true,invalid",
+            "birthdate:missing=eqtrue",
+        ] {
+            let params = parse_query_string(query, 10, 100);
+            assert!(
+                build_native_ir_query_from_params("Patient", &params, &registry, "public").is_err(),
+                "{query}"
+            );
+        }
+        let params = parse_query_string("birthdate:missing=true,false", 10, 100);
+        let built = build_native_ir_query_from_params("Patient", &params, &registry, "public")
+            .unwrap()
+            .builder
+            .build()
+            .unwrap();
+        assert!(built.sql.contains("TRUE"), "{}", built.sql);
+        assert!(
+            !built.sql.contains("fhir_extract_date_min"),
+            "{}",
+            built.sql
+        );
+        let params = parse_query_string("birthdate:missing=true&birthdate:missing=false", 10, 100);
+        let built = build_native_ir_query_from_params("Patient", &params, &registry, "public")
+            .unwrap()
+            .builder
+            .build()
+            .unwrap();
+        assert!(
+            built.sql.contains("IS NULL") && built.sql.contains("IS NOT NULL"),
+            "{}",
+            built.sql
+        );
+        let params = parse_query_string("unknown:missing=true,false", 10, 100);
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Strict,
+            ..Default::default()
+        };
+        assert!(
+            build_native_ir_query_from_params_with_config(
+                "Patient", &params, &registry, "public", &config
+            )
+            .is_err()
         );
     }
 

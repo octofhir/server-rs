@@ -182,15 +182,12 @@ pub async fn oidc_logout_handler(
     // Step 1: Determine client_id from id_token_hint or explicit parameter
     let client_id = match extract_client_id(&state, &params).await {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return *error_response,
     };
 
     // Step 2: Validate post_logout_redirect_uri if provided
     let redirect_uri =
-        match validate_post_logout_redirect_uri(&state, &params, client_id.as_deref()).await {
-            Ok(uri) => uri,
-            Err(error_response) => return error_response,
-        };
+        validate_post_logout_redirect_uri(&state, &params, client_id.as_deref()).await;
 
     // Step 3: Revoke SSO session (from cookie)
     if let Some(session_token) = extract_sso_cookie(&headers, &state.session_config) {
@@ -290,7 +287,7 @@ pub async fn oidc_logout_handler(
 async fn extract_client_id(
     state: &LogoutState,
     params: &OidcLogoutParams,
-) -> Result<Option<String>, Response> {
+) -> Result<Option<String>, Box<Response>> {
     // If id_token_hint is provided, decode it to get the audience (client_id)
     let token_client_id = if let Some(ref id_token) = params.id_token_hint {
         match decode_id_token_hint(state, id_token).await {
@@ -316,10 +313,10 @@ async fn extract_client_id(
                 token_audience = %token_aud,
                 "client_id does not match id_token_hint audience"
             );
-            return Err(logout_error_response(
+            return Err(Box::new(logout_error_response(
                 "invalid_request",
                 "client_id does not match id_token_hint audience",
-            ));
+            )));
         }
         return Ok(Some(explicit_client_id.clone()));
     }
@@ -334,10 +331,10 @@ async fn validate_post_logout_redirect_uri(
     state: &LogoutState,
     params: &OidcLogoutParams,
     client_id: Option<&str>,
-) -> Result<Option<String>, Response> {
+) -> Option<String> {
     let Some(ref redirect_uri) = params.post_logout_redirect_uri else {
         // No redirect URI requested - that's fine
-        return Ok(None);
+        return None;
     };
 
     let Some(client_id) = client_id else {
@@ -348,7 +345,7 @@ async fn validate_post_logout_redirect_uri(
             "post_logout_redirect_uri provided but no client_id to validate against"
         );
         // Don't error - just don't redirect
-        return Ok(None);
+        return None;
     };
 
     // Look up the client
@@ -356,11 +353,11 @@ async fn validate_post_logout_redirect_uri(
         Ok(Some(client)) => client,
         Ok(None) => {
             warn!(client_id = %client_id, "Client not found for logout redirect validation");
-            return Ok(None);
+            return None;
         }
         Err(e) => {
             warn!(error = %e, client_id = %client_id, "Failed to lookup client for logout");
-            return Ok(None);
+            return None;
         }
     };
 
@@ -371,7 +368,7 @@ async fn validate_post_logout_redirect_uri(
             redirect_uri = %redirect_uri,
             "post_logout_redirect_uri validated successfully"
         );
-        Ok(Some(redirect_uri.clone()))
+        Some(redirect_uri.clone())
     } else {
         warn!(
             client_id = %client_id,
@@ -380,7 +377,7 @@ async fn validate_post_logout_redirect_uri(
             "post_logout_redirect_uri not registered for client"
         );
         // Per spec, we MUST NOT redirect to unregistered URIs
-        Ok(None)
+        None
     }
 }
 

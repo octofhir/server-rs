@@ -540,13 +540,28 @@ impl PostgresPackageStore {
                 })
             })?;
 
-        // Warm-DB fast path: query pg_class once to find which main tables
-        // already exist. Skip per-resource raw_sql for types whose schema is
-        // already in place.
+        // Warm-DB fast path: skip tables only when the write gate is enabled
+        // and the history table exists where one is kept. Re-ensure older
+        // schemas even when automatic migrations are disabled, so conditional
+        // writes cannot race an unprotected legacy table.
         let existing_main: std::collections::HashSet<String> =
             match sqlx_core::query_as::query_as::<_, (String,)>(
-                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
+                "SELECT tablename FROM pg_tables p WHERE schemaname = 'public' AND EXISTS (
+                    SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = format('public.%I', p.tablename)::regclass
+                      AND t.tgname = 'octofhir_write_gate' AND NOT t.tgisinternal
+                      AND t.tgenabled IN ('O', 'A')
+                ) AND EXISTS (
+                    SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid
+                    WHERE t.tgrelid = format('public.%I', p.tablename)::regclass
+                      AND f.proname = 'octofhir_set_resource_metadata'
+                      AND t.tgenabled IN ('O', 'A') AND (t.tgtype & 4) != 0
+                ) AND (
+                    p.tablename = ANY($1)
+                    OR to_regclass(format('public.%I', p.tablename || '_history')) IS NOT NULL
+                )",
             )
+            .bind(SchemaManager::HISTORYLESS_TABLES)
             .fetch_all(&self.pool)
             .await
             {
@@ -579,7 +594,16 @@ impl PostgresPackageStore {
         // Parallelize schema creation. Each call now issues one round-trip
         // (multi-statement DDL via raw_sql). Concurrency is bounded so we
         // don't exhaust the pool — leave headroom for the rest of bootstrap.
-        let concurrency = std::cmp::min(need_create.len(), 16);
+        // Startup also loads search parameters, policies and auth state from
+        // this pool. A fixed limit of 16 exhausts smaller pools and can make
+        // those independent queries time out behind cold-schema DDL.
+        let ddl_slots = self
+            .pool
+            .options()
+            .get_max_connections()
+            .saturating_sub(2)
+            .max(1);
+        let concurrency = need_create.len().min(16).min(ddl_slots as usize);
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
         let mut set = tokio::task::JoinSet::new();
 
@@ -674,7 +698,11 @@ impl PostgresPackageStore {
                 content = EXCLUDED.content,
                 content_hash = EXCLUDED.content_hash,
                 created_at = NOW()
-            WHERE fcm.fhirschemas.content_hash != EXCLUDED.content_hash
+            WHERE (fcm.fhirschemas.content_hash, fcm.fhirschemas.fhir_version,
+                   fcm.fhirschemas.schema_type, fcm.fhirschemas.version)
+                IS DISTINCT FROM
+                  (EXCLUDED.content_hash, EXCLUDED.fhir_version,
+                   EXCLUDED.schema_type, EXCLUDED.version)
             "#,
         )
         .bind(url)
@@ -769,7 +797,11 @@ impl PostgresPackageStore {
                 content = EXCLUDED.content,
                 content_hash = EXCLUDED.content_hash,
                 created_at = NOW()
-            WHERE fcm.fhirschemas.content_hash != EXCLUDED.content_hash
+            WHERE (fcm.fhirschemas.content_hash, fcm.fhirschemas.fhir_version,
+                   fcm.fhirschemas.schema_type, fcm.fhirschemas.version)
+                IS DISTINCT FROM
+                  (EXCLUDED.content_hash, EXCLUDED.fhir_version,
+                   EXCLUDED.schema_type, EXCLUDED.version)
             "#,
         )
         .bind(&owned_urls)
@@ -1022,6 +1054,26 @@ impl PostgresPackageStore {
         .await
         .map_err(db_error)?;
         Ok(count)
+    }
+
+    /// Count schemas usable by a particular model release. Legacy caches keyed
+    /// by a numeric version must be converted again using the canonical key;
+    /// their presence must not suppress creation of the schemas the model loads.
+    pub async fn count_fhirschemas_for_package_version(
+        &self,
+        package_name: &str,
+        package_version: &str,
+        fhir_version: &str,
+    ) -> Result<i64, FcmError> {
+        query_scalar(
+            "SELECT CASE WHEN bool_and(fhir_version = $3) THEN COUNT(*) ELSE 0 END FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2",
+        )
+        .bind(package_name)
+        .bind(package_version)
+        .bind(fhir_version)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_error)
     }
 
     /// Delete all FHIRSchemas for a specific package.
@@ -1350,7 +1402,7 @@ impl PostgresPackageStore {
             Some(versions) if !versions.is_empty() => {
                 let owned: Vec<String> = versions.iter().map(|s| s.to_string()).collect();
                 query_scalar(
-                    "SELECT content FROM fcm.resources WHERE resource_type = $1 AND fhir_version = ANY($2)",
+                    "SELECT r.content FROM fcm.resources r JOIN fcm.packages p ON p.name = r.package_name AND p.version = r.package_version WHERE r.resource_type = $1 AND r.fhir_version = ANY($2) ORDER BY r.url, p.priority ASC NULLS FIRST, r.version NULLS FIRST, r.package_name, r.package_version, r.content_hash",
                 )
                 .bind(resource_type)
                 .bind(&owned)
@@ -1358,7 +1410,7 @@ impl PostgresPackageStore {
                 .await
                 .map_err(db_error)?
             }
-            _ => query_scalar("SELECT content FROM fcm.resources WHERE resource_type = $1")
+            _ => query_scalar("SELECT r.content FROM fcm.resources r JOIN fcm.packages p ON p.name = r.package_name AND p.version = r.package_version WHERE r.resource_type = $1 ORDER BY r.url, p.priority ASC NULLS FIRST, r.version NULLS FIRST, r.package_name, r.package_version, r.content_hash")
                 .bind(resource_type)
                 .fetch_all(&self.pool)
                 .await

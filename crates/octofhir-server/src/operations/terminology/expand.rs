@@ -10,6 +10,8 @@
 //! - Type: `GET/POST /ValueSet/$expand` with url parameter
 //! - Instance: `GET/POST /ValueSet/{id}/$expand`
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use chrono::Utc;
 use regex::RegexBuilder;
@@ -911,6 +913,10 @@ impl Default for ExpandOperation {
 
 #[async_trait]
 impl OperationHandler for ExpandOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        level == OperationLevel::System || resource_type == Some("ValueSet")
+    }
+
     fn code(&self) -> &str {
         "expand"
     }

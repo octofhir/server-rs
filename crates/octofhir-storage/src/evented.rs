@@ -19,16 +19,52 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use octofhir_core::events::{EventBroadcaster, ResourceEvent};
+use octofhir_core::events::{EventBroadcaster, ResourceEvent, ResourceEventType};
 use serde_json::Value;
 use tracing::trace;
 
 use crate::error::StorageError;
 use crate::traits::{FhirStorage, Transaction};
 use crate::types::{
-    HistoryParams, HistoryResult, IncludeLimits, RawHistoryResult, RawSearchResult,
-    RawStoredResource, SearchParams, SearchResult, StoredResource,
+    HistoryParams, HistoryResult, IncludeLimits, ProposedResource, RawHistoryResult,
+    RawSearchResult, RawStoredResource, SearchParams, SearchResult, StoredResource,
 };
+
+fn snapshot_event(
+    event_type: ResourceEventType,
+    snapshot: &StoredResource,
+    previous: Option<&StoredResource>,
+) -> ResourceEvent {
+    let mut event = ResourceEvent::new(
+        event_type,
+        &snapshot.resource_type,
+        &snapshot.id,
+        Some(Arc::new(snapshot.resource.clone())),
+    );
+    event.version_id = snapshot.version_id.parse().ok();
+    event.timestamp = snapshot.last_updated;
+    event.previous_resource = previous.map(|row| Arc::new(row.resource.clone()));
+    event
+}
+
+fn raw_snapshot_event(
+    event_type: ResourceEventType,
+    snapshot: &RawStoredResource,
+    previous: Option<&StoredResource>,
+) -> Result<ResourceEvent, StorageError> {
+    let resource = serde_json::from_str(&snapshot.resource_json)
+        .map_err(|error| StorageError::internal(format!("Invalid stored event JSON: {error}")))?;
+    let mut event = ResourceEvent::new(
+        event_type,
+        &snapshot.resource_type,
+        &snapshot.id,
+        Some(resource),
+    );
+    event.version_id = snapshot.version_id.parse().ok();
+    event.timestamp = snapshot.last_updated;
+    event.previous_resource = previous.map(|row| Arc::new(row.resource.clone()));
+    Ok(event)
+}
 
 /// A storage wrapper that emits events after successful CRUD operations.
 ///
@@ -59,77 +95,26 @@ impl<S: FhirStorage> EventedStorage<S> {
     pub fn broadcaster(&self) -> &Arc<EventBroadcaster> {
         &self.broadcaster
     }
-
-    fn emit_created(&self, resource_type: &str, resource_id: &str, resource: &Value) {
-        if self.broadcaster.subscriber_count() == 0 {
-            return;
-        }
-        let count = self
-            .broadcaster
-            .send_created(resource_type, resource_id, resource.clone());
-        trace!(
-            resource_type = %resource_type,
-            resource_id = %resource_id,
-            subscribers = count,
-            "Emitted ResourceCreated event"
-        );
-    }
-
-    fn emit_updated(&self, resource_type: &str, resource_id: &str, resource: &Value) {
-        if self.broadcaster.subscriber_count() == 0 {
-            return;
-        }
-        let count = self
-            .broadcaster
-            .send_updated(resource_type, resource_id, resource.clone());
-        trace!(
-            resource_type = %resource_type,
-            resource_id = %resource_id,
-            subscribers = count,
-            "Emitted ResourceUpdated event"
-        );
-    }
-
-    fn emit_deleted(&self, resource_type: &str, resource_id: &str) {
-        if self.broadcaster.subscriber_count() == 0 {
-            return;
-        }
-        let count = self.broadcaster.send_deleted(resource_type, resource_id);
-        trace!(
-            resource_type = %resource_type,
-            resource_id = %resource_id,
-            subscribers = count,
-            "Emitted ResourceDeleted event"
-        );
-    }
 }
 
 #[async_trait]
 impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
         let result = self.inner.create(resource).await?;
-
-        // Emit event after successful create
-        let resource_type = result
-            .resource
-            .get("resourceType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown");
-        self.emit_created(resource_type, &result.id, &result.resource);
-
+        self.broadcaster
+            .send_resource(snapshot_event(ResourceEventType::Created, &result, None));
         Ok(result)
     }
 
     async fn create_raw(&self, resource: &Value) -> Result<RawStoredResource, StorageError> {
         let result = self.inner.create_raw(resource).await?;
-
-        // Emit event only if there are subscribers (avoids JSON parse overhead)
-        if self.broadcaster.subscriber_count() > 0
-            && let Ok(value) = serde_json::from_str::<Value>(&result.resource_json)
-        {
-            self.emit_created(&result.resource_type, &result.id, &value);
+        if self.broadcaster.subscriber_count() > 0 {
+            self.broadcaster.send_resource(raw_snapshot_event(
+                ResourceEventType::Created,
+                &result,
+                None,
+            )?);
         }
-
         Ok(result)
     }
 
@@ -189,16 +174,9 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        let result = self.inner.update(resource, if_match).await?;
-
-        // Emit event after successful update
-        let resource_type = result
-            .resource
-            .get("resourceType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown");
-        self.emit_updated(resource_type, &result.id, &result.resource);
-
+        let mut tx = self.begin_transaction().await?;
+        let result = tx.update(resource, if_match).await?;
+        tx.commit().await?;
         Ok(result)
     }
 
@@ -207,25 +185,35 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<RawStoredResource, StorageError> {
-        let result = self.inner.update_raw(resource, if_match).await?;
-
-        // Emit event only if there are subscribers (avoids JSON parse overhead)
-        if self.broadcaster.subscriber_count() > 0
-            && let Ok(value) = serde_json::from_str::<Value>(&result.resource_json)
-        {
-            self.emit_updated(&result.resource_type, &result.id, &value);
-        }
-
+        let mut tx = self.begin_transaction().await?;
+        let result = tx.update_raw(resource, if_match).await?;
+        tx.commit().await?;
         Ok(result)
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        self.inner.delete(resource_type, id).await?;
+        let mut tx = self.begin_transaction().await?;
+        tx.delete(resource_type, id).await?;
+        tx.commit().await
+    }
 
-        // Emit event after successful delete
-        self.emit_deleted(resource_type, id);
+    async fn current_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
+        self.inner.current_snapshot(resource_type, id).await
+    }
 
-        Ok(())
+    async fn version_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
+        self.inner
+            .version_snapshot(resource_type, id, version)
+            .await
     }
 
     async fn vread(
@@ -339,6 +327,46 @@ impl EventedTransaction {
 
 #[async_trait]
 impl Transaction for EventedTransaction {
+    async fn current_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
+        self.inner.current_snapshot(resource_type, id).await
+    }
+
+    async fn version_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
+        self.inner
+            .version_snapshot(resource_type, id, version)
+            .await
+    }
+
+    async fn vread(
+        &self,
+        resource_type: &str,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<StoredResource>, StorageError> {
+        self.inner.vread(resource_type, id, version).await
+    }
+
+    async fn save_async_job_checkpoint(
+        &mut self,
+        job_id: uuid::Uuid,
+        execution_id: uuid::Uuid,
+        key: Option<&str>,
+        result: &Value,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .save_async_job_checkpoint(job_id, execution_id, key, result)
+            .await
+    }
+
     async fn commit(self: Box<Self>) -> Result<(), StorageError> {
         // Destructure self to get ownership of all fields
         let EventedTransaction {
@@ -365,36 +393,23 @@ impl Transaction for EventedTransaction {
         self.inner.rollback().await
     }
 
+    async fn lock_conditional_writes(&mut self) -> Result<(), StorageError> {
+        self.inner.lock_conditional_writes().await
+    }
+
     async fn create(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
         let result = self.inner.create(resource).await?;
-
-        // Queue event for emission on commit
-        let resource_type = result
-            .resource
-            .get("resourceType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown")
-            .to_string();
-        self.queue_event(ResourceEvent::created(
-            resource_type,
-            &result.id,
-            result.resource.clone(),
-        ));
-
+        self.queue_event(snapshot_event(ResourceEventType::Created, &result, None));
         Ok(result)
     }
 
     async fn create_raw(&mut self, resource: &Value) -> Result<RawStoredResource, StorageError> {
         let result = self.inner.create_raw(resource).await?;
-        if self.broadcaster.subscriber_count() > 0
-            && let Ok(value) = serde_json::from_str::<Value>(&result.resource_json)
-        {
-            self.queue_event(ResourceEvent::created(
-                &result.resource_type,
-                &result.id,
-                value,
-            ));
-        }
+        self.queue_event(raw_snapshot_event(
+            ResourceEventType::Created,
+            &result,
+            None,
+        )?);
         Ok(result)
     }
 
@@ -403,21 +418,20 @@ impl Transaction for EventedTransaction {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        let result = self.inner.update(resource, if_match).await?;
+        Ok(self.update_with_snapshot(resource, if_match).await?.stored)
+    }
 
-        // Queue event for emission on commit
-        let resource_type = result
-            .resource
-            .get("resourceType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown")
-            .to_string();
-        self.queue_event(ResourceEvent::updated(
-            resource_type,
-            &result.id,
-            result.resource.clone(),
+    async fn update_with_snapshot(
+        &mut self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<crate::UpdatedResource, StorageError> {
+        let result = self.inner.update_with_snapshot(resource, if_match).await?;
+        self.queue_event(snapshot_event(
+            ResourceEventType::Updated,
+            &result.stored,
+            Some(&result.previous),
         ));
-
         Ok(result)
     }
 
@@ -426,25 +440,19 @@ impl Transaction for EventedTransaction {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<RawStoredResource, StorageError> {
-        let result = self.inner.update_raw(resource, if_match).await?;
-        if self.broadcaster.subscriber_count() > 0
-            && let Ok(value) = serde_json::from_str::<Value>(&result.resource_json)
-        {
-            self.queue_event(ResourceEvent::updated(
-                &result.resource_type,
-                &result.id,
-                value,
-            ));
-        }
-        Ok(result)
+        let result = self.update_with_snapshot(resource, if_match).await?.stored;
+        Ok(RawStoredResource {
+            resource_json: result.resource.to_string(),
+            id: result.id,
+            version_id: result.version_id,
+            resource_type: result.resource_type,
+            last_updated: result.last_updated,
+            created_at: result.created_at,
+        })
     }
 
     async fn delete(&mut self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        self.inner.delete(resource_type, id).await?;
-
-        // Queue event for emission on commit
-        self.queue_event(ResourceEvent::deleted(resource_type, id));
-
+        self.delete_batch(resource_type, &[id.to_owned()]).await?;
         Ok(())
     }
 
@@ -471,6 +479,42 @@ impl Transaction for EventedTransaction {
         self.inner.read_for_update(resource_type, id).await
     }
 
+    async fn read_many_for_update(
+        &self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<Vec<StoredResource>, StorageError> {
+        self.inner.read_many_for_update(resource_type, ids).await
+    }
+
+    async fn lock_references(
+        &mut self,
+        groups: &[(String, Vec<String>)],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        self.inner.lock_references(groups).await
+    }
+
+    async fn lock_reference_snapshot(
+        &mut self,
+        reference: &octofhir_core::FhirReference,
+    ) -> Result<Option<Value>, StorageError> {
+        self.inner.lock_reference_snapshot(reference).await
+    }
+
+    async fn lock_reference_versions(
+        &mut self,
+        references: &[octofhir_core::FhirReference],
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        self.inner.lock_reference_versions(references).await
+    }
+
+    async fn lock_reference_snapshots(
+        &mut self,
+        references: &[octofhir_core::FhirReference],
+    ) -> Result<std::collections::HashMap<String, Value>, StorageError> {
+        self.inner.lock_reference_snapshots(references).await
+    }
+
     async fn search(
         &self,
         resource_type: &str,
@@ -491,20 +535,68 @@ impl Transaction for EventedTransaction {
             .await
     }
 
+    async fn search_system_raw_authorized(
+        &self,
+        resource_types: &[&str],
+        params: &SearchParams,
+        include_limits: IncludeLimits,
+        strict: bool,
+        authorization: crate::RawSearchAuthorization<'_>,
+    ) -> Result<RawSearchResult, StorageError> {
+        self.inner
+            .search_system_raw_authorized(
+                resource_types,
+                params,
+                include_limits,
+                strict,
+                authorization,
+            )
+            .await
+    }
+
+    async fn search_conditional_batch(
+        &self,
+        predicates: &[(String, SearchParams)],
+    ) -> Result<Vec<Vec<StoredResource>>, StorageError> {
+        self.inner.search_conditional_batch(predicates).await
+    }
+
+    async fn reserve_write_metadata(
+        &mut self,
+        planned: Option<&crate::TransactionWriteMetadata>,
+    ) -> Result<crate::TransactionWriteMetadata, StorageError> {
+        self.inner.reserve_write_metadata(planned).await
+    }
+
+    async fn search_proposed_conditional_batch(
+        &self,
+        predicates: &[(String, SearchParams)],
+        proposed: &[ProposedResource],
+    ) -> Result<Vec<Vec<StoredResource>>, StorageError> {
+        self.inner
+            .search_proposed_conditional_batch(predicates, proposed)
+            .await
+    }
+
+    async fn search_proposed_conditional_candidates(
+        &self,
+        predicates: &[(String, SearchParams)],
+        proposed: &[ProposedResource],
+        max_candidates: usize,
+    ) -> Result<Vec<Vec<String>>, StorageError> {
+        self.inner
+            .search_proposed_conditional_candidates(predicates, proposed, max_candidates)
+            .await
+    }
+
     async fn create_batch(
         &mut self,
         resource_type: &str,
         resources: &[Value],
     ) -> Result<Vec<StoredResource>, StorageError> {
         let stored = self.inner.create_batch(resource_type, resources).await?;
-        for s in &stored {
-            let rt = s
-                .resource
-                .get("resourceType")
-                .and_then(|v| v.as_str())
-                .unwrap_or(resource_type)
-                .to_string();
-            self.queue_event(ResourceEvent::created(rt, &s.id, s.resource.clone()));
+        for snapshot in &stored {
+            self.queue_event(snapshot_event(ResourceEventType::Created, snapshot, None));
         }
         Ok(stored)
     }
@@ -515,14 +607,20 @@ impl Transaction for EventedTransaction {
         resources: &[Value],
     ) -> Result<crate::traits::BatchUpdateOutcome, StorageError> {
         let outcome = self.inner.update_batch(resource_type, resources).await?;
-        for s in &outcome.updated {
-            let rt = s
-                .resource
-                .get("resourceType")
-                .and_then(|v| v.as_str())
-                .unwrap_or(resource_type)
-                .to_string();
-            self.queue_event(ResourceEvent::updated(rt, &s.id, s.resource.clone()));
+        let previous: std::collections::HashMap<_, _> = outcome
+            .previous
+            .iter()
+            .map(|snapshot| (snapshot.id.as_str(), snapshot))
+            .collect();
+        for snapshot in &outcome.updated {
+            let previous = previous.get(snapshot.id.as_str()).copied().ok_or_else(|| {
+                StorageError::internal("Batch update lacks its preceding snapshot")
+            })?;
+            self.queue_event(snapshot_event(
+                ResourceEventType::Updated,
+                snapshot,
+                Some(previous),
+            ));
         }
         Ok(outcome)
     }
@@ -531,12 +629,37 @@ impl Transaction for EventedTransaction {
         &mut self,
         resource_type: &str,
         ids: &[String],
-    ) -> Result<(), StorageError> {
-        self.inner.delete_batch(resource_type, ids).await?;
-        for id in ids {
-            self.queue_event(ResourceEvent::deleted(resource_type, id));
+    ) -> Result<Vec<String>, StorageError> {
+        Ok(self
+            .delete_batch_with_snapshots(resource_type, ids)
+            .await?
+            .into_iter()
+            .map(|deleted| deleted.previous.id)
+            .collect())
+    }
+
+    async fn delete_batch_with_snapshots(
+        &mut self,
+        resource_type: &str,
+        ids: &[String],
+    ) -> Result<Vec<crate::DeletedResource>, StorageError> {
+        let deleted = self
+            .inner
+            .delete_batch_with_snapshots(resource_type, ids)
+            .await?;
+        for snapshot in &deleted {
+            let mut event = ResourceEvent::deleted(resource_type, &snapshot.previous.id)
+                .with_previous(snapshot.previous.resource.clone())
+                .with_version(
+                    snapshot
+                        .version_id
+                        .parse()
+                        .map_err(|_| StorageError::internal("Invalid deletion version"))?,
+                );
+            event.timestamp = snapshot.last_updated;
+            self.queue_event(event);
         }
-        Ok(())
+        Ok(deleted)
     }
 }
 

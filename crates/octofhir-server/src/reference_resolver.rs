@@ -90,7 +90,15 @@ impl StorageReferenceResolver {
 
     /// Fetch a resource body from local storage by (type, id).
     async fn fetch_local(&self, parsed: &FhirReference) -> ReferenceResult<Option<Arc<Value>>> {
-        match self.storage.read(&parsed.resource_type, &parsed.id).await {
+        let result = match &parsed.version {
+            Some(version) => {
+                self.storage
+                    .vread(&parsed.resource_type, &parsed.id, version)
+                    .await
+            }
+            None => self.storage.read(&parsed.resource_type, &parsed.id).await,
+        };
+        match result {
             Ok(Some(stored)) => Ok(Some(Arc::new(stored.resource))),
             Ok(None) => Ok(None),
             Err(e) => Err(ReferenceError::ServiceUnavailable {
@@ -169,9 +177,12 @@ impl ReferenceResolver for StorageReferenceResolver {
             }
         };
 
-        let exists = self
-            .resource_exists(&parsed.resource_type, &parsed.id)
-            .await?;
+        let exists = if parsed.version.is_some() {
+            self.fetch_local(&parsed).await?.is_some()
+        } else {
+            self.resource_exists(&parsed.resource_type, &parsed.id)
+                .await?
+        };
 
         if exists {
             Ok(ReferenceResolutionResult::found(
@@ -212,7 +223,7 @@ impl ReferenceResolver for StorageReferenceResolver {
             references.iter().map(|r| self.parse_reference(r)).collect();
 
         let mut ids_by_type: HashMap<String, Vec<String>> = HashMap::new();
-        for p in parsed.iter().flatten() {
+        for p in parsed.iter().flatten().filter(|p| p.version.is_none()) {
             ids_by_type
                 .entry(p.resource_type.clone())
                 .or_default()
@@ -241,11 +252,14 @@ impl ReferenceResolver for StorageReferenceResolver {
             }
         };
 
-        parsed
-            .iter()
-            .map(|p| match p {
+        let mut results = Vec::with_capacity(references.len());
+        for p in &parsed {
+            results.push(match p {
                 // Unparseable / contained / urn / external: skip (treated as existing).
                 None => Ok(ReferenceResolutionResult::skipped()),
+                Some(pr) if pr.version.is_some() => {
+                    self.resolve_reference(&pr.to_versioned()).await
+                }
                 Some(pr) => {
                     let key = format!("{}/{}", pr.resource_type, pr.id);
                     Ok(if existing.contains(&key) {
@@ -254,8 +268,9 @@ impl ReferenceResolver for StorageReferenceResolver {
                         ReferenceResolutionResult::not_found()
                     })
                 }
-            })
-            .collect()
+            });
+        }
+        results
     }
 
     async fn fetch_resources_batch(
@@ -269,7 +284,7 @@ impl ReferenceResolver for StorageReferenceResolver {
             references.iter().map(|r| self.parse_reference(r)).collect();
 
         let mut ids_by_type: HashMap<String, Vec<String>> = HashMap::new();
-        for p in parsed.iter().flatten() {
+        for p in parsed.iter().flatten().filter(|p| p.version.is_none()) {
             ids_by_type
                 .entry(p.resource_type.clone())
                 .or_default()
@@ -296,6 +311,7 @@ impl ReferenceResolver for StorageReferenceResolver {
         let mut out = Vec::with_capacity(references.len());
         for (reference, p) in references.iter().zip(parsed.iter()) {
             match p {
+                Some(pr) if pr.version.is_some() => out.push(self.fetch_local(pr).await),
                 Some(pr) => {
                     if failed_types.contains(&pr.resource_type) {
                         out.push(Err(ReferenceError::ServiceUnavailable {
@@ -318,51 +334,9 @@ impl ReferenceResolver for StorageReferenceResolver {
         out
     }
 
-    async fn fetch_profiles_batch(&self, references: &[String]) -> HashMap<String, Vec<String>> {
-        // One grouped query over the generated `profile` column, served by the
-        // partial covering index — no resource body, no TOAST, no JSONB parse.
-        // Only local references participate; an external URL would have to be
-        // dereferenced to learn anything, which is the slow path by definition.
-        let parsed: Vec<Option<FhirReference>> =
-            references.iter().map(|r| self.parse_reference(r)).collect();
-
-        let mut ids_by_type: HashMap<String, Vec<String>> = HashMap::new();
-        for p in parsed.iter().flatten() {
-            ids_by_type
-                .entry(p.resource_type.clone())
-                .or_default()
-                .push(p.id.clone());
-        }
-        if ids_by_type.is_empty() {
-            return HashMap::new();
-        }
-
-        let groups: Vec<(String, Vec<String>)> = ids_by_type
-            .into_iter()
-            .map(|(resource_type, mut ids)| {
-                ids.sort();
-                ids.dedup();
-                (resource_type, ids)
-            })
-            .collect();
-
-        let Ok(by_key) = self.storage.profiles_many_grouped(&groups).await else {
-            // Nothing known: every reference falls through to fetch-and-validate.
-            return HashMap::new();
-        };
-
-        // Re-key from `"Type/id"` onto the caller's original reference strings,
-        // which may be absolute or versioned and so are not the same text.
-        let mut out = HashMap::new();
-        for (reference, p) in references.iter().zip(parsed.iter()) {
-            if let Some(pr) = p
-                && let Some(profiles) = by_key.get(&format!("{}/{}", pr.resource_type, pr.id))
-            {
-                out.insert(reference.clone(), profiles.clone());
-            }
-        }
-        out
-    }
+    // A meta.profile claim is not proof of conformance. In particular, the
+    // profile may have been unavailable when the target was stored. Returning
+    // no shortcut makes the validator inspect the body of the exact version.
 }
 
 /// SSRF guard: whether the URL's host is safe to fetch.

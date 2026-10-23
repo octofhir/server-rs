@@ -12,7 +12,7 @@
 //! # Examples
 //!
 //! System-level (no resource context):
-//! ```
+//! ```text
 //! POST /fhir/$cql
 //! {
 //!   "resourceType": "Parameters",
@@ -23,7 +23,7 @@
 //! ```
 //!
 //! Instance-level (with resource context):
-//! ```
+//! ```text
 //! POST /fhir/Patient/123/$cql
 //! {
 //!   "resourceType": "Parameters",
@@ -32,6 +32,8 @@
 //!   ]
 //! }
 //! ```
+
+use crate::operations::handler::OperationLevel;
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
@@ -366,6 +368,10 @@ impl Default for CqlOperation {
 
 #[async_trait]
 impl OperationHandler for CqlOperation {
+    fn supports_level(&self, _level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        true
+    }
+
     fn code(&self) -> &str {
         "cql"
     }

@@ -28,6 +28,7 @@ use crate::error::AuthError;
 use crate::oauth::pkce::{PkceChallenge, PkceVerifier};
 use crate::oauth::session::AuthorizationSession;
 use crate::oauth::token::{TokenRequest, TokenResponse};
+use crate::storage::client::ClientStorage;
 use crate::storage::refresh_token::RefreshTokenStorage;
 use crate::storage::revoked_token::RevokedTokenStorage;
 use crate::storage::session::SessionStorage;
@@ -39,6 +40,7 @@ use crate::types::Client;
 use crate::types::refresh_token::RefreshToken;
 
 /// Token service for generating and managing OAuth tokens.
+#[derive(Clone)]
 pub struct TokenService {
     /// JWT service for encoding/decoding tokens.
     jwt_service: Arc<JwtService>,
@@ -55,6 +57,9 @@ pub struct TokenService {
     /// User storage for loading fhir_user (optional).
     user_storage: Option<Arc<dyn UserStorage>>,
 
+    /// Current client registrations for grant issuance and introspection.
+    client_storage: Option<Arc<dyn ClientStorage>>,
+
     /// Service configuration.
     config: TokenConfig,
 }
@@ -67,6 +72,9 @@ pub struct TokenConfig {
 
     /// Default FHIR server audience URL (included in tokens as `aud`).
     pub audience: String,
+
+    /// Trusted resource audiences accepted by this authorization server.
+    pub accepted_audiences: Vec<String>,
 
     /// Default access token lifetime.
     /// Can be overridden per-client.
@@ -94,14 +102,23 @@ impl TokenConfig {
     /// * `audience` - The default FHIR server audience URL
     #[must_use]
     pub fn new(issuer: impl Into<String>, audience: impl Into<String>) -> Self {
+        let audience = audience.into();
         Self {
             issuer: issuer.into(),
-            audience: audience.into(),
+            accepted_audiences: vec![audience.clone()],
+            audience,
             access_token_lifetime: Duration::hours(1),
             refresh_token_lifetime: Duration::days(90),
             id_token_lifetime: Duration::hours(1),
             rotate_refresh_tokens: true, // Default to rotating for security
         }
+    }
+
+    /// Sets resource audiences from trusted server configuration.
+    #[must_use]
+    pub fn with_audiences(mut self, audiences: Vec<String>) -> Self {
+        self.accepted_audiences = audiences;
+        self
     }
 
     /// Sets the access token lifetime.
@@ -157,6 +174,7 @@ impl TokenService {
             refresh_token_storage,
             revoked_token_storage,
             user_storage: None,
+            client_storage: None,
             config,
         }
     }
@@ -176,26 +194,81 @@ impl TokenService {
         self.user_storage = Some(user_storage);
     }
 
-    /// Helper to load fhir_user from user storage if available.
-    async fn load_fhir_user(&self, user_id: Option<&str>) -> Option<String> {
-        let user_id = user_id?;
-        let user_storage = self.user_storage.as_ref()?;
+    /// Sets authoritative client registration storage.
+    #[must_use]
+    pub fn with_client_storage(mut self, storage: Arc<dyn ClientStorage>) -> Self {
+        self.client_storage = Some(storage);
+        self
+    }
 
-        match user_storage.find_by_id(user_id).await {
-            Ok(Some(user)) => user.fhir_user,
-            Ok(None) => {
-                tracing::debug!(user_id = %user_id, "User not found for fhir_user lookup");
-                None
-            }
-            Err(e) => {
-                tracing::warn!(
-                    user_id = %user_id,
-                    error = %e,
-                    "Failed to load user for fhir_user lookup"
-                );
-                None
+    fn validate_audience(&self, audience: &str) -> AuthResult<()> {
+        if !self
+            .config
+            .accepted_audiences
+            .iter()
+            .any(|allowed| allowed == audience)
+        {
+            return Err(AuthError::invalid_grant(
+                "Grant audience is not this resource server",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn validate_current_client(&self, client: &Client, scope: &str) -> AuthResult<()> {
+        if !client.active
+            || !scope
+                .split_whitespace()
+                .all(|scope| client.is_scope_allowed(scope))
+        {
+            return Err(AuthError::invalid_grant(
+                "Client no longer authorizes this grant",
+            ));
+        }
+        self.validate_current_registration(&client.client_id, scope)
+            .await
+    }
+
+    async fn validate_current_registration(&self, client_id: &str, scope: &str) -> AuthResult<()> {
+        if client_id.is_empty() {
+            return Err(AuthError::invalid_grant("Missing grant client"));
+        }
+        if let Some(storage) = &self.client_storage {
+            let current = storage
+                .find_by_client_id(client_id)
+                .await?
+                .filter(|client| client.active)
+                .ok_or_else(|| AuthError::invalid_grant("Grant client is unavailable"))?;
+            if !scope
+                .split_whitespace()
+                .all(|scope| current.is_scope_allowed(scope))
+            {
+                return Err(AuthError::invalid_grant(
+                    "Grant exceeds current client permissions",
+                ));
             }
         }
+        Ok(())
+    }
+
+    /// A delegated user must remain available. Storage errors and inactive or
+    /// deleted users cannot silently turn a user grant into a machine grant.
+    async fn load_fhir_user(&self, user_id: Option<&str>) -> AuthResult<Option<String>> {
+        let Some(user_id) = user_id else {
+            return Ok(None);
+        };
+        if user_id.is_empty() {
+            return Err(AuthError::invalid_grant("Missing delegated user"));
+        }
+        let Some(storage) = &self.user_storage else {
+            return Ok(None);
+        };
+        let user = storage
+            .find_by_id(user_id)
+            .await?
+            .filter(|user| user.active)
+            .ok_or_else(|| AuthError::invalid_grant("Delegated user is unavailable"))?;
+        Ok(user.fhir_user)
     }
 
     /// Exchanges an authorization code for tokens.
@@ -312,6 +385,15 @@ impl TokenService {
         session: &AuthorizationSession,
         client: &Client,
     ) -> AuthResult<TokenResponse> {
+        self.validate_current_client(client, &session.scope).await?;
+        self.validate_audience(&session.aud)?;
+        let user_id = session
+            .user_id
+            .as_ref()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| {
+                AuthError::invalid_grant("Authorization grant has no authenticated user")
+            })?;
         let now = OffsetDateTime::now_utc();
 
         // Determine token lifetimes (client-specific or default)
@@ -326,12 +408,15 @@ impl TokenService {
             .unwrap_or(self.config.refresh_token_lifetime);
 
         // Load fhir_user from user storage if available
-        let fhir_user = self.load_fhir_user(session.user_id.as_deref()).await;
+        let fhir_user = self.load_fhir_user(Some(user_id)).await?;
 
         // Build access token claims
         let access_claims = AccessTokenClaims {
             iss: self.config.issuer.clone(),
-            sub: session.user_id.clone().unwrap_or_default(),
+            sub: session
+                .user_id
+                .clone()
+                .ok_or_else(|| AuthError::invalid_grant("Missing authenticated user"))?,
             aud: vec![session.aud.clone()],
             exp: (now + access_lifetime).unix_timestamp(),
             iat: now.unix_timestamp(),
@@ -423,6 +508,7 @@ impl TokenService {
             client_id: client.client_id.clone(),
             user_id: session.user_id.clone(),
             scope: session.scope.clone(),
+            audience: Some(session.aud.clone()),
             launch_context: session.launch_context.clone(),
             created_at: now,
             expires_at: Some(now + lifetime),
@@ -447,7 +533,10 @@ impl TokenService {
 
         let claims = IdTokenClaims {
             iss: self.config.issuer.clone(),
-            sub: session.user_id.clone().unwrap_or_default(),
+            sub: session
+                .user_id
+                .clone()
+                .ok_or_else(|| AuthError::invalid_grant("Missing authenticated user"))?,
             aud: client.client_id.clone(),
             exp: (now + self.config.id_token_lifetime).unix_timestamp(),
             iat: now.unix_timestamp(),
@@ -509,6 +598,7 @@ impl TokenService {
         // 3. Validate and normalize scope
         let scope = request.scope.as_deref().unwrap_or("");
         self.validate_backend_service_scopes(scope, client)?;
+        self.validate_current_client(client, scope).await?;
 
         // 4. Generate access token (no user context)
         let now = OffsetDateTime::now_utc();
@@ -649,6 +739,12 @@ impl TokenService {
 
         // 6. Determine scope (can be narrowed, not expanded)
         let scope = self.determine_refresh_scope(request, &stored_token)?;
+        self.validate_current_client(client, &scope).await?;
+        let audience = stored_token
+            .audience
+            .as_deref()
+            .unwrap_or(&self.config.audience);
+        self.validate_audience(audience)?;
 
         // 7. Generate new access token
         let now = OffsetDateTime::now_utc();
@@ -660,7 +756,7 @@ impl TokenService {
             .unwrap_or(self.config.access_token_lifetime);
 
         // Load fhir_user from user storage if available
-        let fhir_user = self.load_fhir_user(stored_token.user_id.as_deref()).await;
+        let fhir_user = self.load_fhir_user(stored_token.user_id.as_deref()).await?;
 
         // Build access token claims with preserved launch context
         let access_claims = AccessTokenClaims {
@@ -669,7 +765,7 @@ impl TokenService {
                 .user_id
                 .clone()
                 .unwrap_or_else(|| stored_token.client_id.clone()),
-            aud: vec![self.config.audience.clone()],
+            aud: vec![audience.to_owned()],
             exp: (now + access_lifetime).unix_timestamp(),
             iat: now.unix_timestamp(),
             jti: Uuid::new_v4().to_string(),
@@ -708,6 +804,7 @@ impl TokenService {
                 client_id: client.client_id.clone(),
                 user_id: stored_token.user_id,
                 scope: scope.clone(),
+                audience: Some(audience.to_owned()),
                 launch_context: stored_token.launch_context.clone(),
                 created_at: now,
                 expires_at: stored_token.expires_at, // Keep original expiration
@@ -790,12 +887,15 @@ impl TokenService {
             }
             Some(requested) => {
                 // Requested scope must be subset of original
-                let original_scopes: std::collections::HashSet<&str> =
-                    stored_token.scope.split_whitespace().collect();
-                let requested_scopes: std::collections::HashSet<&str> =
-                    requested.split_whitespace().collect();
-
-                if !requested_scopes.is_subset(&original_scopes) {
+                let original_scopes: Vec<String> = stored_token
+                    .scope
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect();
+                if !requested
+                    .split_whitespace()
+                    .all(|scope| Client::scope_is_covered(&original_scopes, scope))
+                {
                     return Err(AuthError::invalid_scope(
                         "Requested scope exceeds original grant",
                     ));
@@ -1018,20 +1118,20 @@ impl TokenService {
         // Try to determine token type
         let token_type = self.determine_token_type(&request.token, request.token_type_hint);
 
-        match token_type {
-            Some(TokenTypeHint::AccessToken) => self.introspect_access_token(&request.token).await,
-            Some(TokenTypeHint::RefreshToken) => {
-                self.introspect_refresh_token(&request.token).await
-            }
-            None => {
-                // Try access token first (JWT detection), then refresh token
-                let response = self.introspect_access_token(&request.token).await;
-                if response.active {
-                    response
-                } else {
-                    self.introspect_refresh_token(&request.token).await
-                }
-            }
+        let refresh_first = token_type == Some(TokenTypeHint::RefreshToken);
+        let preferred = if refresh_first {
+            self.introspect_refresh_token(&request.token).await
+        } else {
+            self.introspect_access_token(&request.token).await
+        };
+        if preferred.active {
+            return preferred;
+        }
+        // RFC 7662: an incorrect hint cannot hide another supported token type.
+        if refresh_first {
+            self.introspect_access_token(&request.token).await
+        } else {
+            self.introspect_refresh_token(&request.token).await
         }
     }
 
@@ -1041,6 +1141,28 @@ impl TokenService {
         match self.jwt_service.decode::<AccessTokenClaims>(token) {
             Ok(token_data) => {
                 let claims = &token_data.claims;
+
+                if claims.iss != self.config.issuer
+                    || claims.sub.is_empty()
+                    || claims.client_id.is_empty()
+                    || claims.jti.is_empty()
+                    || !claims
+                        .aud
+                        .iter()
+                        .any(|aud| self.validate_audience(aud).is_ok())
+                    || self
+                        .validate_current_registration(&claims.client_id, &claims.scope)
+                        .await
+                        .is_err()
+                {
+                    return IntrospectionResponse::inactive();
+                }
+                let delegated_user =
+                    (claims.sub != claims.client_id).then_some(claims.sub.as_str());
+                let fhir_user = match self.load_fhir_user(delegated_user).await {
+                    Ok(value) => value,
+                    Err(_) => return IntrospectionResponse::inactive(),
+                };
 
                 // Check if the token has been revoked
                 match self.revoked_token_storage.is_revoked(&claims.jti).await {
@@ -1087,8 +1209,8 @@ impl TokenService {
                 if let Some(ref encounter) = claims.encounter {
                     response = response.with_encounter(encounter.clone());
                 }
-                if let Some(ref fhir_user) = claims.fhir_user {
-                    response = response.with_fhir_user(fhir_user.clone());
+                if let Some(fhir_user) = fhir_user {
+                    response = response.with_fhir_user(fhir_user);
                 }
 
                 tracing::debug!(
@@ -1126,6 +1248,26 @@ impl TokenService {
                 // Check if expired
                 if stored_token.is_expired() {
                     tracing::debug!("Token introspection: refresh token is expired");
+                    return IntrospectionResponse::inactive();
+                }
+
+                if self
+                    .validate_current_registration(&stored_token.client_id, &stored_token.scope)
+                    .await
+                    .is_err()
+                    || self
+                        .load_fhir_user(stored_token.user_id.as_deref())
+                        .await
+                        .is_err()
+                    || self
+                        .validate_audience(
+                            stored_token
+                                .audience
+                                .as_deref()
+                                .unwrap_or(&self.config.audience),
+                        )
+                        .is_err()
+                {
                     return IntrospectionResponse::inactive();
                 }
 
@@ -1234,6 +1376,8 @@ impl TokenService {
         client: &Client,
         scope: &str,
     ) -> AuthResult<String> {
+        self.validate_current_client(client, scope).await?;
+        self.load_fhir_user(Some(user_id)).await?;
         let now = OffsetDateTime::now_utc();
 
         // Use client's configured lifetime (in seconds) or fall back to service default
@@ -1253,6 +1397,7 @@ impl TokenService {
             client_id: client.client_id.clone(),
             user_id: Some(user_id.to_string()),
             scope: scope.to_string(),
+            audience: Some(self.config.audience.clone()),
             launch_context: None,
             created_at: now,
             expires_at: Some(now + lifetime),
@@ -1566,6 +1711,104 @@ mod tests {
         );
 
         (service, session_storage, refresh_storage, revoked_storage)
+    }
+
+    #[tokio::test]
+    async fn refresh_preserves_audience_and_semantically_narrows_the_original_grant() {
+        let (mut service, _, storage, _) = create_test_service();
+        let mut client = create_refresh_client();
+        let original_audience = "https://fhir.example.com/another-base";
+        service
+            .config
+            .accepted_audiences
+            .push(original_audience.into());
+        let mut token = create_stored_refresh_token(
+            &client.client_id,
+            "system/Patient.r system/Patient.s",
+            "original-refresh",
+        );
+        token.audience = Some(original_audience.into());
+        storage.create(&token).await.unwrap();
+        let mut request: TokenRequest = serde_json::from_value(serde_json::json!({
+            "grant_type":"refresh_token", "refresh_token":"original-refresh",
+            "scope":"system/Patient.rs"
+        }))
+        .unwrap();
+        let response = service.refresh(&request, &client).await.unwrap();
+        let claims = service
+            .jwt_service
+            .decode::<AccessTokenClaims>(&response.access_token)
+            .unwrap()
+            .claims;
+        assert_eq!(claims.aud, vec![original_audience]);
+        assert_eq!(claims.scope, "system/Patient.rs");
+        let rotated = response.refresh_token.unwrap();
+        let record = storage
+            .find_by_hash(&RefreshToken::hash_token(&rotated))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.audience.as_deref(), Some(original_audience));
+        assert_eq!(record.expires_at, token.expires_at);
+        request.refresh_token = Some(rotated.clone());
+        request.scope = Some("system/Patient.crs".into());
+        assert!(matches!(
+            service.refresh(&request, &client).await,
+            Err(AuthError::InvalidScope { .. })
+        ));
+        request.scope = Some("system/Patient.r".into());
+        client.scopes = vec!["system/Observation.r".into()];
+        assert!(matches!(
+            service.refresh(&request, &client).await,
+            Err(AuthError::InvalidGrant { .. })
+        ));
+        assert!(
+            !storage
+                .find_by_hash(&RefreshToken::hash_token(&rotated))
+                .await
+                .unwrap()
+                .unwrap()
+                .is_revoked()
+        );
+        client.scopes.clear();
+        client.active = false;
+        assert!(matches!(
+            service.refresh(&request, &client).await,
+            Err(AuthError::InvalidGrant { .. })
+        ));
+        client.active = true;
+        service
+            .config
+            .accepted_audiences
+            .retain(|aud| aud != original_audience);
+        assert!(matches!(
+            service.refresh(&request, &client).await,
+            Err(AuthError::InvalidGrant { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn authorization_code_requires_an_authenticated_user_and_current_permissions() {
+        let (service, _, _, _) = create_test_service();
+        let mut session = create_test_session("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+        let mut client = create_test_client();
+        session.user_id = None;
+        assert!(matches!(
+            service.generate_tokens(&session, &client).await,
+            Err(AuthError::InvalidGrant { .. })
+        ));
+        session.user_id = Some("authenticated-user".into());
+        client.scopes = vec!["openid".into()];
+        assert!(matches!(
+            service.generate_tokens(&session, &client).await,
+            Err(AuthError::InvalidGrant { .. })
+        ));
+        client.scopes.clear();
+        session.aud = "https://untrusted.example/fhir".into();
+        assert!(matches!(
+            service.generate_tokens(&session, &client).await,
+            Err(AuthError::InvalidGrant { .. })
+        ));
     }
 
     #[tokio::test]
@@ -1909,6 +2152,7 @@ mod tests {
             client_id: client_id.to_string(),
             user_id: Some(Uuid::new_v4().to_string()),
             scope: scope.to_string(),
+            audience: None,
             launch_context: None,
             created_at: now,
             expires_at: Some(now + Duration::days(90)),
@@ -2045,6 +2289,7 @@ mod tests {
             client_id: client.client_id.clone(),
             user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid".to_string(),
+            audience: None,
             launch_context: None,
             created_at: now - Duration::days(100),
             expires_at: Some(now - Duration::days(1)), // Expired yesterday
@@ -2085,6 +2330,7 @@ mod tests {
             client_id: client.client_id.clone(),
             user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid".to_string(),
+            audience: None,
             launch_context: None,
             created_at: now,
             expires_at: Some(now + Duration::days(90)),
@@ -2217,6 +2463,7 @@ mod tests {
             client_id: client.client_id.clone(),
             user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid launch/patient patient/*.read".to_string(),
+            audience: None,
             launch_context: Some(LaunchContext {
                 patient: Some("Patient/123".to_string()),
                 encounter: Some("Encounter/456".to_string()),
@@ -2615,6 +2862,15 @@ mod tests {
 
         let response = service.introspect(&introspect_request).await;
         assert!(response.active);
+        for hint in [
+            None,
+            Some(TokenTypeHint::AccessToken),
+            Some(TokenTypeHint::RefreshToken),
+        ] {
+            let mut request = introspect_request.clone();
+            request.token_type_hint = hint;
+            assert!(service.introspect(&request).await.active, "hint: {hint:?}");
+        }
         assert_eq!(response.client_id, Some("test-client".to_string()));
         assert_eq!(response.scope, Some("openid patient/*.read".to_string()));
         assert_eq!(response.token_type, Some("Bearer".to_string()));
@@ -2741,6 +2997,15 @@ mod tests {
 
         let response = service.introspect(&introspect_request).await;
         assert!(response.active);
+        for hint in [
+            None,
+            Some(TokenTypeHint::AccessToken),
+            Some(TokenTypeHint::RefreshToken),
+        ] {
+            let mut request = introspect_request.clone();
+            request.token_type_hint = hint;
+            assert!(service.introspect(&request).await.active, "hint: {hint:?}");
+        }
         assert_eq!(response.client_id, Some(client.client_id.clone()));
         assert_eq!(response.scope, Some("openid patient/*.read".to_string()));
         assert_eq!(response.token_type, Some("refresh_token".to_string()));
@@ -2762,6 +3027,7 @@ mod tests {
             client_id: client.client_id.clone(),
             user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid".to_string(),
+            audience: None,
             launch_context: None,
             created_at: now - Duration::days(100),
             expires_at: Some(now - Duration::days(1)), // Expired
@@ -2792,6 +3058,7 @@ mod tests {
             client_id: client.client_id.clone(),
             user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid".to_string(),
+            audience: None,
             launch_context: None,
             created_at: now,
             expires_at: Some(now + Duration::days(90)),

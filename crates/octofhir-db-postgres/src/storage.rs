@@ -269,6 +269,23 @@ impl FhirStorage for PostgresStorage {
         queries::vread(self.read_pool(), resource_type, id, version).await
     }
 
+    async fn current_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<octofhir_storage::RawHistoryEntry>, StorageError> {
+        queries::crud::resource_snapshot(self.read_pool(), resource_type, id, None).await
+    }
+
+    async fn version_snapshot(
+        &self,
+        resource_type: &str,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<octofhir_storage::RawHistoryEntry>, StorageError> {
+        queries::crud::version_snapshot(self.read_pool(), resource_type, id, version).await
+    }
+
     async fn vread_raw(
         &self,
         resource_type: &str,

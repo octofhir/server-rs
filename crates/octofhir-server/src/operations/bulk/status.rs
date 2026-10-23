@@ -102,20 +102,40 @@ impl BulkExportParams {
     }
 
     /// Parse type filters into (type, query) pairs
-    pub fn get_type_filters(&self) -> Vec<(String, String)> {
-        self.type_filter
-            .as_ref()
-            .map(|tf| {
-                tf.split(',')
-                    .filter_map(|pair| {
-                        let mut parts = pair.splitn(2, '?');
-                        let resource_type = parts.next()?.trim().to_string();
-                        let query = parts.next().unwrap_or("").trim().to_string();
-                        Some((resource_type, query))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+    pub fn get_type_filters(&self) -> Result<Vec<(String, String)>, String> {
+        let mut filters: Vec<(String, String)> = Vec::new();
+        if let Some(value) = &self.type_filter {
+            for part in value.split(',') {
+                if let Some((resource_type, query)) = part.split_once('?') {
+                    if resource_type.is_empty()
+                        || !resource_type
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric())
+                        || !resource_type.as_bytes()[0].is_ascii_uppercase()
+                        || query.is_empty()
+                    {
+                        return Err("_typeFilter requires ResourceType?search-criteria".into());
+                    }
+                    filters.push((resource_type.to_owned(), query.to_owned()));
+                } else if let Some((_, query)) = filters.last_mut() {
+                    // A comma in a search value is an OR alternative, not a
+                    // delimiter starting a new ResourceType?query expression.
+                    query.push(',');
+                    query.push_str(part);
+                } else {
+                    return Err("_typeFilter requires ResourceType?search-criteria".into());
+                }
+            }
+        }
+        for (_, query) in &filters {
+            if query.split('&').any(|pair| {
+                pair.split_once('=')
+                    .is_none_or(|(key, value)| key.is_empty() || value.is_empty())
+            }) {
+                return Err("_typeFilter requires nonempty search parameter values".into());
+            }
+        }
+        Ok(filters)
     }
 }
 
@@ -292,7 +312,7 @@ mod tests {
             ..Default::default()
         };
 
-        let filters = params.get_type_filters();
+        let filters = params.get_type_filters().unwrap();
         assert_eq!(filters.len(), 2);
         assert_eq!(
             filters[0],

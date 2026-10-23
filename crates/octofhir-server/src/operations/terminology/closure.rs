@@ -11,6 +11,8 @@
 //! Supported invocation levels:
 //! - System: `POST /$closure` with name and optional concept
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::Deserialize;
@@ -300,6 +302,10 @@ impl Default for ClosureOperation {
 
 #[async_trait]
 impl OperationHandler for ClosureOperation {
+    fn supports_level(&self, level: OperationLevel, _resource_type: Option<&str>) -> bool {
+        level == OperationLevel::System
+    }
+
     fn code(&self) -> &str {
         "closure"
     }

@@ -11,6 +11,8 @@
 //! - Type: `GET/POST /CodeSystem/$validate-code` or `/ValueSet/$validate-code`
 //! - Instance: `GET/POST /CodeSystem/{id}/$validate-code` or `/ValueSet/{id}/$validate-code`
 
+use crate::operations::handler::OperationLevel;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -856,6 +858,10 @@ impl Default for ValidateCodeOperation {
 
 #[async_trait]
 impl OperationHandler for ValidateCodeOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        level == OperationLevel::System || matches!(resource_type, Some("CodeSystem" | "ValueSet"))
+    }
+
     fn code(&self) -> &str {
         "validate-code"
     }

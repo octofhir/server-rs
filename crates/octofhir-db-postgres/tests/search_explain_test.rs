@@ -14,13 +14,14 @@ use std::env;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Instant;
-use testcontainers::runners::AsyncRunner;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 
 #[tokio::test]
 #[ignore = "manual live-DB EXPLAIN smoke test"]
 async fn representative_search_explain_json_runs_with_bound_params() {
     let container = Postgres::default()
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("Failed to start PostgreSQL container");

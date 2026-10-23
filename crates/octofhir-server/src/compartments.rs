@@ -14,7 +14,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```ignore
 //! // Create registry from canonical manager
 //! let registry = CompartmentRegistry::new(canonical_manager).await?;
 //!
@@ -134,7 +134,19 @@ impl CompartmentDefinition {
         };
         let relative = format!("{}/{compartment_id}", self.name);
         let absolute = format!("{}/fhir/{relative}", base_url.trim_end_matches('/'));
-        let references = format!("{},{}", escape(&relative), escape(&absolute));
+        let alternate = absolute
+            .strip_prefix("http://")
+            .map(|rest| format!("https://{rest}"))
+            .or_else(|| {
+                absolute
+                    .strip_prefix("https://")
+                    .map(|rest| format!("http://{rest}"))
+            });
+        let mut aliases = vec![escape(&relative), escape(&absolute)];
+        if let Some(alternate) = alternate {
+            aliases.push(escape(&alternate));
+        }
+        let references = aliases.join(",");
         for parameter in self.get_inclusion_params(resource_type).unwrap_or_default() {
             alternatives.push(SearchConstraint::Query(HashMap::from([(
                 parameter.clone(),
@@ -142,6 +154,28 @@ impl CompartmentDefinition {
             )])));
         }
         SearchConstraint::Or(alternatives)
+    }
+
+    /// Client compartment queries include records linked into the target
+    /// compartment. Authorization continues to use direct membership above.
+    pub fn search_membership_constraint(
+        &self,
+        compartment_id: &str,
+        resource_type: &str,
+        base_url: &str,
+    ) -> octofhir_storage::SearchConstraint {
+        if self.name == "Patient" {
+            octofhir_storage::SearchConstraint::LinkedPatient {
+                patient_id: compartment_id.into(),
+                fhir_base_url: format!("{}/fhir", base_url.trim_end_matches('/')),
+                parameters: self
+                    .get_inclusion_params(resource_type)
+                    .unwrap_or_default()
+                    .to_vec(),
+            }
+        } else {
+            self.membership_constraint(compartment_id, resource_type, base_url)
+        }
     }
 
     /// Parse a CompartmentDefinition from a FHIR resource

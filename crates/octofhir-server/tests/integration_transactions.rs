@@ -28,10 +28,314 @@ fn path_patch(operation: &str, path: &str, extra: Vec<Value>) -> Value {
 }
 
 #[tokio::test]
+async fn auth_helpers_preserve_global_fhir_revisions_and_atomic_code_consumption() {
+    use octofhir_auth::oauth::session::AuthorizationSession;
+    use octofhir_auth::storage::{RefreshTokenStorage, SessionStorage as SessionStorageTrait};
+    use octofhir_auth::types::RefreshToken;
+    use octofhir_auth_postgres::{
+        ArcRefreshTokenStorage, ArcSessionStorage, ClientStorage, IdentityProviderStorage,
+        PolicyStorage, RoleStorage, SessionStorage, TokenStorage, UserStorage,
+    };
+    use octofhir_db_postgres::PostgresStorage;
+    use octofhir_storage::{FhirStorage, HistoryParams};
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (_base, shutdown, handle) = start_server(&config).await;
+    let pool = Arc::new(
+        sqlx_postgres::PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&postgres_url)
+            .await
+            .unwrap(),
+    );
+    let native = PostgresStorage::from_pool(pool.as_ref().clone());
+    macro_rules! revisions {
+        ($helper:expr, $resource_type:literal) => {{
+            let helper = $helper;
+            let id = Uuid::new_v4();
+            let created = helper.create(id, json!({"resourceType":$resource_type,
+                "id":id,"active":true,"name":"revision-fixture"})).await.unwrap();
+            assert_eq!(created.resource["meta"]["versionId"], created.txid.to_string());
+            let first_native = native.update(&created.resource, None).await.unwrap();
+            let updated = helper.update(id, first_native.resource.clone()).await.unwrap();
+            assert!(updated.txid > first_native.version_id.parse::<i64>().unwrap());
+            let second_native = native.update(&updated.resource, None).await.unwrap();
+            assert!(second_native.version_id.parse::<i64>().unwrap() > updated.txid);
+            assert_eq!(native.vread($resource_type, &id.to_string(), &updated.txid.to_string())
+                .await.unwrap().unwrap().resource, updated.resource);
+            helper.delete(id).await.unwrap();
+            // Deleted resources read as Gone (410), not as never-existing (404)
+            assert!(matches!(
+                native.read($resource_type, &id.to_string()).await,
+                Err(octofhir_storage::StorageError::Deleted { .. })
+            ));
+            let tombstone = native.current_snapshot($resource_type, &id.to_string())
+                .await.unwrap().unwrap();
+            assert_eq!(tombstone.method, octofhir_storage::HistoryMethod::Delete);
+            assert!(tombstone.resource.version_id.parse::<i64>().unwrap() > second_native.version_id.parse::<i64>().unwrap());
+            let history = native.history($resource_type, Some(&id.to_string()),
+                &HistoryParams { total: Some(octofhir_storage::TotalMode::Accurate), ..Default::default() })
+                .await.unwrap();
+            assert_eq!(history.total, Some(5));
+            assert_eq!(history.entries[0].resource.resource, serde_json::from_str::<Value>(&tombstone.resource.resource_json).unwrap());
+            assert_eq!(history.entries[1].resource.resource, second_native.resource);
+        }};
+    }
+    revisions!(UserStorage::new(&pool), "User");
+    revisions!(RoleStorage::new(&pool), "Role");
+    revisions!(ClientStorage::new(&pool), "Client");
+    revisions!(PolicyStorage::new(&pool), "AccessPolicy");
+    revisions!(IdentityProviderStorage::new(&pool), "IdentityProvider");
+    revisions!(SessionStorage::new(&pool), "Session");
+
+    let now = OffsetDateTime::now_utc();
+    let session = AuthorizationSession {
+        id: Uuid::new_v4(),
+        code: AuthorizationSession::generate_code(),
+        client_id: "code-fixture".into(),
+        redirect_uri: "https://client.example/callback".into(),
+        scope: "openid".into(),
+        state: "state".into(),
+        code_challenge: None,
+        code_challenge_method: None,
+        user_id: None,
+        launch_context: None,
+        nonce: None,
+        aud: config.base_url(),
+        created_at: now,
+        expires_at: now + time::Duration::minutes(5),
+        consumed_at: None,
+    };
+    let sessions = ArcSessionStorage::new(pool.clone());
+    sessions.create(&session).await.unwrap();
+    let (first, second) = tokio::join!(
+        sessions.consume(&session.code),
+        sessions.consume(&session.code)
+    );
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let successful = first
+        .as_ref()
+        .ok()
+        .or_else(|| second.as_ref().ok())
+        .unwrap();
+    let failed = first
+        .as_ref()
+        .err()
+        .or_else(|| second.as_ref().err())
+        .unwrap();
+    assert!(
+        matches!(failed, octofhir_auth::AuthError::InvalidGrant { .. }),
+        "{failed}"
+    );
+    assert!(successful.consumed_at.is_some());
+    let stored = sessions.find_by_code(&session.code).await.unwrap().unwrap();
+    assert_eq!(stored.consumed_at, successful.consumed_at);
+    assert!(sessions.consume(&session.code).await.is_err());
+    let mut expired = session.clone();
+    expired.id = Uuid::new_v4();
+    expired.code = AuthorizationSession::generate_code();
+    expired.expires_at = now - time::Duration::seconds(1);
+    sessions.create(&expired).await.unwrap();
+    assert!(sessions.consume(&expired.code).await.is_err());
+    assert!(
+        sessions
+            .find_by_code(&expired.code)
+            .await
+            .unwrap()
+            .unwrap()
+            .consumed_at
+            .is_none()
+    );
+
+    let refresh = RefreshToken {
+        id: Uuid::new_v4(),
+        token_hash: RefreshToken::hash_token("fixture-refresh"),
+        client_id: "refresh-fixture".into(),
+        user_id: None,
+        scope: "system/Patient.c".into(),
+        audience: Some(config.base_url()),
+        launch_context: None,
+        created_at: now,
+        expires_at: Some(now + time::Duration::days(1)),
+        revoked_at: None,
+    };
+    let tokens = ArcRefreshTokenStorage::new(pool.clone());
+    tokens.create(&refresh).await.unwrap();
+    TokenStorage::new(&pool)
+        .update_last_used(refresh.id)
+        .await
+        .unwrap();
+    tokens.revoke(&refresh.token_hash).await.unwrap();
+    let revoked = tokens
+        .find_by_hash(&refresh.token_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(revoked.is_revoked());
+    let row = TokenStorage::new(&pool)
+        .find_by_id(refresh.id)
+        .await
+        .unwrap()
+        .unwrap();
+    time::OffsetDateTime::parse(
+        row.resource["lastUsedAt"].as_str().unwrap(),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    let previous = row.resource.clone();
+    assert!(tokens.revoke(&refresh.token_hash).await.is_err());
+    assert_eq!(
+        TokenStorage::new(&pool)
+            .find_by_id(refresh.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .resource,
+        previous
+    );
+    shutdown.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+        .await
+        .unwrap()
+        .unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn configured_fhir_version_aliases_preserve_models_search_and_warm_caches() {
+    use octofhir_db_postgres::PostgresPackageStore;
+    use sqlx_core::{query::query, query_scalar::query_scalar};
+
+    let (_container, postgres_url) = start_postgres().await;
+    let mut config = create_config(&postgres_url);
+    config.fhir.version = "4.0.1".into();
+    config.validate().unwrap();
+    let (base, shutdown, handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/Patient"))
+        .json(&json!({"resourceType":"Patient","active":true,
+            "identifier":[{"system":"urn:version-fixture","value":"kept"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    let etag = response.headers()["etag"].clone();
+    let last_modified = response.headers()["last-modified"].clone();
+    let saved: Value = response.json().await.unwrap();
+    shutdown.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let pool = sqlx_postgres::PgPoolOptions::new()
+        .max_connections(3)
+        .connect(&postgres_url)
+        .await
+        .unwrap();
+    let store = PostgresPackageStore::new(pool.clone());
+    // A short-form embedded package must be included even with a numeric config.
+    store
+        .load_from_embedded(
+            "version-fixture",
+            "1.0.0",
+            "R4",
+            vec![(
+                "SearchParameter".into(),
+                json!({"resourceType":"SearchParameter","url":"urn:version-fixture:marker",
+            "name":"VersionMarker","status":"active","code":"version-marker",
+            "type":"token","base":["Patient"],"expression":"Patient.identifier"}),
+            )],
+        )
+        .await
+        .unwrap();
+    // Reproduce a partial cache left by the old numeric version key. A warm
+    // package with other valid schemas must not skip repair of this one.
+    let updated = query("UPDATE fcm.fhirschemas SET fhir_version='4.0.1' WHERE package_name='hl7.fhir.r4.core' AND content->>'name'='Patient'")
+        .execute(&pool).await.unwrap();
+    assert_eq!(updated.rows_affected(), 1);
+    assert_eq!(
+        store
+            .count_fhirschemas_for_package_version("hl7.fhir.r4.core", "4.0.1", "R4")
+            .await
+            .unwrap(),
+        0
+    );
+
+    for alias in ["4.0.1", "r4"] {
+        config.fhir.version = alias.into();
+        config.validate().unwrap();
+        let (base, shutdown, handle) = start_server(&config).await;
+        let response = client
+            .get(format!("{base}/Patient/{}", saved["id"].as_str().unwrap()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.headers()["etag"], etag);
+        assert_eq!(response.headers()["last-modified"], last_modified);
+        assert_eq!(response.json::<Value>().await.unwrap(), saved);
+        let metadata: Value = client
+            .get(format!("{base}/metadata"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(metadata["fhirVersion"], "4.0.1");
+        let patient = metadata["rest"][0]["resource"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["type"] == "Patient")
+            .unwrap();
+        assert!(
+            patient["searchParam"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|param| param["name"] == "version-marker"),
+            "{patient}"
+        );
+        let response = client
+            .get(format!("{base}/Patient"))
+            .query(&[
+                ("version-marker", "urn:version-fixture|kept"),
+                ("_total", "accurate"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let matches: Value = response.json().await.unwrap();
+        assert_eq!(matches["total"], 1, "{matches}");
+        assert_eq!(matches["entry"][0]["resource"], saved);
+        let wrong_keys: i64 =
+            query_scalar("SELECT COUNT(*) FROM fcm.fhirschemas WHERE fhir_version <> 'R4'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(wrong_keys, 0);
+        shutdown.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    pool.close().await;
+}
+
+#[tokio::test]
 async fn validate_honors_explicit_profiles_in_query_and_parameters() {
     use reqwest::StatusCode;
     let (_container, postgres_url) = start_postgres().await;
-    let config = create_config(&postgres_url);
+    let mut config = create_config(&postgres_url);
+    config.cql.enabled = true;
     let (base, shutdown, _server) = start_server(&config).await;
     let client = reqwest::Client::new();
     let resource = json!({"resourceType":"Patient","active":true});
@@ -46,6 +350,87 @@ async fn validate_honors_explicit_profiles_in_query_and_parameters() {
     assert_eq!(outcome["resourceType"], "OperationOutcome");
     assert!(!outcome["issue"].as_array().unwrap().is_empty());
     assert_eq!(outcome["issue"][0]["severity"], "information");
+
+    for method in [reqwest::Method::GET, reqwest::Method::POST] {
+        let mut request = client.request(
+            method.clone(),
+            format!("{base}/Measure/unavailable/$evaluate-measure"),
+        );
+        if method == reqwest::Method::POST {
+            request = request.json(&json!({"resourceType":"Parameters","parameter":[
+                {"name":"periodStart","valueDate":"2024-01-01"},
+                {"name":"periodEnd","valueDate":"2024-12-31"},
+                {"name":"reportType","valueCode":"summary"}
+            ]}));
+        } else {
+            request = request.query(&[
+                ("periodStart", "2024-01-01"),
+                ("periodEnd", "2024-12-31"),
+                ("reportType", "summary"),
+            ]);
+        }
+        let response = request.send().await.unwrap();
+        let status = response.status();
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+        assert_eq!(body["resourceType"], "OperationOutcome", "{body}");
+        assert!(
+            body.get("status").is_none(),
+            "unavailable scoring must not fabricate a complete report: {body}"
+        );
+    }
+    let metadata: Value = client
+        .get(format!("{base}/metadata"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(metadata["software"]["name"], "OctoFHIR");
+    assert_eq!(metadata["fhirVersion"], "4.0.1");
+    assert!(
+        metadata["implementation"]["url"]
+            .as_str()
+            .unwrap()
+            .ends_with("/fhir")
+    );
+    let patient_capability = metadata["rest"][0]["resource"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| resource["type"] == "Patient")
+        .unwrap();
+    assert!(
+        patient_capability["operation"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|op| op["name"] == "everything"),
+        "Patient $everything must remain supported: {patient_capability}"
+    );
+    assert!(
+        !metadata["rest"][0]["operation"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|op| op["name"] == "everything")
+    );
+    assert!(patient_capability.get("supportedProfile").is_none());
+
+    assert!(metadata.get("instantiates").is_none());
+    for rest in metadata["rest"].as_array().unwrap() {
+        for operation in rest["operation"].as_array().into_iter().flatten().chain(
+            rest["resource"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|resource| resource["operation"].as_array().into_iter().flatten()),
+        ) {
+            assert_ne!(operation["name"], "evaluate-measure");
+            assert_ne!(operation["name"], "$evaluate-measure");
+        }
+    }
 
     for (profile, expected) in [
         (
@@ -420,7 +805,263 @@ async fn bundle_writes_follow_identity_validation_patch_and_version_contracts() 
             "{body}"
         );
     }
+    Box::pin(transaction_etag_contracts(
+        &client,
+        &base,
+        &format!("{}/fhir", config.base_url()),
+    ))
+    .await;
     let _ = shutdown.send(());
+}
+
+async fn transaction_etag_contracts(client: &reqwest::Client, base: &str, advertised_base: &str) {
+    use reqwest::StatusCode;
+    let resource = json!({"resourceType":"Patient", "id":"transaction-etag", "active":true,
+        "identifier":[{"system":"urn:tx-etag","value":"protected"}]});
+    let direct = format!("{base}/Patient/transaction-etag");
+    let response = client.put(&direct).json(&resource).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let original: Value = response.json().await.unwrap();
+    let version = original["meta"]["versionId"].as_str().unwrap();
+    let history: Value = client
+        .get(format!("{direct}/_history"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let patch = path_patch(
+        "replace",
+        "Patient.active",
+        vec![json!({"name":"value","valueBoolean":false})],
+    );
+    let sentinel = json!({"request":{"method":"POST","url":"Patient"}, "resource":{"resourceType":"Patient", "identifier":[{"system":"urn:tx-etag","value":"rollback-sibling"}]}});
+    for (value, expected) in [
+        (json!(42), StatusCode::BAD_REQUEST),
+        (json!("*"), StatusCode::BAD_REQUEST),
+        (json!("1"), StatusCode::BAD_REQUEST),
+        (json!("W/\"1\", W/\"2\""), StatusCode::BAD_REQUEST),
+        (
+            json!("W/\"missing.version\""),
+            StatusCode::PRECONDITION_FAILED,
+        ),
+        (
+            json!(format!("W/\"0{version}\"")),
+            StatusCode::PRECONDITION_FAILED,
+        ),
+    ] {
+        for method in ["PUT", "PATCH", "DELETE"] {
+            let mut entry = json!({"request":{"method":method,"url":"Patient/transaction-etag","ifMatch":value}});
+            if method == "PUT" {
+                entry["resource"] = resource.clone();
+            }
+            if method == "PATCH" {
+                entry["resource"] = patch.clone();
+            }
+            let (status, body) =
+                send_bundle(client, base, "transaction", json!([sentinel, entry])).await;
+            assert_eq!(status, expected, "{method}/{value}: {body}");
+        }
+    }
+    for target in [
+        "Patient/transaction-absent",
+        "Patient?identifier=urn:tx-etag%7Cabsent",
+    ] {
+        let mut absent = resource.clone();
+        absent["id"] = json!("transaction-absent");
+        let (status, body) = send_bundle(client, base, "transaction", json!([
+            sentinel,
+            {"request":{"method":"PUT","url":target,"ifMatch":"W/\"missing.version\""},"resource":absent}
+        ])).await;
+        assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
+    }
+    let unchanged: Value = client
+        .get(&direct)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unchanged, original);
+    let unchanged_history: Value = client
+        .get(format!("{direct}/_history"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unchanged_history, history);
+    let count: Value = client
+        .get(format!(
+            "{base}/Patient?identifier=urn:tx-etag%7Crollback-sibling&_summary=count"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        count["total"], 0,
+        "failed version checks must roll back sibling creates"
+    );
+
+    let (status, body) = send_bundle(client, base, "transaction", json!([
+        {"request":{"method":"PUT","url":"Patient?identifier=urn:tx-etag%7Cprotected"},"resource":{"resourceType":"Patient","id":"mismatched-conditional","active":true}}
+    ])).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = send_bundle(client, base, "transaction", json!([
+        {"fullUrl":"urn:uuid:upsert-existing", "request":{"method":"PUT","url":"Patient?identifier=urn:tx-etag%7Cno-match","ifMatch":format!("W/\"{version}\"")},"resource":resource}
+    ])).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["entry"][0]["response"]["status"], "200 OK", "{body}");
+    assert_eq!(body["entry"][0]["resource"]["id"], "transaction-etag");
+    let etag = body["entry"][0]["response"]["etag"].clone();
+    let before_delete = body["entry"][0]["resource"].clone();
+    let (status, body) = send_bundle(
+        client,
+        base,
+        "transaction",
+        json!([
+            {"request":{"method":"DELETE","url":"Patient/transaction-etag","ifMatch":etag}}
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["entry"][0]["response"]["status"], "204 No Content",
+        "{body}"
+    );
+    let deleted_etag = body["entry"][0]["response"]["etag"].as_str().unwrap();
+    let deletion_version = deleted_etag
+        .strip_prefix("W/\"")
+        .unwrap()
+        .strip_suffix('"')
+        .unwrap();
+    assert_ne!(
+        deletion_version,
+        before_delete["meta"]["versionId"].as_str().unwrap()
+    );
+    assert!(
+        time::OffsetDateTime::parse(
+            body["entry"][0]["response"]["lastModified"]
+                .as_str()
+                .unwrap(),
+            &time::format_description::well_known::Rfc3339
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        client
+            .get(format!("{direct}/_history/{deletion_version}"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::GONE
+    );
+    assert!(body["entry"][0]["response"].get("location").is_none());
+    assert_eq!(
+        body["entry"][0]["fullUrl"],
+        format!("{advertised_base}/Patient/transaction-etag")
+    );
+    let historical: Value = client
+        .get(format!(
+            "{direct}/_history/{}",
+            before_delete["meta"]["versionId"].as_str().unwrap()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(historical, before_delete);
+    let (status, body) = send_bundle(client, base, "transaction", json!([
+        {"request":{"method":"DELETE","url":"Patient/transaction-etag","ifMatch":etag}}, sentinel
+    ])).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
+    let (status, body) = send_bundle(
+        client,
+        base,
+        "transaction",
+        json!([
+            {"request":{"method":"DELETE","url":"Patient/transaction-etag"}}
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, body) = send_bundle(client, base, "transaction", json!([
+        {"fullUrl":"urn:uuid:upsert-new", "request":{"method":"PUT","url":"Patient?identifier=urn:tx-etag%7Cnew"},
+            "resource":{"resourceType":"Patient","id":"transaction-explicit-created","active":true}},
+        {"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final",
+            "code":{"text":"upsert link"},"subject":{"reference":"urn:uuid:upsert-new"}}}
+    ])).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["entry"][0]["response"]["status"], "201 Created",
+        "{body}"
+    );
+    assert_eq!(
+        body["entry"][0]["resource"]["id"],
+        "transaction-explicit-created"
+    );
+    assert_eq!(
+        body["entry"][1]["resource"]["subject"]["reference"],
+        "Patient/transaction-explicit-created"
+    );
+    let cached_url = format!("{base}/Patient/transaction-explicit-created");
+    let cached: Value = client
+        .get(&cached_url)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let (status, body) = send_bundle(
+        client,
+        base,
+        "transaction",
+        json!([
+            {"request":{"method":"DELETE","url":"Patient?_id=transaction-explicit-created",
+                "ifMatch":format!("W/\"{}\"", cached["meta"]["versionId"].as_str().unwrap())}}
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["entry"][0]["fullUrl"],
+        format!("{advertised_base}/Patient/transaction-explicit-created")
+    );
+    let deleted_etag = body["entry"][0]["response"]["etag"].as_str().unwrap();
+    let deletion_version = deleted_etag
+        .strip_prefix("W/\"")
+        .unwrap()
+        .strip_suffix('"')
+        .unwrap();
+    assert_ne!(
+        deletion_version,
+        cached["meta"]["versionId"].as_str().unwrap()
+    );
+    assert_eq!(
+        client
+            .get(format!("{cached_url}/_history/{deletion_version}"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::GONE
+    );
+    assert!(body["entry"][0]["response"].get("location").is_none());
+    assert_eq!(
+        client.get(&cached_url).send().await.unwrap().status(),
+        StatusCode::GONE
+    );
 }
 
 // =============================================================================
@@ -447,7 +1088,7 @@ async fn start_postgres() -> (PostgresFixture, String) {
     // PG14+ for tstzmultirange and the jsonpath[] date-extraction overloads;
     // the testcontainers default (11-alpine) lacks both.
     let container = Postgres::default()
-        .with_tag("18-alpine")
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("start postgres container");
@@ -621,21 +1262,28 @@ async fn test_transaction_commit_all_creates() {
     let entries = response_bundle["entry"].as_array().expect("entries");
     assert_eq!(entries.len(), 2);
 
-    // Verify both resources exist
+    // Each committed response identifies the saved resource at the FHIR base.
     for entry in entries {
-        let location = entry["response"]["location"].as_str();
-        if let Some(loc) = location {
-            let parts: Vec<&str> = loc.split('/').collect();
-            if parts.len() >= 2 {
-                let resource_type = parts[0];
-                let id = parts[1].split('?').next().unwrap_or(parts[1]);
-                assert!(
-                    resource_exists(&client, &base, resource_type, id).await,
-                    "Resource {} should exist after commit",
-                    loc
-                );
-            }
-        }
+        let resource = &entry["resource"];
+        let resource_type = resource["resourceType"].as_str().unwrap();
+        let id = resource["id"].as_str().unwrap();
+        let version = resource["meta"]["versionId"].as_str().unwrap();
+        assert_eq!(
+            entry["fullUrl"],
+            format!("{}/fhir/{resource_type}/{id}", config.base_url())
+        );
+        assert_eq!(
+            entry["response"]["location"],
+            format!(
+                "{}/fhir/{resource_type}/{id}/_history/{version}",
+                config.base_url()
+            )
+        );
+        assert_eq!(
+            entry["response"]["lastModified"],
+            resource["meta"]["lastUpdated"]
+        );
+        assert!(resource_exists(&client, &base, resource_type, id).await);
     }
 
     let _ = shutdown_tx.send(());
@@ -1301,36 +1949,23 @@ async fn test_transaction_internal_reference_resolution() {
     let mut condition_id = String::new();
 
     for entry in entries {
-        if let Some(location) = entry["response"]["location"].as_str() {
-            if location.starts_with("Patient/") {
-                patient_id = location
-                    .split('/')
-                    .nth(1)
-                    .unwrap_or("")
-                    .split('?')
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-            } else if location.starts_with("Encounter/") {
-                encounter_id = location
-                    .split('/')
-                    .nth(1)
-                    .unwrap_or("")
-                    .split('?')
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-            } else if location.starts_with("Condition/") {
-                condition_id = location
-                    .split('/')
-                    .nth(1)
-                    .unwrap_or("")
-                    .split('?')
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-            }
+        let resource = &entry["resource"];
+        let id = resource["id"].as_str().unwrap();
+        match resource["resourceType"].as_str().unwrap() {
+            "Patient" => patient_id = id.to_owned(),
+            "Encounter" => encounter_id = id.to_owned(),
+            "Condition" => condition_id = id.to_owned(),
+            resource_type => panic!("Unexpected transaction resource: {resource_type}"),
         }
+        assert_eq!(
+            entry["fullUrl"],
+            format!(
+                "{}/fhir/{}/{}",
+                config.base_url(),
+                resource["resourceType"].as_str().unwrap(),
+                id
+            )
+        );
     }
 
     assert!(!patient_id.is_empty(), "Patient should be created");
@@ -1579,9 +2214,11 @@ async fn test_transaction_conditional_update() {
         .await
         .expect("transaction request");
 
+    let status = resp.status();
+    let outcome: Value = resp.json().await.expect("conditional update response");
     assert!(
-        resp.status().is_success(),
-        "Conditional update should succeed"
+        status.is_success(),
+        "Conditional update should succeed: {status} {outcome}"
     );
 
     let search_resp = client
@@ -1647,9 +2284,11 @@ async fn test_transaction_conditional_delete() {
         .await
         .expect("transaction request");
 
+    let status = resp.status();
+    let outcome: Value = resp.json().await.expect("conditional delete response");
     assert!(
-        resp.status().is_success(),
-        "Conditional delete should succeed"
+        status.is_success(),
+        "Conditional delete should succeed: {status} {outcome}"
     );
 
     let search_resp = client
@@ -1874,6 +2513,35 @@ async fn test_large_transaction_performance() {
 
     assert_eq!(total, 50, "All 50 bulk patients should exist");
 
+    let parent = response_entries[0]["resource"]["id"].as_str().unwrap();
+    let linked_entries: Vec<_> = (0..50).map(|_| json!({
+        "request":{"method":"POST","url":"Observation"},
+        "resource":{"resourceType":"Observation","status":"final","code":{"text":"load regression"},
+            "subject":{"reference":format!("Patient/{parent}")}}
+    })).collect();
+    let linked = json!({"resourceType":"Bundle","type":"transaction","entry":linked_entries});
+    for concurrency in [1, 4, 16] {
+        let start = std::time::Instant::now();
+        let results = futures_util::future::join_all((0..concurrency).map(|_| async {
+            let response = client.post(&base).json(&linked).send().await.unwrap();
+            let status = response.status();
+            let body: Value = response.json().await.unwrap();
+            assert!(status.is_success(), "{body}");
+            assert_eq!(body["entry"].as_array().unwrap().len(), 50);
+        }))
+        .await;
+        let elapsed = start.elapsed();
+        println!(
+            "Reference-heavy transaction: {} concurrent requests x 50 entries, one unique target: {:?}",
+            results.len(),
+            elapsed
+        );
+        assert!(
+            elapsed.as_secs() < 30,
+            "reference-heavy concurrency regression: {elapsed:?}"
+        );
+    }
+
     let _ = shutdown_tx.send(());
 }
 
@@ -2068,4 +2736,495 @@ async fn transaction_search_counts_and_includes_observe_own_writes_with_one_conn
         assert_eq!(stored["total"], usize::from(!rollback), "{stored}");
     }
     let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn transaction_conditional_references_resolve_proposed_graph_and_roll_back_ambiguity() {
+    use reqwest::StatusCode;
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown, _server) = start_server(&config).await;
+    let client = reqwest::Client::new();
+    let observation = |criterion: &str| {
+        json!({"resourceType":"Observation","status":"final",
+        "code":{"text":"graph reference"},"subject":{"reference":criterion}})
+    };
+    // The result must be independent of entry order. No pool search can find
+    // these targets before their Bundle commits.
+    for reverse in [false, true] {
+        let value = format!("new-{reverse}");
+        let criterion = format!("Patient?identifier=urn:graph|{value}&_count=0&_offset=999");
+        let mut entries = vec![
+            json!({"request":{"method":"POST","url":"Patient"},
+                "resource":{"resourceType":"Patient","identifier":[{"system":"urn:graph","value":value}]}}),
+            json!({"request":{"method":"POST","url":"Observation"},"resource":observation(&criterion)}),
+        ];
+        if reverse {
+            entries.reverse();
+        }
+        let (status, body) = send_bundle(&client, &base, "transaction", json!(entries)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let patient_index = usize::from(reverse);
+        let observation_index = usize::from(!reverse);
+        let id = body["entry"][patient_index]["resource"]["id"]
+            .as_str()
+            .unwrap();
+        let obs_id = body["entry"][observation_index]["resource"]["id"]
+            .as_str()
+            .unwrap();
+        let saved = read_resource(&client, &base, "Observation", obs_id)
+            .await
+            .unwrap();
+        assert_eq!(saved["subject"]["reference"], format!("Patient/{id}"));
+    }
+    // A reference predicate may depend on another conditional reference.
+    let (status, body) = send_bundle(&client, &base, "transaction", json!([
+        {"request":{"method":"POST","url":"DiagnosticReport"},
+         "resource":{"resourceType":"DiagnosticReport","status":"final","code":{"text":"dependency"},
+          "result":[{"reference":"Observation?subject:Patient.identifier=urn:graph|dependency&code=graph-code"}]}},
+        {"request":{"method":"POST","url":"Observation"},
+         "resource":{"resourceType":"Observation","status":"final","code":{"coding":[{"code":"graph-code"}]},
+          "subject":{"reference":"Patient?identifier=urn:graph|dependency"}}},
+        {"request":{"method":"POST","url":"Patient"},
+         "resource":{"resourceType":"Patient","identifier":[{"system":"urn:graph","value":"dependency"}]}}
+    ])).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["entry"][0]["resource"]["result"][0]["reference"],
+        format!(
+            "Observation/{}",
+            body["entry"][1]["resource"]["id"].as_str().unwrap()
+        )
+    );
+
+    let old: Value = client.post(format!("{base}/Patient"))
+        .json(&json!({"resourceType":"Patient","identifier":[{"system":"urn:graph","value":"replace-old"}]}))
+        .send().await.unwrap().json().await.unwrap();
+    let id = old["id"].as_str().unwrap();
+    let (status, body) = send_bundle(&client,&base,"transaction",json!([
+        {"request":{"method":"PUT","url":format!("Patient/{id}")},
+         "resource":{"resourceType":"Patient","id":id,"identifier":[{"system":"urn:graph","value":"replace-new"}]}},
+        {"request":{"method":"POST","url":"Observation"},
+         "resource":observation("Patient?identifier=urn:graph|replace-new")}
+    ])).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["entry"][1]["resource"]["subject"]["reference"],
+        format!("Patient/{id}")
+    );
+    let before = read_resource(&client, &base, "Patient", id).await.unwrap();
+    for entries in [
+        json!([
+            {"request":{"method":"DELETE","url":format!("Patient/{id}")}},
+            {"request":{"method":"POST","url":"Observation"},"resource":observation("Patient?identifier=urn:graph|replace-new")}
+        ]),
+        json!([
+            {"request":{"method":"POST","url":"Patient"},"resource":{"resourceType":"Patient","identifier":[{"system":"urn:graph","value":"replace-new"}]}},
+            {"request":{"method":"POST","url":"Observation"},"resource":observation("Patient?identifier=urn:graph|replace-new")}
+        ]),
+    ] {
+        let (status, body) = send_bundle(&client, &base, "transaction", entries).await;
+        assert!(
+            status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::PRECONDITION_FAILED,
+            "{status} {body}"
+        );
+        assert_eq!(
+            read_resource(&client, &base, "Patient", id).await.unwrap(),
+            before
+        );
+        let history: Value = client
+            .get(format!("{base}/Patient/{id}/_history"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(history["entry"].as_array().unwrap().len(), 2, "{history}");
+        let search: Value = client
+            .get(format!("{base}/Patient?identifier=urn:graph|replace-new"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(search["entry"].as_array().unwrap().len(), 1, "{search}");
+    }
+    // A matched conditional POST ignores its incoming references, too.
+    let (status, body) = send_bundle(&client,&base,"transaction",json!([{
+        "request":{"method":"POST","url":"Patient","ifNoneExist":"identifier=urn:graph|replace-new"},
+        "resource":{"resourceType":"Patient","managingOrganization":{"reference":"Organization?identifier=missing"},
+        "generalPractitioner":[{"reference":"urn:uuid:ignored-unresolved"}]}
+    }])).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["entry"][0]["resource"], before);
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn transaction_conditional_writes_match_completed_phases_and_patch() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use reqwest::StatusCode;
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown, _server) = start_server(&config).await;
+    let client = reqwest::Client::new();
+    for reverse in [false, true] {
+        let marker = format!("phase-{reverse}");
+        let patient: Value = client.post(format!("{base}/Patient"))
+            .json(&json!({"resourceType":"Patient","active":true,"identifier":[{"system":"urn:phase","value":marker}]}))
+            .send().await.unwrap().json().await.unwrap();
+        let old_id = patient["id"].as_str().unwrap();
+        let mut entries = vec![
+            json!({"request":{"method":"POST","url":"Patient","ifNoneExist":format!("identifier=urn:phase|{marker}")},
+                "resource":{"resourceType":"Patient","active":false,"identifier":[{"system":"urn:phase","value":marker}]}}),
+            json!({"request":{"method":"DELETE","url":format!("Patient/{old_id}")}}),
+        ];
+        if reverse {
+            entries.reverse();
+        }
+        let (status, body) = send_bundle(&client, &base, "transaction", json!(entries)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let created = &body["entry"][usize::from(reverse)];
+        assert_eq!(created["response"]["status"], "201 Created", "{body}");
+        let id = created["resource"]["id"].as_str().unwrap();
+        assert_ne!(id, old_id);
+        assert_eq!(created["resource"]["active"], false);
+        assert!(
+            read_resource(&client, &base, "Patient", old_id)
+                .await
+                .is_none()
+        );
+        // PUT and PATCH conditions see POST resources, including reverse chains.
+        for method in ["PUT", "PATCH"] {
+            let code = format!("{marker}-{method}");
+            let candidate = if method == "PUT" {
+                json!({"resourceType":"Patient","active":true,"identifier":[{"system":"urn:phase","value":marker}]})
+            } else {
+                json!({"resourceType":"Binary","contentType":"application/json-patch+json",
+                    "id":"patch-instructions",
+                    "data":STANDARD.encode(serde_json::to_vec(&json!([{"op":"add","path":"/birthDate","value":"2000-01-01"}])).unwrap())})
+            };
+            let mut entries = vec![
+                json!({"request":{"method":method,"url":format!("Patient?_id={id}&_has:Observation:subject:code={code}")},"resource":candidate}),
+                json!({"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final",
+                    "code":{"coding":[{"code":code}]},"subject":{"reference":format!("Patient/{id}")}}}),
+            ];
+            if reverse {
+                entries.reverse();
+            }
+            let (status, body) = send_bundle(&client, &base, "transaction", json!(entries)).await;
+            assert_eq!(status, StatusCode::OK, "{method}: {body}");
+            let updated = &body["entry"][usize::from(reverse)];
+            assert_eq!(updated["response"]["status"], "200 OK", "{body}");
+            assert_eq!(updated["resource"]["id"], id);
+            if method == "PUT" {
+                assert_eq!(updated["resource"]["active"], true);
+            } else {
+                assert_eq!(updated["resource"]["birthDate"], "2000-01-01");
+            }
+        }
+    }
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn transaction_reference_dependencies_exceed_eight_rounds_and_bind_cycles() {
+    use reqwest::StatusCode;
+    let (_container, postgres_url) = start_postgres().await;
+    let mut config = create_config(&postgres_url);
+    // Exact budgets: the unique 2x2 graph requires checking all four assignments.
+    config.server.max_conditional_reference_candidates = 2;
+    config.server.max_conditional_reference_assignments = 4;
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+    let mut entries = Vec::new();
+    for i in 0..12 {
+        let mut resource = json!({"resourceType":"Observation","status":"final","code":{"text":"deep conditional graph"},
+            "identifier":[{"system":"urn:deep-reference","value":i.to_string()}]});
+        if i > 0 {
+            let condition = if i == 1 {
+                "Observation?identifier=urn:deep-reference|0".into()
+            } else {
+                format!(
+                    "Observation?identifier=urn:deep-reference|{}&derived-from:Observation.identifier=urn:deep-reference|{}",
+                    i - 1,
+                    i - 2
+                )
+            };
+            resource["derivedFrom"] = json!([{"reference":condition}]);
+        }
+        entries.push(json!({"request":{"method":"POST","url":"Observation"},"resource":resource}));
+    }
+    entries.reverse();
+    let (status, body) = send_bundle(&client, &base, "transaction", json!(entries)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for i in 0..11 {
+        assert_eq!(
+            body["entry"][i]["resource"]["derivedFrom"][0]["reference"],
+            format!(
+                "Observation/{}",
+                body["entry"][i + 1]["resource"]["id"].as_str().unwrap()
+            ),
+            "{body}"
+        );
+    }
+    let (status, cycle) = send_bundle(&client, &base, "transaction", json!([
+        {"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final","code":{"text":"cycle"},
+            "identifier":[{"system":"urn:reference-cycle","value":"left"}],
+            "derivedFrom":[{"reference":"Observation?identifier=urn:reference-cycle|right&derived-from:Observation.identifier=urn:reference-cycle|left"}]}},
+        {"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final","code":{"text":"cycle"},
+            "identifier":[{"system":"urn:reference-cycle","value":"right"}],
+            "derivedFrom":[{"reference":"Observation?identifier=urn:reference-cycle|left&derived-from:Observation.identifier=urn:reference-cycle|right"}]}}
+    ])).await;
+    assert_eq!(status, StatusCode::OK, "{cycle}");
+    for (left, right) in [(0, 1), (1, 0)] {
+        assert_eq!(
+            cycle["entry"][left]["resource"]["derivedFrom"][0]["reference"],
+            format!(
+                "Observation/{}",
+                cycle["entry"][right]["resource"]["id"].as_str().unwrap()
+            )
+        );
+        let id = cycle["entry"][left]["resource"]["id"].as_str().unwrap();
+        assert_eq!(
+            read_resource(&client, &base, "Observation", id)
+                .await
+                .unwrap(),
+            cycle["entry"][left]["resource"]
+        );
+    }
+    // Both identity domains contain two candidates. Only the A/A binding
+    // satisfies both complete chained predicates with singleton cardinality.
+    let left_condition = "Observation?identifier=urn:unique-cycle|left&derived-from:Observation.code=urn:cycle-code|A";
+    let right_condition = "Observation?identifier=urn:unique-cycle|right&derived-from:Observation.code=urn:cycle-code|A";
+    let bad_left = "urn:uuid:550e8400-e29b-41d4-a716-446655440001";
+    let bad_right = "urn:uuid:550e8400-e29b-41d4-a716-446655440002";
+    let (status, unique) = send_bundle(&client, &base, "transaction", json!([
+        {"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final",
+            "code":{"coding":[{"system":"urn:cycle-code","code":"A"}]},"identifier":[{"system":"urn:unique-cycle","value":"left"}],
+            "derivedFrom":[{"reference":right_condition}]}},
+        {"fullUrl":bad_left,"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final",
+            "code":{"coding":[{"system":"urn:cycle-code","code":"B"}]},"identifier":[{"system":"urn:unique-cycle","value":"left"}],
+            "derivedFrom":[{"reference":bad_right}]}},
+        {"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final",
+            "code":{"coding":[{"system":"urn:cycle-code","code":"A"}]},"identifier":[{"system":"urn:unique-cycle","value":"right"}],
+            "derivedFrom":[{"reference":left_condition}]}},
+        {"fullUrl":bad_right,"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final",
+            "code":{"coding":[{"system":"urn:cycle-code","code":"B"}]},"identifier":[{"system":"urn:unique-cycle","value":"right"}],
+            "derivedFrom":[{"reference":bad_left}]}}
+    ])).await;
+    assert_eq!(status, StatusCode::OK, "{unique}");
+    for (source, target) in [(0, 2), (2, 0), (1, 3), (3, 1)] {
+        assert_eq!(
+            unique["entry"][source]["resource"]["derivedFrom"][0]["reference"],
+            format!(
+                "Observation/{}",
+                unique["entry"][target]["resource"]["id"].as_str().unwrap()
+            ),
+            "{unique}"
+        );
+        let resource = &unique["entry"][source]["resource"];
+        assert_eq!(
+            read_resource(
+                &client,
+                &base,
+                "Observation",
+                resource["id"].as_str().unwrap()
+            )
+            .await
+            .unwrap(),
+            *resource
+        );
+    }
+    // Reverse chains permit several self-consistent graphs. Never select the
+    // first solution just because each predicate is unique in that graph.
+    let left_condition = "Observation?identifier=urn:ambiguous-cycle|left&_has:Observation:derived-from:identifier=urn:ambiguous-cycle|right";
+    let right_condition = "Observation?identifier=urn:ambiguous-cycle|right&_has:Observation:derived-from:identifier=urn:ambiguous-cycle|left";
+    let mut ambiguous = Vec::new();
+    for side in ["left", "right"] {
+        for _ in 0..2 {
+            ambiguous.push(json!({"request":{"method":"POST","url":"Observation"},"resource":{
+                "resourceType":"Observation","status":"final","code":{"text":"ambiguous cycle"},
+                "identifier":[{"system":"urn:ambiguous-cycle","value":side}],
+                "derivedFrom":[{"reference":if side == "left" {right_condition} else {left_condition}}]}}));
+        }
+    }
+    let (status, rejected) = send_bundle(&client, &base, "transaction", json!(ambiguous)).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{rejected}");
+    let count: Value = client
+        .get(format!("{base}/Observation"))
+        .query(&[
+            (
+                "identifier",
+                "urn:ambiguous-cycle|left,urn:ambiguous-cycle|right",
+            ),
+            ("_summary", "count"),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(count["total"], 0, "{count}");
+    let condition = "Patient?identifier=urn%3Aconditional-typed%7CP";
+    let (status, typed) = send_bundle(&client, &base, "transaction", json!([
+        {"request":{"method":"POST","url":"Patient"},"resource":{"resourceType":"Patient",
+            "identifier":[{"system":"urn:conditional-typed","value":"P"}]}},
+        {"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final","code":{"text":"typed conditional links"},
+            "subject":{"reference":condition},"identifier":[{"system":condition,"value":condition}],
+            "extension":[{"url":"urn:typed:uri","valueUri":condition},{"url":"urn:typed:canonical","valueCanonical":condition}],
+            "text":{"status":"generated","div":format!("<div xmlns='http://www.w3.org/1999/xhtml'><a href='{condition}'>link</a></div>")}}}
+    ])).await;
+    assert_eq!(status, StatusCode::OK, "{typed}");
+    let resource = &typed["entry"][1]["resource"];
+    assert_eq!(
+        resource["subject"]["reference"],
+        format!(
+            "Patient/{}",
+            typed["entry"][0]["resource"]["id"].as_str().unwrap()
+        )
+    );
+    assert_eq!(resource["identifier"][0]["system"], condition);
+    assert_eq!(resource["identifier"][0]["value"], condition);
+    assert_eq!(resource["extension"][0]["valueUri"], condition);
+    assert_eq!(resource["extension"][1]["valueCanonical"], condition);
+    assert!(
+        resource["text"]["div"]
+            .as_str()
+            .unwrap()
+            .contains(condition)
+    );
+    assert_eq!(
+        read_resource(
+            &client,
+            &base,
+            "Observation",
+            resource["id"].as_str().unwrap()
+        )
+        .await
+        .unwrap(),
+        *resource
+    );
+    let alias = "urn:uuid:550e8400-e29b-41d4-a716-446655440000";
+    let (status, mapped) = send_bundle(&client, &base, "transaction", json!([
+        {"fullUrl":alias,"request":{"method":"POST","url":"Patient"},"resource":{"resourceType":"Patient","id":"client-id","active":true}},
+        {"request":{"method":"POST","url":"Patient"},"resource":{"resourceType":"Patient",
+            "identifier":[{"system":alias,"value":alias}],"photo":[{"url":alias,"title":alias}],
+            "meta":{"profile":[alias]},
+            "text":{"status":"generated","div":format!("<div xmlns='http://www.w3.org/1999/xhtml'><a href='{alias}/_history/old#part'>Patient</a><img src='{alias}' /></div>")}}},
+        {"request":{"method":"POST","url":"Observation"},"resource":{"resourceType":"Observation","status":"final","code":{"text":"versioned bundle link"},
+            "subject":{"reference":format!("{alias}/_history/arbitrary-client-version")}}}
+    ])).await;
+    assert_eq!(status, StatusCode::OK, "{mapped}");
+    let patient = &mapped["entry"][0]["resource"];
+    let patient_id = patient["id"].as_str().unwrap();
+    assert_ne!(patient_id, "client-id");
+    let version = patient["meta"]["versionId"].as_str().unwrap();
+    let relative = format!("Patient/{patient_id}");
+    let companion = &mapped["entry"][1]["resource"];
+    assert_eq!(companion["identifier"][0]["system"], relative);
+    assert_eq!(companion["identifier"][0]["value"], alias);
+    assert_eq!(companion["photo"][0]["url"], relative);
+    assert_eq!(companion["photo"][0]["title"], alias);
+    assert_eq!(companion["meta"]["profile"][0], alias);
+    assert!(
+        companion["text"]["div"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("{relative}/_history/{version}#part")),
+        "{mapped}"
+    );
+    assert_eq!(
+        mapped["entry"][2]["resource"]["subject"]["reference"],
+        format!("{relative}/_history/{version}")
+    );
+    for entry in mapped["entry"].as_array().unwrap() {
+        let resource = &entry["resource"];
+        assert_eq!(
+            read_resource(
+                &client,
+                &base,
+                resource["resourceType"].as_str().unwrap(),
+                resource["id"].as_str().unwrap()
+            )
+            .await
+            .unwrap(),
+            *resource
+        );
+        assert_eq!(
+            entry["response"]["lastModified"],
+            resource["meta"]["lastUpdated"]
+        );
+    }
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn transaction_reference_graph_limits_reject_without_rows_or_history() {
+    use reqwest::StatusCode;
+    let (_container, postgres_url) = start_postgres().await;
+    let client = reqwest::Client::new();
+    let left = "Observation?identifier=urn:budget-cycle|left&derived-from:Observation.code=urn:cycle-code|A";
+    let right = "Observation?identifier=urn:budget-cycle|right&derived-from:Observation.code=urn:cycle-code|A";
+    let entries = json!([
+        {"request":{"method":"PUT","url":"Observation/csp-budget-0-good-left"},"resource":{"resourceType":"Observation","id":"csp-budget-0-good-left","status":"final",
+            "code":{"coding":[{"system":"urn:cycle-code","code":"A"}]},"identifier":[{"system":"urn:budget-cycle","value":"left"}],"derivedFrom":[{"reference":right}]}},
+        {"request":{"method":"PUT","url":"Observation/csp-budget-1-bad-left"},"resource":{"resourceType":"Observation","id":"csp-budget-1-bad-left","status":"final",
+            "code":{"coding":[{"system":"urn:cycle-code","code":"B"}]},"identifier":[{"system":"urn:budget-cycle","value":"left"}],"derivedFrom":[{"reference":"Observation/csp-budget-1-bad-right"}]}},
+        {"request":{"method":"PUT","url":"Observation/csp-budget-0-good-right"},"resource":{"resourceType":"Observation","id":"csp-budget-0-good-right","status":"final",
+            "code":{"coding":[{"system":"urn:cycle-code","code":"A"}]},"identifier":[{"system":"urn:budget-cycle","value":"right"}],"derivedFrom":[{"reference":left}]}},
+        {"request":{"method":"PUT","url":"Observation/csp-budget-1-bad-right"},"resource":{"resourceType":"Observation","id":"csp-budget-1-bad-right","status":"final",
+            "code":{"coding":[{"system":"urn:cycle-code","code":"B"}]},"identifier":[{"system":"urn:budget-cycle","value":"right"}],"derivedFrom":[{"reference":"Observation/csp-budget-1-bad-left"}]}}
+    ]);
+    for limit in ["domain", "total", "assignments"] {
+        let mut config = create_config(&postgres_url);
+        match limit {
+            "domain" => config.server.max_conditional_reference_candidates = 1,
+            "total" => config.server.max_conditional_reference_total_candidates = 3,
+            _ => config.server.max_conditional_reference_assignments = 1,
+        }
+        let (base, shutdown, handle) = start_server(&config).await;
+        let (status, outcome) = send_bundle(&client, &base, "transaction", entries.clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{limit}: {outcome}"
+        );
+        assert_eq!(
+            outcome["issue"][0]["code"], "too-costly",
+            "{limit}: {outcome}"
+        );
+        // The first assignment is a valid A/A solution, but the assignments
+        // budget cannot prove uniqueness. It must still reject atomically.
+        for entry in entries.as_array().unwrap() {
+            assert!(
+                read_resource(
+                    &client,
+                    &base,
+                    "Observation",
+                    entry["resource"]["id"].as_str().unwrap()
+                )
+                .await
+                .is_none()
+            );
+        }
+        let history: Value = client
+            .get(format!("{base}/Observation/_history"))
+            .query(&[("_total", "accurate")])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(history["total"], 0, "{limit}: {history}");
+        let _ = shutdown.send(());
+        tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }

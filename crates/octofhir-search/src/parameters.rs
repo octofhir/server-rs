@@ -382,6 +382,19 @@ pub struct SearchParameter {
 }
 
 impl SearchParameter {
+    /// A declaration without an expression is not an executable filter. The
+    /// implemented special searches deliberately derive their own SQL paths.
+    pub fn is_runnable(&self) -> bool {
+        self.expression
+            .as_deref()
+            .is_some_and(|expression| !expression.trim().is_empty())
+            || (self.param_type == SearchParameterType::Special
+                && matches!(
+                    self.code.as_str(),
+                    "_text" | "_content" | "_filter" | "_list"
+                ))
+    }
+
     /// Create a new search parameter with required fields.
     pub fn new(
         code: impl Into<String>,
