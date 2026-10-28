@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -17,6 +17,29 @@ use octofhir_fhirschema::reference::{
 };
 use octofhir_storage::DynStorage;
 use serde_json::Value;
+
+/// Resolvers are built per request; building a `reqwest::Client` loads and
+/// parses the system root certificates, which on Linux dominated write CPU.
+fn shared_client(timeout_ms: u64) -> Option<reqwest::Client> {
+    static CLIENTS: LazyLock<Mutex<HashMap<u64, reqwest::Client>>> =
+        LazyLock::new(Default::default);
+    let mut clients = CLIENTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(client) = clients.get(&timeout_ms) {
+        return Some(client.clone());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        // Never follow redirects: a public URL must not be able to
+        // bounce the fetch to an internal address (SSRF).
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent("octofhir-server/targetProfile-resolver")
+        .build()
+        .ok()?;
+    clients.insert(timeout_ms, client.clone());
+    Some(client)
+}
 
 /// Reference resolver backed by FHIR storage.
 ///
@@ -59,14 +82,7 @@ impl StorageReferenceResolver {
         timeout_ms: u64,
     ) -> Self {
         let http = if fetch_external {
-            reqwest::Client::builder()
-                .timeout(Duration::from_millis(timeout_ms))
-                // Never follow redirects: a public URL must not be able to
-                // bounce the fetch to an internal address (SSRF).
-                .redirect(reqwest::redirect::Policy::none())
-                .user_agent("octofhir-server/targetProfile-resolver")
-                .build()
-                .ok()
+            shared_client(timeout_ms)
         } else {
             None
         };
