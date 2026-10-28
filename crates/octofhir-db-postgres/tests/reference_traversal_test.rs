@@ -1626,7 +1626,7 @@ async fn transactional_aggregate_and_inline_search_use_one_connection() {
 }
 
 #[tokio::test]
-async fn reference_locks_hold_through_write_and_rollback_discards_events() {
+async fn reference_checks_do_not_block_targets_and_rollback_discards_events() {
     use octofhir_core::events::{EventBroadcaster, ResourceEventType};
     use octofhir_storage::EventedStorage;
     use std::time::Duration;
@@ -1664,18 +1664,16 @@ async fn reference_locks_hold_through_write_and_rollback_discards_events() {
         found,
         std::collections::HashSet::from(["Patient/locked-parent".to_owned()])
     );
-    let delete_storage = other.clone();
-    let delete =
-        tokio::spawn(async move { delete_storage.delete("Patient", "locked-parent").await });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let blocked: bool = query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%DELETE FROM%patient%')",
-            ).fetch_one(&other_pool).await.unwrap();
-            if blocked { break; }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("delete must reach a row-lock wait, not merely await a pool slot");
+    // Reference checks take no row locks: hot targets shared by many
+    // concurrent writers must not become MultiXacts, so a delete of the target
+    // proceeds instead of queueing behind the checking transaction.
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        other.delete("Patient", "locked-parent"),
+    )
+    .await
+    .expect("reference checks must not block deletes of their targets")
+    .unwrap();
     let speculative = tx.create(&json!({"resourceType":"Observation","id":"rolled-back-child", "subject":{"reference":"Patient/locked-parent"}})).await.unwrap();
     assert_eq!(speculative.id, "rolled-back-child");
     assert!(matches!(
@@ -1689,13 +1687,7 @@ async fn reference_locks_hold_through_write_and_rollback_discards_events() {
             .unwrap()
             .is_none()
     );
-    assert!(!delete.is_finished());
     tx.rollback().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), delete)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
     assert!(
         storage
             .read("Observation", "rolled-back-child")
@@ -2487,7 +2479,7 @@ async fn reserved_metadata_matches_overlay_native_batches_saved_snapshots_and_ev
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     let mut tx = storage.begin_transaction().await.unwrap();
     tx.reserve_write_metadata(Some(&planned)).await.unwrap();
-    let created = tx.create_batch("Patient", &[body]).await.unwrap();
+    let created = tx.create_batch("Patient", vec![body]).await.unwrap();
     let updated = tx
         .update_batch(
             "Patient",
@@ -2776,7 +2768,7 @@ async fn ordinary_transaction_cannot_reorder_retained_revisions() {
             _ => early
                 .create_batch(
                     "Patient",
-                    &[
+                    vec![
                         json!({"resourceType":"Patient","id":"valid-batch-sibling"}),
                         body.clone(),
                     ],
@@ -2853,7 +2845,10 @@ async fn snapshot_policies_precede_visible_pages_totals_and_iterative_inline_hop
         })
         .collect();
     let mut seed = storage.begin_transaction().await.unwrap();
-    let saved = seed.create_batch("Patient", &patients).await.unwrap();
+    let saved = seed
+        .create_batch("Patient", patients.clone())
+        .await
+        .unwrap();
     seed.commit().await.unwrap();
     let active = |row: &RawStoredResource| -> Result<bool, StorageError> {
         let body: Value = serde_json::from_str(&row.resource_json).unwrap();

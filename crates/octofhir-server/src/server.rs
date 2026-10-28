@@ -1980,6 +1980,7 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
     let request_timeouts = app_middleware::RequestTimeouts {
         read: state.config.read_timeout(),
         write: state.config.write_timeout(),
+        bundle: state.config.bundle_timeout(),
     };
     // Build OAuth routes if auth is enabled (these are merged AFTER middleware, as they're public)
     let oauth_routes = build_oauth_routes(&state);

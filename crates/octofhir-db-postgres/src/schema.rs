@@ -231,10 +231,20 @@ impl SchemaManager {
 
         // Update trigger (drop + create)
         let update_trigger = format!("{}_update_timestamp", table);
+        let insert_trigger = format!("{}_insert_metadata", table);
+        // Every UPDATE is stamped (and its revision order checked) by the row
+        // trigger. INSERTs from the storage layer stamp id/meta in SQL; the
+        // WHEN clause is evaluated natively, so only other inserters (auth
+        // helpers, raw SQL) pay for the plpgsql call.
         sql.push_str(&format!(
             "DROP TRIGGER IF EXISTS \"{update_trigger}\" ON \"{table}\";\n\
-             CREATE TRIGGER \"{update_trigger}\" BEFORE INSERT OR UPDATE ON \"{table}\" \
-             FOR EACH ROW EXECUTE FUNCTION octofhir_set_resource_metadata();\n"
+             CREATE TRIGGER \"{update_trigger}\" BEFORE UPDATE ON \"{table}\" \
+             FOR EACH ROW EXECUTE FUNCTION octofhir_set_resource_metadata();\n\
+             DROP TRIGGER IF EXISTS \"{insert_trigger}\" ON \"{table}\";\n\
+             CREATE TRIGGER \"{insert_trigger}\" BEFORE INSERT ON \"{table}\" \
+             FOR EACH ROW WHEN (NEW.resource ->> 'id' IS DISTINCT FROM NEW.id \
+             OR NEW.resource -> 'meta' ->> 'versionId' IS DISTINCT FROM NEW.txid::text) \
+             EXECUTE FUNCTION octofhir_set_resource_metadata();\n"
         ));
 
         // History table + triggers (skipped for high-churn internal resources).
@@ -267,11 +277,11 @@ impl SchemaManager {
             let update_hist = format!("{}_history_update", table);
             let delete_hist = format!("{}_history_delete", table);
             let insert_guard = format!("{}_insert_revision_guard", table);
+            // The per-insert history probe (`{insert_guard}`) is gone: the global
+            // txid sequence already orders revisions, and the probe cost every
+            // INSERT a transition table plus a dynamic history lookup.
             sql.push_str(&format!(
                 "DROP TRIGGER IF EXISTS \"{insert_guard}\" ON \"{table}\";\n\
-                 CREATE TRIGGER \"{insert_guard}\" AFTER INSERT ON \"{table}\" \
-                 REFERENCING NEW TABLE AS new_rows \
-                 FOR EACH STATEMENT EXECUTE FUNCTION octofhir_guard_insert_revisions();\n\
                  DROP TRIGGER IF EXISTS \"{update_hist}\" ON \"{table}\";\n\
                  CREATE TRIGGER \"{update_hist}\" AFTER UPDATE ON \"{table}\" \
                  REFERENCING OLD TABLE AS old_rows \
@@ -410,7 +420,7 @@ impl SchemaManager {
         "notificationlog",
     ];
 
-    fn skips_history(table: &str) -> bool {
+    pub fn skips_history(table: &str) -> bool {
         Self::HISTORYLESS_TABLES.contains(&table)
     }
 

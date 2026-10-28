@@ -169,15 +169,22 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         self.inner.read_raw(resource_type, id).await
     }
 
+    // Single-statement pool writes: a transaction here would pin a connection
+    // for BEGIN/lock/txid/COMMIT round trips, and the pool is the write-path
+    // bottleneck under load. The previous body rides along in the same
+    // statement's RETURNING for the event.
     async fn update(
         &self,
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        let mut tx = self.begin_transaction().await?;
-        let result = tx.update(resource, if_match).await?;
-        tx.commit().await?;
-        Ok(result)
+        let updated = self.inner.update_with_snapshot(resource, if_match).await?;
+        self.broadcaster.send_resource(snapshot_event(
+            ResourceEventType::Updated,
+            &updated.stored,
+            Some(&updated.previous),
+        ));
+        Ok(updated.stored)
     }
 
     async fn update_raw(
@@ -185,16 +192,34 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<RawStoredResource, StorageError> {
-        let mut tx = self.begin_transaction().await?;
-        let result = tx.update_raw(resource, if_match).await?;
-        tx.commit().await?;
-        Ok(result)
+        let updated = self
+            .inner
+            .update_raw_with_snapshot(resource, if_match)
+            .await?;
+        if self.broadcaster.subscriber_count() > 0 {
+            self.broadcaster.send_resource(raw_snapshot_event(
+                ResourceEventType::Updated,
+                &updated.stored,
+                Some(&updated.previous),
+            )?);
+        }
+        Ok(updated.stored)
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        let mut tx = self.begin_transaction().await?;
-        tx.delete(resource_type, id).await?;
-        tx.commit().await
+        let previous = self
+            .inner
+            .delete_returning_previous(resource_type, id)
+            .await?;
+        if let Some(previous) = previous
+            && self.broadcaster.subscriber_count() > 0
+        {
+            let mut event =
+                ResourceEvent::deleted(resource_type, id).with_previous(previous.resource);
+            event.timestamp = previous.last_updated;
+            self.broadcaster.send_resource(event);
+        }
+        Ok(())
     }
 
     async fn current_snapshot(
@@ -592,7 +617,7 @@ impl Transaction for EventedTransaction {
     async fn create_batch(
         &mut self,
         resource_type: &str,
-        resources: &[Value],
+        resources: Vec<Value>,
     ) -> Result<Vec<StoredResource>, StorageError> {
         let stored = self.inner.create_batch(resource_type, resources).await?;
         for snapshot in &stored {

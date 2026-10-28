@@ -68,7 +68,10 @@ impl AppConfig {
         if self.server.port == 0 {
             return Err("server.port must be > 0".into());
         }
-        if self.server.read_timeout_ms == 0 || self.server.write_timeout_ms == 0 {
+        if self.server.read_timeout_ms == 0
+            || self.server.write_timeout_ms == 0
+            || self.server.bundle_timeout_ms == 0
+        {
             return Err("server timeouts must be > 0".into());
         }
         if self.server.max_conditional_reference_candidates == 0
@@ -172,6 +175,9 @@ impl AppConfig {
     pub fn write_timeout(&self) -> Duration {
         Duration::from_millis(self.server.write_timeout_ms as u64)
     }
+    pub fn bundle_timeout(&self) -> Duration {
+        Duration::from_millis(self.server.bundle_timeout_ms as u64)
+    }
 
     /// Returns the base URL for the server.
     /// If `base_url` is configured, returns that; otherwise computes from host:port.
@@ -197,6 +203,8 @@ pub struct ServerConfig {
     pub read_timeout_ms: u32,
     #[serde(default = "default_write_timeout_ms")]
     pub write_timeout_ms: u32,
+    #[serde(default = "default_bundle_timeout_ms")]
+    pub bundle_timeout_ms: u32,
     /// Maximum identities per predicate when solving a dependent reference graph.
     #[serde(default = "default_conditional_reference_candidates")]
     pub max_conditional_reference_candidates: usize,
@@ -224,6 +232,9 @@ fn default_read_timeout_ms() -> u32 {
 fn default_write_timeout_ms() -> u32 {
     15_000
 }
+fn default_bundle_timeout_ms() -> u32 {
+    600_000
+}
 fn default_conditional_reference_candidates() -> usize {
     256
 }
@@ -245,6 +256,7 @@ impl Default for ServerConfig {
             base_url: None,
             read_timeout_ms: default_read_timeout_ms(),
             write_timeout_ms: default_write_timeout_ms(),
+            bundle_timeout_ms: default_bundle_timeout_ms(),
             max_conditional_reference_candidates: default_conditional_reference_candidates(),
             max_conditional_reference_assignments: default_conditional_reference_assignments(),
             max_conditional_reference_total_candidates:

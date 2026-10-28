@@ -8,7 +8,8 @@ use serde_json::Value;
 use crate::error::StorageError;
 use crate::types::{
     HistoryParams, HistoryResult, IncludeLimits, ProposedResource, RawHistoryResult,
-    RawSearchResult, RawStoredResource, SearchParams, SearchResult, StoredResource,
+    RawSearchResult, RawStoredResource, RawUpdatedResource, SearchParams, SearchResult,
+    StoredResource, UpdatedResource,
 };
 
 /// The main storage trait that all FHIR storage backends must implement.
@@ -265,6 +266,41 @@ pub trait FhirStorage: Send + Sync {
     ///
     /// Returns `StorageError::NotFound` if the resource does not exist.
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError>;
+
+    /// Single-statement update that also returns the replaced body, for event
+    /// consumers that need the previous state without a surrounding transaction.
+    async fn update_with_snapshot(
+        &self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<UpdatedResource, StorageError> {
+        let _ = (resource, if_match);
+        Err(StorageError::internal(
+            "update_with_snapshot is not supported by this backend",
+        ))
+    }
+
+    /// Raw-JSON variant of [`FhirStorage::update_with_snapshot`].
+    async fn update_raw_with_snapshot(
+        &self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<RawUpdatedResource, StorageError> {
+        let _ = (resource, if_match);
+        Err(StorageError::internal(
+            "update_raw_with_snapshot is not supported by this backend",
+        ))
+    }
+
+    /// Delete returning the removed live body (None when nothing was live).
+    async fn delete_returning_previous(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<StoredResource>, StorageError> {
+        self.delete(resource_type, id).await?;
+        Ok(None)
+    }
 
     // ==================== Versioning ====================
 
@@ -839,10 +875,10 @@ pub trait Transaction: Send + Sync {
     async fn create_batch(
         &mut self,
         _resource_type: &str,
-        resources: &[Value],
+        resources: Vec<Value>,
     ) -> Result<Vec<StoredResource>, StorageError> {
         let mut out = Vec::with_capacity(resources.len());
-        for r in resources {
+        for r in &resources {
             out.push(self.create(r).await?);
         }
         Ok(out)

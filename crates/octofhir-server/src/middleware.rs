@@ -32,6 +32,9 @@ use crate::operation_registry::OperationRegistryService;
 pub(crate) struct RequestTimeouts {
     pub read: std::time::Duration,
     pub write: std::time::Duration,
+    /// Batch/transaction Bundles carry thousands of entries; holding them to
+    /// the single-resource write budget fails large imports under load.
+    pub bundle: std::time::Duration,
 }
 
 /// Bound request processing, including extraction and storage futures. Dropping
@@ -46,7 +49,15 @@ pub(crate) async fn request_timeout_middleware(
         axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
     ) || (request.method() == axum::http::Method::POST
         && request.uri().path().ends_with("/_search"));
-    let duration = if read { timeouts.read } else { timeouts.write };
+    let bundle = request.method() == axum::http::Method::POST
+        && request.uri().path().trim_end_matches('/') == "/fhir";
+    let duration = if read {
+        timeouts.read
+    } else if bundle {
+        timeouts.bundle
+    } else {
+        timeouts.write
+    };
     match tokio::time::timeout(duration, next.run(request)).await {
         Ok(response) => response,
         Err(_) => (
@@ -1843,6 +1854,7 @@ mod request_timeout_tests {
                 RequestTimeouts {
                     read: std::time::Duration::from_millis(5),
                     write: std::time::Duration::from_secs(1),
+                    bundle: std::time::Duration::from_secs(1),
                 },
                 request_timeout_middleware,
             ));

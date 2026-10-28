@@ -779,7 +779,7 @@ fn is_compartment_search_path(path: &str, context: &PolicyContext) -> bool {
             && *resource_type == context.request.resource_type)
 }
 
-fn entry_context(auth: &AuthContext, entry: &Value) -> Result<PolicyContext, ApiError> {
+fn entry_request(entry: &Value) -> Result<(&str, &str, &str, &str), ApiError> {
     let request = &entry["request"];
     let method = request["method"]
         .as_str()
@@ -793,6 +793,11 @@ fn entry_context(auth: &AuthContext, entry: &Value) -> Result<PolicyContext, Api
             "Bundle request.url must be relative to the FHIR base",
         ));
     }
+    Ok((method, url, path, query))
+}
+
+fn entry_context(auth: &AuthContext, entry: &Value) -> Result<PolicyContext, ApiError> {
+    let (method, _, path, query) = entry_request(entry)?;
     let mut context = PolicyContextBuilder::new()
         .with_auth_context(auth)
         .with_request(
@@ -823,10 +828,13 @@ pub(crate) fn authorize_batch_write(
     auth: &AuthContext,
     entry: &Value,
 ) -> Result<Option<crate::write::AuthorizedWrite>, ApiError> {
-    let context = entry_context(auth, entry)?;
     if state.is_anonymous_context(auth) {
+        // Same request validation, without building (and cloning the body
+        // into) a policy context that anonymous access never evaluates.
+        entry_request(entry)?;
         return Ok(None);
     }
+    let context = entry_context(auth, entry)?;
     if !matches!(
         context.request.operation,
         FhirOperation::Create

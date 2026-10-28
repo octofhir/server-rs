@@ -142,13 +142,30 @@ async fn validate_bundle_writes(
         if !outcome.valid {
             return Err(validation_error(outcome));
         }
-        references.all.extend(local.all);
-        references.versions.extend(local.versions);
+        // Targets written by this same transaction exist at commit by
+        // construction; only references leaving the bundle need a lookup.
+        references.all.extend(
+            local
+                .all
+                .into_iter()
+                .filter(|reference| !candidates.contains_key(reference)),
+        );
+        references.versions.extend(
+            local
+                .versions
+                .into_iter()
+                .filter(|reference| !candidates.contains_key(&reference.to_versioned())),
+        );
         references.aliases.extend(local.aliases);
         for (resource_type, ids) in local.groups {
-            groups.entry(resource_type).or_default().extend(ids);
+            let external: Vec<String> = ids
+                .into_iter()
+                .filter(|id| !candidates.contains_key(&format!("{resource_type}/{id}")))
+                .collect();
+            groups.entry(resource_type).or_default().extend(external);
         }
     }
+    groups.retain(|_, ids| !ids.is_empty());
     if resolver.take_error().is_some() {
         return Err(ApiError::internal("Reference integrity lookup failed"));
     }
@@ -995,6 +1012,54 @@ async fn validate_missing_references(
     validation_error(validation_outcome)
 }
 
+/// Pool-side existence check for the lock-free write path. Targets may vanish
+/// between this check and the write; that race is accepted in exchange for not
+/// holding row locks on every reference target.
+async fn check_references_exist(
+    state: &crate::server::AppState,
+    payload: &Value,
+    references: &LocalReferenceSet,
+) -> Result<(), ApiError> {
+    if references.groups.is_empty() {
+        return Ok(());
+    }
+    let found = state
+        .storage
+        .exists_many_grouped(&references.groups)
+        .await
+        .map_err(map_storage_error)?;
+    if found == references.all {
+        return Ok(());
+    }
+    Err(validate_missing_references(payload, state, &found).await)
+}
+
+/// `postprocess_resource` only inspects the body for SearchParameter, where it
+/// needs the committed meta; every other type can use the request payload and
+/// skip re-parsing the stored JSON.
+async fn postprocess_stored(
+    resource_type: &str,
+    stored: &octofhir_storage::RawStoredResource,
+    payload: &Value,
+    state: &crate::server::AppState,
+) -> Result<(), ApiError> {
+    let committed = if resource_type == "SearchParameter" {
+        Some(
+            serde_json::from_str::<Value>(&stored.resource_json)
+                .map_err(|error| ApiError::internal(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    postprocess_resource(
+        resource_type,
+        &stored.id,
+        committed.as_ref().unwrap_or(payload),
+        state,
+    )
+    .await
+}
+
 async fn map_write_error(
     error: crate::write::WriteError,
     payload: &Value,
@@ -1054,17 +1119,29 @@ pub async fn create_resource(
             "If-None-Exist requires a single search criterion",
         ));
     }
-    let write = crate::write::PreparedWrite::prepare(
-        &state,
-        crate::write::WriteMode::Create,
-        &resource_type,
-        None,
-        authorization.map(|Extension(authorization)| authorization.0),
-    )
-    .await?;
-    let conditional = match condition {
-        Some(condition) => Some(write.conditional(&state, condition).await?),
-        None => None,
+    // Without a policy context or If-None-Exist nothing needs row locks or a
+    // multi-statement transaction: one pool statement checks references, one
+    // inserts. The locking protocol below pins a connection for 5+ round trips
+    // per write, which under load turns the pool into the bottleneck.
+    let fast_path = authorization.is_none() && condition.is_none();
+    let authorization = authorization.map(|Extension(authorization)| authorization.0);
+    let write = if fast_path {
+        None
+    } else {
+        Some(
+            crate::write::PreparedWrite::prepare(
+                &state,
+                crate::write::WriteMode::Create,
+                &resource_type,
+                None,
+                authorization,
+            )
+            .await?,
+        )
+    };
+    let conditional = match (&write, condition) {
+        (Some(write), Some(condition)) => Some(write.conditional(&state, condition).await?),
+        _ => None,
     };
     // A match ignores the POST content. Preview under the same coordination
     // used for the final write, without holding a connection during validation.
@@ -1076,8 +1153,9 @@ pub async fn create_resource(
         None => None,
     };
     let skip_validation = should_skip_validation(&headers, &state.config.validation);
-    let result = if let Some(matched) = matched {
-        matched
+    let (stored, created) = if let Some(matched) = matched {
+        let created = matched.created;
+        (matched.into_raw(), created)
     } else {
         let local_references = if skip_validation {
             tracing::warn!(resource_type = %resource_type, operation = "create",
@@ -1089,28 +1167,53 @@ pub async fn create_resource(
         preprocess_payload(&resource_type, &mut payload).await?;
         validate_payload_structure(&resource_type, &payload, &IdPolicy::Create)
             .map_err(ApiError::bad_request)?;
-        let result = match &conditional {
-            Some(conditional) => conditional
+        if let Some(conditional) = &conditional {
+            match conditional
                 .execute(&state, &payload, Some(&local_references))
                 .await
-                .map(|result| result.expect("validated conditional create returns a resource")),
-            None => {
-                write
-                    .run(&state, Some(&payload), &local_references, None, true)
-                    .await
+            {
+                Ok(result) => {
+                    let result = result.expect("validated conditional create returns a resource");
+                    let created = result.created;
+                    (result.into_raw(), created)
+                }
+                Err(error) => return Err(map_write_error(error, &payload, &state).await),
             }
-        };
-        match result {
-            Ok(result) => result,
-            Err(error) => return Err(map_write_error(error, &payload, &state).await),
+        } else if fast_path && local_references.versions.is_empty() {
+            check_references_exist(&state, &payload, &local_references).await?;
+            match state.storage.create_raw(&payload).await {
+                Ok(stored) => (stored, true),
+                Err(error) => return Err(map_storage_error(error)),
+            }
+        } else {
+            let write = match write {
+                Some(write) => write,
+                None => {
+                    crate::write::PreparedWrite::prepare(
+                        &state,
+                        crate::write::WriteMode::Create,
+                        &resource_type,
+                        None,
+                        None,
+                    )
+                    .await?
+                }
+            };
+            match write
+                .run(&state, Some(&payload), &local_references, None, true)
+                .await
+            {
+                Ok(result) => {
+                    let created = result.created;
+                    (result.into_raw(), created)
+                }
+                Err(error) => return Err(map_write_error(error, &payload, &state).await),
+            }
         }
     };
-    let created = result.created;
     if created {
-        let stored = result.stored.as_ref().expect("create returns a resource");
-        postprocess_resource(&resource_type, &stored.id, &stored.resource, &state).await?;
+        postprocess_stored(&resource_type, &stored, &payload, &state).await?;
     }
-    let stored = result.into_raw();
     let status = if created {
         StatusCode::CREATED
     } else {
@@ -2073,44 +2176,52 @@ pub async fn update_resource(
         obj.insert("id".to_string(), Value::String(id.clone()));
     }
 
-    let write = crate::write::PreparedWrite::prepare(
-        &state,
-        crate::write::WriteMode::Update,
-        &resource_type,
-        Some(&id),
-        authorization.map(|Extension(authorization)| authorization.0),
-    )
-    .await?;
-    let result = match write
-        .run(
-            &state,
-            Some(&payload),
-            &local_references,
-            if_match.as_deref(),
-            true,
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(error) => return Err(map_write_error(error, &payload, &state).await),
-    };
-    let created = result.created;
-    let stored = result.into_raw();
-    let saved_payload = if resource_type == "SearchParameter" {
-        Some(
-            serde_json::from_str::<Value>(&stored.resource_json)
-                .map_err(|error| ApiError::internal(error.to_string()))?,
-        )
+    // Same fast path as create: no policy context means a single-statement
+    // UPDATE (If-Match folded into its WHERE), falling back to an INSERT when
+    // the id does not exist yet (PUT-as-create).
+    let (stored, created) = if authorization.is_none() && local_references.versions.is_empty() {
+        check_references_exist(&state, &payload, &local_references).await?;
+        match state
+            .storage
+            .update_raw(&payload, if_match.as_deref())
+            .await
+        {
+            Ok(stored) => (stored, false),
+            Err(octofhir_storage::StorageError::NotFound { .. }) if if_match.is_none() => {
+                match state.storage.create_raw(&payload).await {
+                    Ok(stored) => (stored, true),
+                    Err(error) => return Err(map_storage_error(error)),
+                }
+            }
+            Err(error) => return Err(map_storage_error(error)),
+        }
     } else {
-        None
+        let write = crate::write::PreparedWrite::prepare(
+            &state,
+            crate::write::WriteMode::Update,
+            &resource_type,
+            Some(&id),
+            authorization.map(|Extension(authorization)| authorization.0),
+        )
+        .await?;
+        match write
+            .run(
+                &state,
+                Some(&payload),
+                &local_references,
+                if_match.as_deref(),
+                true,
+            )
+            .await
+        {
+            Ok(result) => {
+                let created = result.created;
+                (result.into_raw(), created)
+            }
+            Err(error) => return Err(map_write_error(error, &payload, &state).await),
+        }
     };
-    postprocess_resource(
-        &resource_type,
-        &id,
-        saved_payload.as_ref().unwrap_or(&payload),
-        &state,
-    )
-    .await?;
+    postprocess_stored(&resource_type, &stored, &payload, &state).await?;
 
     let status = if created {
         StatusCode::CREATED
@@ -2399,6 +2510,20 @@ pub async fn delete_resource(
     }
 
     let if_match = crate::write::if_match_header(&headers)?;
+    // Fast path: one pool DELETE; the trigger archives the body and tombstone.
+    // SearchParameter needs the deletion revision for its registry, so it keeps
+    // the snapshot-returning path.
+    if authorization.is_none() && if_match.is_none() && resource_type != "SearchParameter" {
+        state
+            .storage
+            .delete(&resource_type, &id)
+            .await
+            .map_err(map_storage_error)?;
+        if let Some(cache) = &state.resource_cache {
+            cache.invalidate(&resource_type, &id).await;
+        }
+        return Ok((StatusCode::NO_CONTENT, HeaderMap::new()));
+    }
     let write = crate::write::PreparedWrite::prepare(
         &state,
         crate::write::WriteMode::Delete,
@@ -4715,7 +4840,7 @@ pub async fn transaction_handler(
         "transaction" => {
             let (status, json) = process_transaction(
                 &state,
-                &bundle,
+                bundle,
                 bundle_include_resource,
                 skip_validation,
                 &prepared_searches,
@@ -4772,7 +4897,7 @@ pub(crate) async fn execute_worker_write_chunk(
     let (_, Json(result)) = step
         .scope(process_transaction(
             state,
-            &bundle,
+            bundle,
             false,
             skip_validation,
             &HashMap::new(),
@@ -4791,18 +4916,18 @@ pub(crate) async fn execute_worker_write_chunk(
 /// 3. Execute: process entries in verb order (DELETE → POST → PUT → GET) in one DB transaction
 async fn process_transaction(
     state: &crate::server::AppState,
-    bundle: &Value,
+    mut bundle: Value,
     include_resource: bool,
     skip_validation: bool,
     prepared_searches: &HashMap<usize, PreparedBundleSearch>,
     prepared_reads: &HashMap<usize, crate::authorization::PreparedRead>,
     prepared_writes: &mut crate::write::PreparedTransactionWrites,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    let entries = bundle["entry"]
-        .as_array()
-        .ok_or_else(|| ApiError::bad_request("Missing or invalid bundle entries"))?;
+    let Some(Value::Array(mut planned_entries)) = bundle.get_mut("entry").map(Value::take) else {
+        return Err(ApiError::bad_request("Missing or invalid bundle entries"));
+    };
 
-    if entries.is_empty() {
+    if planned_entries.is_empty() {
         let response_bundle = json!({
             "resourceType": "Bundle",
             "type": "transaction-response",
@@ -4811,7 +4936,6 @@ async fn process_transaction(
         return Ok((StatusCode::OK, Json(response_bundle)));
     }
 
-    let mut planned_entries = entries.clone();
     for entry in &mut planned_entries {
         validate_bundle_entry_identity(entry)?;
         if entry["request"]["method"]
@@ -5062,28 +5186,43 @@ async fn process_transaction(
 
     // Phase 2: Build resolved entries — replace all urn:uuid references using the complete map
     let mut resolved_entries: Vec<(usize, Value)> = Vec::new();
-    for (original_idx, entry) in &sorted_entries {
-        let mut resolved_entry = (*entry).clone();
+    let mut entry_references: HashMap<usize, Vec<String>> = HashMap::new();
+    // Conditional writes re-read the original entries per phase below; every
+    // other bundle hands its entries over instead of copying them.
+    let keep_originals = !conditions.is_empty();
+    let order: Vec<usize> = sorted_entries.iter().map(|(index, _)| *index).collect();
+    let request_methods: Vec<String> = planned_entries
+        .iter()
+        .map(|entry| {
+            entry["request"]["method"]
+                .as_str()
+                .unwrap_or_default()
+                .to_ascii_uppercase()
+        })
+        .collect();
+    for original_idx in &order {
+        let mut resolved_entry = if keep_originals {
+            planned_entries[*original_idx].clone()
+        } else {
+            planned_entries[*original_idx].take()
+        };
+        let method = resolved_entry["request"]["method"]
+            .as_str()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
 
         // Inject pre-assigned ID into POST resources
-        if let Some(fu) = entry["fullUrl"].as_str()
-            && let Some(new_id) = pre_assigned_ids.get(fu)
+        if let Some(new_id) = resolved_entry["fullUrl"]
+            .as_str()
+            .and_then(|fu| pre_assigned_ids.get(fu))
+            .cloned()
             && let Some(res) = resolved_entry.get_mut("resource")
         {
             res["id"] = json!(new_id);
-        } else if entry["request"]["method"]
-            .as_str()
-            .is_some_and(|method| method.eq_ignore_ascii_case("POST"))
-            && !matched_conditional.contains_key(original_idx)
-            && let Some(resource) = resolved_entry.get_mut("resource")
-        {
-            resource["id"] = entry["resource"]["id"].clone();
         }
 
-        if entry["request"]["method"]
-            .as_str()
-            .is_some_and(|method| method.eq_ignore_ascii_case("PUT"))
-            && entry_conditional_query(entry).is_some()
+        if method == "PUT"
+            && entry_conditional_query(&resolved_entry).is_some()
             && let Some(resource) = resolved_entry.get_mut("resource")
         {
             match conditional_matches.get(original_idx) {
@@ -5101,7 +5240,7 @@ async fn process_transaction(
         if !matched_conditional.contains_key(original_idx)
             && let Some(res) = resolved_entry.get_mut("resource")
         {
-            uri_remapper
+            let references = uri_remapper
                 .resolve(
                     state.model_provider.as_ref(),
                     res,
@@ -5109,9 +5248,8 @@ async fn process_transaction(
                     &reference_versions,
                 )
                 .await?;
-            if entry["request"]["method"].as_str().is_some_and(|method| {
-                method.eq_ignore_ascii_case("POST") || method.eq_ignore_ascii_case("PUT")
-            }) {
+            entry_references.insert(*original_idx, references);
+            if method == "POST" || method == "PUT" {
                 let resource_type = res["resourceType"].as_str().unwrap_or_default().to_owned();
                 preprocess_payload(&resource_type, res).await?;
             }
@@ -5224,7 +5362,7 @@ async fn process_transaction(
     }
 
     for (body, _) in prepared_patches.values_mut() {
-        uri_remapper
+        let _ = uri_remapper
             .resolve(
                 state.model_provider.as_ref(),
                 body,
@@ -5237,6 +5375,7 @@ async fn process_transaction(
     // Resolve against the proposed final graph, including replacements,
     // deletions and evaluated patches. Matched POST content is ignored by R4.
     let mut conditional_refs = HashSet::new();
+    let mut conditional_rows: HashSet<(String, String)> = HashSet::new();
     for (index, entry) in &resolved_entries {
         if matched_conditional.contains_key(index) {
             continue;
@@ -5253,13 +5392,27 @@ async fn process_transaction(
                     .and_then(|_| entry.get("resource"))
             });
         if let Some(body) = body {
-            conditional_refs.extend(
-                uri_remapper
-                    .references(state.model_provider.as_ref(), body)
-                    .await?
-                    .into_iter()
-                    .filter(|reference| is_conditional_reference(reference)),
-            );
+            let collected = match entry_references.remove(index) {
+                Some(references) if !prepared_patches.contains_key(index) => references,
+                _ => {
+                    uri_remapper
+                        .references(state.model_provider.as_ref(), body)
+                        .await?
+                }
+            };
+            let mut any = false;
+            for reference in collected {
+                if is_conditional_reference(&reference) {
+                    any = true;
+                    conditional_refs.insert(reference);
+                }
+            }
+            if any {
+                conditional_rows.insert((
+                    body["resourceType"].as_str().unwrap_or_default().to_owned(),
+                    body["id"].as_str().unwrap_or_default().to_owned(),
+                ));
+            }
         }
     }
     let conditional_ref_predicates =
@@ -5272,27 +5425,64 @@ async fn process_transaction(
     let mut conditional_ref_dependent = false;
     let mut conditional_ref_templates = None;
     if !conditional_refs.is_empty() {
+        // Only rows that carry conditional references (for their paths) and
+        // rows of a predicate's type (as proposed matches) take part, unless the
+        // predicates turn out to depend on the bundle's own references.
+        let predicate_types: HashSet<&str> = reference_predicates
+            .iter()
+            .map(|(resource_type, _)| resource_type.as_str())
+            .collect();
         let rows = proposed_transaction_graph(
             &resolved_entries,
             &conditional_matches,
             &matched_conditional,
             &prepared_patches,
+            &|resource_type: &str, _: &str| predicate_types.contains(resource_type),
         )?;
+        let mut path_sources = Vec::new();
+        for (index, entry) in &resolved_entries {
+            let body = match prepared_patches.get(index) {
+                Some((body, _)) => Some(body),
+                None if matches!(request_methods[*index].as_str(), "POST" | "PUT")
+                    && !matched_conditional.contains_key(index) =>
+                {
+                    entry.get("resource")
+                }
+                None => None,
+            };
+            if let Some(body) = body {
+                let resource_type = body["resourceType"].as_str().unwrap_or_default();
+                let id = body["id"].as_str().unwrap_or_default();
+                if conditional_rows.contains(&(resource_type.to_owned(), id.to_owned())) {
+                    path_sources.push((resource_type, id, body));
+                }
+            }
+        }
         let mut graph = ConditionalReferenceGraph::prepare(
             rows,
+            path_sources,
             &mut uri_remapper,
             state.model_provider.as_ref(),
         )
         .await?;
         (conditional_ref_candidates, conditional_ref_dependent) =
             conditional_reference_candidate_predicates(state, &reference_predicates, &graph);
+        if conditional_ref_dependent {
+            graph.resources = proposed_transaction_graph(
+                &resolved_entries,
+                &conditional_matches,
+                &matched_conditional,
+                &prepared_patches,
+                &|_: &str, _: &str| true,
+            )?;
+        }
 
         let resolved = resolve_conditional_references_batched(
             state,
             &conditional_ref_predicates,
             &conditional_ref_candidates,
             conditional_ref_dependent,
-            graph.clone(),
+            &graph,
             &mut planned_metadata,
         )
         .await?;
@@ -5409,7 +5599,12 @@ async fn process_transaction(
         .await
         .map_err(|e| ApiError::internal(format!("Failed to begin transaction: {}", e)))?;
 
-    if !conditional_matches.is_empty() || !conditional_refs.is_empty() {
+    // Conditional writes (and reference graphs that depend on this bundle's
+    // own resources) need the exclusive gate so their search and write are
+    // atomic. Plain conditional references to existing resources do not: they
+    // are re-checked below, and serializing every Synthea-style bundle on a
+    // database-wide lock would turn concurrent imports into a queue.
+    if !conditional_matches.is_empty() || conditional_ref_dependent {
         // Acquire before any row lock. This avoids shared-to-exclusive gate
         // upgrades and pins chained predicates while the graph is committed.
         tx.lock_conditional_writes()
@@ -5519,6 +5714,7 @@ async fn process_transaction(
     // If-Match or conditional DELETE must execute before every POST/PUT.
     for phase in 0..=6 {
         if phase <= 2 && !conditions.is_empty() {
+            let sorted_entries = sort_transaction_entries(&planned_entries);
             let phase_entries: Vec<_> = sorted_entries
                 .iter()
                 .copied()
@@ -5584,9 +5780,15 @@ async fn process_transaction(
         if phase == 1 {
             // Flush all POST batches.
             for (resource_type, items) in std::mem::take(&mut post_batches) {
-                let resources: Vec<Value> = items.iter().map(|(_, r)| r.clone()).collect();
+                let index_of: HashMap<String, usize> = items
+                    .iter()
+                    .filter_map(|(index, body)| {
+                        body["id"].as_str().map(|id| (id.to_owned(), *index))
+                    })
+                    .collect();
+                let resources: Vec<Value> = items.into_iter().map(|(_, r)| r).collect();
                 let stored = tx
-                    .create_batch(&resource_type, &resources)
+                    .create_batch(&resource_type, resources)
                     .await
                     .map_err(|e| {
                         tracing::warn!(
@@ -5595,16 +5797,12 @@ async fn process_transaction(
                         );
                         map_storage_error(e)
                     })?;
-                let index_of: HashMap<&str, usize> = items
-                    .iter()
-                    .filter_map(|(index, body)| body["id"].as_str().map(|id| (id, *index)))
-                    .collect();
                 for s in stored {
                     let index = index_of
                         .get(s.id.as_str())
                         .ok_or_else(|| ApiError::conflict("The stored create identity changed"))?;
-                    response_entries[*index] = Some(build_stored_transaction_response_entry(
-                        &s,
+                    response_entries[*index] = Some(build_owned_transaction_response_entry(
+                        s,
                         "201 Created",
                         include_write_resource,
                     ));
@@ -5666,7 +5864,7 @@ async fn process_transaction(
                     continue;
                 }
                 let created = tx
-                    .create_batch(&resource_type, &to_create)
+                    .create_batch(&resource_type, to_create)
                     .await
                     .map_err(|e| {
                         tracing::warn!(
@@ -5749,15 +5947,7 @@ async fn process_transaction(
         .map_err(map_transaction_write_error)?;
     if !include_resource {
         for (index, entry) in response_entries.iter_mut().enumerate() {
-            if entries[index]["request"]["method"]
-                .as_str()
-                .is_some_and(|method| {
-                    matches!(
-                        method.to_ascii_uppercase().as_str(),
-                        "POST" | "PUT" | "PATCH"
-                    )
-                })
-            {
+            if matches!(request_methods[index].as_str(), "POST" | "PUT" | "PATCH") {
                 entry
                     .as_object_mut()
                     .expect("response entry")
@@ -5849,15 +6039,10 @@ async fn process_transaction(
     // until the entry's TTL expired.
     if let Some(cache) = &state.resource_cache {
         for (index, entry) in response_entries.iter().enumerate() {
-            if !entries[index]["request"]["method"]
-                .as_str()
-                .is_some_and(|method| {
-                    matches!(
-                        method.to_ascii_uppercase().as_str(),
-                        "POST" | "PUT" | "PATCH" | "DELETE"
-                    )
-                })
-                || matched_conditional.contains_key(&index)
+            if !matches!(
+                request_methods[index].as_str(),
+                "POST" | "PUT" | "PATCH" | "DELETE"
+            ) || matched_conditional.contains_key(&index)
             {
                 continue;
             }
@@ -7099,6 +7284,7 @@ fn proposed_transaction_graph(
     conditions: &HashMap<usize, ConditionalMatch>,
     matched_posts: &HashMap<usize, Arc<MatchedExisting>>,
     patches: &HashMap<usize, (Value, String)>,
+    keep: &dyn Fn(&str, &str) -> bool,
 ) -> Result<Vec<octofhir_storage::ProposedResource>, ApiError> {
     let mut graph = Vec::new();
     for (index, entry) in entries {
@@ -7132,6 +7318,9 @@ fn proposed_transaction_graph(
             }
             return Err(ApiError::bad_request("Missing proposed resource identity"));
         };
+        if !keep(resource_type, id) {
+            continue;
+        }
         graph.push(octofhir_storage::ProposedResource {
             resource_type: resource_type.to_owned(),
             id: id.to_owned(),
@@ -7149,37 +7338,38 @@ struct ConditionalReferenceGraph {
 }
 
 impl ConditionalReferenceGraph {
+    /// `path_sources` are the bodies that carry conditional references; their
+    /// paths are read in place, so only `resources` (proposed matches) are owned.
     async fn prepare(
         resources: Vec<octofhir_storage::ProposedResource>,
+        path_sources: Vec<(&str, &str, &Value)>,
         remapper: &mut crate::bundle_references::BundleReferenceRemapper,
         provider: &dyn ModelProvider,
     ) -> Result<Self, ApiError> {
         let mut paths = HashMap::new();
         let mut changed_ancestors: HashMap<String, HashSet<String>> = HashMap::new();
-        for row in &resources {
-            if let Some(body) = &row.resource {
-                let references: Vec<_> = remapper
-                    .reference_paths(provider, body)
-                    .await?
-                    .into_iter()
-                    .filter(|(_, value)| is_conditional_reference(value))
+        for (resource_type, id, body) in path_sources {
+            let references: Vec<_> = remapper
+                .reference_paths(provider, body)
+                .await?
+                .into_iter()
+                .filter(|(_, value)| is_conditional_reference(value))
+                .collect();
+            let ancestors = changed_ancestors
+                .entry(resource_type.to_owned())
+                .or_default();
+            for (pointer, _) in &references {
+                let segments: Vec<_> = pointer
+                    .split('/')
+                    .skip(1)
+                    .filter(|segment| !segment.chars().all(|c| c.is_ascii_digit()))
+                    .map(|segment| segment.replace("~1", "/").replace("~0", "~"))
                     .collect();
-                let ancestors = changed_ancestors
-                    .entry(row.resource_type.clone())
-                    .or_default();
-                for (pointer, _) in &references {
-                    let segments: Vec<_> = pointer
-                        .split('/')
-                        .skip(1)
-                        .filter(|segment| !segment.chars().all(|c| c.is_ascii_digit()))
-                        .map(|segment| segment.replace("~1", "/").replace("~0", "~"))
-                        .collect();
-                    for length in 1..=segments.len() {
-                        ancestors.insert(segments[..length].join("."));
-                    }
+                for length in 1..=segments.len() {
+                    ancestors.insert(segments[..length].join("."));
                 }
-                paths.insert((row.resource_type.clone(), row.id.clone()), references);
             }
+            paths.insert((resource_type.to_owned(), id.to_owned()), references);
         }
         Ok(Self {
             resources,
@@ -7333,7 +7523,7 @@ async fn resolve_conditional_references_batched(
     prepared: &[(String, String, octofhir_storage::SearchParams)],
     coarse: &[(String, octofhir_storage::SearchParams)],
     dependent: bool,
-    mut graph: ConditionalReferenceGraph,
+    graph: &ConditionalReferenceGraph,
     metadata: &mut Option<octofhir_storage::TransactionWriteMetadata>,
 ) -> Result<HashMap<String, String>, ApiError> {
     let predicates: Vec<_> = prepared
@@ -7345,13 +7535,35 @@ async fn resolve_conditional_references_batched(
         .begin_transaction()
         .await
         .map_err(map_storage_error)?;
-    tx.lock_conditional_writes()
-        .await
-        .map_err(map_storage_error)?;
+    // Only a graph whose matches depend on this bundle's own proposed
+    // resources must be pinned; references to existing resources are
+    // re-verified inside the committing transaction instead.
+    if dependent {
+        tx.lock_conditional_writes()
+            .await
+            .map_err(map_storage_error)?;
+    }
     let reserved = tx
         .reserve_write_metadata(metadata.as_ref())
         .await
         .map_err(map_storage_error)?;
+    // Invariant predicates only see rows of their own type, so the rest of the
+    // bundle need not be shipped to Postgres as proposed rows.
+    let types: HashSet<&str> = predicates.iter().map(|(rt, _)| rt.as_str()).collect();
+    let mut graph = if dependent {
+        graph.clone()
+    } else {
+        ConditionalReferenceGraph {
+            resources: graph
+                .resources
+                .iter()
+                .filter(|row| types.contains(row.resource_type.as_str()))
+                .cloned()
+                .collect(),
+            paths: HashMap::new(),
+            changed_ancestors: HashMap::new(),
+        }
+    };
     for row in &mut graph.resources {
         if let Some(body) = &mut row.resource {
             apply_planned_metadata(body, &reserved)?;
@@ -7360,10 +7572,16 @@ async fn resolve_conditional_references_batched(
     *metadata = Some(reserved);
     let result = tokio::time::timeout(state.config.write_timeout(), async {
         if !dependent {
-            let matches = tx
-                .search_proposed_conditional_batch(&predicates, &graph.resources)
-                .await
-                .map_err(map_storage_error)?;
+            let relevant = &graph.resources;
+            let matches = if relevant.is_empty() {
+                tx.search_conditional_batch(&predicates)
+                    .await
+                    .map_err(map_storage_error)?
+            } else {
+                tx.search_proposed_conditional_batch(&predicates, relevant)
+                    .await
+                    .map_err(map_storage_error)?
+            };
             return conditional_reference_bindings(prepared, &matches);
         }
         solve_conditional_reference_graph(
@@ -7574,6 +7792,27 @@ fn build_matched_transaction_response_entry(
         Some(&stored.version_id),
     );
     response["response"]["lastModified"] = stored.resource["meta"]["lastUpdated"].clone();
+    response
+}
+
+/// Owned variant for freshly written rows: moves the body into the entry.
+fn build_owned_transaction_response_entry(
+    stored: octofhir_storage::StoredResource,
+    status: &str,
+    include_resource: bool,
+) -> Value {
+    let last_modified = stored.resource["meta"]["lastUpdated"].clone();
+    let mut response = build_transaction_response_entry(
+        None,
+        status,
+        Some(&stored.resource_type),
+        Some(&stored.id),
+        Some(&stored.version_id),
+    );
+    if include_resource {
+        response["resource"] = stored.resource;
+    }
+    response["response"]["lastModified"] = last_modified;
     response
 }
 
@@ -9730,6 +9969,7 @@ mod tests {
                 id: "typed-plan".into(),
                 resource: Some(resource.clone()),
             }],
+            vec![("Patient", "typed-plan", &resource)],
             &mut remapper,
             &provider,
         )

@@ -34,6 +34,14 @@ pub struct UpdatedResource {
     pub previous: StoredResource,
 }
 
+/// Raw-JSON counterpart of [`UpdatedResource`]: the committed body is kept as
+/// text for the response, the previous body is parsed only for events.
+#[derive(Debug, Clone)]
+pub struct RawUpdatedResource {
+    pub stored: RawStoredResource,
+    pub previous: StoredResource,
+}
+
 /// A FHIR resource stored with raw JSON string for zero-copy serialization.
 ///
 /// This is an optimized version of `StoredResource` that keeps the resource

@@ -1,6 +1,7 @@
 //! Type-aware transaction URI mapping. Canonicals retain their logical identity.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use octofhir_api::ApiError;
 use octofhir_fhir_model::{ModelProvider, TypeInfo};
@@ -9,19 +10,29 @@ use serde_json::Value;
 
 #[derive(Default)]
 pub(crate) struct BundleReferenceRemapper {
-    elements: HashMap<(String, String), Option<TypeInfo>>,
-    inherited: HashMap<String, HashMap<String, TypeInfo>>,
+    elements: HashMap<String, HashMap<String, Option<Arc<TypeInfo>>>>,
+    inherited: HashMap<String, HashMap<String, Arc<TypeInfo>>>,
+    types: HashMap<String, Arc<TypeInfo>>,
+}
+
+/// One step from a node to its child, kept in an arena so a JSON pointer is
+/// only materialised for the few locations that are actually replaced.
+enum Step<'a> {
+    Key(&'a str),
+    Index(usize),
 }
 
 impl BundleReferenceRemapper {
+    /// Rewrites bundle-local URIs and returns every original Reference.reference
+    /// value, so callers need no second walk to find conditional references.
     pub(crate) async fn resolve(
         &mut self,
         provider: &dyn ModelProvider,
         resource: &mut Value,
         aliases: &HashMap<String, String>,
         versions: &HashMap<String, String>,
-    ) -> Result<(), ApiError> {
-        let (replacements, _) = self
+    ) -> Result<Vec<String>, ApiError> {
+        let (replacements, references) = self
             .inspect(provider, resource, aliases, versions, false)
             .await?;
         for (pointer, replacement) in replacements {
@@ -29,7 +40,7 @@ impl BundleReferenceRemapper {
                 .pointer_mut(&pointer)
                 .expect("collected resource path") = Value::String(replacement);
         }
-        Ok(())
+        Ok(references)
     }
 
     pub(crate) async fn references(
@@ -57,6 +68,74 @@ impl BundleReferenceRemapper {
         Ok(paths)
     }
 
+    async fn type_of(
+        &mut self,
+        provider: &dyn ModelProvider,
+        name: &str,
+    ) -> Result<Option<Arc<TypeInfo>>, ApiError> {
+        if let Some(info) = self.types.get(name) {
+            return Ok(Some(info.clone()));
+        }
+        let Some(info) = provider.get_type(name).await.map_err(model_error)? else {
+            return Ok(None);
+        };
+        let info = Arc::new(info);
+        self.types.insert(name.to_owned(), info.clone());
+        Ok(Some(info))
+    }
+
+    async fn element_of(
+        &mut self,
+        provider: &dyn ModelProvider,
+        info: &TypeInfo,
+        parent: &str,
+        name: &str,
+    ) -> Result<Option<Arc<TypeInfo>>, ApiError> {
+        if let Some(cached) = self
+            .elements
+            .get(parent)
+            .and_then(|fields| fields.get(name))
+        {
+            return Ok(cached.clone());
+        }
+        let mut element = if name.starts_with('_') {
+            self.type_of(provider, "Element").await?
+        } else {
+            provider
+                .get_element_type(info, name)
+                .await
+                .map_err(model_error)?
+                .map(Arc::new)
+        };
+        // Some providers resolve declared fields only. Their element inventory
+        // also includes inherited fields (DomainResource.text/extension and
+        // Resource.meta).
+        if element.is_none() {
+            if !self.inherited.contains_key(parent) {
+                let fields = provider
+                    .get_elements(parent)
+                    .await
+                    .map_err(model_error)?
+                    .into_iter()
+                    .filter(|field| {
+                        !matches!(field.element_type.as_str(), "Any" | "BackboneElement")
+                    })
+                    .map(|field| {
+                        let info = Arc::new(TypeInfo::new_complex(&field.element_type));
+                        (field.name, info)
+                    })
+                    .collect();
+                self.inherited.insert(parent.to_owned(), fields);
+            }
+            element = self.inherited[parent].get(name).cloned();
+        }
+        self.elements
+            .entry(parent.to_owned())
+            .or_default()
+            .insert(name.to_owned(), element.clone());
+        Ok(element)
+    }
+
     async fn inspect(
         &mut self,
         provider: &dyn ModelProvider,
@@ -66,22 +145,36 @@ impl BundleReferenceRemapper {
         collect_only: bool,
     ) -> Result<(Vec<(String, String)>, Vec<String>), ApiError> {
         let resource_type = resource["resourceType"].as_str().unwrap_or_default();
-        let Some(root) = provider
-            .get_type(resource_type)
-            .await
-            .map_err(model_error)?
-        else {
+        let Some(root) = self.type_of(provider, resource_type).await? else {
             return Err(ApiError::bad_request("Unavailable Bundle resource model"));
         };
-        let mut stack = vec![(String::new(), root)];
+        // arena[i] = (parent index, step from the parent); index 0 is the root.
+        let mut arena: Vec<(usize, Step<'_>)> = vec![(0, Step::Index(0))];
+        let pointer = |arena: &[(usize, Step<'_>)], mut at: usize| {
+            let mut steps = Vec::new();
+            while at != 0 {
+                steps.push(&arena[at].1);
+                at = arena[at].0;
+            }
+            let mut out = String::new();
+            for step in steps.into_iter().rev() {
+                out.push('/');
+                match step {
+                    Step::Key(key) => out.push_str(&key.replace('~', "~0").replace('/', "~1")),
+                    Step::Index(index) => out.push_str(&index.to_string()),
+                }
+            }
+            out
+        };
+        let mut stack: Vec<(&Value, Arc<TypeInfo>, usize)> = vec![(resource, root, 0)];
         let mut replacements = Vec::new();
         let mut references = Vec::new();
-        while let Some((pointer, mut info)) = stack.pop() {
-            let node = resource.pointer(&pointer).expect("collected resource path");
+        while let Some((node, mut info, at)) = stack.pop() {
             match node {
                 Value::Array(items) => {
-                    for index in 0..items.len() {
-                        stack.push((format!("{pointer}/{index}"), info.clone()));
+                    for (index, item) in items.iter().enumerate() {
+                        arena.push((at, Step::Index(index)));
+                        stack.push((item, info.clone(), arena.len() - 1));
                     }
                 }
                 Value::Object(object) => {
@@ -89,80 +182,46 @@ impl BundleReferenceRemapper {
                     // carry their own concrete model, rather than Resource's fields.
                     if let Some(resource_type) = object.get("resourceType").and_then(Value::as_str)
                     {
-                        info = provider
-                            .get_type(resource_type)
-                            .await
-                            .map_err(model_error)?
+                        info = self
+                            .type_of(provider, resource_type)
+                            .await?
                             .ok_or_else(|| {
                                 ApiError::bad_request("Unavailable embedded resource model")
                             })?;
                     }
                     let parent = info.name.as_deref().unwrap_or(&info.type_name);
+                    let is_reference = parent == "Reference";
                     for (name, child) in object {
                         if name == "resourceType" {
                             continue;
                         }
-                        let key = (parent.to_owned(), name.clone());
-                        if !self.elements.contains_key(&key) {
-                            let mut element = if name.starts_with('_') {
-                                provider.get_type("Element").await.map_err(model_error)?
-                            } else {
-                                provider
-                                    .get_element_type(&info, name)
-                                    .await
-                                    .map_err(model_error)?
-                            };
-                            // Some providers resolve declared fields only. Their
-                            // element inventory also includes inherited fields
-                            // (DomainResource.text/extension and Resource.meta).
-                            if element.is_none() {
-                                if !self.inherited.contains_key(parent) {
-                                    let fields = provider
-                                        .get_elements(parent)
-                                        .await
-                                        .map_err(model_error)?
-                                        .into_iter()
-                                        .filter(|field| {
-                                            !matches!(
-                                                field.element_type.as_str(),
-                                                "Any" | "BackboneElement"
-                                            )
-                                        })
-                                        .map(|field| {
-                                            (field.name, TypeInfo::new_complex(&field.element_type))
-                                        })
-                                        .collect();
-                                    self.inherited.insert(parent.to_owned(), fields);
-                                }
-                                element = self.inherited[parent].get(name).cloned();
-                            }
-                            self.elements.insert(key.clone(), element);
-                        }
-                        let Some(element) = self.elements[&key].as_ref() else {
+                        let Some(element) = self.element_of(provider, &info, parent, name).await?
+                        else {
                             continue;
                         };
-                        let path =
-                            format!("{pointer}/{}", name.replace('~', "~0").replace('/', "~1"));
-                        let kind = element.name.as_deref().unwrap_or(&element.type_name);
                         if let Some(value) = child.as_str() {
+                            let reference_field = is_reference && name == "reference";
                             if collect_only {
-                                if parent == "Reference" && name == "reference" {
+                                if reference_field {
+                                    arena.push((at, Step::Key(name)));
                                     references.push(value.to_owned());
-                                    replacements.push((path, value.to_owned()));
+                                    replacements
+                                        .push((pointer(&arena, arena.len() - 1), value.to_owned()));
                                 }
                                 continue;
                             }
-                            if kind == "xhtml" {
-                                if let Some(mapped) = remap_narrative(value, aliases, versions)? {
-                                    replacements.push((path, mapped));
-                                }
+                            if reference_field {
+                                references.push(value.to_owned());
+                            }
+                            let kind = element.name.as_deref().unwrap_or(&element.type_name);
+                            let mapped = if kind == "xhtml" {
+                                remap_narrative(value, aliases, versions)?
                             } else if matches!(kind, "uri" | "url" | "oid" | "uuid")
-                                || (parent == "Reference" && name == "reference")
+                                || reference_field
                             {
-                                if let Some(mapped) = remap_uri(value, aliases, versions)? {
-                                    replacements.push((path, mapped));
-                                } else if parent == "Reference"
-                                    && name == "reference"
+                                let mapped = remap_uri(value, aliases, versions)?;
+                                if mapped.is_none()
+                                    && reference_field
                                     && (value.starts_with("urn:uuid:")
                                         || value.starts_with("urn:oid:"))
                                 {
@@ -170,9 +229,17 @@ impl BundleReferenceRemapper {
                                         "Unresolved reference: {value}"
                                     )));
                                 }
+                                mapped
+                            } else {
+                                None
+                            };
+                            if let Some(mapped) = mapped {
+                                arena.push((at, Step::Key(name)));
+                                replacements.push((pointer(&arena, arena.len() - 1), mapped));
                             }
                         } else if child.is_object() || child.is_array() {
-                            stack.push((path, element.clone()));
+                            arena.push((at, Step::Key(name)));
+                            stack.push((child, element, arena.len() - 1));
                         }
                     }
                 }
@@ -182,7 +249,7 @@ impl BundleReferenceRemapper {
                         && matches!(info.name.as_deref(), Some("uri" | "url" | "oid" | "uuid")) =>
                 {
                     if let Some(mapped) = remap_uri(value, aliases, versions)? {
-                        replacements.push((pointer, mapped));
+                        replacements.push((pointer(&arena, at), mapped));
                     }
                 }
                 _ => {}

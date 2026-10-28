@@ -515,7 +515,7 @@ impl Transaction for PostgresTransaction {
     async fn create_batch(
         &mut self,
         resource_type: &str,
-        resources: &[Value],
+        resources: Vec<Value>,
     ) -> Result<Vec<StoredResource>, StorageError> {
         if resources.is_empty() {
             return Ok(Vec::new());

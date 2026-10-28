@@ -260,6 +260,44 @@ impl FhirStorage for PostgresStorage {
         queries::crud::delete(&self.pool, resource_type, id).await
     }
 
+    async fn update_with_snapshot(
+        &self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<octofhir_storage::UpdatedResource, StorageError> {
+        let updated = queries::crud::update_snapshot(&self.pool, resource, if_match).await?;
+        let stored = updated.stored;
+        Ok(octofhir_storage::UpdatedResource {
+            stored: StoredResource {
+                resource: serde_json::from_str(&stored.resource_json).map_err(|error| {
+                    StorageError::internal(format!("Invalid stored JSON: {error}"))
+                })?,
+                id: stored.id,
+                version_id: stored.version_id,
+                resource_type: stored.resource_type,
+                created_at: stored.created_at,
+                last_updated: stored.last_updated,
+            },
+            previous: updated.previous,
+        })
+    }
+
+    async fn update_raw_with_snapshot(
+        &self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<octofhir_storage::RawUpdatedResource, StorageError> {
+        queries::crud::update_snapshot(&self.pool, resource, if_match).await
+    }
+
+    async fn delete_returning_previous(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<StoredResource>, StorageError> {
+        queries::crud::delete_returning_previous(&self.pool, resource_type, id).await
+    }
+
     async fn vread(
         &self,
         resource_type: &str,
