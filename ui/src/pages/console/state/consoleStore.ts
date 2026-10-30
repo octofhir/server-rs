@@ -61,7 +61,6 @@ export const updateCustomHeader = createEvent<{
   newKey: string;
   value: string;
 }>();
-export const setCommandPaletteOpen = createEvent<boolean>();
 
 export const $method = createStore<HttpMethod>("GET")
   .on(setMethod, (_, method) => method)
@@ -139,11 +138,6 @@ export const $customHeaders = createStore<Record<string, string>>({})
     return { ...rest, [newKey]: value };
   })
   .reset(resetDraft);
-
-export const $commandPaletteOpen = createStore<boolean>(false).on(
-  setCommandPaletteOpen,
-  (_, open) => open
-);
 
 sample({
   source: {

@@ -9,7 +9,6 @@ import {
   type SidebarNavGroup,
   type SidebarStatus,
   useColorScheme,
-  useHotkeys,
 } from "@octofhir/ui-kit";
 import {
   Activity,
@@ -39,9 +38,11 @@ import {
   Terminal,
   Users,
 } from "lucide-react";
-import { type ComponentType, useCallback, useMemo, useState } from "react";
+import { useUnit } from "effector-react";
+import { type ComponentType, useEffect, useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, useHealth, useResourceTypes, useSettings } from "@/shared/api/hooks";
+import { $paletteContributions, $paletteOpen, paletteOpenChanged } from "@/shared/command-palette";
 import { ErrorBoundary } from "@/shared/ui";
 
 const BRANDING = `${import.meta.env.BASE_URL}branding`;
@@ -169,7 +170,11 @@ export function AppShell() {
   const { data: resourceTypes } = useResourceTypes();
   useSettings();
 
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen, contributions] = useUnit([
+    $paletteOpen,
+    paletteOpenChanged,
+    $paletteContributions,
+  ]);
 
   const path = location.pathname;
 
@@ -221,20 +226,24 @@ export function AppShell() {
       },
       { id: "sign-out", label: "Sign out", group: "Actions", icon: LogOut, onSelect: logout },
     ];
-    return [...pages, ...actions, ...types];
-  }, [navigate, resourceTypes, colorScheme, toggleColorScheme, logout]);
+    // Commands from the current page come first: they are the most specific.
+    const pageItems = Object.values(contributions).flat();
+    return [...pageItems, ...pages, ...actions, ...types];
+  }, [navigate, resourceTypes, colorScheme, toggleColorScheme, logout, contributions]);
 
-  const openPalette = useCallback(
-    (e: KeyboardEvent) => {
-      // The REST console binds ⌘K to its own request palette.
-      if (location.pathname.startsWith("/console")) return;
-      e.preventDefault();
-      setPaletteOpen(true);
-    },
-    [location.pathname]
-  );
-  const hotkeys = useMemo(() => [["mod+k", openPalette]] as const, [openPalette]);
-  useHotkeys(hotkeys);
+  // Capture phase: Monaco-based inputs (REST URL bar, SQL editor) treat ⌘K as a chord
+  // prefix and stop the event before it would bubble to a document listener.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        event.stopPropagation();
+        setPaletteOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [setPaletteOpen]);
 
   const sidebar = (
     <Sidebar

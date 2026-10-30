@@ -6,8 +6,9 @@ import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
 import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector";
+import { usePaletteContribution } from "@/shared/command-palette";
 import { CollectionsPanel } from "./components/CollectionsPanel";
-import { CommandPalette } from "./components/CommandPalette";
+import { useConsolePaletteItems } from "./commands/hooks/useConsolePaletteItems";
 import { EnvironmentPanel } from "./components/EnvironmentPanel";
 import { ExplainPanel } from "./components/ExplainPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -24,7 +25,6 @@ import {
   $method,
   $rawPath,
   $resourceType,
-  setCommandPaletteOpen,
 } from "./state/consoleStore";
 
 export function RestConsolePage() {
@@ -37,15 +37,14 @@ export function RestConsolePage() {
     body,
     customHeaders,
     resourceType,
-    setCommandPaletteOpen: openPalette,
   } = useUnit({
     method: $method,
     rawPath: $rawPath,
     body: $body,
     customHeaders: $customHeaders,
     resourceType: $resourceType,
-    setCommandPaletteOpen,
   });
+  usePaletteContribution("rest-console", useConsolePaletteItems());
 
   const sendMutation = useSendConsoleRequest();
   // Keep the active-environment variable resolver in sync (even with panels closed).
@@ -76,21 +75,12 @@ export function RestConsolePage() {
     sendMutation.mutate({ method, path: rawPath, body, headers: customHeaders });
   }, [sendMutation, method, rawPath, body, customHeaders]);
 
-  const handleOpenPalette = useCallback(
-    (e: KeyboardEvent) => {
-      e.preventDefault();
-      openPalette(true);
-    },
-    [openPalette]
-  );
-
   const hotkeys = useMemo(
     () =>
       [
-        ["mod+K", handleOpenPalette],
         ["mod+Enter", handleSend],
       ] as const,
-    [handleOpenPalette, handleSend]
+    [handleSend]
   );
 
   useHotkeys(hotkeys);
@@ -201,7 +191,6 @@ export function RestConsolePage() {
         </div>
       </div>
 
-      <CommandPalette />
       <HistoryPanel opened={historyOpened} onClose={historyHandlers.close} />
       <CollectionsPanel opened={savedOpened} onClose={savedHandlers.close} />
       <EnvironmentPanel opened={envOpened} onClose={envHandlers.close} />
