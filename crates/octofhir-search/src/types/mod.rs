@@ -1084,9 +1084,9 @@ mod tests {
             .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        // Indexed form: value min/max btree + code containment.
+        // Indexed form: value hull + code containment.
         assert!(
-            clause.contains("fhir_qty_extract_max_numeric(resource,") && clause.contains("> "),
+            clause.contains("fhir_qty_hull_range_arr(resource,") && clause.contains("&& numrange("),
             "CLAUSE={clause}"
         );
         assert!(

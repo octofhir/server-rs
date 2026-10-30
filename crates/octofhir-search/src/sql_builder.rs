@@ -1746,6 +1746,34 @@ pub fn composite_token_containment_sql(
     system: Option<&str>,
     code: &str,
 ) -> String {
+    composite_token_match_sql(token_paths, system, code, |doc| {
+        format!("{col} @> '{doc}'::jsonb")
+    })
+}
+
+/// The same match as [`composite_token_containment_sql`], spelled with the
+/// `jsonb_contains` function instead of the `@>` operator so that no index can
+/// serve it. Used for the system half of a `system|code` composite: the
+/// bare-code containment already selects the partial index, and an indexable
+/// system clause would let the planner prefer the whole-document GIN — whose
+/// estimate for an `@>` without statistics is a fixed 1% per clause — over it.
+pub fn composite_token_filter_sql(
+    col: &str,
+    token_paths: &[Vec<String>],
+    system: Option<&str>,
+    code: &str,
+) -> String {
+    composite_token_match_sql(token_paths, system, code, |doc| {
+        format!("jsonb_contains({col}, '{doc}'::jsonb)")
+    })
+}
+
+fn composite_token_match_sql(
+    token_paths: &[Vec<String>],
+    system: Option<&str>,
+    code: &str,
+    render: impl Fn(&str) -> String,
+) -> String {
     let coding = match system {
         Some(s) => serde_json::json!({ "coding": [{ "system": s, "code": code }] }),
         None => serde_json::json!({ "coding": [{ "code": code }] }),
@@ -1763,7 +1791,7 @@ pub fn composite_token_containment_sql(
                     serde_json::json!({ seg.as_str(): acc })
                 };
             }
-            format!("{col} @> '{}'::jsonb", acc.to_string().replace('\'', "''"))
+            render(&acc.to_string().replace('\'', "''"))
         })
         .collect();
     if arms.len() == 1 {

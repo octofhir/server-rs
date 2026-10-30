@@ -333,33 +333,35 @@ pub fn render_quantity_array_clauses_as_or(
     Ok(or_exprs(exprs))
 }
 
-/// Index-servable numeric condition over the union min/max btrees (`maxfn`/`minfn` =
-/// `fhir_qty_extract_max/min_numeric(resource, <all value paths>)`). Single-bound
-/// prefixes are EXACT — `some value > N` ⇔ `max > N`, `some value < N` ⇔ `min < N`.
-/// `eq`/`ap` give a btree-servable SUPERSET (the `@?` recheck enforces exactness).
-/// Returns None for `Ne` (no index help — recheck only).
+/// Index-servable numeric condition over the value hull (`hullfn` =
+/// `fhir_qty_hull_range_arr(resource, <all value paths>)`, the `[min, max]` of
+/// every value), served by the hull GiST index. Single-bound prefixes are EXACT —
+/// `some value > N` ⇔ `max > N` ⇔ the hull overlaps `(N, ∞)`, likewise for the
+/// other bounds — so one index serves every prefix. `eq`/`ap` give a SUPERSET
+/// (the `@?` recheck enforces exactness). Returns None for `Ne` (no index help).
 fn quantity_union_index_cond(
-    maxfn: &str,
-    minfn: &str,
+    hullfn: &str,
     prefix: crate::parameters::SearchPrefix,
     number: &RenderDecimalParts,
 ) -> Option<String> {
     use crate::parameters::SearchPrefix;
-    Some(match prefix {
-        SearchPrefix::Gt | SearchPrefix::Sa => format!("{maxfn} > {}", number.format()),
-        SearchPrefix::Ge => format!("{maxfn} >= {}", number.format()),
-        SearchPrefix::Lt | SearchPrefix::Eb => format!("{minfn} < {}", number.format()),
-        SearchPrefix::Le => format!("{minfn} <= {}", number.format()),
+    let n = number.format();
+    let range = match prefix {
+        SearchPrefix::Gt | SearchPrefix::Sa => format!("numrange({n}, NULL, '()')"),
+        SearchPrefix::Ge => format!("numrange({n}, NULL, '[)')"),
+        SearchPrefix::Lt | SearchPrefix::Eb => format!("numrange(NULL, {n}, '()')"),
+        SearchPrefix::Le => format!("numrange(NULL, {n}, '(]')"),
         SearchPrefix::Eq => {
             let (lo, hi) = number.implicit_eq_bounds();
-            format!("{maxfn} >= {lo} AND {minfn} < {hi}")
+            format!("numrange({lo}, {hi}, '[)')")
         }
         SearchPrefix::Ap => {
             let (lo, hi) = number.approximate_bounds();
-            format!("{maxfn} >= {lo} AND {minfn} <= {hi}")
+            format!("numrange({lo}, {hi}, '[]')")
         }
         SearchPrefix::Ne => return None,
-    })
+    };
+    Some(format!("{hullfn} && {range}"))
 }
 
 /// Exact `@?` recheck over every value location, OR'd: `col @? '<loc> ? (<value cond>
@@ -401,11 +403,11 @@ fn quantity_union_recheck(
 }
 
 /// Render quantity clauses as one OR group, folding EVERY value location (top-level
-/// `valueQuantity` and `component[*].valueQuantity`) into a SINGLE min/max btree
-/// predicate over `fhir_qty_extract_min/max_numeric(resource, <all paths>)`. This is
-/// the index-friendly successor to the per-location OR of a scalar btree and a
-/// component hull+`@?` (which the planner could not combine, falling to a Seq Scan):
-/// one clean btree expression → one Index Scan, regardless of which location matched.
+/// `valueQuantity` and `component[*].valueQuantity`) into a SINGLE hull predicate
+/// over `fhir_qty_hull_range_arr(resource, <all paths>)`. One GiST index on that
+/// expression serves every prefix with one Index Scan, regardless of which
+/// location matched; separate min and max btrees would cost every write two more
+/// evaluations of the same jsonpath for no faster read.
 pub fn render_quantity_union_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[QuantityClause],
@@ -417,15 +419,14 @@ pub fn render_quantity_union_clauses_as_or(
     }
     let col = builder.resource_column().to_string();
     let arr = crate::sql_builder::quantity_value_jsonpath_array(paths);
-    let maxfn = format!("fhir_qty_extract_max_numeric({col}, {arr})");
-    let minfn = format!("fhir_qty_extract_min_numeric({col}, {arr})");
     let hullfn = format!("fhir_qty_hull_range_arr({col}, {arr})");
     let mut exprs = Vec::new();
     for clause in clauses {
         match &clause.predicate {
             QuantityPredicate::Missing { is_missing } => {
+                // The hull is NULL exactly when no location holds a value.
                 exprs.push(SqlExpr::Raw(format!(
-                    "{maxfn} IS {}NULL",
+                    "{hullfn} IS {}NULL",
                     if *is_missing { "" } else { "NOT " }
                 )));
             }
@@ -437,24 +438,8 @@ pub fn render_quantity_union_clauses_as_or(
             } => {
                 let number =
                     RenderDecimalParts::parse(value).map_err(|_| invalid_quantity_number(value))?;
-                // Two-sided prefixes (eq/ap) served by a GiST hull-range overlap, not the
-                // qmax/qmin btree pair: `qmax >= lo AND qmin < hi` forced a BitmapAnd whose
-                // `qmin < hi` half matches most of the table (a huge bitmap the planner must
-                // fully materialize before the AND, defeating LIMIT). `hull && numrange` is
-                // one selective range probe that streams under LIMIT. Single-bound prefixes
-                // stay on the exact qmax/qmin btrees (no over-return, no recheck).
-                let index_cond = match prefix {
-                    SearchPrefix::Eq => {
-                        let (lo, hi) = number.implicit_eq_bounds();
-                        Some(format!("{hullfn} && numrange({lo}, {hi}, '[)')"))
-                    }
-                    SearchPrefix::Ap => {
-                        let (lo, hi) = number.approximate_bounds();
-                        Some(format!("{hullfn} && numrange({lo}, {hi}, '[]')"))
-                    }
-                    _ => quantity_union_index_cond(&maxfn, &minfn, *prefix, &number),
-                };
-                // The min/max prefilter is exact for single-bound prefixes with no
+                let index_cond = quantity_union_index_cond(&hullfn, *prefix, &number);
+                // The hull prefilter is exact for single-bound prefixes with no
                 // unit constraint; otherwise an `@?` recheck enforces the exact match.
                 let need_recheck = matches!(
                     prefix,
@@ -1783,14 +1768,32 @@ fn render_composite_clause_expr(
         })
         .collect();
 
-    // token+quantity composite (code-value-quantity family): emit the
-    // indexed form (code GIN containment AND value min/max btree, no per-row `@?`) so a
-    // BitmapAnd of the two scales on large tables. Falls through to the `@?` fold below
-    // for every other composite shape.
-    if let Some(expr) = render_token_quantity_composite_indexed(builder, components, &paths) {
-        return Ok(expr);
+    // token+quantity composite (code-value-quantity family): an index prefilter
+    // (code containment AND value hull) that the targeted partial index serves.
+    // With only top-level locations it is exact — one code, one value. When the
+    // composite can match inside `component`, the code and the value must come
+    // from the SAME element, which only the exact render checks; without it a
+    // systolic-only search would match on the diastolic value.
+    let prefilter = render_token_quantity_composite_prefilter(builder, components, &paths);
+    if comp_segs.is_none()
+        && let Some(prefilter) = prefilter
+    {
+        return Ok(prefilter);
     }
+    let exact = render_composite_exact(builder, components, comp_segs, top_paths)?;
+    Ok(match prefilter {
+        Some(prefilter) => SqlExpr::And(vec![prefilter, exact]),
+        None => exact,
+    })
+}
 
+/// Exact composite render: every component predicate bound to the same location.
+fn render_composite_exact(
+    builder: &mut SqlBuilder,
+    components: &[CompositeComponentPredicate],
+    comp_segs: Option<Vec<Vec<String>>>,
+    top_paths: Option<Vec<Vec<String>>>,
+) -> Result<SqlExpr, SqlBuilderError> {
     // When a component arm exists, fold every location into ONE `@?` jsonpath
     // `$ ? (<top> || <component>)`. The component existence filter makes the
     // whole-resource GIN serve the predicate as one Bitmap Index Scan; a SQL-level
@@ -1843,14 +1846,15 @@ fn render_composite_clause_expr(
     }
 }
 
-/// Indexed render for a token+quantity composite (the
-/// `code-value-quantity` family): `<code containment at every location> AND
-/// fhir_qty_extract_max/min(resource, <value union>) <op> N`. NO correlated `@?`
-/// recheck — this trades strict same-component correlation for a
-/// BitmapAnd of the code GIN and the value btree, which scales (no per-row jsonpath
-/// executor). Returns None when the composite isn't exactly one token + one quantity
-/// component, so the caller falls back to the general `@?` render.
-fn render_token_quantity_composite_indexed(
+/// Index prefilter for a token+quantity composite (the `code-value-quantity`
+/// family): `<code containment at every location> AND <value hull> && <range>`.
+/// It matches the targeted partial hull index pinned to the code. The two halves
+/// are not correlated — the code and the value may come from different
+/// components — so the caller adds the exact same-element check whenever the
+/// composite can match inside `component`. Returns None when the composite isn't
+/// exactly one token + one quantity component, so the caller uses only the exact
+/// render.
+fn render_token_quantity_composite_prefilter(
     builder: &mut SqlBuilder,
     components: &[CompositeComponentPredicate],
     paths: &[Vec<Vec<String>>],
@@ -1867,9 +1871,9 @@ fn render_token_quantity_composite_indexed(
         .position(|c| c.spec.search_type == SearchParameterType::Quantity)?;
     let col = builder.resource_column().to_string();
 
-    // Value prefilter: one min/max btree over EVERY value location (top + component),
-    // matching the Fix-A `*-value-quantity` qmax/qmin functional index. SampledData has
-    // no `.value` scalar, so drop it to match the index.
+    // Value prefilter: the hull over EVERY value location (top + component),
+    // matching the `*-value-quantity` hull index. SampledData has no `.value`
+    // scalar, so drop it to match the index.
     let qpaths: Vec<Vec<String>> = paths[quant_idx]
         .iter()
         .filter(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")))
@@ -1879,8 +1883,7 @@ fn render_token_quantity_composite_indexed(
         return None;
     }
     let arr = crate::sql_builder::quantity_value_jsonpath_array(&qpaths);
-    let maxfn = format!("fhir_qty_extract_max_numeric({col}, {arr})");
-    let minfn = format!("fhir_qty_extract_min_numeric({col}, {arr})");
+    let hullfn = format!("fhir_qty_hull_range_arr({col}, {arr})");
     let (prefix_str, num_str) = extract_prefix(&components[quant_idx].value);
     let prefix = match prefix_str {
         "gt" => SearchPrefix::Gt,
@@ -1894,7 +1897,7 @@ fn render_token_quantity_composite_indexed(
         _ => SearchPrefix::Eq,
     };
     let number = RenderDecimalParts::parse(num_str).ok()?;
-    let value_cond = quantity_union_index_cond(&maxfn, &minfn, prefix, &number)?;
+    let value_cond = quantity_union_index_cond(&hullfn, prefix, &number)?;
 
     // Code prefilter: inline whole-resource containment at every token location, OR'd
     // (top-level `code`, and `component.code` array-wrapped). Inlined (not bound) so the
@@ -1910,12 +1913,24 @@ fn render_token_quantity_composite_indexed(
     }
     // Build via the SAME helper the partial-index DDL uses, so the query's containment
     // matches the partial's `WHERE` byte-for-byte and the planner uses the partial.
-    let code_sql =
-        crate::sql_builder::composite_token_containment_sql(&col, &paths[token_idx], system, code);
-    Some(SqlExpr::And(vec![
-        SqlExpr::Raw(code_sql),
+    // Partial indexes are pinned to the bare code, which a system-qualified token
+    // implies; the system itself is checked as a non-indexable filter so the
+    // planner keeps the partial index (see `composite_token_filter_sql`).
+    let mut prefilter = vec![
+        SqlExpr::Raw(crate::sql_builder::composite_token_containment_sql(
+            &col,
+            &paths[token_idx],
+            None,
+            code,
+        )),
         SqlExpr::Raw(value_cond),
-    ]))
+    ];
+    if system.is_some() {
+        prefilter.push(SqlExpr::Raw(
+            crate::sql_builder::composite_token_filter_sql(&col, &paths[token_idx], system, code),
+        ));
+    }
+    Some(SqlExpr::And(prefilter))
 }
 
 /// Top-level location arm as a jsonpath predicate rooted at `@` (the resource):

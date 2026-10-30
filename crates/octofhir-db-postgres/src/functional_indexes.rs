@@ -332,12 +332,7 @@ pub async fn create_default_search_indexes(
             }
             // Quantity params (e.g. Observation.value-quantity, combo/component-*). A
             // `combo-*` quantity binds a union of co-located paths (top-level
-            // `valueQuantity` AND `component[*].valueQuantity`); index every branch.
-            //   - top-level scalar path: btree over `(<segs>.value)::numeric`, matching
-            //     the in-place numeric-cast comparison.
-            //   - repeating path under an array parent (component[*]): two btrees over
-            //     the numeric min/max hull, matching the quantity-array predicate's
-            //     indexable prefilter (the exact `@?` stays as a recheck).
+            // `valueQuantity` AND `component[*].valueQuantity`); one index covers them.
             SearchParameterType::Quantity => {
                 let mut all_paths = param
                     .expression
@@ -353,49 +348,32 @@ pub async fn create_default_search_indexes(
                 if all_paths.is_empty() {
                     continue;
                 }
-                // One min and one max btree over the UNION of every value location,
-                // matching `render_quantity_union_clauses_as_or`'s single predicate:
-                // `extract_max(resource, <paths>) > N` / `extract_min(...) < N`. The
-                // array literal is built by the SAME helper the predicate uses, so the
-                // expressions are textually identical and the planner uses the index.
+                // One GiST over the `[min, max]` hull of the value union, matching
+                // `render_quantity_union_clauses_as_or`'s `hull && numrange(...)` for
+                // every prefix. The array literal is built by the SAME helper the
+                // predicate uses, so the expressions are textually identical and the
+                // planner uses the index.
                 let arr = octofhir_search::sql_builder::quantity_value_jsonpath_array(&all_paths);
-                let qddls = [
-                    format!(
-                        "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qmax\" ON \"{table}\" \
-                         ((fhir_qty_extract_max_numeric(resource, {arr})))"
-                    ),
-                    format!(
-                        "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qmin\" ON \"{table}\" \
-                         ((fhir_qty_extract_min_numeric(resource, {arr})))"
-                    ),
-                    // GiST hull-range over the same value union, serving the eq/ap
-                    // predicate's `fhir_qty_hull_range_arr(resource, <paths>) && numrange`.
-                    // A single range-overlap probe that streams under LIMIT — the qmax/qmin
-                    // btrees above force a BitmapAnd for two-sided bounds whose low half
-                    // matches most rows.
-                    format!(
-                        "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qhull\" ON \"{table}\" \
-                         USING gist ((fhir_qty_hull_range_arr(resource, {arr})))"
-                    ),
-                ];
-                for ddl in &qddls {
-                    if let Some(body) = index_body(ddl)
-                        && !seen_bodies.insert(body)
-                    {
-                        debug!(resource_type, code, "skipped duplicate quantity index");
-                        continue;
+                let ddl = format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qhull\" ON \"{table}\" \
+                     USING gist ((fhir_qty_hull_range_arr(resource, {arr})))"
+                );
+                if let Some(body) = index_body(&ddl)
+                    && !seen_bodies.insert(body)
+                {
+                    debug!(resource_type, code, "skipped duplicate quantity index");
+                    continue;
+                }
+                match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl))
+                    .execute(pool)
+                    .await
+                {
+                    Ok(_) => {
+                        created += 1;
+                        debug!(resource_type, code, "created quantity functional index");
                     }
-                    match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl.to_string()))
-                        .execute(pool)
-                        .await
-                    {
-                        Ok(_) => {
-                            created += 1;
-                            debug!(resource_type, code, "created quantity functional index");
-                        }
-                        Err(e) => {
-                            warn!(resource_type, code, error = %e, "skipped quantity functional index");
-                        }
+                    Err(e) => {
+                        warn!(resource_type, code, error = %e, "skipped quantity functional index");
                     }
                 }
                 continue;
@@ -496,13 +474,14 @@ pub async fn create_ucum_indexes(
     created
 }
 
-/// Create targeted PARTIAL composite indexes: a small btree on the quantity
-/// component's top-level value, restricted (`WHERE`) to rows whose token component
-/// equals a pinned code (optionally within a system). The `WHERE` mirrors the INLINED
-/// `@>` containment the composite token render emits, so the planner uses the partial
-/// index for that exact token instead of BitmapAnd-ing two large bitmaps. Only
-/// top-level-value composites (e.g. `code-value-quantity`) are served; a component-
-/// array value (no scalar `->>'value'`) is skipped. Idempotent (`IF NOT EXISTS`).
+/// Create targeted PARTIAL composite indexes: a small GiST over the value hull of
+/// a token+quantity composite, restricted (`WHERE`) to rows whose token component
+/// equals a pinned code. The `WHERE` mirrors the INLINED `@>` containment the
+/// composite render emits, so the planner uses the partial index for that exact
+/// token instead of BitmapAnd-ing two large bitmaps; the hull serves every
+/// comparison prefix. Indexes are pinned to the bare code: a system-qualified
+/// search adds the bare containment it implies, so specs that differ only in
+/// system share one index. Idempotent (`IF NOT EXISTS`).
 pub async fn create_composite_partial_indexes(
     pool: &PgPool,
     registry: &SearchParameterRegistry,
@@ -514,7 +493,12 @@ pub async fn create_composite_partial_indexes(
     };
     use std::hash::{Hash, Hasher};
     let mut created = 0usize;
+    let mut seen = std::collections::HashSet::new();
     for spec in specs {
+        if !seen.insert((&spec.resource_type, &spec.param, &spec.code)) {
+            debug!(param = %spec.param, code = %spec.code, "composite partial: shares the bare-code index");
+            continue;
+        }
         let Some(param_def) = registry.get(&spec.resource_type, &spec.param) else {
             warn!(rt = %spec.resource_type, param = %spec.param, "composite partial: unknown param");
             continue;
@@ -566,14 +550,10 @@ pub async fn create_composite_partial_indexes(
                 p
             }
         };
-        let where_clause = composite_token_containment_sql(
-            "resource",
-            &token_paths,
-            spec.system.as_deref(),
-            &spec.code,
-        );
+        let where_clause =
+            composite_token_containment_sql("resource", &token_paths, None, &spec.code);
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        (&spec.resource_type, &spec.param, &spec.system, &spec.code).hash(&mut hasher);
+        (&spec.resource_type, &spec.param, &spec.code).hash(&mut hasher);
         let hash = hasher.finish();
         let table = spec.resource_type.to_lowercase();
         let pname: String = spec
@@ -581,36 +561,22 @@ pub async fn create_composite_partial_indexes(
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect();
-        // One min and one max partial btree on the value union, pinned to the code —
-        // matching the render's `fhir_qty_extract_max/min_numeric(resource, <arr>) <op> N`.
-        let qddls = [
-            (
-                "max",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{pname}_ptmax_{hash:016x}\" ON \"{table}\" \
-                     ((fhir_qty_extract_max_numeric(resource, {arr}))) WHERE {where_clause}"
-                ),
-            ),
-            (
-                "min",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{pname}_ptmin_{hash:016x}\" ON \"{table}\" \
-                     ((fhir_qty_extract_min_numeric(resource, {arr}))) WHERE {where_clause}"
-                ),
-            ),
-        ];
-        for (kind, ddl) in qddls {
-            match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl))
-                .execute(pool)
-                .await
-            {
-                Ok(_) => {
-                    created += 1;
-                    debug!(param = %spec.param, code = %spec.code, kind, "created composite partial index");
-                }
-                Err(e) => {
-                    warn!(param = %spec.param, code = %spec.code, kind, error = %e, "skipped composite partial index");
-                }
+        // One partial GiST on the value hull, pinned to the code — matching the
+        // render's `fhir_qty_hull_range_arr(resource, <arr>) && numrange(...)`.
+        let ddl = format!(
+            "CREATE INDEX IF NOT EXISTS \"idx_{table}_{pname}_pthull_{hash:016x}\" ON \"{table}\" \
+             USING gist ((fhir_qty_hull_range_arr(resource, {arr}))) WHERE {where_clause}"
+        );
+        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl))
+            .execute(pool)
+            .await
+        {
+            Ok(_) => {
+                created += 1;
+                debug!(param = %spec.param, code = %spec.code, "created composite partial index");
+            }
+            Err(e) => {
+                warn!(param = %spec.param, code = %spec.code, error = %e, "skipped composite partial index");
             }
         }
     }

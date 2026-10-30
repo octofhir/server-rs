@@ -312,10 +312,10 @@ mod tests {
             .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        // Union min/max btree prefilter on the value, plus an `@?` recheck carrying
-        // the unit constraint (min/max says nothing about the unit).
-        assert!(clause.contains("fhir_qty_extract_max_numeric"));
-        assert!(clause.contains(">= 100"));
+        // Value hull prefilter, plus an `@?` recheck carrying the unit constraint
+        // (the hull says nothing about the unit).
+        assert!(clause.contains("fhir_qty_hull_range_arr"));
+        assert!(clause.contains("numrange(100, NULL, '[)')"));
         assert!(clause.contains("@?"));
         assert!(clause.contains("mm[Hg]"));
     }

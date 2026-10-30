@@ -139,14 +139,53 @@ mod tests {
             build_composite_search(&mut builder, "http://loinc.org|8480-6$gt100", &components);
         assert!(result.is_ok());
         let clause = builder.build_where_clause().unwrap();
-        // Indexed form: value min/max btree prefilter + code containment.
+        // Indexed form: value hull prefilter + code containment.
         assert!(
-            clause.contains("fhir_qty_extract_max_numeric(resource,") && clause.contains("> 100"),
+            clause.contains("fhir_qty_hull_range_arr(resource,")
+                && clause.contains("numrange(100, NULL, '()')"),
             "CLAUSE={clause}"
         );
-        // Token component as whole-resource code containment (served by the resource GIN).
+        // The system is checked as a non-indexable filter...
         assert!(
-            clause.contains("@> '{\"code\":{\"coding\":[{\"code\":\"8480-6\",\"system\":\"http://loinc.org\"}]}}'"),
+            clause.contains("jsonb_contains(resource, '{\"code\":{\"coding\":[{\"code\":\"8480-6\",\"system\":\"http://loinc.org\"}]}}'"),
+            "CLAUSE={clause}"
+        );
+        // ...beside the bare-code containment it implies, matching the bare-code partial index.
+        assert!(
+            clause.contains("@> '{\"code\":{\"coding\":[{\"code\":\"8480-6\"}]}}'"),
+            "CLAUSE={clause}"
+        );
+        // Top-level only: one code and one value, so no correlated recheck.
+        assert!(!clause.contains("@?"), "CLAUSE={clause}");
+    }
+
+    /// Code and value inside `component` must come from the SAME element: a
+    /// systolic-only search must not match on the diastolic value.
+    #[test]
+    fn test_component_composite_rechecks_same_element() {
+        let mut builder = SqlBuilder::new();
+        let components = vec![
+            CompositeComponent {
+                name: "code".to_string(),
+                param_type: "token".to_string(),
+                expression: "Observation.component.code".to_string(),
+            },
+            CompositeComponent {
+                name: "value".to_string(),
+                param_type: "quantity".to_string(),
+                expression: "Observation.component.valueQuantity".to_string(),
+            },
+        ];
+
+        build_composite_search(&mut builder, "8480-6$lt100", &components).unwrap();
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("fhir_qty_hull_range_arr(resource,")
+                && clause.contains("numrange(NULL, 100, '()')"),
+            "CLAUSE={clause}"
+        );
+        assert!(
+            clause.contains("@? '$ ? (") && clause.contains("component"),
             "CLAUSE={clause}"
         );
     }
@@ -178,7 +217,7 @@ mod tests {
         // value.as(Quantity) -> valueQuantity (polymorphic cast folded by the AST):
         // the value union jsonpath must target `valueQuantity.value`.
         assert!(
-            clause.contains("fhir_qty_extract_max_numeric(resource,")
+            clause.contains("fhir_qty_hull_range_arr(resource,")
                 && clause.contains("\"valueQuantity\".\"value\""),
             "CLAUSE={clause}"
         );

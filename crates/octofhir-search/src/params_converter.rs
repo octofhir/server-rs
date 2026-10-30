@@ -1862,8 +1862,8 @@ mod tests {
                 "Observation",
                 "value-quantity=ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
                 [
-                    "fhir_qty_extract_max_numeric(r.resource, ARRAY['$.\"valueQuantity\".\"value\"'::jsonpath]",
-                    ">= 100",
+                    "fhir_qty_hull_range_arr(r.resource, ARRAY['$.\"valueQuantity\".\"value\"'::jsonpath]",
+                    "numrange(100, NULL, '[)')",
                 ],
             ),
         ];
