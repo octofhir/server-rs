@@ -16,3 +16,59 @@
 	height: 100%;
 	min-height: 0;
 }
+
+/*
+ * GraphiQL palette mapped onto the OctoFHIR tokens. GraphiQL reads HSL triples and scopes its
+ * dark palette to body.graphiql-dark; :root[data-theme] out-ranks both. Dialogs, tooltips and
+ * popovers render in portals, so the selectors are global.
+ */
+:global(:root[data-theme]) :global(:is(.graphiql-container, .graphiql-dialog, .graphiql-dialog-overlay, .graphiql-tooltip, [data-radix-popper-content-wrapper])) {
+	--font-family: var(--octo-typography-family);
+	--font-family-mono: var(--octo-typography-mono);
+	--font-size-body: 0.8125rem;
+	--font-size-hint: 0.75rem;
+	--font-size-inline-code: 0.75rem;
+	--border-radius-2: 2px;
+	--border-radius-4: var(--octo-radius-sm);
+	--border-radius-8: var(--octo-radius-md);
+	--border-radius-12: var(--octo-radius-lg);
+	--popover-box-shadow: none;
+	--popover-border: 1px solid var(--octo-border-strong);
+}
+
+:global(:root[data-theme="light"]) :global(:is(.graphiql-container, .graphiql-dialog, .graphiql-dialog-overlay, .graphiql-tooltip, [data-radix-popper-content-wrapper])) {
+	--color-base: 0, 0%, 100%;
+	--color-neutral: 240, 6%, 10%;
+	--color-primary: 39, 100%, 26%;
+	--color-secondary: 224, 76%, 48%;
+	--color-tertiary: 142, 72%, 29%;
+	--color-info: 224, 76%, 48%;
+	--color-success: 142, 72%, 29%;
+	--color-warning: 21, 88%, 40%;
+	--color-error: 345, 83%, 41%;
+}
+
+:global(:root[data-theme="dark"]) :global(:is(.graphiql-container, .graphiql-dialog, .graphiql-dialog-overlay, .graphiql-tooltip, [data-radix-popper-content-wrapper])) {
+	--color-base: 225, 8%, 7%;
+	--color-neutral: 240, 5%, 93%;
+	--color-primary: 42, 91%, 66%;
+	--color-secondary: 221, 100%, 78%;
+	--color-tertiary: 138, 48%, 68%;
+	--color-info: 213, 94%, 68%;
+	--color-success: 142, 69%, 58%;
+	--color-warning: 27, 96%, 61%;
+	--color-error: 351, 95%, 71%;
+}
+
+/* Run is the one Marigold fill on the page, with dark text like every primary action. */
+.console :global(button.graphiql-execute-button) {
+	background-color: var(--octo-accent-primary);
+}
+
+.console :global(button.graphiql-execute-button:hover) {
+	background-color: var(--octo-accent-primary-hover);
+}
+
+.console :global(button.graphiql-execute-button > svg) {
+	color: var(--octo-accent-on-primary);
+}
