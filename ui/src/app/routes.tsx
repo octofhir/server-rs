@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
 import { AppDetailPage, AppsPage } from "@/pages/apps";
 import { AuditTrailPage } from "@/pages/audit";
@@ -31,6 +32,11 @@ import { ViewDefinitionPage } from "@/pages/viewdefinition";
 import { RouteGuard } from "@/shared/ui-react/RouteGuard";
 import { AppShell } from "@/widgets/app-shell";
 
+// Dev-only design specimens; the DEV guard lets the bundler drop the chunk from production builds.
+const StyleguidePage = import.meta.env.DEV
+  ? lazy(() => import("@/pages/styleguide").then((m) => ({ default: m.StyleguidePage })))
+  : null;
+
 // Protected layout with RouteGuard and AppShell
 function ProtectedLayout() {
   return (
@@ -45,6 +51,16 @@ export function AppRoutes() {
     <Routes>
       {/* Public routes */}
       <Route path="/login" element={<LoginPage />} />
+      {StyleguidePage && (
+        <Route
+          path="/_styleguide"
+          element={
+            <Suspense fallback={null}>
+              <StyleguidePage />
+            </Suspense>
+          }
+        />
+      )}
 
       {/* Protected routes - require authentication */}
       <Route element={<ProtectedLayout />}>
