@@ -10,6 +10,7 @@ interface ShortcutsDialogProps {
 const GENERAL: Array<[string[], string]> = [
   [["⌘", "K"], "Command palette"],
   [["?"], "This list"],
+  [["["], "Collapse sidebar"],
   [["↑", "↓"], "Move in lists"],
   [["j", "k"], "Move in lists (vim)"],
   [["↵"], "Open the focused row"],

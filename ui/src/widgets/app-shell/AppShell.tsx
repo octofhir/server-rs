@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { useUnit } from "effector-react";
 import { type ComponentType, useEffect, useMemo, useState } from "react";
+import { Helmet } from "react-helmet-async";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, useHealth, useResourceTypes, useSettings } from "@/shared/api/hooks";
 import { $paletteContributions, $paletteOpen, paletteOpenChanged } from "@/shared/command-palette";
@@ -47,6 +48,7 @@ import { ErrorBoundary } from "@/shared/ui";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 
 const BRANDING = `${import.meta.env.BASE_URL}branding`;
+const SIDEBAR_KEY = "octofhir-sidebar";
 
 const statusThemeByHealth: Record<"ok" | "degraded" | "down", SidebarStatus["theme"]> = {
   ok: "success",
@@ -182,6 +184,13 @@ export function AppShell() {
   useSettings();
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem(SIDEBAR_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [paletteOpen, setPaletteOpen, contributions] = useUnit([
     $paletteOpen,
     paletteOpenChanged,
@@ -273,6 +282,11 @@ export function AppShell() {
         setShortcutsOpen(true);
         return;
       }
+      if (event.key === "[") {
+        event.preventDefault();
+        setSidebarCollapsed((collapsed) => !collapsed);
+        return;
+      }
       if (pendingGo && Date.now() - pendingGo < 1200) {
         pendingGo = 0;
         const target = goTargets.get(event.key.toLowerCase());
@@ -312,13 +326,18 @@ export function AppShell() {
       }
       colorScheme={colorScheme}
       onToggleColorScheme={toggleColorScheme}
-      persistKey="octofhir-sidebar"
+      persistKey={SIDEBAR_KEY}
+      collapsed={sidebarCollapsed}
+      onCollapsedChange={setSidebarCollapsed}
     />
   );
 
+  const segments = locationSegments(path, navigate);
+  const pageTitle = segments.at(-1)?.label;
+
   const header = (
     <LocationBar
-      segments={locationSegments(path, navigate)}
+      segments={segments}
       actions={
         <ActionIcon
           variant="subtle"
@@ -334,6 +353,9 @@ export function AppShell() {
 
   return (
     <Shell sidebar={sidebar} header={header}>
+      <Helmet>
+        <title>{typeof pageTitle === "string" ? `${pageTitle} · OctoFHIR` : "OctoFHIR"}</title>
+      </Helmet>
       <ErrorBoundary>
         <Outlet />
       </ErrorBoundary>

@@ -2,7 +2,6 @@ import { Button, Collapse, Text, useDisclosure, useHotkeys } from "@octofhir/ui-
 import { useUnit } from "effector-react";
 import { Bookmark, History as ClockArrowRotateLeft, Eye, Gauge, Layers } from "lucide-react";
 import { useCallback, useMemo } from "react";
-import { Helmet } from "react-helmet-async";
 import type { HttpMethod } from "@/shared/api";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
@@ -100,9 +99,6 @@ export function RestConsolePage() {
 
   return (
     <div className={`${styles.container} page-enter`}>
-      <Helmet>
-        <title>REST Console</title>
-      </Helmet>
 
       <header className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
