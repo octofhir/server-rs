@@ -12,7 +12,7 @@ import {
 import { useAuth } from "@/shared/api/hooks";
 import classes from "./LoginPage.module.css";
 
-const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
+const logoUrl = `${import.meta.env.BASE_URL}branding/mark.svg`;
 
 export function LoginPage() {
 	const navigate = useNavigate();

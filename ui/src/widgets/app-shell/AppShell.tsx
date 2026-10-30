@@ -34,7 +34,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, useHealth, useSettings } from "@/shared/api/hooks";
 import { ErrorBoundary } from "@/shared/ui";
 
-const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
+const logoUrl = `${import.meta.env.BASE_URL}branding/mark.svg`;
 
 const statusThemeByHealth: Record<"ok" | "degraded" | "down", SidebarStatus["theme"]> = {
   ok: "success",

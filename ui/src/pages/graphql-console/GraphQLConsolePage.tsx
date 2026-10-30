@@ -6,7 +6,7 @@ import "graphiql/style.css";
 import { useUiSettings } from "@/shared";
 import classes from "./GraphQLConsolePage.module.css";
 
-const DEFAULT_QUERY = `# Welcome to the Abyxon GraphQL Console!
+const DEFAULT_QUERY = `# Welcome to the OctoFHIR GraphQL Console!
 #
 # GraphiQL is an in-browser tool for writing, validating, and
 # testing GraphQL queries.
