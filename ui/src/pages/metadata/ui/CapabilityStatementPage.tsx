@@ -1,114 +1,204 @@
-import { Server, ClipboardList as SquareListUl, Wrench } from "lucide-react";
-import type { ReactNode } from "react";
-import { Badge, Code, Loader, Text, WorkspacePageLayout, WorkspacePageSection } from "@octofhir/ui-kit";
+import {
+	Button,
+	DataTable,
+	type DataTableColumn,
+	Loader,
+	Tabs,
+	Text,
+	TextInput,
+	useClipboard,
+	WorkspacePageLayout,
+} from "@octofhir/ui-kit";
+import { Check, Copy, Search } from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCapabilities } from "@/shared/api/hooks";
+import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import classes from "./CapabilityStatementPage.module.css";
 
+/** Interaction columns of the matrix, in REST order. */
+const INTERACTIONS: Array<{ code: string; label: string }> = [
+	{ code: "read", label: "read" },
+	{ code: "vread", label: "vread" },
+	{ code: "search-type", label: "search" },
+	{ code: "create", label: "create" },
+	{ code: "update", label: "update" },
+	{ code: "patch", label: "patch" },
+	{ code: "delete", label: "delete" },
+	{ code: "history-instance", label: "hist·id" },
+	{ code: "history-type", label: "hist·type" },
+];
+
+interface ResourceRow {
+	type: string;
+	interactions: Set<string>;
+	searchParams: number;
+}
+
+type View = "overview" | "json";
+
 export function CapabilityStatementPage() {
+	const navigate = useNavigate();
 	const { data, isLoading, error } = useCapabilities();
+	const clipboard = useClipboard();
+	const [view, setView] = useState<View>("overview");
+	const [filter, setFilter] = useState("");
+
 	const rest = data?.rest ?? [];
-	const resources = rest.flatMap((item) => item.resource ?? []);
-	const systemInteractions = rest.flatMap((item) => item.interaction ?? []);
-	const formats = data?.format ?? [];
+	const json = useMemo(() => (data ? JSON.stringify(data, null, 2) : ""), [data]);
+	const systemInteractions = rest.flatMap((mode) => mode.interaction ?? []).flatMap((i) => i.code ?? []);
+
+	const rows = useMemo<ResourceRow[]>(
+		() =>
+			rest
+				.flatMap((mode) => mode.resource ?? [])
+				.flatMap((resource) =>
+					resource.type
+						? [
+								{
+									type: resource.type,
+									interactions: new Set(resource.interaction?.flatMap((i) => i.code ?? []) ?? []),
+									searchParams: resource.searchParam?.length ?? 0,
+								},
+							]
+						: [],
+				),
+		[rest],
+	);
+	const visibleRows = useMemo(() => {
+		const query = filter.trim().toLowerCase();
+		return query ? rows.filter((row) => row.type.toLowerCase().includes(query)) : rows;
+	}, [rows, filter]);
+
+	const columns: DataTableColumn<ResourceRow>[] = [
+		{
+			id: "type",
+			header: "Resource",
+			accessor: (row) => row.type,
+			sortable: true,
+			cell: (row) => <span className={classes.typeName}>{row.type}</span>,
+		},
+		...INTERACTIONS.map(
+			({ code, label }): DataTableColumn<ResourceRow> => ({
+				id: code,
+				header: label,
+				width: 72,
+				align: "center",
+				accessor: (row) => row.interactions.has(code),
+				cell: (row) =>
+					row.interactions.has(code) ? (
+						<span className={classes.yes} role="img" aria-label="supported" />
+					) : (
+						<span className={classes.no} role="img" aria-label="not supported" />
+					),
+			}),
+		),
+		{
+			id: "searchParams",
+			header: "params",
+			width: 80,
+			align: "right",
+			sortable: true,
+			accessor: (row) => row.searchParams,
+			cell: (row) => <span className={classes.count}>{row.searchParams}</span>,
+		},
+	];
+
+	const meta = data
+		? [data.fhirVersion && `FHIR ${data.fhirVersion}`, data.status, data.date?.slice(0, 10)]
+				.filter(Boolean)
+				.join(" · ")
+		: undefined;
 
 	return (
 		<WorkspacePageLayout
-			title="Capability Statement"
-			description="FHIR server metadata, advertised formats, resources, and interactions"
-			maxWidth={1280}
-			meta={
-				<div className={classes.metaBadges}>
-					<Badge color="primary" variant="light">
-						{data?.fhirVersion ? `FHIR ${data.fhirVersion}` : "FHIR metadata"}
-					</Badge>
-					{data?.status ? <Badge variant="light">{data.status}</Badge> : null}
-					{data?.date ? <Badge variant="light">{data.date}</Badge> : null}
-				</div>
+			title="Capabilities"
+			description={meta}
+			className="page-enter"
+			actions={
+				data ? (
+					<Button variant="outline" onClick={() => clipboard.copy(json)}>
+						<Button.Icon side="left">
+							{clipboard.copied ? <Check size={14} /> : <Copy size={14} />}
+						</Button.Icon>
+						{clipboard.copied ? "Copied" : "Copy JSON"}
+					</Button>
+				) : null
+			}
+			toolbar={
+				<Tabs value={view} onChange={(next) => setView(next as View)}>
+					<Tabs.List>
+						<Tabs.Tab value="overview">Overview</Tabs.Tab>
+						<Tabs.Tab value="json">JSON</Tabs.Tab>
+					</Tabs.List>
+				</Tabs>
 			}
 		>
 			{isLoading ? (
 				<div className={classes.loadingState}>
 					<Loader size="sm" />
-					<Text color="secondary">Loading capability statement...</Text>
+					<Text color="secondary">Loading capability statement…</Text>
 				</div>
 			) : error ? (
 				<Text color="danger">
 					{error instanceof Error ? error.message : "Failed to load capability statement"}
 				</Text>
-			) : data ? (
+			) : !data ? null : view === "json" ? (
+				<div className={classes.json}>
+					<JsonEditor value={json} readOnly height="100%" />
+				</div>
+			) : (
 				<>
-					<div className={classes.stats}>
-						<Metric icon={<Server size={18} />} label="REST modes" value={rest.length} />
-						<Metric icon={<SquareListUl size={18} />} label="Resources" value={resources.length} />
-						<Metric icon={<Wrench size={18} />} label="System interactions" value={systemInteractions.length} />
-					</div>
+					<section className={classes.server} aria-label="Server">
+						<Field label="Software">
+							{data.software?.name ?? "—"} <span className={classes.mono}>{data.software?.version}</span>
+						</Field>
+						<Field label="Endpoint">
+							<span className={classes.mono}>{data.implementation?.url ?? "—"}</span>
+						</Field>
+						<Field label="Formats">
+							<span className={classes.mono}>{data.format?.join("  ") || "—"}</span>
+						</Field>
+						<Field label="System interactions">
+							<span className={classes.mono}>{systemInteractions.join("  ") || "—"}</span>
+						</Field>
+					</section>
 
-					<WorkspacePageSection title="Server">
-						<div className={classes.definitionGrid}>
-							<Definition label="Software" value={data.software?.name} />
-							<Definition label="Version" value={data.software?.version} />
-							<Definition label="Implementation" value={data.implementation?.description} />
-							<Definition label="Endpoint" value={data.implementation?.url} />
-							<Definition label="Formats" value={formats.join(", ")} />
-							<Definition label="Publisher" value={data.publisher} />
+					<section className={classes.matrix}>
+						<div className={classes.matrixToolbar}>
+							<TextInput
+								aria-label="Filter resources"
+								placeholder="Filter resources…"
+								leftSection={<Search size={14} aria-hidden="true" />}
+								value={filter}
+								onChange={setFilter}
+								className={classes.filter}
+							/>
+							<span className={classes.total}>
+								{visibleRows.length} of {rows.length} resources
+							</span>
 						</div>
-					</WorkspacePageSection>
-
-					<WorkspacePageSection title="Resources">
-						<div className={classes.resourceGrid}>
-							{resources.map((resource) => (
-								<div key={resource.type} className={classes.resourceItem}>
-									<Text variant="subheader-1">{resource.type}</Text>
-									<div className={classes.interactionList}>
-										{(resource.interaction ?? []).map((interaction) => (
-											<Badge key={interaction.code} size="xs" variant="light">
-												{interaction.code}
-											</Badge>
-										))}
-									</div>
-								</div>
-							))}
-						</div>
-					</WorkspacePageSection>
-
-					<WorkspacePageSection title="Raw JSON">
-						<Code className={classes.raw}>{JSON.stringify(data, null, 2)}</Code>
-					</WorkspacePageSection>
+						<DataTable
+							aria-label="Resource interactions"
+							data={visibleRows}
+							columns={columns}
+							getRowId={(row) => row.type}
+							stickyHeader
+							maxHeight="calc(100vh - 330px)"
+							onRowClick={(row) => navigate(`/resources/${row.type}`)}
+						/>
+					</section>
 				</>
-			) : null}
+			)}
 		</WorkspacePageLayout>
 	);
 }
 
-function Metric({
-	icon,
-	label,
-	value,
-}: {
-	icon: ReactNode;
-	label: string;
-	value: number | string;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
 	return (
-		<div className={classes.metric}>
-			<div className={classes.metricHeader}>
-				<span className={classes.metricIcon}>{icon}</span>
-				<Text color="secondary" variant="body-1">
-					{label}
-				</Text>
-			</div>
-			<Text variant="header-1">{value}</Text>
-		</div>
-	);
-}
-
-function Definition({ label, value }: { label: string; value: string | undefined }) {
-	return (
-		<div className={classes.definition}>
-			<Text color="secondary" variant="caption-1">
-				{label}
-			</Text>
-			<Text>{value || "Not advertised"}</Text>
+		<div className={classes.field}>
+			<span className={classes.label}>{label}</span>
+			<span className={classes.value}>{children}</span>
 		</div>
 	);
 }

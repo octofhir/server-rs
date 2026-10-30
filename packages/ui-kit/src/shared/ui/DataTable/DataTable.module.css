@@ -82,6 +82,9 @@
     color: inherit;
     font: inherit;
     font-weight: inherit;
+    /* Buttons reset these in the UA stylesheet; header labels are mono caps. */
+    letter-spacing: inherit;
+    text-transform: inherit;
     cursor: pointer;
 }
 .sortButton:focus-visible {
