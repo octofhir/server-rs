@@ -147,7 +147,7 @@ function locationSegments(path: string, navigate: (to: string) => void): Locatio
     ];
   }
   const active = findActive(path);
-  if (!active) return [{ id: "home", label: "home" }];
+  if (!active) return [{ id: "overview", label: "overview" }];
   const rest = path.slice(active.entry.path.length).split("/").filter(Boolean).map(decodeURIComponent);
   return [
     { id: "section", label: active.section.label.toLowerCase() },
