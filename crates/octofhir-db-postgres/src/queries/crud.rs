@@ -237,9 +237,49 @@ pub async fn exists(pool: &PgPool, resource_type: &str, id: &str) -> Result<bool
     Ok(exists.0)
 }
 
+/// Longest id list an existence check binds id by id; see [`id_match`].
+const ID_LIST_BIND_LIMIT: usize = 32;
+
+/// Renders `id = ANY(...)` for `count` ids whose parameters start at `first`,
+/// and returns it with the next free parameter number.
+///
+/// Short lists bind every id (`ANY(ARRAY[$1, $2])`), so the list length is part
+/// of the statement and a cached statement moves to its generic plan after five
+/// executions. With one bound array the generic plan has to assume a long list,
+/// always looks costlier than the custom plan, and PostgreSQL re-plans every
+/// call — on CRUD creates that planning cost more than the lookup itself. Long
+/// lists bind one array: their planning is negligible next to execution, and
+/// it keeps the parameter count bounded.
+fn id_match(first: usize, count: usize) -> (String, usize) {
+    if count > ID_LIST_BIND_LIMIT {
+        return (format!("id = ANY(${first})"), first + 1);
+    }
+    let placeholders = (first..first + count)
+        .map(|n| format!("${n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    (
+        format!("id = ANY(ARRAY[{placeholders}]::text[])"),
+        first + count,
+    )
+}
+
+/// Binds `ids` the way [`id_match`] rendered them.
+fn bind_ids<'q, Q>(
+    query: Q,
+    ids: &'q [String],
+    bind_one: impl Fn(Q, &'q String) -> Q,
+    bind_all: impl FnOnce(Q, &'q [String]) -> Q,
+) -> Q {
+    if ids.len() > ID_LIST_BIND_LIMIT {
+        bind_all(query, ids)
+    } else {
+        ids.iter().fold(query, bind_one)
+    }
+}
+
 /// Batch existence check: returns the subset of `ids` present and live (not
-/// deleted) in `{resource_type}`. One `id = ANY($1)` round-trip for the whole
-/// slice instead of one query per id.
+/// deleted) in `{resource_type}`, in one round trip.
 pub async fn exists_many(
     pool: &PgPool,
     resource_type: &str,
@@ -249,19 +289,24 @@ pub async fn exists_many(
         return Ok(std::collections::HashSet::new());
     }
     let table = SchemaManager::table_name(resource_type);
-    let sql = format!(r#"SELECT id FROM "{table}" WHERE id = ANY($1) AND status != 'deleted'"#);
+    let (id_condition, _) = id_match(1, ids.len());
+    let sql = format!(r#"SELECT id FROM "{table}" WHERE {id_condition} AND status != 'deleted'"#);
 
-    let rows: Vec<(String,)> = query_as(AssertSqlSafe(sql.to_string()))
-        .bind(ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            // Missing table = none of the ids exist; not an error for validation.
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("Table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to batch-check existence: {e}"))
-        })?;
+    let rows: Vec<(String,)> = bind_ids(
+        query_as(AssertSqlSafe(sql)),
+        ids,
+        |query, id| query.bind(id),
+        |query, ids| query.bind(ids),
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        // Missing table = none of the ids exist; not an error for validation.
+        if e.to_string().contains("does not exist") {
+            return StorageError::internal(format!("Table does not exist: {e}"));
+        }
+        StorageError::internal(format!("Failed to batch-check existence: {e}"))
+    })?;
 
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
@@ -298,24 +343,31 @@ pub async fn exists_many_grouped(
             .collect());
     }
 
-    // Build `UNION ALL` of one `id = ANY($n)` existence query per type. Each
-    // branch tags its rows with the group index (a bound-free integer literal),
-    // so no resource-type string is interpolated into the SQL.
+    // Build `UNION ALL` of one existence query per type. Each branch tags its
+    // rows with the group index (a bound-free integer literal), so no
+    // resource-type string is interpolated into the SQL.
     let mut sql = String::new();
-    for (i, (rt, _ids)) in groups.iter().enumerate() {
+    let mut next_param = 1;
+    for (i, (rt, ids)) in groups.iter().enumerate() {
         let table = SchemaManager::table_name(rt);
         if i > 0 {
             sql.push_str(" UNION ALL ");
         }
+        let (id_condition, next) = id_match(next_param, ids.len());
+        next_param = next;
         sql.push_str(&format!(
-            r#"SELECT {i}::int AS grp, id FROM "{table}" WHERE id = ANY(${n}) AND status != 'deleted'"#,
-            n = i + 1
+            r#"SELECT {i}::int AS grp, id FROM "{table}" WHERE {id_condition} AND status != 'deleted'"#
         ));
     }
 
     let mut q = query_as::<_, (i32, String)>(AssertSqlSafe(sql));
     for (_, ids) in &groups {
-        q = q.bind(ids);
+        q = bind_ids(
+            q,
+            ids,
+            |query, id| query.bind(id),
+            |query, ids| query.bind(ids),
+        );
     }
 
     match q.fetch_all(pool).await {
@@ -367,14 +419,17 @@ pub async fn lock_references_with_tx(
         // FOR SHARE from several transactions turns every such row into a
         // MultiXact. A target deleted between this check and commit is the
         // same accepted race as any reference check outside the write.
-        let sql = format!(r#"SELECT id FROM {table} WHERE id = ANY($1) AND status != 'deleted'"#);
-        let rows: Vec<String> = query_scalar(AssertSqlSafe(sql))
-            .bind(ids)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(|error| {
-                StorageError::internal(format!("Failed to lock references: {error}"))
-            })?;
+        let (id_condition, _) = id_match(1, ids.len());
+        let sql = format!(r#"SELECT id FROM {table} WHERE {id_condition} AND status != 'deleted'"#);
+        let rows: Vec<String> = bind_ids(
+            query_scalar(AssertSqlSafe(sql)),
+            ids,
+            |query, id| query.bind(id),
+            |query, ids| query.bind(ids),
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|error| StorageError::internal(format!("Failed to lock references: {error}")))?;
         found.extend(rows.into_iter().map(|id| format!("{resource_type}/{id}")));
     }
     Ok(found)
@@ -1863,6 +1918,29 @@ async fn read_with_tx_lock(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_id_lists_bind_each_id() {
+        assert_eq!(
+            id_match(1, 1),
+            ("id = ANY(ARRAY[$1]::text[])".to_string(), 2)
+        );
+        assert_eq!(
+            id_match(3, 2),
+            ("id = ANY(ARRAY[$3, $4]::text[])".to_string(), 5)
+        );
+        let (condition, next) = id_match(1, ID_LIST_BIND_LIMIT);
+        assert!(condition.ends_with(&format!("${ID_LIST_BIND_LIMIT}]::text[])")));
+        assert_eq!(next, ID_LIST_BIND_LIMIT + 1);
+    }
+
+    #[test]
+    fn long_id_lists_bind_one_array() {
+        assert_eq!(
+            id_match(2, ID_LIST_BIND_LIMIT + 1),
+            ("id = ANY($2)".to_string(), 3)
+        );
+    }
 
     #[test]
     fn test_chrono_to_time_conversion() {
