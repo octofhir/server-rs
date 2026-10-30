@@ -2,12 +2,39 @@
 .wrap {
   border-radius: var(--octo-radius-md);
   background: var(--octo-surface-1);
-  --accentBase: var(--octo-accent-primary);
-  --baseBg: var(--octo-surface-1);
-  --baseBorder: var(--octo-border-subtle);
 }
-.wrap :global(.mdxeditor) {
+
+/*
+ * MDXEditor's whole palette (Radix-style scale) mapped onto tokens, so the toolbar select and
+ * the portalled popups follow the app scheme instead of the stock light colours.
+ */
+.wrap :global(.mdxeditor),
+:global(.mdxeditor-popup-container) {
+  --basePageBg: var(--octo-surface-1);
+  --baseBase: var(--octo-surface-1);
+  --baseBgSubtle: var(--octo-surface-2);
   --baseBg: var(--octo-surface-1);
+  --baseBgHover: var(--octo-surface-2);
+  --baseBgActive: var(--octo-surface-3);
+  --baseLine: var(--octo-border-subtle);
+  --baseBorder: var(--octo-border-subtle);
+  --baseBorderHover: var(--octo-border-strong);
+  --baseSolid: var(--octo-text-muted);
+  --baseSolidHover: var(--octo-text-secondary);
+  --baseText: var(--octo-text-secondary);
+  --baseTextContrast: var(--octo-text-primary);
+  --accentBase: var(--octo-accent-primary-bg);
+  --accentBgSubtle: var(--octo-accent-primary-bg);
+  --accentBg: var(--octo-accent-primary-bg);
+  --accentBgHover: var(--octo-accent-primary-bg-hover);
+  --accentBgActive: var(--octo-accent-primary-bg-hover);
+  --accentLine: var(--octo-border-strong);
+  --accentBorder: var(--octo-accent-primary-text);
+  --accentBorderHover: var(--octo-accent-primary-text);
+  --accentSolid: var(--octo-accent-primary);
+  --accentSolidHover: var(--octo-accent-primary-hover);
+  --accentText: var(--octo-accent-primary-text);
+  --accentTextContrast: var(--octo-text-primary);
   font-family: inherit;
 }
 .wrap :global(.mdxeditor-toolbar) {
