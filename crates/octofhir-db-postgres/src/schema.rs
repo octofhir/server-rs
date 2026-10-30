@@ -251,6 +251,18 @@ impl SchemaManager {
             );\n"
         ));
         sql.push_str(&lz4_resource_column_ddl(&table));
+        // No planner statistics on the whole document. Its histogram holds
+        // ~100 complete resources, and the selectivity estimator for `@>`/`@?`
+        // evaluates the operator against every entry — once per clause and
+        // again per partial index whose predicate is implied. Measured on the
+        // benchmark data set that was ~0.2 ms of planning per matching partial
+        // index; dropping it cut PostgreSQL time per search by 17% with the same
+        // plans. A 100-document sample cannot tell common from rare values
+        // reliably anyway; extraction expressions keep their own statistics
+        // through their indexes.
+        sql.push_str(&format!(
+            "ALTER TABLE \"{table}\" ALTER COLUMN resource SET STATISTICS 0;\n"
+        ));
 
         // Statement triggers cover direct/autocommit SQL paths too. Row locks
         // in the transaction API acquire this same shared gate before selecting.
