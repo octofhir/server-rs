@@ -87,7 +87,7 @@
 }
 
 .sortIcon {
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
 }
 .sortIconIdle {
     color: var(--octo-text-muted, #adb5bd);

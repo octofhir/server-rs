@@ -88,7 +88,7 @@
 }
 
 .typeChipArray {
-  color: var(--octo-accent-primary);
+  color: var(--octo-accent-primary-text);
   background: var(--octo-accent-primary-bg);
 }
 

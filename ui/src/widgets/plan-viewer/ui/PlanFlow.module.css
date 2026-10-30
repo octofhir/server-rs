@@ -67,7 +67,7 @@
   padding: 1px 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--octo-accent-primary) 16%, transparent);
-  color: var(--octo-accent-primary);
+  color: var(--octo-accent-primary-text);
 }
 
 .loops {

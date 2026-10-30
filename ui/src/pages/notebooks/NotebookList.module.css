@@ -62,7 +62,7 @@
   height: 34px;
   border-radius: var(--octo-radius-md);
   background: var(--octo-accent-primary-bg, var(--octo-surface-2));
-  color: var(--octo-accent-primary);
+  color: var(--octo-accent-primary-text);
   margin-bottom: var(--octo-spacing-xs);
 }
 .cardTitle {

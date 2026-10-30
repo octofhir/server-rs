@@ -41,7 +41,7 @@
 }
 .tabActive {
   background: color-mix(in oklch, var(--octo-accent-primary, #10b981) 14%, transparent);
-  color: var(--octo-accent-primary, #0f9d6b);
+  color: var(--octo-accent-primary-text, #0f9d6b);
 }
 
 .meta {

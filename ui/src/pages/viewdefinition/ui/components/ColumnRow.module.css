@@ -25,7 +25,7 @@
   white-space: nowrap;
   font-family: var(--octo-font-mono, monospace);
   font-size: 11px;
-  color: var(--octo-accent-primary, #10b981);
+  color: var(--octo-accent-primary-text, #10b981);
   opacity: 0.85;
 }
 

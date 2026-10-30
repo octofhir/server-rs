@@ -14,7 +14,7 @@
 
 .eyebrow {
     width: fit-content;
-    color: var(--octo-accent-primary); /* fallback when background-clip unsupported */
+    color: var(--octo-accent-primary-text); /* fallback when background-clip unsupported */
     font-size: 12px;
     font-weight: 700;
     line-height: 16px;

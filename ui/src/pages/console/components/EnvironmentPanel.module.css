@@ -27,7 +27,7 @@
 .envChip[data-active="1"] {
   border-color: var(--octo-accent-primary);
   background: var(--octo-accent-primary-bg);
-  color: var(--octo-accent-primary);
+  color: var(--octo-accent-primary-text);
   font-weight: 600;
 }
 

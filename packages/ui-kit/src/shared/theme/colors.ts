@@ -1,5 +1,5 @@
 /**
- * OctoFHIR brand palette — built on the OKLCH color space for perceptual
+ * OctoFHIR brand palette (Marigold + graphite) — built on the OKLCH color space for perceptual
  * uniformity. Each scale runs from 50 (lightest) → 950 (darkest) by index
  * 0..9. Index 5 is the "Base" stop used as the canonical brand stop and is
  * what the dark/light schemes pull from.
@@ -10,18 +10,18 @@
  */
 
 export const palette = {
-    /** Mint / Emerald — primary brand accent. Soft, modern, distinctive. */
+    /** Marigold — the single brand accent. Fills use the base stop with dark text on top. */
     primary: [
-        "oklch(98% 0.018 168)",
-        "oklch(95% 0.040 168)",
-        "oklch(90% 0.072 168)",
-        "oklch(82% 0.120 168)",
-        "oklch(73% 0.155 168)",
-        "oklch(64% 0.168 168)", // Base
-        "oklch(56% 0.152 168)", // Hover
-        "oklch(48% 0.130 168)", // Active
-        "oklch(38% 0.100 168)",
-        "oklch(28% 0.070 168)",
+        "oklch(98.5% 0.022 90)",
+        "oklch(95.5% 0.055 88)",
+        "oklch(91% 0.100 86)",
+        "oklch(86% 0.140 84)",
+        "oklch(83% 0.155 83)",
+        "oklch(80% 0.160 82)", // Base
+        "oklch(75% 0.158 78)", // Hover
+        "oklch(66% 0.140 74)", // Active
+        "oklch(50% 0.110 70)", // Text on light
+        "oklch(36% 0.080 70)",
     ],
     /** Emerald — success. */
     success: [
@@ -36,57 +36,57 @@ export const palette = {
         "oklch(36% 0.090 150)",
         "oklch(27% 0.065 150)",
     ],
-    /** Amber — warning. */
+    /** Orange — warning. Kept well away from the Marigold accent. */
     warning: [
-        "oklch(98% 0.018 80)",
-        "oklch(96% 0.045 80)",
-        "oklch(91% 0.090 80)",
-        "oklch(86% 0.135 80)",
-        "oklch(80% 0.165 80)",
-        "oklch(74% 0.180 80)", // Base
-        "oklch(64% 0.155 80)", // Hover
-        "oklch(54% 0.125 80)", // Active
-        "oklch(43% 0.095 80)",
-        "oklch(32% 0.065 80)",
+        "oklch(98% 0.016 55)",
+        "oklch(95% 0.040 55)",
+        "oklch(90% 0.080 55)",
+        "oklch(83% 0.125 55)",
+        "oklch(75% 0.160 55)",
+        "oklch(66% 0.185 50)", // Base
+        "oklch(58% 0.175 46)", // Hover
+        "oklch(50% 0.150 44)", // Active
+        "oklch(41% 0.120 44)",
+        "oklch(32% 0.090 44)",
     ],
     /** Crimson — destructive / error. */
     error: [
-        "oklch(98% 0.014 25)",
-        "oklch(95% 0.040 25)",
-        "oklch(90% 0.080 25)",
-        "oklch(82% 0.130 25)",
-        "oklch(73% 0.175 25)",
-        "oklch(63% 0.200 25)", // Base
-        "oklch(55% 0.180 25)", // Hover
-        "oklch(46% 0.150 25)", // Active
-        "oklch(37% 0.115 25)",
-        "oklch(28% 0.085 25)",
+        "oklch(98% 0.014 12)",
+        "oklch(95% 0.035 12)",
+        "oklch(90% 0.075 12)",
+        "oklch(82% 0.125 12)",
+        "oklch(72% 0.175 12)",
+        "oklch(60% 0.215 12)", // Base
+        "oklch(52% 0.200 12)", // Hover
+        "oklch(45% 0.170 12)", // Active
+        "oklch(37% 0.130 12)",
+        "oklch(28% 0.095 12)",
     ],
-    /** Iris — informational accent. */
+    /** Blue — informational. */
     info: [
-        "oklch(98% 0.014 230)",
-        "oklch(95% 0.036 230)",
-        "oklch(90% 0.072 230)",
-        "oklch(82% 0.125 230)",
-        "oklch(73% 0.165 230)",
-        "oklch(62% 0.188 230)", // Base
-        "oklch(54% 0.170 230)", // Hover
-        "oklch(46% 0.142 230)", // Active
-        "oklch(37% 0.108 230)",
-        "oklch(28% 0.080 230)",
+        "oklch(98% 0.012 260)",
+        "oklch(95% 0.030 260)",
+        "oklch(90% 0.060 260)",
+        "oklch(82% 0.105 260)",
+        "oklch(72% 0.150 260)",
+        "oklch(58% 0.200 262)", // Base
+        "oklch(50% 0.200 262)", // Hover
+        "oklch(43% 0.180 262)", // Active
+        "oklch(35% 0.140 262)",
+        "oklch(27% 0.100 262)",
     ],
-    /** Violet — secondary brand accent for highlights / decorations. */
+    /** Graphite — secondary accent kept neutral so Marigold stays the only hue. */
     accent: [
-        "oklch(98% 0.014 295)",
-        "oklch(95% 0.040 295)",
-        "oklch(90% 0.085 295)",
-        "oklch(82% 0.145 295)",
-        "oklch(72% 0.190 295)",
-        "oklch(62% 0.210 295)", // Base
-        "oklch(54% 0.192 295)", // Hover
-        "oklch(46% 0.162 295)", // Active
-        "oklch(37% 0.125 295)",
-        "oklch(27% 0.092 295)",
+        "oklch(98% 0.003 286)",
+        "oklch(95% 0.005 286)",
+        "oklch(90% 0.008 286)",
+        "oklch(82% 0.010 286)",
+        "oklch(70% 0.012 286)",
+        "oklch(55% 0.014 286)", // Base
+        "oklch(47% 0.014 286)", // Hover
+        "oklch(40% 0.012 286)", // Active
+        "oklch(30% 0.010 286)",
+        "oklch(22% 0.008 286)",
     ],
     /** Slate / Navy — surface depth, dark-mode backgrounds. */
     deep: [

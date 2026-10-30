@@ -62,7 +62,7 @@
 }
 
 .packageIcon {
-	color: var(--octo-accent-primary);
+	color: var(--octo-accent-primary-text);
 }
 
 .truncateText {

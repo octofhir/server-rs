@@ -39,7 +39,7 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--octo-accent-primary);
+	color: var(--octo-accent-primary-text);
 	font-weight: 600;
 	font-size: 13px;
 }
@@ -103,7 +103,7 @@
 
 .selectedCount {
 	font-weight: 500;
-	color: var(--octo-accent-primary);
+	color: var(--octo-accent-primary-text);
 	margin-right: 4px;
 }
 

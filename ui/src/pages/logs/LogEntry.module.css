@@ -108,7 +108,7 @@
 }
 
 .fieldValue {
-	color: var(--octo-accent-primary);
+	color: var(--octo-accent-primary-text);
 	overflow-wrap: anywhere;
 }
 

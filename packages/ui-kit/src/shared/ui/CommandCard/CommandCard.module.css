@@ -26,7 +26,7 @@
 }
 
 .button:focus-visible {
-    outline: 2px solid var(--octo-accent-primary);
+    outline: 2px solid var(--octo-focus-ring);
     outline-offset: 2px;
 }
 
@@ -49,7 +49,7 @@
     width: 28px;
     height: 28px;
     border-radius: 7px;
-    color: var(--octo-accent-primary);
+    color: var(--octo-accent-primary-text);
     background: var(--octo-accent-primary-bg);
 }
 

@@ -106,9 +106,9 @@
 .item:focus-visible { outline: 2px solid var(--octo-focus-ring, #91a7ff); outline-offset: -2px; }
 .item[data-active="true"] {
     background: var(--octo-accent-primary-bg, #edf2ff);
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
 }
-.item[data-active="true"] .itemIcon { color: var(--octo-accent-primary, #4263eb); }
+.item[data-active="true"] .itemIcon { color: var(--octo-accent-primary-text, #4263eb); }
 .item[data-disabled="true"] { color: var(--octo-text-muted, #868e96); cursor: not-allowed; }
 
 .itemIcon {
@@ -183,7 +183,7 @@
     height: 30px;
     border-radius: 50%;
     background: var(--octo-accent-primary-bg, #edf2ff);
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
     font-size: var(--octo-typography-size-xs, 0.75rem);
     font-weight: 700;
 }

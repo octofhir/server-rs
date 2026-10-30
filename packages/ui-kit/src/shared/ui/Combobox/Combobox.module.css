@@ -133,7 +133,7 @@
     background: var(--octo-surface-2, #f1f3f5);
 }
 .item[data-selected] {
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
     font-weight: var(--octo-typography-weight-medium, 500);
 }
 .item[data-disabled] {
@@ -149,5 +149,5 @@
     display: inline-flex;
     flex: none;
     width: 14px;
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
 }

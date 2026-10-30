@@ -1,5 +1,5 @@
 .link {
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
     text-decoration: none;
     cursor: pointer;
     transition: color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
@@ -25,5 +25,5 @@
     color: var(--octo-text-primary, #1a1b1e);
 }
 .link[data-view="primary"]:hover {
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
 }

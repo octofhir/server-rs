@@ -110,7 +110,7 @@
 
 .tab[data-active] .tabCount {
   background: var(--octo-accent-primary-subtle, rgb(79 70 229 / 14%));
-  color: var(--octo-accent-primary, #4f46e5);
+  color: var(--octo-accent-primary-text, #4f46e5);
 }
 
 .tableWrap {

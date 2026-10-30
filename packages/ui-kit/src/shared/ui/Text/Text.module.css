@@ -34,5 +34,5 @@
 .text[data-color="success"]   { color: var(--octo-brand-success, #2f9e44); }
 .text[data-color="warning"]   { color: var(--octo-brand-warm, #e8590c); }
 .text[data-color="info"]      { color: var(--octo-brand-info, #1971c2); }
-.text[data-color="brand"]     { color: var(--octo-accent-primary, #4263eb); }
+.text[data-color="brand"]     { color: var(--octo-accent-primary-text, #4263eb); }
 .text[data-color="inherit"]   { color: inherit; }

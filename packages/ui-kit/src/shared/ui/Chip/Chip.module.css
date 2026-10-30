@@ -30,11 +30,11 @@
 .chip[data-checked] {
     border-color: var(--octo-accent-primary, #4263eb);
     background: var(--octo-accent-primary-bg, #edf2ff);
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
 }
 .chip[data-checked]:hover:not(:disabled) {
     border-color: var(--octo-accent-primary, #4263eb);
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
 }
 
 .chip:focus-visible {

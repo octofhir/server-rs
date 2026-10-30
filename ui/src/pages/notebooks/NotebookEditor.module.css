@@ -431,7 +431,7 @@
   border-radius: var(--octo-radius-sm);
   border: 1px solid var(--octo-border-subtle);
   background: var(--octo-surface-2);
-  color: var(--octo-accent-primary);
+  color: var(--octo-accent-primary-text);
   cursor: pointer;
 }
 .pipeChip:hover {
@@ -476,7 +476,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: var(--octo-accent-primary);
+  color: var(--octo-accent-primary-text);
 }
 .pipeFields {
   flex: 1;

@@ -41,7 +41,7 @@
     padding: 0 4px 0 8px;
     border-radius: var(--octo-radius-sm, 6px);
     background: var(--octo-accent-primary-bg, #edf2ff);
-    color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary-text, #4263eb);
     font-size: var(--octo-typography-size-xs, 0.75rem);
     white-space: nowrap;
 }

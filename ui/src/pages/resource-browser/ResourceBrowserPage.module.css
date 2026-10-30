@@ -104,7 +104,7 @@
 }
 
 .typeTile:focus-visible {
-  outline: 2px solid var(--octo-accent-primary);
+  outline: 2px solid var(--octo-focus-ring);
   outline-offset: 2px;
 }
 

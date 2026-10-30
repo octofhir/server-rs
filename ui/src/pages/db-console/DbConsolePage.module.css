@@ -507,7 +507,7 @@
 
 .cellNumber {
   font-variant-numeric: tabular-nums;
-  color: var(--octo-accent-primary, #1d4ed8);
+  color: var(--octo-accent-primary-text, #1d4ed8);
 }
 
 .cellBoolTrue,

@@ -19,7 +19,7 @@
     border: 1px solid var(--octo-border-strong, #ced4da);
     border-radius: var(--octo-radius-xs, 4px);
     background: var(--octo-surface-1, #fff);
-    color: #fff;
+    color: var(--octo-accent-on-primary, #fff);
     transition:
         background-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
         border-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);

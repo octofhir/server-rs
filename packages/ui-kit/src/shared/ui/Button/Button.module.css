@@ -55,24 +55,33 @@
  */
 .button {
     --_accent: var(--octo-accent-primary, #4263eb);
+    /* Accent-coloured text and text on an accent fill differ for light accents (Marigold). */
+    --_accent-text: var(--octo-accent-primary-text, var(--octo-accent-primary, #4263eb));
+    --_on-accent: var(--octo-accent-on-primary, #fff);
     --_accent-hover: var(--octo-accent-primary-hover, #3b5bdb);
     --_accent-active: var(--octo-accent-primary-active, #364fc7);
     --_accent-bg: var(--octo-accent-primary-bg, #edf2ff);
 }
 .button[data-tone="danger"] {
     --_accent: var(--octo-accent-fire, #fa5252);
+    --_accent-text: var(--octo-accent-fire, #fa5252);
+    --_on-accent: var(--octo-text-inverse, #fff);
     --_accent-hover: var(--octo-accent-fire-hover, #f03e3e);
     --_accent-active: var(--octo-accent-fire-active, #e03131);
     --_accent-bg: var(--octo-accent-fire-bg, #fff5f5);
 }
 .button[data-tone="success"] {
     --_accent: var(--octo-brand-success, #2f9e44);
+    --_accent-text: var(--octo-brand-success, #2f9e44);
+    --_on-accent: var(--octo-text-inverse, #fff);
     --_accent-hover: var(--octo-brand-success-hover, #2b8a3e);
     --_accent-active: var(--octo-brand-success-hover, #2b8a3e);
     --_accent-bg: var(--octo-brand-success-soft, #ebfbee);
 }
 .button[data-tone="warning"] {
     --_accent: var(--octo-brand-warm, #f08c00);
+    --_accent-text: var(--octo-brand-warm, #f08c00);
+    --_on-accent: var(--octo-text-inverse, #fff);
     --_accent-hover: var(--octo-brand-warm-hover, #e8590c);
     --_accent-active: var(--octo-brand-warm-hover, #e8590c);
     --_accent-bg: var(--octo-brand-warm-soft, #fff9db);
@@ -80,6 +89,8 @@
 .button[data-tone="info"],
 .button[data-tone="utility"] {
     --_accent: var(--octo-brand-info, #1971c2);
+    --_accent-text: var(--octo-brand-info, #1971c2);
+    --_on-accent: var(--octo-text-inverse, #fff);
     --_accent-hover: var(--octo-brand-info-hover, #1864ab);
     --_accent-active: var(--octo-brand-info-hover, #1864ab);
     --_accent-bg: var(--octo-brand-info-soft, #e7f5ff);
@@ -90,8 +101,8 @@
 /* action: solid filled accent */
 .button[data-base="action"] {
     background: var(--_accent);
-    color: #fff;
-    border-color: var(--_accent);
+    color: var(--_on-accent);
+    border-color: var(--_accent-text);
 }
 .button[data-base="action"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-hover); border-color: var(--_accent-hover); }
 .button[data-base="action"]:active:not([data-disabled]):not(:disabled) { background: var(--_accent-active); border-color: var(--_accent-active); }
@@ -99,8 +110,8 @@
 /* raised: filled accent with depth */
 .button[data-base="raised"] {
     background: var(--_accent);
-    color: #fff;
-    border-color: var(--_accent);
+    color: var(--_on-accent);
+    border-color: var(--_accent-text);
     box-shadow: var(--octo-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
 }
 .button[data-base="raised"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-hover); }
@@ -112,7 +123,7 @@
     border-color: var(--octo-border-subtle, #dee2e6);
 }
 .button[data-base="normal"]:hover:not([data-disabled]):not(:disabled) { background: var(--octo-surface-3, #e9ecef); }
-.button[data-base="normal"][data-tone] { color: var(--_accent); }
+.button[data-base="normal"][data-tone] { color: var(--_accent-text); }
 
 /* outlined: transparent with accent/neutral border */
 .button[data-base="outlined"] {
@@ -120,7 +131,7 @@
     color: var(--octo-text-primary, #1a1b1e);
     border-color: var(--octo-border-strong, #ced4da);
 }
-.button[data-base="outlined"][data-tone] { color: var(--_accent); border-color: var(--_accent); }
+.button[data-base="outlined"][data-tone] { color: var(--_accent-text); border-color: var(--_accent-text); }
 .button[data-base="outlined"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-bg); }
 
 /* light: soft tinted fill */
@@ -129,7 +140,7 @@
     color: var(--octo-text-primary, #1a1b1e);
     border-color: transparent;
 }
-.button[data-base="light"][data-tone] { background: var(--_accent-bg); color: var(--_accent); }
+.button[data-base="light"][data-tone] { background: var(--_accent-bg); color: var(--_accent-text); }
 .button[data-base="light"]:hover:not([data-disabled]):not(:disabled) { filter: brightness(0.97); }
 
 /* flat: no chrome until hover */
@@ -138,10 +149,10 @@
     color: var(--octo-text-primary, #1a1b1e);
     border-color: transparent;
 }
-.button[data-base="flat"][data-tone] { color: var(--_accent); }
+.button[data-base="flat"][data-tone] { color: var(--_accent-text); }
 .button[data-base="flat"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-bg); }
 
-.button[data-selected="true"] { background: var(--_accent-bg); color: var(--_accent); }
+.button[data-selected="true"] { background: var(--_accent-bg); color: var(--_accent-text); }
 
 /* ---- Icons + loading ---- */
 .icon {
@@ -163,7 +174,7 @@
     animation: octo-btn-spin 0.6s linear infinite;
 }
 .button[data-base="action"] .spinner,
-.button[data-base="raised"] .spinner { color: #fff; }
+.button[data-base="raised"] .spinner { color: var(--_on-accent); }
 
 @keyframes octo-btn-spin {
     to { transform: rotate(360deg); }
