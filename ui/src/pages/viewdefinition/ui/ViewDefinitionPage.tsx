@@ -169,8 +169,8 @@ export function ViewDefinitionPage() {
 
   return (
     <ToolWorkspaceLayout
-      title="ViewDefinition Editor"
-      description="Build SQL on FHIR ViewDefinition resources and preview generated output"
+      title="Views"
+      description="SQL on FHIR ViewDefinitions: build, run and inspect the generated SQL."
       className="page-enter"
       actions={
         <div className={classes.actions}>

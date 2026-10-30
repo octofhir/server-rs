@@ -124,11 +124,19 @@ function readRows(parameter: Record<string, unknown> | undefined): unknown[] {
   }
 
   try {
-    const rows = JSON.parse(rowsData);
+    const rows = JSON.parse(decodeBinaryData(rowsData));
     return Array.isArray(rows) ? rows : [];
   } catch {
     return [];
   }
+}
+
+/** Binary.data is base64 (FHIR); accept raw JSON too in case a server sends it unencoded. */
+function decodeBinaryData(data: string): string {
+  const trimmed = data.trimStart();
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) return data;
+  const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 /**

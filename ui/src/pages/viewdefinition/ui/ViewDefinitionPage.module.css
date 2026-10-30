@@ -30,7 +30,7 @@
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--octo-border-subtle);
-  border-radius: 8px;
+  border-radius: var(--octo-radius-lg);
   background: var(--octo-surface-1);
 }
 
@@ -50,6 +50,7 @@
 }
 
 .editorSection {
+  flex-grow: 1.25;
   border-right: 1px solid var(--octo-border-subtle);
 }
 

@@ -1,0 +1,22 @@
+.type {
+  margin-left: 4px;
+  font-weight: 500;
+  color: var(--octo-text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.null {
+  font-style: italic;
+  color: var(--octo-text-muted);
+}
+
+.scalar,
+.json {
+  font-family: var(--octo-typography-mono);
+  font-size: 12px;
+}
+
+.json {
+  color: var(--octo-text-secondary);
+}

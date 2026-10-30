@@ -1,6 +1,7 @@
-import { Code, Table, Text } from "@octofhir/ui-kit";
+import { Table, Text } from "@octofhir/ui-kit";
 import { isRecord } from "@/shared/api/guards";
 import type { RunResult } from "../../lib/useViewDefinition";
+import classes from "./ResultTable.module.css";
 
 interface ResultTableProps {
   result: RunResult;
@@ -21,10 +22,7 @@ export function ResultTable({ result }: ResultTableProps) {
         <Table.Tr>
           {result.columns.map((col) => (
             <Table.Th key={col.name}>
-              {col.name}
-              <Text size="xs" c="dimmed">
-                {col.type}
-              </Text>
+              {col.name} <span className={classes.type}>{col.type}</span>
             </Table.Th>
           ))}
         </Table.Tr>
@@ -34,7 +32,7 @@ export function ResultTable({ result }: ResultTableProps) {
           <Table.Tr key={`row-${i}-${JSON.stringify(row).slice(0, 20)}`}>
             {result.columns.map((col) => (
               <Table.Td key={col.name}>
-                <Code>{JSON.stringify(isRecord(row) ? row[col.name] : undefined)}</Code>
+                <CellValue value={isRecord(row) ? row[col.name] : undefined} />
               </Table.Td>
             ))}
           </Table.Tr>
@@ -42,4 +40,11 @@ export function ResultTable({ result }: ResultTableProps) {
       </Table.Tbody>
     </Table>
   );
+}
+
+/** Scalars read as plain values; only structured values fall back to JSON. */
+function CellValue({ value }: { value: unknown }) {
+  if (value === null || value === undefined) return <span className={classes.null}>null</span>;
+  if (typeof value === "object") return <span className={classes.json}>{JSON.stringify(value)}</span>;
+  return <span className={typeof value === "string" ? undefined : classes.scalar}>{String(value)}</span>;
 }
