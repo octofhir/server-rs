@@ -29,6 +29,7 @@ export function getResourceDisplayName(
         stringValue(resource.title) ??
         nameValue(resource.name) ??
         stringValue(resource.code) ??
+        codeableConceptValue(resource.code) ??
         resource.id ??
         resource.resourceType ??
         fallback
@@ -58,6 +59,20 @@ export function ResourceName({
 
 function stringValue(value: unknown): string | undefined {
     return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+/** CodeableConcept → text, else the first coding's display, else its code. */
+function codeableConceptValue(value: unknown): string | undefined {
+    if (!isRecord(value)) return undefined;
+    const text = stringValue(value.text);
+    if (text) return text;
+    if (!Array.isArray(value.coding)) return undefined;
+    for (const coding of value.coding) {
+        if (!isRecord(coding)) continue;
+        const label = stringValue(coding.display) ?? stringValue(coding.code);
+        if (label) return label;
+    }
+    return undefined;
 }
 
 function nameValue(value: unknown): string | undefined {

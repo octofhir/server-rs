@@ -1,14 +1,15 @@
 import {
   ActionIcon,
   Alert,
-  Anchor,
   Badge,
-  Breadcrumbs,
   Button,
+  DataTable,
+  type DataTableColumn,
   EmptyState,
+  getResourceDisplayName,
   notify,
   OperationOutcomePanel,
-  RecordList,
+  ReferenceLink,
   Resizable,
   ScrollArea,
   SegmentedControl,
@@ -25,6 +26,8 @@ import {
   Search as Magnifier,
   X as Xmark,
 } from "lucide-react";
+import dayjs from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -33,7 +36,7 @@ import {
   getFhirCatalogCategoryOptions,
   getFhirCatalogTypeViews,
 } from "@/entities/fhir-catalog";
-import { getFhirBundleResources, getFhirResourceListViews } from "@/entities/fhir-resource";
+import { getFhirBundleResources } from "@/entities/fhir-resource";
 import { HttpError } from "@/shared/api/fhirClient";
 import { assertFhirResource, isRecord } from "@/shared/api/guards";
 import {
@@ -44,10 +47,58 @@ import {
   useResourceTypesCategorized,
   useUpdateResource,
 } from "@/shared/api/hooks";
-import type { FhirBundle, FhirOperationOutcome } from "@/shared/api/types";
+import type { FhirBundle, FhirOperationOutcome, FhirResource } from "@/shared/api/types";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import classes from "./ResourceBrowserPage.module.css";
+
+dayjs.extend(relativeTime);
+
+const CATEGORY_SECTIONS = [
+  { id: "fhir", label: "FHIR" },
+  { id: "system", label: "System" },
+  { id: "custom", label: "Custom" },
+] as const;
+
+type BadgeTheme = "success" | "warning" | "danger" | "normal";
+
+const STATUS_THEME: Record<string, BadgeTheme> = {
+  active: "success",
+  final: "success",
+  completed: "success",
+  amended: "success",
+  draft: "warning",
+  preliminary: "warning",
+  registered: "warning",
+  "on-hold": "warning",
+  "entered-in-error": "danger",
+  cancelled: "danger",
+  revoked: "danger",
+};
+
+/** Columns dropped while the details pane takes half of the width. */
+const SPLIT_HIDDEN_COLUMNS = new Set(["version", "updated"]);
+
+interface ResourceRow {
+  id: string;
+  resource: FhirResource;
+}
+
+/** Parses `name=anna&_sort=-birthdate` into search params; a leading `?` is allowed. */
+function parseQuery(text: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const [key, value] of new URLSearchParams(text.trim().replace(/^\?/, ""))) {
+    if (key) params[key] = value;
+  }
+  return params;
+}
+
+function resourceStatus(resource: FhirResource): string | undefined {
+  const record = resource as Record<string, unknown>;
+  if (typeof record.status === "string") return record.status;
+  if (typeof record.active === "boolean") return record.active ? "active" : "inactive";
+  return undefined;
+}
 
 function isCatalogCategoryFilter(value: string): value is FhirCatalogCategoryFilter {
   return value === "all" || value === "fhir" || value === "system" || value === "custom";
@@ -59,16 +110,6 @@ function isOperationOutcome(value: unknown): value is FhirOperationOutcome {
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
-}
-
-function ListSkeleton({ rows }: { rows: number }) {
-  return (
-    <div className={classes.skeletonList} aria-hidden="true">
-      {Array.from({ length: rows }, (_, index) => `skeleton-${index}`).map((key) => (
-        <Skeleton key={key} className={classes.skeletonRow} />
-      ))}
-    </div>
-  );
 }
 
 export function ResourceBrowserPage() {
@@ -83,6 +124,9 @@ export function ResourceBrowserPage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedResource, setEditedResource] = useState("");
   const [currentBundle, setCurrentBundle] = useState<FhirBundle | null>(null);
+  const [queryText, setQueryText] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
+  const searchParams = useMemo(() => ({ _count: 50, ...parseQuery(appliedQuery) }), [appliedQuery]);
   const [saveError, setSaveError] = useState<{
     message: string;
     operationOutcome?: FhirOperationOutcome;
@@ -101,7 +145,7 @@ export function ResourceBrowserPage() {
     isError: searchError,
     error: searchErrorObj,
     refetch: refetchSearch,
-  } = useResourceSearch(selectedType ?? "", { _count: 50 }, { enabled: !!selectedType });
+  } = useResourceSearch(selectedType ?? "", searchParams, { enabled: !!selectedType });
   const {
     data: selectedResource,
     isLoading: resourceLoading,
@@ -122,6 +166,8 @@ export function ResourceBrowserPage() {
     setCurrentBundle(null);
     setIsEditMode(false);
     setSaveError(null);
+    setQueryText("");
+    setAppliedQuery("");
   }, [selectedType]);
 
   // Update current bundle when search bundle changes
@@ -170,7 +216,19 @@ export function ResourceBrowserPage() {
   const resources = useMemo(() => {
     return getFhirBundleResources(currentBundle);
   }, [currentBundle]);
-  const resourceViews = useMemo(() => getFhirResourceListViews(resources), [resources]);
+  const resourceRows = useMemo<ResourceRow[]>(
+    () =>
+      resources.flatMap((resource) => (resource.id ? [{ id: resource.id, resource }] : [])),
+    [resources]
+  );
+  const typeSections = useMemo(
+    () =>
+      CATEGORY_SECTIONS.map((section) => ({
+        ...section,
+        items: filteredTypeViews.filter((item) => item.category === section.id),
+      })).filter((section) => section.items.length > 0),
+    [filteredTypeViews]
+  );
 
   // Pagination state
   const hasNextPage = currentBundle?.link?.some((l) => l.relation === "next") ?? false;
@@ -186,13 +244,6 @@ export function ResourceBrowserPage() {
   const handleResourceSelect = (id: string) => {
     if (!selectedType) return;
     navigate(`/resources/${selectedType}/${id}`);
-  };
-
-  const handleBackToTypes = () => {
-    setCurrentBundle(null);
-    setIsEditMode(false);
-    setSaveError(null);
-    navigate("/resources");
   };
 
   const handleCloseDetails = () => {
@@ -270,28 +321,79 @@ export function ResourceBrowserPage() {
     setIsEditMode(false);
   };
 
-  // Breadcrumb items
-  const breadcrumbItems = [
-    <Anchor key="root" onClick={handleBackToTypes} view="secondary">
-      Resources
-    </Anchor>,
+  const resourceColumns: DataTableColumn<ResourceRow>[] = [
+    {
+      id: "id",
+      header: "id",
+      accessor: (row) => row.id,
+      width: 260,
+      cell: (row) => (
+        <ReferenceLink
+          reference={`${row.resource.resourceType}/${row.id}`}
+          href={`${import.meta.env.BASE_URL}resources/${row.resource.resourceType}/${row.id}`}
+          onClick={(event) => {
+            event.preventDefault();
+            handleResourceSelect(row.id);
+          }}
+        />
+      ),
+    },
+    {
+      id: "display",
+      header: "Name",
+      accessor: (row) => getResourceDisplayName(row.resource, ""),
+      cell: (row) => {
+        const name = getResourceDisplayName(row.resource, "");
+        return name && name !== row.id ? (
+          <span className={classes.displayName}>{name}</span>
+        ) : (
+          <span className={classes.muted}>—</span>
+        );
+      },
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: 140,
+      accessor: (row) => resourceStatus(row.resource) ?? "",
+      cell: (row) => {
+        const status = resourceStatus(row.resource);
+        return status ? (
+          <Badge theme={STATUS_THEME[status] ?? "normal"} size="sm">
+            {status}
+          </Badge>
+        ) : (
+          <span className={classes.muted}>—</span>
+        );
+      },
+    },
+    {
+      id: "version",
+      header: "Ver",
+      width: 64,
+      align: "right",
+      accessor: (row) => row.resource.meta?.versionId ?? "",
+      cell: (row) => <span className={classes.mono}>{row.resource.meta?.versionId ?? "—"}</span>,
+    },
+    {
+      id: "updated",
+      header: "Updated",
+      width: 130,
+      accessor: (row) => row.resource.meta?.lastUpdated ?? "",
+      cell: (row) => {
+        const updated = row.resource.meta?.lastUpdated;
+        return updated ? (
+          <span className={classes.muted} title={new Date(updated).toLocaleString()}>
+            {dayjs(updated).fromNow()}
+          </span>
+        ) : (
+          <span className={classes.muted}>—</span>
+        );
+      },
+    },
   ];
-  if (selectedType) {
-    breadcrumbItems.push(
-      <Text key="type" variant={selectedId ? "body-2" : "subheader-2"}>
-        {selectedType}
-      </Text>
-    );
-  }
-  if (selectedId) {
-    breadcrumbItems.push(
-      <Text key="id" variant="subheader-2">
-        {selectedId}
-      </Text>
-    );
-  }
 
-  // Resource Types Catalog — flat tile grid
+  // Level 1: resource type catalog, grouped by category so no legend is needed
   const renderResourceTypesTable = () => (
     <div className={classes.catalogPanel}>
       <div className={classes.catalogToolbar}>
@@ -312,7 +414,6 @@ export function ResourceBrowserPage() {
           ref={searchRef}
           placeholder="Search resource types…"
           aria-label="Search resource types"
-          size="sm"
           leftSection={<Magnifier width={14} height={14} aria-hidden="true" />}
           rightSection={
             typeFilter ? (
@@ -334,6 +435,8 @@ export function ResourceBrowserPage() {
             if (event.key === "Escape" && typeFilter) {
               event.preventDefault();
               setTypeFilter("");
+            } else if (event.key === "Enter" && filteredTypeViews.length > 0) {
+              handleTypeSelect(filteredTypeViews[0].id);
             }
           }}
           className={classes.searchInput}
@@ -345,14 +448,14 @@ export function ResourceBrowserPage() {
 
       {resourceTypesLoading ? (
         <div className={classes.typeGrid} aria-hidden="true">
-          {Array.from({ length: 18 }, (_, index) => `tile-skeleton-${index}`).map((key) => (
+          {Array.from({ length: 24 }, (_, index) => `tile-skeleton-${index}`).map((key) => (
             <Skeleton key={key} className={classes.tileSkeleton} />
           ))}
         </div>
       ) : resourceTypesError ? (
         <EmptyState
           className={classes.stateBlock}
-          image={<CircleExclamation width={48} height={48} aria-hidden="true" />}
+          image={<CircleExclamation width={40} height={40} aria-hidden="true" />}
           title="Failed to load resource types"
           description={getErrorMessage(
             resourceTypesErrorObj,
@@ -368,7 +471,7 @@ export function ResourceBrowserPage() {
         typeFilter || categoryFilter !== "all" ? (
           <EmptyState
             className={classes.stateBlock}
-            image={<Magnifier width={48} height={48} aria-hidden="true" />}
+            image={<Magnifier width={40} height={40} aria-hidden="true" />}
             title="No matching resource types"
             description="No resource types match the current search and filter."
             actions={[
@@ -387,83 +490,93 @@ export function ResourceBrowserPage() {
         ) : (
           <EmptyState
             className={classes.stateBlock}
-            image={<FileText width={48} height={48} aria-hidden="true" />}
+            image={<FileText width={40} height={40} aria-hidden="true" />}
             title="No resource types found"
             description="The FHIR catalog is empty. Load an Implementation Guide to add resource types."
           />
         )
       ) : (
         <ScrollArea className={`${classes.scrollArea} custom-scrollbar`}>
-          <div className={classes.typeGrid}>
-            {filteredTypeViews.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={classes.typeTile}
-                data-category={item.category}
-                title={item.definitionUrl ?? item.name}
-                onClick={() => handleTypeSelect(item.id)}
-              >
-                <span className={classes.typeTileTop}>
-                  <span className={classes.typeName}>{item.name}</span>
-                  <span className={classes.typeCategoryDot} aria-hidden="true" />
-                </span>
-                <span className={classes.typePackage}>{item.packageName}</span>
-              </button>
-            ))}
-          </div>
+          {typeSections.map((section) => (
+            <section key={section.id} className={classes.typeSection}>
+              <h2 className={classes.sectionLabel}>
+                {section.label} <span>{section.items.length}</span>
+              </h2>
+              <div className={classes.typeGrid}>
+                {section.items.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={classes.typeTile}
+                    title={item.definitionUrl ?? item.name}
+                    onClick={() => handleTypeSelect(item.id)}
+                  >
+                    <span className={classes.typeName}>{item.name}</span>
+                    {section.id !== "fhir" && (
+                      <span className={classes.typePackage}>{item.packageName}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
         </ScrollArea>
       )}
     </div>
   );
 
-  // Resources Table
+  // Level 2: resources of the selected type
   const renderResourcesTable = () => (
-    <div className={classes.tablePanel} style={{ height: "100%" }}>
-      <div className={classes.panelHeader}>
-        <div className={classes.toolbar}>
-          <Text variant="body-2" color="secondary" className={classes.overline}>
-            <strong>{selectedType}s</strong>
-          </Text>
-          <div className={classes.titleRow}>
-            {currentBundle && (
-              <Badge color="primary">{currentBundle.total ?? resources.length} Total</Badge>
-            )}
-            {(hasNextPage || hasPrevPage) && (
-              <div className={classes.paginationActions}>
-                <ActionIcon
-                  variant="subtle"
-                  size="sm"
-                  aria-label="Previous page"
-                  disabled={!hasPrevPage || followLinkMutation.isPending}
-                  onClick={handlePrevPage}
-                >
-                  <ChevronLeft width={16} height={16} aria-hidden="true" />
-                </ActionIcon>
-                <ActionIcon
-                  variant="subtle"
-                  size="sm"
-                  aria-label="Next page"
-                  disabled={!hasNextPage || followLinkMutation.isPending}
-                  onClick={handleNextPage}
-                >
-                  <ChevronRight width={16} height={16} aria-hidden="true" />
-                </ActionIcon>
-              </div>
-            )}
+    <div className={classes.tablePanel}>
+      <div className={classes.listToolbar}>
+        <form
+          className={classes.queryForm}
+          onSubmit={(event) => {
+            event.preventDefault();
+            setAppliedQuery(queryText);
+          }}
+        >
+          <TextInput
+            aria-label={`Search ${selectedType} with FHIR search parameters`}
+            placeholder="name=anna&_sort=-_lastUpdated"
+            leftSection={<span className={classes.queryPrefix}>?</span>}
+            value={queryText}
+            onChange={(value) => setQueryText(value)}
+            className={classes.queryInput}
+          />
+        </form>
+        <span className={classes.resultCount}>
+          {currentBundle?.total ?? resourceRows.length} total
+        </span>
+        {(hasNextPage || hasPrevPage) && (
+          <div className={classes.paginationActions}>
+            <ActionIcon
+              variant="subtle"
+              size="sm"
+              aria-label="Previous page"
+              disabled={!hasPrevPage || followLinkMutation.isPending}
+              onClick={handlePrevPage}
+            >
+              <ChevronLeft width={16} height={16} aria-hidden="true" />
+            </ActionIcon>
+            <ActionIcon
+              variant="subtle"
+              size="sm"
+              aria-label="Next page"
+              disabled={!hasNextPage || followLinkMutation.isPending}
+              onClick={handleNextPage}
+            >
+              <ChevronRight width={16} height={16} aria-hidden="true" />
+            </ActionIcon>
           </div>
-        </div>
+        )}
       </div>
 
-      {searchLoading ? (
-        <div className={classes.listPadding}>
-          <ListSkeleton rows={8} />
-        </div>
-      ) : searchError ? (
+      {searchError ? (
         <EmptyState
           className={classes.stateBlock}
-          image={<CircleExclamation width={48} height={48} aria-hidden="true" />}
-          title="Failed to load resources"
+          image={<CircleExclamation width={40} height={40} aria-hidden="true" />}
+          title="Search failed"
           description={getErrorMessage(
             searchErrorObj,
             `Could not search ${selectedType ?? "resources"}.`
@@ -474,56 +587,46 @@ export function ResourceBrowserPage() {
             </Button>,
           ]}
         />
-      ) : resources.length === 0 ? (
-        <EmptyState
-          className={classes.stateBlock}
-          image={<FileText width={48} height={48} aria-hidden="true" />}
-          title="No resources found"
-          description={`There are no ${selectedType ?? "resources"} stored yet.`}
-        />
       ) : (
-        <ScrollArea className={`${classes.scrollArea} custom-scrollbar`}>
-          <div className={classes.listPadding}>
-            <RecordList
-              density="compact"
-              selectedId={selectedId ?? undefined}
-              items={resourceViews.map((resource) => ({
-                id: resource.id,
-                title: resource.resourceId ?? "(no id)",
-                subtitle: resource.resourceType,
-                description: resource.lastUpdatedLabel,
-                disabled: !resource.canOpen,
-                meta: [
-                  {
-                    id: "status",
-                    label: resource.statusLabel,
-                    tone: "neutral",
-                  },
-                  {
-                    id: "version",
-                    label: resource.versionLabel,
-                    tone: "info",
-                  },
-                ],
-              }))}
-              onSelect={(item) => handleResourceSelect(item.id)}
+        <DataTable
+          aria-label={`${selectedType} resources`}
+          data={resourceRows}
+          columns={
+            selectedId
+              ? resourceColumns.filter((column) => !SPLIT_HIDDEN_COLUMNS.has(column.id))
+              : resourceColumns
+          }
+          getRowId={(row) => row.id}
+          loading={searchLoading}
+          loadingRowCount={8}
+          stickyHeader
+          fillHeight
+          selectedRowIds={selectedId ? [selectedId] : []}
+          onRowClick={(row) => handleResourceSelect(row.id)}
+          emptyState={
+            <EmptyState
+              className={classes.stateBlock}
+              image={<FileText width={40} height={40} aria-hidden="true" />}
+              title={appliedQuery ? "No matches" : "No resources yet"}
+              description={
+                appliedQuery
+                  ? `No ${selectedType} matches ?${appliedQuery}.`
+                  : `There are no ${selectedType ?? "resources"} stored yet.`
+              }
             />
-          </div>
-        </ScrollArea>
+          }
+        />
       )}
     </div>
   );
 
   // Details Panel Content without manual resize handle
   const renderDetailsPanelContent = () => (
-    <div className={classes.detailsPanel} style={{ width: "100%", height: "100%" }}>
+    <div className={classes.detailsPanel}>
       <div className={classes.panelHeader}>
         <div className={classes.toolbar}>
           <div className={classes.resourceIdentity}>
-            <Badge color="primary">{selectedType}</Badge>
-            <Text variant="body-2" color="secondary" className={classes.monospace}>
-              <strong>{selectedId}</strong>
-            </Text>
+            <ReferenceLink reference={`${selectedType}/${selectedId}`} />
           </div>
           <div className={classes.detailActions}>
             {isEditMode ? (
@@ -625,24 +728,9 @@ export function ResourceBrowserPage() {
 
   return (
     <ToolWorkspaceLayout
-      title="Resource Browser"
-      description="Browse, inspect, and edit FHIR resources"
+      title={selectedType ?? "Resources"}
+      description={selectedType ? undefined : "Browse, search and edit stored FHIR resources."}
       className="page-enter"
-      kicker={
-        <Breadcrumbs separator="→" className={classes.breadcrumbs}>
-          {breadcrumbItems}
-        </Breadcrumbs>
-      }
-      actions={
-        selectedType && !selectedId ? (
-          <Button variant="subtle" onClick={handleBackToTypes}>
-            <Button.Icon side="left">
-              <ChevronLeft width={16} height={16} aria-hidden="true" />
-            </Button.Icon>
-            Change Resource Type
-          </Button>
-        ) : null
-      }
     >
       <div className={classes.pageBody}>
         {!selectedType ? (
@@ -660,7 +748,7 @@ export function ResourceBrowserPage() {
                 <>
                   <Resizable.Handle />
                   <Resizable.Pane defaultSize={50} minSize={30}>
-                    <div className={classes.detailsShell} style={{ flex: 1, minWidth: 0 }}>
+                    <div className={classes.detailsShell}>
                       {renderDetailsPanelContent()}
                     </div>
                   </Resizable.Pane>
