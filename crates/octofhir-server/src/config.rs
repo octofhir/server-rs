@@ -506,10 +506,13 @@ pub struct SearchSettings {
     /// Upper bound on searches running against PostgreSQL at the same time.
     ///
     /// Searches beyond the bound wait in FIFO order for a slot. Keeping the
-    /// number of active backends near the database's CPU count avoids
+    /// number of active backends close to the database's CPU count avoids
     /// oversubscribing it: under a container CPU quota, oversubscription shows
     /// up as stalls of up to one quota period on whichever queries are in
-    /// flight. A value around 1–1.5× the database CPUs is a good start.
+    /// flight. A slot also covers the request's round trips, so start at 2–3×
+    /// the database CPUs: against a 4-CPU PostgreSQL quota, 30 concurrent
+    /// searches throttled 43% of quota periods (p99 45 ms); 12 slots kept the
+    /// same throughput at p99 26 ms, while 5 slots lost 15% of it.
     /// Writes are not limited. Unset (the default) means no bound beyond the
     /// pool size. Env: `OCTOFHIR__SEARCH__MAX_CONCURRENT_QUERIES`.
     #[serde(default)]
