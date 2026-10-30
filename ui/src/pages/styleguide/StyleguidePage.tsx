@@ -28,10 +28,15 @@ import classes from "./styleguide.module.css";
  * direction is later rolled into the ui-kit tokens.
  */
 
-type DirectionId = "terminal" | "studio" | "ink";
+type DirectionId = "terminal" | "studio" | "ink" | "hybrid";
 type Scheme = "light" | "dark";
 
 const DIRECTIONS: { id: DirectionId; name: string; summary: string }[] = [
+  {
+    id: "hybrid",
+    name: "D · Hybrid (chosen)",
+    summary: "Terminal density and mono labels on the Ink rail: the direction rolled into ui-kit.",
+  },
   {
     id: "terminal",
     name: "A · Terminal",
@@ -118,7 +123,7 @@ const SWATCHES = [
 export function StyleguidePage() {
   const [direction, setDirection] = useState<DirectionId>(() => {
     const fromUrl = new URLSearchParams(window.location.search).get("dir");
-    return DIRECTIONS.some((d) => d.id === fromUrl) ? (fromUrl as DirectionId) : "terminal";
+    return DIRECTIONS.some((d) => d.id === fromUrl) ? (fromUrl as DirectionId) : "hybrid";
   });
 
   return (
@@ -160,7 +165,7 @@ export function StyleguidePage() {
 }
 
 function ShellSpecimen({ scheme, direction }: { scheme: Scheme; direction: DirectionId }) {
-  const logo = direction === "ink" || scheme === "dark" ? "logo-dark" : "logo-light";
+  const logo = direction === "ink" || direction === "hybrid" || scheme === "dark" ? "logo-dark" : "logo-light";
   return (
     <div className={classes.shell}>
       <aside className={classes.side}>

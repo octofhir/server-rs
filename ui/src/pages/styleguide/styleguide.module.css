@@ -184,6 +184,33 @@
 	--sg-item-h: 28px;
 }
 
+.dir[data-dir="hybrid"] {
+	--sg-font-head: "JetBrains Mono", ui-monospace, monospace;
+	--sg-head-weight: 600;
+	--sg-head-tracking: -0.02em;
+	--sg-h1: 18px;
+	--sg-body: 13px;
+	--sg-label-font: "JetBrains Mono", ui-monospace, monospace;
+	--sg-label-size: 10.5px;
+	--sg-label-transform: uppercase;
+	--sg-label-tracking: 0.06em;
+	--sg-r-sm: 3px;
+	--sg-r-md: 5px;
+	--sg-r-lg: 6px;
+	--sg-row: 28px;
+	--sg-ctl: 28px;
+	--sg-header: 40px;
+	--sg-side-w: 204px;
+	--sg-side-bg: var(--sg-ink-side);
+	--sg-side-border: transparent;
+	--sg-side-text: #c9cad0;
+	--sg-side-label: #7d7e87;
+	--sg-side-active-bg: #2b220d;
+	--sg-side-active-text: #f7c95a;
+	--sg-side-active-icon: #f7c95a;
+	--sg-item-h: 26px;
+}
+
 /* ---------- layout ---------- */
 
 .dir {
