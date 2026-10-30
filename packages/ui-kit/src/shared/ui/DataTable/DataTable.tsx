@@ -487,6 +487,16 @@ function DataTableRow<T>({ row, children, selectCell, onRowClick, measureRef, in
                           if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               onRowClick(row.original);
+                              return;
+                          }
+                          // Keyboard-first lists: ↑/↓ or k/j move between rows.
+                          const step =
+                              e.key === "ArrowDown" || e.key === "j" ? 1 : e.key === "ArrowUp" || e.key === "k" ? -1 : 0;
+                          if (step === 0) return;
+                          const sibling = step > 0 ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling;
+                          if (sibling instanceof HTMLElement) {
+                              e.preventDefault();
+                              sibling.focus();
                           }
                       }
                     : undefined

@@ -39,11 +39,12 @@ import {
   Users,
 } from "lucide-react";
 import { useUnit } from "effector-react";
-import { type ComponentType, useEffect, useMemo } from "react";
+import { type ComponentType, useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, useHealth, useResourceTypes, useSettings } from "@/shared/api/hooks";
 import { $paletteContributions, $paletteOpen, paletteOpenChanged } from "@/shared/command-palette";
 import { ErrorBoundary } from "@/shared/ui";
+import { ShortcutsDialog } from "./ShortcutsDialog";
 
 const BRANDING = `${import.meta.env.BASE_URL}branding`;
 
@@ -60,6 +61,8 @@ interface NavEntry {
   path: string;
   /** Extra path prefixes that also mark this entry active. */
   aliases?: string[];
+  /** Second key of a `g <key>` go-to shortcut. */
+  goKey?: string;
 }
 
 interface NavSection {
@@ -73,31 +76,31 @@ const NAV: NavSection[] = [
     id: "data",
     label: "Data",
     items: [
-      { id: "resources", label: "Resources", icon: FolderTree, path: "/resources" },
-      { id: "requests", label: "Requests", icon: Send, path: "/console" },
-      { id: "packages", label: "Packages", icon: Boxes, path: "/packages" },
-      { id: "capabilities", label: "Capabilities", icon: FileCode2, path: "/metadata" },
+      { id: "resources", label: "Resources", icon: FolderTree, path: "/resources", goKey: "r" },
+      { id: "requests", label: "Requests", icon: Send, path: "/console", goKey: "e" },
+      { id: "packages", label: "Packages", icon: Boxes, path: "/packages", goKey: "p" },
+      { id: "capabilities", label: "Capabilities", icon: FileCode2, path: "/metadata", goKey: "c" },
     ],
   },
   {
     id: "query",
     label: "Query",
     items: [
-      { id: "sql", label: "SQL", icon: Terminal, path: "/db-console" },
-      { id: "graphql", label: "GraphQL", icon: Code2, path: "/graphql" },
-      { id: "fhirpath", label: "FHIRPath", icon: Activity, path: "/fhirpath" },
-      { id: "cql", label: "CQL", icon: Sigma, path: "/cql" },
-      { id: "views", label: "Views", icon: Table, path: "/viewdefinition" },
-      { id: "notebooks", label: "Notebooks", icon: NotebookPen, path: "/notebooks" },
+      { id: "sql", label: "SQL", icon: Terminal, path: "/db-console", goKey: "s" },
+      { id: "graphql", label: "GraphQL", icon: Code2, path: "/graphql", goKey: "g" },
+      { id: "fhirpath", label: "FHIRPath", icon: Activity, path: "/fhirpath", goKey: "f" },
+      { id: "cql", label: "CQL", icon: Sigma, path: "/cql", goKey: "q" },
+      { id: "views", label: "Views", icon: Table, path: "/viewdefinition", goKey: "v" },
+      { id: "notebooks", label: "Notebooks", icon: NotebookPen, path: "/notebooks", goKey: "n" },
     ],
   },
   {
     id: "access",
     label: "Access",
     items: [
-      { id: "users", label: "Users", icon: Users, path: "/auth/users", aliases: ["/users"] },
+      { id: "users", label: "Users", icon: Users, path: "/auth/users", aliases: ["/users"], goKey: "u" },
       { id: "roles", label: "Roles", icon: ShieldCheck, path: "/auth/roles" },
-      { id: "policies", label: "Policies", icon: Shield, path: "/auth/policies", aliases: ["/access-policies"] },
+      { id: "policies", label: "Policies", icon: Shield, path: "/auth/policies", aliases: ["/access-policies"], goKey: "y" },
       { id: "clients", label: "Clients", icon: KeyRound, path: "/auth/clients", aliases: ["/clients"] },
       { id: "sessions", label: "Sessions", icon: Monitor, path: "/auth/sessions" },
       { id: "providers", label: "Identity providers", icon: Globe, path: "/auth/providers" },
@@ -107,13 +110,13 @@ const NAV: NavSection[] = [
     id: "system",
     label: "System",
     items: [
-      { id: "operations", label: "Operations", icon: SquareFunction, path: "/operations" },
+      { id: "operations", label: "Operations", icon: SquareFunction, path: "/operations", goKey: "o" },
       { id: "apps", label: "Apps", icon: LayoutGrid, path: "/apps" },
       { id: "automations", label: "Automations", icon: Cpu, path: "/automations" },
-      { id: "audit", label: "Audit", icon: Receipt, path: "/audit" },
-      { id: "logs", label: "Logs", icon: FileText, path: "/logs" },
+      { id: "audit", label: "Audit", icon: Receipt, path: "/audit", goKey: "a" },
+      { id: "logs", label: "Logs", icon: FileText, path: "/logs", goKey: "l" },
       { id: "database", label: "Database", icon: Database, path: "/database" },
-      { id: "settings", label: "Settings", icon: Settings, path: "/settings" },
+      { id: "settings", label: "Settings", icon: Settings, path: "/settings", goKey: "," },
     ],
   },
 ];
@@ -160,6 +163,14 @@ function locationSegments(path: string, navigate: (to: string) => void): Locatio
   ];
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    target.closest("input, textarea, select, [contenteditable='true'], .monaco-editor") !== null
+  );
+}
+
 /** Top-level navigation and layout for the console: panel rail, path header, ⌘K palette. */
 export function AppShell() {
   const location = useLocation();
@@ -170,6 +181,7 @@ export function AppShell() {
   const { data: resourceTypes } = useResourceTypes();
   useSettings();
 
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen, contributions] = useUnit([
     $paletteOpen,
     paletteOpenChanged,
@@ -201,7 +213,7 @@ export function AppShell() {
         label: entry.label,
         group: section.label,
         icon: entry.icon,
-        hint: entry.path,
+        hint: entry.goKey ? `g ${entry.goKey}` : entry.path,
         keywords: [section.label],
         onSelect: () => navigate(entry.path),
       }))
@@ -244,6 +256,37 @@ export function AppShell() {
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [setPaletteOpen]);
+
+  // Linear-style navigation: `g` then a letter jumps to a page; `?` lists the shortcuts.
+  useEffect(() => {
+    const goTargets = new Map(
+      NAV.flatMap((section) => section.items).flatMap((entry) =>
+        entry.goKey ? [[entry.goKey, entry.path] as const] : []
+      )
+    );
+    goTargets.set("h", "/");
+    let pendingGo = 0;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) return;
+      if (event.key === "?") {
+        event.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
+      if (pendingGo && Date.now() - pendingGo < 1200) {
+        pendingGo = 0;
+        const target = goTargets.get(event.key.toLowerCase());
+        if (target) {
+          event.preventDefault();
+          navigate(target);
+        }
+        return;
+      }
+      if (event.key === "g") pendingGo = Date.now();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigate]);
 
   const sidebar = (
     <Sidebar
@@ -295,6 +338,13 @@ export function AppShell() {
         <Outlet />
       </ErrorBoundary>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={paletteItems} />
+      <ShortcutsDialog
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+        goTargets={NAV.flatMap((section) => section.items).flatMap((entry) =>
+          entry.goKey ? [{ key: entry.goKey, label: entry.label }] : []
+        )}
+      />
     </Shell>
   );
 }

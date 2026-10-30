@@ -1,0 +1,41 @@
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.heading {
+  margin: 0 0 6px;
+  font-family: var(--octo-typography-heading);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--octo-text-muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 26px;
+  font-size: var(--octo-typography-size-sm);
+  color: var(--octo-text-primary);
+}
+
+.keys {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.kbd {
+  min-width: 18px;
+  padding: 2px 5px;
+  border: 1px solid var(--octo-border-strong);
+  border-radius: var(--octo-radius-sm);
+  font-family: var(--octo-typography-mono);
+  font-size: 10.5px;
+  text-align: center;
+  color: var(--octo-text-secondary);
+}
