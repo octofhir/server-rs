@@ -253,7 +253,7 @@ export function CqlConsolePage() {
 
   return (
     <ToolWorkspaceLayout
-      title="CQL Console"
+      title="CQL"
       description="Evaluate CQL expressions and libraries — every define, against an optional resource context"
       className="page-enter"
       actions={

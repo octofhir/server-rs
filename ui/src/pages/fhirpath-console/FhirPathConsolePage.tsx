@@ -132,7 +132,7 @@ export function FhirPathConsolePage() {
 
   return (
     <ToolWorkspaceLayout
-      title="FHIRPath Console"
+      title="FHIRPath"
       description="Evaluate FHIRPath expressions against a sample or pasted resource"
       className="page-enter"
       actions={

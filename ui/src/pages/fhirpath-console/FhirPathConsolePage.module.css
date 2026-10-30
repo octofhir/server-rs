@@ -47,7 +47,7 @@
 }
 
 .runBtn:hover {
-  background: var(--octo-fhirpath-accent-deep);
+  background: var(--octo-accent-primary-hover);
 }
 
 .runBtn:active {
@@ -65,7 +65,7 @@
   height: 18px;
   padding: 0 5px;
   border-radius: 5px;
-  background: rgb(255 255 255 / 22%);
+  background: color-mix(in srgb, var(--octo-accent-on-primary) 12%, transparent);
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11px;
   font-weight: 600;
@@ -123,7 +123,7 @@
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--octo-border-subtle);
-  background: linear-gradient(180deg, var(--octo-fhirpath-accent-soft) 0%, transparent 140%);
+  background: var(--octo-surface-2);
   flex: none;
 }
 
@@ -185,7 +185,7 @@
 }
 
 .chip:hover {
-  background: var(--octo-fhirpath-accent-soft);
+  background: var(--octo-surface-2);
   border-color: var(--octo-fhirpath-accent-line);
   color: var(--octo-fhirpath-accent-deep);
 }
@@ -211,7 +211,7 @@
   height: 20px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--octo-fhirpath-accent-soft);
+  background: var(--octo-surface-2);
   border: 1px solid var(--octo-fhirpath-accent-line);
   color: var(--octo-fhirpath-accent-deep);
   font-family: var(--mono, ui-monospace, monospace);
@@ -296,7 +296,7 @@
 }
 
 .paletteFn:hover {
-  background: var(--octo-fhirpath-accent-soft);
+  background: var(--octo-surface-2);
   border-color: var(--octo-fhirpath-accent-line);
   color: var(--octo-fhirpath-accent-deep);
 }
@@ -395,7 +395,7 @@
   height: 18px;
   padding: 0 7px;
   border-radius: 999px;
-  background: var(--octo-fhirpath-accent-soft);
+  background: var(--octo-surface-2);
   color: var(--octo-fhirpath-accent-deep);
   font-size: 11px;
   font-weight: 700;
@@ -456,28 +456,28 @@
 }
 
 .typeString {
-  background: var(--octo-fhirpath-accent-soft);
+  background: var(--octo-surface-2);
   color: var(--octo-fhirpath-accent-deep);
 }
 
 .typeNumber {
-  background: rgb(59 130 246 / 12%);
-  color: #1d4ed8;
+  background: var(--octo-brand-info-soft);
+  color: var(--octo-brand-info);
 }
 
 .typeBool {
-  background: rgb(245 158 11 / 14%);
-  color: #b45309;
+  background: var(--octo-brand-warm-soft);
+  color: var(--octo-brand-warm);
 }
 
 .typeDate {
-  background: rgb(6 182 212 / 14%);
-  color: #0e7490;
+  background: var(--octo-surface-3);
+  color: var(--octo-text-secondary);
 }
 
 .typeComplex {
-  background: rgb(139 92 246 / 14%);
-  color: #6d28d9;
+  background: var(--octo-surface-3);
+  color: var(--octo-text-secondary);
 }
 
 .resultValue {
@@ -529,16 +529,17 @@
 }
 
 .copyBtn:hover {
-  background: var(--octo-fhirpath-accent-soft);
+  background: var(--octo-surface-2);
   color: var(--octo-fhirpath-accent-deep);
 }
 
 .resultJson {
   margin: 0;
   padding: 10px 12px;
-  border-radius: 8px;
-  background: #0b1f17;
-  color: #d1fae5;
+  border-radius: var(--octo-radius-md);
+  border: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-2);
+  color: var(--octo-text-primary);
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11.5px;
   line-height: 1.5;
@@ -586,12 +587,12 @@
   margin: 14px 16px;
   padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid rgb(220 38 38 / 28%);
-  background: rgb(220 38 38 / 8%);
+  border: 1px solid color-mix(in oklab, var(--octo-accent-fire) 30%, var(--octo-border-subtle));
+  background: var(--octo-brand-fire-soft, var(--octo-accent-fire-bg));
 }
 
 .errorIcon {
-  color: #dc2626;
+  color: var(--octo-accent-fire);
   flex: none;
   margin-top: 1px;
 }
@@ -599,7 +600,7 @@
 .errorTitle {
   font-size: 13px;
   font-weight: 700;
-  color: #b91c1c;
+  color: var(--octo-accent-fire);
   margin-bottom: 2px;
 }
 
@@ -629,7 +630,7 @@
   width: 48px;
   height: 48px;
   border-radius: 14px;
-  background: var(--octo-fhirpath-accent-soft);
+  background: var(--octo-surface-2);
   color: var(--octo-fhirpath-accent-deep);
 }
 
