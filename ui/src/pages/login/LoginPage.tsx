@@ -8,16 +8,18 @@ import {
 	PasswordInput,
 	Text,
 	TextInput,
+	useColorScheme,
 } from "@octofhir/ui-kit";
 import { useAuth } from "@/shared/api/hooks";
 import classes from "./LoginPage.module.css";
 
-const logoUrl = `${import.meta.env.BASE_URL}branding/mark.svg`;
+const BRANDING = `${import.meta.env.BASE_URL}branding`;
 
 export function LoginPage() {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const { login, loginError, isLoggingIn, refetch } = useAuth();
+	const { colorScheme } = useColorScheme();
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
 	const usernameId = useId();
@@ -50,10 +52,11 @@ export function LoginPage() {
 		<div className={classes.scene}>
 			<div className={classes.shell}>
 				<div className={classes.brand}>
-					<img src={logoUrl} alt="OctoFHIR" className={classes.logo} />
-					<Text variant="subheader-2" color="primary">
-						OctoFHIR Console
-					</Text>
+					<img
+						src={`${BRANDING}/${colorScheme === "dark" ? "logo-dark" : "logo-light"}.svg`}
+						alt="OctoFHIR"
+						className={classes.logo}
+					/>
 					<Text variant="body-2" color="secondary">
 						Sign in to administer your FHIR server
 					</Text>
