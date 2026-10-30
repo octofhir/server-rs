@@ -99,7 +99,7 @@ export function SessionsPage() {
 
   return (
     <WorkspacePageLayout
-      title="Active Sessions"
+      title="Sessions"
       description="Manage your active login sessions across devices"
       className="page-enter"
       actions={

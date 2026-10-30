@@ -13,7 +13,7 @@ export interface UserStatusView {
 
 export interface UserRoleView {
 	role: string;
-	theme: "danger" | "info";
+	theme: "warning" | "normal";
 }
 
 export function getPasswordStrength(password: string): PasswordStrengthView {
@@ -53,7 +53,7 @@ export function getUserStatusView(user: Pick<UserResource, "active" | "status">)
 export function getUserRoleView(role: string): UserRoleView {
 	return {
 		role,
-		theme: role === "admin" ? "danger" : "info",
+		theme: role === "admin" ? "warning" : "normal",
 	};
 }
 

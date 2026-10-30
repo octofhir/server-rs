@@ -111,7 +111,7 @@ export function AccessPoliciesPage() {
 
   return (
     <WorkspacePageLayout
-      title="Access Policies"
+      title="Policies"
       description="Define fine-grained access control rules with matchers and custom scripts"
       actions={
         <Button variant="filled" onClick={open}>

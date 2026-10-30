@@ -80,7 +80,7 @@ export function IdentityProvidersPage() {
 
   return (
     <WorkspacePageLayout
-      title="Identity Providers"
+      title="Identity providers"
       description="Manage external OIDC/OAuth2 authentication providers"
       actions={
         <Button variant="filled" onClick={open}>

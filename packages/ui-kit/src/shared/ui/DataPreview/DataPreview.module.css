@@ -2,7 +2,7 @@
     overflow: auto;
     min-width: 0;
     border: 1px solid var(--octo-border-subtle);
-    border-radius: 8px;
+    border-radius: var(--octo-radius-lg);
     background: var(--octo-surface-1);
 }
 
@@ -10,14 +10,14 @@
     width: 100%;
     min-width: 560px;
     border-collapse: collapse;
-    font-size: 12px;
-    line-height: 16px;
+    font-size: var(--octo-typography-size-sm, 0.8125rem);
+    line-height: 18px;
 }
 
 .table th,
 .table td {
     max-width: 280px;
-    padding: 8px 10px;
+    padding: 5px 12px;
     border-bottom: 1px solid var(--octo-border-subtle);
     overflow: hidden;
     color: var(--octo-text-primary);
@@ -30,9 +30,13 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    color: var(--octo-text-secondary);
-    font-weight: 650;
-    background: var(--octo-surface-1);
+    font-family: var(--octo-typography-heading, monospace);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--octo-text-muted);
+    background: var(--octo-surface-2);
 }
 
 .table tr:last-child td {
@@ -44,7 +48,7 @@
     min-height: 72px;
     place-items: center;
     border: 1px dashed var(--octo-border-subtle);
-    border-radius: 8px;
+    border-radius: var(--octo-radius-lg);
     color: var(--octo-text-secondary);
     font-size: 13px;
     line-height: 18px;

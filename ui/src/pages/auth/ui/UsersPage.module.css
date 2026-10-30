@@ -1,8 +1,8 @@
 .tableContainer {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-	padding: var(--octo-spacing-sm) var(--octo-spacing-md) var(--octo-spacing-md);
+    /* The table draws its own border; the card is only a layout slot. */
+    padding: 0;
+    border: none;
+    background: transparent;
 }
 
 .skeletonRow {

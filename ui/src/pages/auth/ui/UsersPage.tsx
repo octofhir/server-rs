@@ -329,7 +329,7 @@ export function UsersPage() {
                             <Text variant="body-2" className={classes.userName}>
                               {user.name || user.username}
                             </Text>
-                            <Text variant="body-1" color="secondary" className={classes.userEmail}>
+                            <Text variant="caption-1" color="secondary" className={classes.userEmail}>
                               {user.email || user.username}
                             </Text>
                           </div>

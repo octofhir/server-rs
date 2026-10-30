@@ -52,7 +52,8 @@ const TONE_BY_THEME: Record<string, BadgeTone> = {
 function resolveTone(color?: BadgeColorName, theme?: BadgeThemeName): BadgeTone {
     if (color && TONE_BY_COLOR[color]) return TONE_BY_COLOR[color];
     if (theme && TONE_BY_THEME[theme]) return TONE_BY_THEME[theme];
-    return "primary";
+    // Unstyled badges label data; the brand accent is opt-in via color="primary".
+    return "neutral";
 }
 
 export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(

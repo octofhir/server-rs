@@ -169,12 +169,8 @@ export function UserDetailPage() {
                   return (
                     <div key={role} className={classes.roleItem}>
                       <Text className={classes.roleName}>{roleView.role}</Text>
-                      <Badge
-                        size="sm"
-                        variant={roleView.theme === "danger" ? "filled" : "light"}
-                        color={roleView.theme === "danger" ? "red" : "blue"}
-                      >
-                        {roleView.theme === "danger" ? "System" : "Custom"}
+                      <Badge size="sm" theme={roleView.theme}>
+                        {roleView.theme === "warning" ? "System" : "Custom"}
                       </Badge>
                     </div>
                   );
