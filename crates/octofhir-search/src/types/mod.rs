@@ -36,9 +36,10 @@ pub use special::{
 pub use string::build_indexed_string_inplace;
 pub use string::{build_array_string_search, build_human_name_search, build_string_search};
 pub use token::{
-    build_code_search, build_gin_code_search, build_gin_identifier_search, build_gin_token_search,
-    build_identifier_search, build_token_coding_array_search, build_token_coding_subtree_search,
-    build_token_search, parse_token_value,
+    build_code_search, build_gin_code_array_search, build_gin_code_search,
+    build_gin_identifier_search, build_gin_token_search, build_identifier_search,
+    build_token_coding_array_search, build_token_coding_subtree_search, build_token_search,
+    parse_token_value,
 };
 pub use uri::{build_uri_array_search, build_uri_search, build_uri_text_array_search};
 
@@ -179,6 +180,9 @@ fn dispatch_search_inner(
             } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
                 // GIN-optimized simple code search (e.g., Patient.gender)
                 build_gin_code_search(builder, param, &path_segments)
+            } else if definition.element_type_hint.is_simple_scalar_array() {
+                // Array of codes (e.g. AllergyIntolerance.category 0..*).
+                build_gin_code_array_search(builder, param, &path_segments)
             } else if matches!(
                 &definition.element_type_hint,
                 ElementTypeHint::Array(t) if t == "CodeableConcept" || t == "Coding"
@@ -361,6 +365,8 @@ fn dispatch_user_defined_jsonb_search(
                 ElementTypeHint::SimpleCode | ElementTypeHint::Boolean
             ) {
                 build_code_search(builder, param, &text_path)
+            } else if definition.element_type_hint.is_simple_scalar_array() {
+                build_gin_code_array_search(builder, param, path_segments)
             } else if matches!(
                 &definition.element_type_hint,
                 ElementTypeHint::Array(t) if t == "CodeableConcept" || t == "Coding"
@@ -1308,6 +1314,51 @@ mod tests {
         assert!(
             clause.contains("= ANY(fhir_extract_text(resource"),
             "Expected in-place :exact over extracted value array, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_token_code_array_wraps_the_code() {
+        // `code` 0..* (AllergyIntolerance.category): a nested JSON array only
+        // contains `["medication"]`, never the bare string.
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "category".to_string(),
+            modifier: None,
+            values: ["medication", "biologic"]
+                .map(|code| ParsedValue {
+                    prefix: None,
+                    raw: code.to_string(),
+                })
+                .to_vec(),
+        };
+        let def = Arc::new(
+            SearchParameter::new(
+                "category",
+                "http://hl7.org/fhir/SearchParameter/AllergyIntolerance-category",
+                SearchParameterType::Token,
+                vec!["AllergyIntolerance".to_string()],
+            )
+            .with_expression("AllergyIntolerance.category")
+            .with_element_type_hint(ElementTypeHint::Array("code".to_string())),
+        );
+
+        dispatch_search(&mut builder, &param, &def, "AllergyIntolerance").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected GIN containment, got: {clause}"
+        );
+        let params: Vec<String> = builder
+            .params()
+            .iter()
+            .map(|p| p.as_str().to_string())
+            .collect();
+        assert!(
+            params.iter().any(|p| p == r#"{"category":["medication"]}"#)
+                && params.iter().any(|p| p == r#"{"category":["biologic"]}"#),
+            "Expected array-wrapped containment params, got: {params:?}"
         );
     }
 

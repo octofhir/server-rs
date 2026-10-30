@@ -11,6 +11,8 @@ async function getAdminToken(): Promise<string> {
 		username: AUTH_USER,
 		password: AUTH_PASSWORD,
 		client_id: UI_CLIENT_ID,
+		// Without a scope the token carries no permissions and Client creation is forbidden.
+		scope: "user/*.cruds",
 	});
 
 	const res = await fetch(`${BASE_URL}/auth/token`, {

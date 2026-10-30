@@ -48,6 +48,26 @@ const RESOURCE_WRITE_METADATA_FN_SQL: &str = include_str!("../sql/resource_write
 
 const RESOURCE_WRITE_GATE_FN_SQL: &str = include_str!("../sql/resource_write_gate.sql");
 
+/// Switches `resource` of `table` to lz4 TOAST compression.
+///
+/// lz4 compresses and decompresses several times faster than the default pglz
+/// at a similar ratio. With `toast_tuple_target = 8160` only rows over ~8KB are
+/// compressed at all, so this matters for large resources and their history.
+///
+/// Skipped when the column already uses lz4, since the `ALTER` takes an
+/// exclusive lock, and when the server was built without lz4 support.
+fn lz4_resource_column_ddl(table: &str) -> String {
+    format!(
+        "DO $lz4$ BEGIN\n\
+            IF (SELECT attcompression FROM pg_attribute \
+                WHERE attrelid = '\"{table}\"'::regclass AND attname = 'resource') <> 'l' THEN\n\
+                ALTER TABLE \"{table}\" ALTER COLUMN resource SET COMPRESSION lz4;\n\
+            END IF;\n\
+        EXCEPTION WHEN feature_not_supported THEN NULL;\n\
+        END $lz4$;\n"
+    )
+}
+
 /// Manages the database schema for FHIR resources.
 ///
 /// The `SchemaManager` is responsible for:
@@ -198,6 +218,9 @@ impl SchemaManager {
         // all — see `with_profile_column`. Flipping the setting on an existing
         // database is not supported: the database is recreated instead, which
         // also avoids the table rewrite `ADD COLUMN ... STORED` would impose.
+        // `ucum` holds the resource's UCUM quantities in canonical units,
+        // computed on write (see `octofhir_search::ucum`). A nullable column
+        // without a default is added to older tables as a catalog-only change.
         let profile_col = if self.profile_column {
             ",\n                profile TEXT[] GENERATED ALWAYS AS (octofhir_meta_profiles(resource)) STORED"
         } else {
@@ -210,8 +233,15 @@ impl SchemaManager {
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n\
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n\
                 resource JSONB NOT NULL,\n\
-                status resource_status NOT NULL DEFAULT 'created'{profile_col}\n\
+                status resource_status NOT NULL DEFAULT 'created',\n\
+                ucum JSONB{profile_col}\n\
             );\n\
+            DO $ucum$ BEGIN\n\
+                IF NOT EXISTS (SELECT 1 FROM pg_attribute \
+                    WHERE attrelid = '\"{table}\"'::regclass AND attname = 'ucum' AND NOT attisdropped) THEN\n\
+                    ALTER TABLE \"{table}\" ADD COLUMN ucum JSONB;\n\
+                END IF;\n\
+            END $ucum$;\n\
             ALTER TABLE \"{table}\" SET (\n\
                 toast_tuple_target = 8160,\n\
                 fillfactor = 90,\n\
@@ -220,6 +250,7 @@ impl SchemaManager {
                 autovacuum_vacuum_cost_limit = 2000\n\
             );\n"
         ));
+        sql.push_str(&lz4_resource_column_ddl(&table));
 
         // Statement triggers cover direct/autocommit SQL paths too. Row locks
         // in the transaction API acquire this same shared gate before selecting.
@@ -266,6 +297,7 @@ impl SchemaManager {
                 );\n\
                 ALTER TABLE \"{history_table}\" SET (toast_tuple_target = 8160);\n"
             ));
+            sql.push_str(&lz4_resource_column_ddl(&history_table));
             // Compact range summaries bound resurrection checks independently
             // of batch width. History is append-only; current HOT eligibility
             // and its deliberate absence of timestamp indexes are unchanged.

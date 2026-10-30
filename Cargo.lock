@@ -3209,7 +3209,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -3529,7 +3529,7 @@ dependencies = [
  "httparse",
  "memchr",
  "mime",
- "spin",
+ "spin 0.9.8",
  "version_check",
 ]
 
@@ -4050,7 +4050,7 @@ dependencies = [
  "octofhir-cql-model",
  "octofhir-cql-types",
  "octofhir-fhir-model",
- "octofhir-ucum",
+ "octofhir-ucum 0.5.2",
  "parking_lot",
  "regex",
  "serde",
@@ -4136,7 +4136,7 @@ dependencies = [
  "indexmap 2.14.0",
  "octofhir-cql-ast",
  "octofhir-cql-diagnostics",
- "octofhir-ucum",
+ "octofhir-ucum 0.5.2",
  "serde",
  "serde_json",
  "smallvec",
@@ -4215,7 +4215,7 @@ dependencies = [
  "lsp-types",
  "moka",
  "octofhir-fhir-model",
- "octofhir-ucum",
+ "octofhir-ucum 0.5.2",
  "once_cell",
  "papaya",
  "parking_lot",
@@ -4338,6 +4338,7 @@ dependencies = [
  "octofhir-fhir-model",
  "octofhir-fhirpath",
  "octofhir-storage",
+ "octofhir-ucum 0.8.0",
  "regex",
  "serde",
  "serde_json",
@@ -4508,6 +4509,22 @@ dependencies = [
  "serde_derive",
  "smallvec",
  "thiserror",
+]
+
+[[package]]
+name = "octofhir-ucum"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2099a2ef75ae9b07065b27a453a000f61dd14b2a83aaf7b3d60d4918b7c02cf"
+dependencies = [
+ "fuzzy-matcher",
+ "hashbrown 0.17.1",
+ "libm",
+ "quick-xml 0.41.0",
+ "regex",
+ "rust_decimal",
+ "serde",
+ "spin 0.12.3",
 ]
 
 [[package]]
@@ -6439,6 +6456,12 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "spin"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
 
 [[package]]
 name = "spki"

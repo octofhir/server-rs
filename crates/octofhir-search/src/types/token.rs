@@ -23,7 +23,7 @@ use crate::{
     ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_array_clauses_as_or,
     ir::render_token_coding_clauses_as_or, ir::render_token_coding_subtree_clauses_as_or,
     ir::render_token_identifier_containment_clauses_as_or,
-    ir::render_token_simple_code_clauses_as_or,
+    ir::render_token_simple_code_array_clauses_as_or, ir::render_token_simple_code_clauses_as_or,
 };
 
 /// Parse a token value into system and code parts.
@@ -173,6 +173,21 @@ pub fn build_gin_code_search(
 ) -> Result<(), SqlBuilderError> {
     let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::SimpleCode)?;
     if let Some(sql) = render_token_simple_code_clauses_as_or(builder, &clauses, path_segments)? {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
+/// GIN code search over an array of codes (e.g. `AllergyIntolerance.category`).
+pub fn build_gin_code_array_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    path_segments: &[String],
+) -> Result<(), SqlBuilderError> {
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::SimpleCode)?;
+    if let Some(sql) =
+        render_token_simple_code_array_clauses_as_or(builder, &clauses, path_segments)?
+    {
         builder.add_condition(sql);
     }
     Ok(())

@@ -461,25 +461,105 @@ pub fn render_quantity_union_clauses_as_or(
                     SearchPrefix::Eq | SearchPrefix::Ne | SearchPrefix::Ap
                 ) || system.as_deref().is_some_and(|s| !s.is_empty())
                     || code.as_deref().is_some_and(|c| !c.is_empty());
-                if !need_recheck {
-                    if let Some(cond) = index_cond {
-                        exprs.push(SqlExpr::Raw(cond));
+                let raw = if !need_recheck {
+                    match index_cond {
+                        Some(cond) => SqlExpr::Raw(cond),
+                        None => continue,
                     }
                 } else {
                     let recheck =
                         quantity_union_recheck(&col, paths, *prefix, &number, system, code);
                     match index_cond {
-                        Some(cond) => exprs.push(SqlExpr::And(vec![
-                            SqlExpr::Raw(cond),
-                            SqlExpr::Raw(recheck),
-                        ])),
-                        None => exprs.push(SqlExpr::Raw(recheck)),
+                        Some(cond) => SqlExpr::And(vec![SqlExpr::Raw(cond), SqlExpr::Raw(recheck)]),
+                        None => SqlExpr::Raw(recheck),
                     }
-                }
+                };
+                // A UCUM quantity also matches in any commensurable unit. The
+                // raw match stays as the other arm, so rows written before the
+                // canonical column existed are still found by their own unit.
+                let ucum = (system.as_deref() == Some(crate::ucum::UCUM_SYSTEM))
+                    .then(|| code.as_deref().filter(|c| !c.is_empty()))
+                    .flatten()
+                    .and_then(|code| {
+                        quantity_ucum_cond(&builder.ucum_column(), paths, *prefix, &number, code)
+                    });
+                exprs.push(match ucum {
+                    Some(ucum) => SqlExpr::Or(vec![raw, ucum]),
+                    None => raw,
+                });
             }
         }
     }
     Ok(or_exprs(exprs))
+}
+
+/// Canonical-unit match of a UCUM quantity clause against the `ucum` column:
+/// the query bounds are converted to the canonical unit of `code`, prefiltered
+/// by the canonical hull (GiST-servable, a superset since it spans every unit
+/// at the path) and rechecked per entry for path, unit and value. `None` when
+/// `code` is not a linear UCUM unit.
+fn quantity_ucum_cond(
+    ucum_col: &str,
+    paths: &[Vec<String>],
+    prefix: crate::parameters::SearchPrefix,
+    number: &RenderDecimalParts,
+    code: &str,
+) -> Option<SqlExpr> {
+    use crate::parameters::SearchPrefix;
+    let unit = crate::ucum::CanonicalUnit::of(code)?;
+    let convert = |value: &str| unit.convert(value).map(|v| format!("'{v}'::numeric"));
+    let value = "(q->>'v')::numeric";
+    // (lower, upper, numrange bounds); None = unbounded on that side.
+    let (lo, hi, bounds) = match prefix {
+        SearchPrefix::Eq | SearchPrefix::Ne => {
+            let (lo, hi) = number.implicit_eq_bounds();
+            (Some(convert(&lo)?), Some(convert(&hi)?), "[)")
+        }
+        SearchPrefix::Ap => {
+            let (lo, hi) = number.approximate_bounds();
+            (Some(convert(&lo)?), Some(convert(&hi)?), "[]")
+        }
+        SearchPrefix::Gt | SearchPrefix::Sa => (Some(convert(&number.format())?), None, "()"),
+        SearchPrefix::Ge => (Some(convert(&number.format())?), None, "[)"),
+        SearchPrefix::Lt | SearchPrefix::Eb => (None, Some(convert(&number.format())?), "()"),
+        SearchPrefix::Le => (None, Some(convert(&number.format())?), "(]"),
+    };
+    let lower_op = if bounds.starts_with('[') { ">=" } else { ">" };
+    let upper_op = if bounds.ends_with(']') { "<=" } else { "<" };
+    let mut in_range = Vec::new();
+    if let Some(lo) = &lo {
+        in_range.push(format!("{value} {lower_op} {lo}"));
+    }
+    if let Some(hi) = &hi {
+        in_range.push(format!("{value} {upper_op} {hi}"));
+    }
+    let in_range = in_range.join(" AND ");
+    let value_cond = if prefix == SearchPrefix::Ne {
+        format!("NOT ({in_range})")
+    } else {
+        in_range
+    };
+    let canonical_unit = unit.unit.replace('\'', "''");
+    let recheck = format!(
+        "EXISTS (SELECT 1 FROM jsonb_array_elements({ucum_col}) AS q \
+         WHERE q->>'p' = ANY({paths}) AND q->>'u' = '{canonical_unit}' AND {value_cond})",
+        paths = crate::sql_builder::ucum_paths_array(paths),
+    );
+    if prefix == SearchPrefix::Ne {
+        return Some(SqlExpr::Raw(recheck));
+    }
+    let hull = format!(
+        "{} && numrange({}, {}, '{bounds}')",
+        crate::sql_builder::ucum_hull_expr(ucum_col, paths),
+        lo.as_deref().unwrap_or("NULL"),
+        hi.as_deref().unwrap_or("NULL"),
+    );
+    // `IS NOT NULL` lets the planner use the partial `_qucum` index.
+    Some(SqlExpr::And(vec![
+        SqlExpr::Raw(format!("{ucum_col} IS NOT NULL")),
+        SqlExpr::Raw(hull),
+        SqlExpr::Raw(recheck),
+    ]))
 }
 
 /// Render simple-code token clauses as one OR group.
@@ -494,7 +574,25 @@ pub fn render_token_simple_code_clauses_as_or(
     let exprs = clauses
         .iter()
         .map(|clause| {
-            token_simple_code_clause_expr(builder, clause, path_segments)
+            token_simple_code_clause_expr(builder, clause, path_segments, false)
+                .map(|cond| token_apply_negation(clause, cond))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(or_exprs(exprs))
+}
+
+/// Like [`render_token_simple_code_clauses_as_or`] for an array of codes
+/// (`code` 0..*): the containment leaf is wrapped in an array, since a nested
+/// JSON array never contains a bare string.
+pub fn render_token_simple_code_array_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    path_segments: &[String],
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
+        .iter()
+        .map(|clause| {
+            token_simple_code_clause_expr(builder, clause, path_segments, true)
                 .map(|cond| token_apply_negation(clause, cond))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1412,28 +1510,52 @@ fn date_inplace_clause_expr(
             }),
         ])
     };
-    match &clause.predicate {
-        // `eq`: some occurrence range is contained in the query range. The hull
-        // `&&` query range is a superset of the true matches, a sound indexable
-        // prefilter; the EXISTS over `unnest(mr)` is the exact per-occurrence recheck.
-        DatePredicate::Contains { q } => {
-            let qterm = date_range_term(builder, q);
-            let qsql = render_term(&qterm);
+    // Some occurrence range is contained in the query range. The hull `&&`
+    // query range is a superset of the true matches, a sound indexable
+    // prefilter; the EXISTS over `unnest(mr)` is the exact per-occurrence recheck.
+    let contained_in = |builder: &mut SqlBuilder, q: &crate::types::date::DateRange| {
+        let qterm = date_range_term(builder, q);
+        let qsql = render_term(&qterm);
+        SqlExpr::And(vec![
+            SqlExpr::RangeOp {
+                lhs: hull(),
+                op: RangeOp::Overlaps,
+                rhs: qterm,
+            },
+            // A single occurrence makes the hull exact, but overlap is
+            // still insufficient: a year must not equal one day in it.
+            // CASE also avoids the multirange cost for scalar dates and
+            // single Periods while retaining the indexable hull prefilter.
+            SqlExpr::Raw(format!(
+                "CASE WHEN {single_guard} THEN {hull_expr} <@ {qsql} ELSE EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql}) END"
+            )),
+        ])
+    };
+    // `ge`/`le` are a union of two arms, and an OR of them cannot drive the
+    // GiST index under LIMIT. The overlap with the query's own half-range is a
+    // superset of both arms, so it is the single indexable condition and the
+    // exact union is rechecked on its candidates.
+    let half_range_then_exact =
+        |builder: &mut SqlBuilder,
+         index_range: SqlTerm,
+         beyond: SqlTerm,
+         q: &crate::types::date::DateRange| {
+            let qsql = render_term(&date_range_term(builder, q));
+            let beyond = render_term(&beyond);
             SqlExpr::And(vec![
                 SqlExpr::RangeOp {
                     lhs: hull(),
                     op: RangeOp::Overlaps,
-                    rhs: qterm,
+                    rhs: index_range,
                 },
-                // A single occurrence makes the hull exact, but overlap is
-                // still insufficient: a year must not equal one day in it.
-                // CASE also avoids the multirange cost for scalar dates and
-                // single Periods while retaining the indexable hull prefilter.
                 SqlExpr::Raw(format!(
-                    "CASE WHEN {single_guard} THEN {hull_expr} <@ {qsql} ELSE EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql}) END"
+                    "CASE WHEN {single_guard} THEN ({hull_expr} && {beyond} OR {hull_expr} <@ {qsql}) \
+                 ELSE ({mr_expr} && {beyond} OR EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})) END"
                 )),
             ])
-        }
+        };
+    match &clause.predicate {
+        DatePredicate::Contains { q } => contained_in(builder, q),
         DatePredicate::NotContains { q } => {
             let qterm = date_range_term(builder, q);
             let qsql = render_term(&qterm);
@@ -1444,28 +1566,48 @@ fn date_inplace_clause_expr(
         DatePredicate::Overlap { lo, hi } => {
             prefilter_then_recheck(RangeOp::Overlaps, timestamp_range_term(builder, *lo, *hi))
         }
-        DatePredicate::Ge { q } => prefilter_then_recheck(
-            RangeOp::Overlaps,
-            timestamp_range_term(
+        // `ge` = `gt` ∪ `eq`: some occurrence reaches past the query range or
+        // lies inside it; a range that only straddles the query's start
+        // matches neither. See `half_range_then_exact`.
+        DatePredicate::Ge { q } => {
+            let index_range = timestamp_range_term(
                 builder,
                 Some(Bound {
                     at: q.start,
                     inclusive: true,
                 }),
                 None,
-            ),
-        ),
-        DatePredicate::Le { q } => prefilter_then_recheck(
-            RangeOp::Overlaps,
-            timestamp_range_term(
+            );
+            let above = timestamp_range_term(
+                builder,
+                Some(Bound {
+                    at: q.end,
+                    inclusive: true,
+                }),
+                None,
+            );
+            half_range_then_exact(builder, index_range, above, q)
+        }
+        // `le` = `lt` ∪ `eq`, the mirror of `ge`.
+        DatePredicate::Le { q } => {
+            let index_range = timestamp_range_term(
                 builder,
                 None,
                 Some(Bound {
                     at: q.end,
                     inclusive: false,
                 }),
-            ),
-        ),
+            );
+            let below = timestamp_range_term(
+                builder,
+                None,
+                Some(Bound {
+                    at: q.start,
+                    inclusive: false,
+                }),
+            );
+            half_range_then_exact(builder, index_range, below, q)
+        }
         // `sa`/`eb`: strictly-after / strictly-before key off the extreme occurrence,
         // shared by hull and multirange — pure index op, no recheck.
         DatePredicate::StrictlyAfter { q } => SqlExpr::RangeOp {
@@ -2368,6 +2510,7 @@ fn token_simple_code_clause_expr(
     builder: &mut SqlBuilder,
     clause: &TokenClause,
     path_segments: &[String],
+    array: bool,
 ) -> Result<SqlExpr, SqlBuilderError> {
     let resource_col = builder.resource_column().to_string();
     match &clause.predicate {
@@ -2397,7 +2540,12 @@ fn token_simple_code_clause_expr(
         TokenPredicate::SystemAnyCode { .. } => Ok(SqlExpr::Bool(false)),
         predicate => {
             let code = simple_code_token_value(predicate)?;
-            let containment = build_nested_json_containment(path_segments, serde_json::json!(code));
+            let leaf = if array {
+                serde_json::json!([code])
+            } else {
+                serde_json::json!(code)
+            };
+            let containment = build_nested_json_containment(path_segments, leaf);
             Ok(jsonb_contains_expr(builder, &resource_col, containment))
         }
     }

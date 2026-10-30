@@ -586,8 +586,21 @@ fn proposed_conditional_source(
         }
         proposed_types.insert(row.resource_type.clone());
     }
-    let graph_json = serde_json::to_string(proposed)
-        .map_err(|error| StorageError::internal(error.to_string()))?;
+    // Proposed rows carry the canonical UCUM quantities a write would store,
+    // so a UCUM quantity search sees them like committed rows.
+    let graph: Vec<Value> = proposed
+        .iter()
+        .map(|row| {
+            serde_json::json!({
+                "resource_type": row.resource_type,
+                "id": row.id,
+                "resource": row.resource,
+                "ucum": row.resource.as_ref().and_then(octofhir_search::ucum::canonical_quantities),
+            })
+        })
+        .collect();
+    let graph_json =
+        serde_json::to_string(&graph).map_err(|error| StorageError::internal(error.to_string()))?;
     Ok((proposed_types, graph_json))
 }
 
@@ -629,7 +642,7 @@ async fn prepare_proposed_conditional_query(
     if !proposed_types.is_empty() {
         let parameter = query.params.len() + 1;
         let mut ctes = vec![format!(
-            "octofhir_proposed_rows AS MATERIALIZED (SELECT item->>'resource_type' AS resource_type, item->>'id' AS id, item->'resource' AS resource FROM jsonb_array_elements(${parameter}::jsonb) AS item)"
+            "octofhir_proposed_rows AS MATERIALIZED (SELECT item->>'resource_type' AS resource_type, item->>'id' AS id, item->'resource' AS resource, item->'ucum' AS ucum FROM jsonb_array_elements(${parameter}::jsonb) AS item)"
         )];
         for resource_type in proposed_types {
             let table = octofhir_search::escape_identifier(&resource_type.to_lowercase())
@@ -639,7 +652,7 @@ async fn prepare_proposed_conditional_query(
             // have the optional generated profile column or omit it. Saved
             // branches retain their real columns and indexes.
             ctes.push(format!(
-                    "{table} AS NOT MATERIALIZED (SELECT saved.* FROM public.{table} AS saved WHERE NOT EXISTS (SELECT 1 FROM octofhir_proposed_rows AS g WHERE g.resource_type = '{type_literal}' AND g.id = saved.id) UNION ALL SELECT (jsonb_populate_record(NULL::public.{table}, jsonb_build_object('id', g.id, 'txid', COALESCE((g.resource#>>'{{meta,versionId}}')::bigint, txid_current()), 'created_at', octofhir_resource_timestamp(), 'updated_at', COALESCE((g.resource#>>'{{meta,lastUpdated}}')::timestamptz, octofhir_resource_timestamp()), 'resource', g.resource, 'status', 'created', 'profile', to_jsonb(octofhir_meta_profiles(g.resource))))).* FROM octofhir_proposed_rows AS g WHERE g.resource_type = '{type_literal}' AND g.resource IS NOT NULL AND g.resource != 'null'::jsonb)"
+                    "{table} AS NOT MATERIALIZED (SELECT saved.* FROM public.{table} AS saved WHERE NOT EXISTS (SELECT 1 FROM octofhir_proposed_rows AS g WHERE g.resource_type = '{type_literal}' AND g.id = saved.id) UNION ALL SELECT (jsonb_populate_record(NULL::public.{table}, jsonb_build_object('id', g.id, 'txid', COALESCE((g.resource#>>'{{meta,versionId}}')::bigint, txid_current()), 'created_at', octofhir_resource_timestamp(), 'updated_at', COALESCE((g.resource#>>'{{meta,lastUpdated}}')::timestamptz, octofhir_resource_timestamp()), 'resource', g.resource, 'status', 'created', 'ucum', g.ucum, 'profile', to_jsonb(octofhir_meta_profiles(g.resource))))).* FROM octofhir_proposed_rows AS g WHERE g.resource_type = '{type_literal}' AND g.resource IS NOT NULL AND g.resource != 'null'::jsonb)"
                 ));
         }
         query.sql = format!("WITH {} {}", ctes.join(", "), query.sql);
@@ -1361,25 +1374,7 @@ async fn execute_query(
     query: &BuiltQuery,
     resource_type: &str,
 ) -> Result<Vec<StoredResource>, StorageError> {
-    // Build dynamic query with parameters
     // The query returns: resource, id, txid, created_at, updated_at
-    let mut sqlx_query =
-        sqlx_core::query::query::<sqlx_postgres::Postgres>(AssertSqlSafe(query.sql.to_string()));
-
-    // Bind parameters
-    for param in &query.params {
-        sqlx_query = match param {
-            SqlValue::Text(s) => sqlx_query.bind(s.clone()),
-            SqlValue::Integer(i) => sqlx_query.bind(*i),
-            SqlValue::Float(f) => sqlx_query.bind(*f),
-            SqlValue::Boolean(b) => sqlx_query.bind(*b),
-            SqlValue::Json(s) => sqlx_query.bind(s.clone()),
-            SqlValue::Timestamp(s) => sqlx_query.bind(s.clone()),
-            SqlValue::Null => sqlx_query.bind(None::<String>),
-        };
-    }
-
-    // Execute and map results
     let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
         query_as(AssertSqlSafe(query.sql.to_string()))
             .bind_all_params(&query.params)
@@ -2254,7 +2249,14 @@ async fn resolve_revinclude_once_raw(
     Ok(entries)
 }
 
-/// Helper trait to bind all params to a query.
+/// Helper trait to bind all params to a search query.
+///
+/// Also marks the statement non-persistent. Search SQL is built per request, so
+/// caching it only evicts the fixed CRUD statements from the per-connection
+/// statement cache. And a cached statement may be switched to a generic plan
+/// after a few executions, which cannot tell a rare token value from one that
+/// matches most of the table; an unnamed statement is planned with the actual
+/// values every time.
 trait BindAllParams<'q> {
     fn bind_all_params(self, params: &'q [SqlValue]) -> Self;
 }
@@ -2268,6 +2270,7 @@ impl<'q> BindAllParams<'q>
     >
 {
     fn bind_all_params(mut self, params: &'q [SqlValue]) -> Self {
+        self = self.persistent(false);
         for param in params {
             self = match param {
                 SqlValue::Text(s) => self.bind(s.as_str()),
@@ -2292,6 +2295,7 @@ impl<'q> BindAllParams<'q>
     >
 {
     fn bind_all_params(mut self, params: &'q [SqlValue]) -> Self {
+        self = self.persistent(false);
         for param in params {
             self = match param {
                 SqlValue::Text(s) => self.bind(s.as_str()),
@@ -2316,6 +2320,7 @@ impl<'q> BindAllParams<'q>
     >
 {
     fn bind_all_params(mut self, params: &'q [SqlValue]) -> Self {
+        self = self.persistent(false);
         for param in params {
             self = match param {
                 SqlValue::Text(s) => self.bind(s.as_str()),
@@ -2340,6 +2345,7 @@ impl<'q> BindAllParams<'q>
     >
 {
     fn bind_all_params(mut self, params: &'q [SqlValue]) -> Self {
+        self = self.persistent(false);
         for param in params {
             self = match param {
                 SqlValue::Text(s) => self.bind(s.as_str()),
@@ -2384,6 +2390,7 @@ pub async fn explain_built_search_query_text(
 }
 
 /// Helper trait to bind all params to a raw query (resource as text).
+/// Non-persistent for the same reasons as [`BindAllParams`].
 trait BindAllParamsRaw<'q> {
     fn bind_all_params_raw(self, params: &'q [SqlValue]) -> Self;
 }
@@ -2392,6 +2399,7 @@ impl<'q, O> BindAllParamsRaw<'q>
     for sqlx_core::query_as::QueryAs<'q, sqlx_postgres::Postgres, O, sqlx_postgres::PgArguments>
 {
     fn bind_all_params_raw(mut self, params: &'q [SqlValue]) -> Self {
+        self = self.persistent(false);
         for param in params {
             self = match param {
                 SqlValue::Text(s) => self.bind(s.as_str()),

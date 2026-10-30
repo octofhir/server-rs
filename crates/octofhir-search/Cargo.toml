@@ -23,6 +23,9 @@ octofhir-fhir-model = { workspace = true }
 # FHIRPath parser — parse SearchParameter expressions to AST for jsonb-path derivation
 octofhir-fhirpath = { workspace = true }
 
+# UCUM canonical units for unit-aware quantity search
+octofhir-ucum = "0.8"
+
 # Workspace dependencies
 dashmap = { workspace = true }
 moka = { version = "0.12", features = ["sync"] }

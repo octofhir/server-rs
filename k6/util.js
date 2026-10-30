@@ -36,7 +36,9 @@ const passwordGrant = () => {
     return null
   }
 
-  let body = `grant_type=password&username=${user}&password=${pass}&client_id=${clientId}`
+  // Without a scope the token carries no permissions.
+  const scope = encodeURIComponent(__ENV.SCOPE || 'user/*.cruds')
+  let body = `grant_type=password&username=${user}&password=${pass}&client_id=${clientId}&scope=${scope}`
 
   // Add client_secret only for confidential clients
   if (clientSecret) {

@@ -311,6 +311,12 @@ impl ElementTypeHint {
         matches!(self, Self::HumanName) || matches!(self, Self::Array(t) if t == "HumanName")
     }
 
+    /// Check if this hint is an array of a simple scalar other than boolean
+    /// (e.g. `AllergyIntolerance.category`, `code` 0..*).
+    pub fn is_simple_scalar_array(&self) -> bool {
+        matches!(self, Self::Array(t) if t != "boolean" && SIMPLE_SCALAR_TYPES.contains(&t.as_str()))
+    }
+
     /// Check if this hint represents an Identifier (direct or array).
     pub fn is_identifier(&self) -> bool {
         matches!(self, Self::Identifier) || matches!(self, Self::Array(t) if t == "Identifier")

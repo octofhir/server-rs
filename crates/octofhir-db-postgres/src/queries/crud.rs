@@ -12,6 +12,7 @@ use sqlx_postgres::{PgPool, PgTransaction};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use octofhir_search::ucum::canonical_quantities;
 use octofhir_storage::{RawStoredResource, StorageError, StoredResource};
 
 use crate::schema::SchemaManager;
@@ -113,10 +114,10 @@ pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, S
         r#"WITH new_tx AS (
                SELECT nextval('_transaction_txid_seq') AS txid
            ), stamp AS (SELECT octofhir_resource_timestamp() AS at)
-           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status, ucum)
            SELECT $1, new_tx.txid, stamp.at, stamp.at,
                $2::jsonb || jsonb_build_object('id', $1::text, 'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object('versionId', new_tx.txid::text, 'lastUpdated', to_char(stamp.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))),
-               'created'
+               'created', $3::jsonb
            FROM new_tx, stamp
            RETURNING id, txid, created_at, updated_at, resource"#
     );
@@ -125,6 +126,7 @@ pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, S
         query_as(AssertSqlSafe(sql.to_string()))
             .bind(&id)
             .bind(resource)
+            .bind(canonical_quantities(resource))
             .fetch_one(pool)
             .await
             .map_err(|e| {
@@ -178,10 +180,10 @@ pub async fn create_raw(
         r#"WITH new_tx AS (
                SELECT nextval('_transaction_txid_seq') AS txid
            ), stamp AS (SELECT octofhir_resource_timestamp() AS at)
-           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status, ucum)
            SELECT $1, new_tx.txid, stamp.at, stamp.at,
                $2::jsonb || jsonb_build_object('id', $1::text, 'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object('versionId', new_tx.txid::text, 'lastUpdated', to_char(stamp.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))),
-               'created'
+               'created', $3::jsonb
            FROM new_tx, stamp
            RETURNING id, txid, created_at, updated_at, resource::text"#
     );
@@ -190,6 +192,7 @@ pub async fn create_raw(
         query_as(AssertSqlSafe(sql.to_string()))
             .bind(&id)
             .bind(resource)
+            .bind(canonical_quantities(resource))
             .fetch_one(pool)
             .await
             .map_err(|e| {
@@ -841,7 +844,7 @@ pub async fn update_snapshot(
                SELECT id, txid, created_at, updated_at, resource FROM "{table}"
                WHERE id = $1 AND status != 'deleted' FOR UPDATE
            ), new_tx AS MATERIALIZED (SELECT nextval('_transaction_txid_seq') AS txid FROM previous)
-           UPDATE "{table}" AS t SET txid = new_tx.txid, resource = $2::jsonb, status = 'updated'
+           UPDATE "{table}" AS t SET txid = new_tx.txid, resource = $2::jsonb, ucum = $3::jsonb, status = 'updated'
            FROM previous AS p, new_tx WHERE t.id = p.id {version_check}
            RETURNING t.id, t.txid, t.created_at, t.updated_at, t.resource::text,
                      p.txid, p.created_at, p.updated_at, p.resource"#
@@ -860,6 +863,7 @@ pub async fn update_snapshot(
     let row: Option<Row> = query_as(AssertSqlSafe(sql))
         .bind(id)
         .bind(resource)
+        .bind(canonical_quantities(resource))
         .fetch_optional(pool)
         .await
         .map_err(|error| mutation_error(error, "Failed to update resource"))?;
@@ -1178,10 +1182,10 @@ pub async fn create_with_tx(
         };
         format!(
             r#"WITH stamp AS (SELECT octofhir_resource_timestamp() AS at)
-               INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+               INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status, ucum)
                SELECT $1, {t}::bigint, stamp.at, stamp.at,
                    $2::jsonb || jsonb_build_object('id', $1::text, 'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object('versionId', '{t}', 'lastUpdated', to_char(stamp.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))),
-                   'created'
+                   'created', $3::jsonb
                FROM stamp
                {guard}
                RETURNING id, txid, created_at, updated_at, resource"#
@@ -1191,10 +1195,10 @@ pub async fn create_with_tx(
             r#"WITH new_tx AS (
                    SELECT nextval('_transaction_txid_seq') AS txid
                ), stamp AS (SELECT octofhir_resource_timestamp() AS at)
-               INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+               INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status, ucum)
                SELECT $1, new_tx.txid, stamp.at, stamp.at,
                    $2::jsonb || jsonb_build_object('id', $1::text, 'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object('versionId', new_tx.txid::text, 'lastUpdated', to_char(stamp.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))),
-                   'created'
+                   'created', $3::jsonb
                FROM new_tx, stamp
                RETURNING id, txid, created_at, updated_at, resource"#
         )
@@ -1204,6 +1208,7 @@ pub async fn create_with_tx(
         query_as(AssertSqlSafe(sql.to_string()))
             .bind(&id)
             .bind(resource)
+            .bind(canonical_quantities(resource))
             .fetch_optional(&mut **tx)
             .await
             .map_err(|e| {
@@ -1275,7 +1280,7 @@ pub async fn create_batch_with_tx(
                SELECT at, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last_updated
                FROM (SELECT octofhir_resource_timestamp() AS at) now
            )
-           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status, ucum)
            SELECT t.id, {txid}::bigint, stamp.at, stamp.at,
                -- Bundle bodies already carry their reserved id/meta; rebuild
                -- the document only when they do not.
@@ -1287,8 +1292,8 @@ pub async fn create_batch_with_tx(
                        COALESCE(t.resource -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                            'versionId', '{txid}', 'lastUpdated', stamp.last_updated))
                END,
-               'created'
-           FROM UNNEST($1::text[], $2::jsonb[]) AS t(id, resource), stamp
+               'created', t.ucum
+           FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[]) AS t(id, resource, ucum), stamp
            {guard}"#
     );
 
@@ -1299,6 +1304,12 @@ pub async fn create_batch_with_tx(
     let rows: Vec<(String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe(sql))
         .bind(&ids)
         .bind(payloads)
+        .bind(
+            payloads
+                .iter()
+                .map(canonical_quantities)
+                .collect::<Vec<_>>(),
+        )
         .fetch_all(&mut **tx)
         .await
         .map_err(|e| {
@@ -1410,8 +1421,9 @@ pub async fn update_batch_with_tx(
            UPDATE "{table}" t
            SET txid = {txid}::bigint,
                resource = u.resource,
+               ucum = u.ucum,
                status = 'updated'
-           FROM UNNEST($1::text[], $2::jsonb[]) AS u(id, resource), previous p
+           FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[]) AS u(id, resource, ucum), previous p
            WHERE t.id = u.id AND t.id = p.id
            RETURNING t.id, t.created_at, t.updated_at, t.resource, p.txid, p.created_at, p.updated_at, p.resource"#
     );
@@ -1429,6 +1441,12 @@ pub async fn update_batch_with_tx(
     let rows: Vec<UpdateRow> = query_as(AssertSqlSafe(sql.to_string()))
         .bind(&ids)
         .bind(&payloads)
+        .bind(
+            payloads
+                .iter()
+                .map(canonical_quantities)
+                .collect::<Vec<_>>(),
+        )
         .fetch_all(&mut **tx)
         .await
         .map_err(|e| mutation_error(e, "Failed to batch-update resources"))?;
@@ -1605,7 +1623,7 @@ pub async fn update_with_tx_snapshot(
         SELECT id, txid, created_at, updated_at, resource FROM "{table}" WHERE id=$1 AND status!='deleted' FOR UPDATE
     ), new_tx AS MATERIALIZED (SELECT {version} AS txid FROM previous)
     UPDATE "{table}" AS t SET txid=new_tx.txid,
-        resource = $2::jsonb, status = 'updated'
+        resource = $2::jsonb, ucum = $3::jsonb, status = 'updated'
     FROM previous AS p, new_tx WHERE t.id=p.id {version_check}
     RETURNING t.id, t.txid, t.created_at, t.updated_at, t.resource, p.txid, p.created_at, p.updated_at, p.resource"#
     );
@@ -1623,6 +1641,7 @@ pub async fn update_with_tx_snapshot(
     let row: Option<Row> = query_as(AssertSqlSafe(sql))
         .bind(id)
         .bind(resource)
+        .bind(canonical_quantities(resource))
         .fetch_optional(&mut **tx)
         .await
         .map_err(|error| mutation_error(error, "Failed to update resource"))?;

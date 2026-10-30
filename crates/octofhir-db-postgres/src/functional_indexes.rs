@@ -103,6 +103,17 @@ const FHIR_EXTRACT_REF_DDL: &str = "CREATE OR REPLACE FUNCTION public.fhir_extra
        CROSS JOIN LATERAL jsonb_path_query(resource, p) AS value; \
      $$;";
 
+/// Numeric hull (`numrange(min,max,'[]')`) of the canonical UCUM values recorded
+/// at `paths` in a resource's `ucum` column (see `octofhir_search::ucum`). The hull
+/// spans every canonical unit at those paths, so it only prefilters; the search
+/// predicate rechecks path, unit and value per entry. NULL when nothing matches.
+const FHIR_UCUM_HULL_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_ucum_hull(ucum jsonb, paths text[]) RETURNS numrange \
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
+       SELECT CASE WHEN min(v) IS NULL THEN NULL ELSE numrange(min(v), max(v), '[]') END \
+       FROM (SELECT (q->>'v')::numeric AS v FROM jsonb_array_elements(ucum) AS q \
+             WHERE q->>'p' = ANY(paths)) AS canonical; \
+     $$;";
+
 /// Create functional search indexes for the configured parameters (each
 /// `"ResourceType.code"`). Idempotent (`IF NOT EXISTS`); a missing table or
 /// unknown parameter is skipped, not fatal. No runtime/lazy creation.
@@ -141,6 +152,13 @@ pub async fn create_default_search_indexes(
             .await
     {
         warn!(error = %e, "failed to create quantity array-hull helper");
+    }
+    // Canonical UCUM hull — used by the UCUM arm of every quantity predicate.
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_UCUM_HULL_DDL.to_string()))
+        .execute(pool)
+        .await
+    {
+        warn!(error = %e, "failed to create canonical UCUM hull helper");
     }
     // Quantity union min/max extractors — back the single-btree quantity predicate and
     // its functional indexes; used at query time even for non-indexed quantity params.
@@ -358,6 +376,14 @@ pub async fn create_default_search_indexes(
                     format!(
                         "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qhull\" ON \"{table}\" \
                          USING gist ((fhir_qty_hull_range_arr(resource, {arr})))"
+                    ),
+                    // GiST over the canonical UCUM hull, serving the UCUM arm of the
+                    // predicate. Without it that arm would turn the whole OR into a
+                    // sequential scan. Partial: rows without UCUM quantities stay out.
+                    format!(
+                        "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qucum\" ON \"{table}\" \
+                         USING gist (({})) WHERE ucum IS NOT NULL",
+                        octofhir_search::sql_builder::ucum_hull_expr("ucum", &all_paths)
                     ),
                 ];
                 for ddl in &qddls {

@@ -2313,18 +2313,20 @@ mod tests {
             "comma-separated prefixed dates must OR, got: {}",
             built.sql
         );
-        // lt renders `&& tstzrange(NULL, ..)`; ge renders a single overlap
-        // `&& tstzrange($lo, NULL, ..)`. Both in-place range predicates must be
-        // present, OR'd together — and ge no longer emits a `<@` contained-by branch.
+        // lt renders `&& tstzrange(NULL, ..)`; ge renders a single indexable
+        // overlap `&& tstzrange($lo, NULL, ..)`. Both in-place range predicates
+        // must be present, OR'd together.
         assert!(
             built.sql.contains("&& tstzrange(NULL,")
                 && built.sql.matches("&& tstzrange(").count() >= 2,
             "two prefixed comma values should produce two OR'd in-place range predicates: {}",
             built.sql
         );
+        // ge's exact `gt ∪ eq` union (with its `<@` arm) is only a recheck ANDed
+        // after that overlap, never an OR the GiST index would have to serve.
         assert!(
-            !built.sql.contains("<@ tstzrange("),
-            "ge should render a single overlap, not an overlap+contains OR: {}",
+            built.sql.contains("NULL, '[)') AND CASE WHEN"),
+            "ge should keep one indexable overlap followed by the exact recheck: {}",
             built.sql
         );
         let rendered_params = built

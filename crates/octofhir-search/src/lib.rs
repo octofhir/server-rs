@@ -14,6 +14,7 @@ pub mod sql_builder;
 pub mod terminology;
 pub mod terminology_preprocess;
 pub mod types;
+pub mod ucum;
 
 pub use common::register_common_parameters;
 pub use loader::{

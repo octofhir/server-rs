@@ -1379,6 +1379,15 @@ impl SqlBuilder {
         }
     }
 
+    /// The canonical UCUM quantity column next to the resource column
+    /// (`<alias>.ucum`), see [`crate::ucum`].
+    pub fn ucum_column(&self) -> String {
+        match self.resource_col.strip_suffix("resource") {
+            Some(prefix) => format!("{prefix}{}", crate::ucum::UCUM_COLUMN),
+            None => crate::ucum::UCUM_COLUMN.to_string(),
+        }
+    }
+
     /// Add a structured SQL condition to the accumulator.
     pub fn add_condition(&mut self, condition: crate::ir::sql::SqlExpr) {
         self.conditions.push(condition);
@@ -1783,6 +1792,24 @@ pub fn quantity_value_jsonpath_array(paths: &[Vec<String>]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("ARRAY[{items}]::jsonpath[]")
+}
+
+/// SQL `text[]` literal of the canonical-quantity paths of `paths`
+/// (`ARRAY['valueQuantity', 'component.valueQuantity']::text[]`), the form
+/// [`crate::ucum::canonical_quantities`] records. Used by BOTH the canonical
+/// hull index and the search predicate, so the two expressions match textually.
+pub fn ucum_paths_array(paths: &[Vec<String>]) -> String {
+    let items = paths
+        .iter()
+        .map(|segs| format!("'{}'", segs.join(".").replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{items}]::text[]")
+}
+
+/// The canonical-quantity hull over `paths`, matched by the `_qucum` GiST index.
+pub fn ucum_hull_expr(ucum_col: &str, paths: &[Vec<String>]) -> String {
+    format!("fhir_ucum_hull({ucum_col}, {})", ucum_paths_array(paths))
 }
 
 pub fn paths_to_jsonpath_array(paths: &[Vec<String>]) -> String {
