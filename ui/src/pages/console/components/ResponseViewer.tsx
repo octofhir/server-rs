@@ -6,7 +6,7 @@ import {
   type DataTableColumn,
   IconCheck,
   IconX,
-  Link,
+  ReferenceLink,
   Modal,
   OperationOutcomePanel,
   SegmentedControl,
@@ -100,18 +100,19 @@ function buildBundleColumns(
   columns.push({
     id: "__id",
     header: "ID",
-    width: 200,
+    width: 340,
     sortable: true,
     filterable: true,
     accessor: (e) => e.resource.id ?? "",
     cell: (e) =>
       e.resource.id ? (
-        <Link
-          onClick={() => onOpen(e.resource.resourceType, e.resource.id as string)}
-          className={styles.resourceLink}
-        >
-          {e.resource.id}
-        </Link>
+        <ReferenceLink
+          reference={`${e.resource.resourceType}/${e.resource.id}`}
+          onClick={(event) => {
+            event.preventDefault();
+            onOpen(e.resource.resourceType, e.resource.id as string);
+          }}
+        />
       ) : (
         <Text color="secondary">—</Text>
       ),

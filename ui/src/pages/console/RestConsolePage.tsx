@@ -1,8 +1,9 @@
-import { ActionIcon, Collapse, Text, Tooltip, useDisclosure, useHotkeys } from "@octofhir/ui-kit";
+import { Button, Collapse, Text, useDisclosure, useHotkeys } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
-import { Bookmark, History as ClockArrowRotateLeft, Eye, Gauge, Inbox, Layers } from "lucide-react";
+import { Bookmark, History as ClockArrowRotateLeft, Eye, Gauge, Layers } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
+import type { HttpMethod } from "@/shared/api";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
 import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector";
@@ -25,7 +26,16 @@ import {
   $method,
   $rawPath,
   $resourceType,
+  setMethod,
+  setRawPath,
 } from "./state/consoleStore";
+
+const EXAMPLES: Array<{ method: HttpMethod; path: string; note: string }> = [
+  { method: "GET", path: "/fhir/Patient?_count=20", note: "list patients" },
+  { method: "GET", path: "/fhir/Observation?_sort=-_lastUpdated&_count=10", note: "latest observations" },
+  { method: "GET", path: "/fhir/Patient?_summary=count", note: "count only" },
+  { method: "GET", path: "/fhir/metadata", note: "capability statement" },
+];
 
 export function RestConsolePage() {
   const { isPending, data, resourceTypes, allSuggestions, searchParamsByResource } =
@@ -44,6 +54,7 @@ export function RestConsolePage() {
     customHeaders: $customHeaders,
     resourceType: $resourceType,
   });
+  const [chooseMethod, choosePath] = useUnit([setMethod, setRawPath]);
   usePaletteContribution("rest-console", useConsolePaletteItems());
 
   const sendMutation = useSendConsoleRequest();
@@ -96,42 +107,42 @@ export function RestConsolePage() {
       <header className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
           <Text variant="header-2" className={styles.title}>
-            REST Console
+            Requests
           </Text>
         </div>
         <div className={styles.toolbarActions}>
-          <Tooltip label={activeEnv ? `Environment: ${activeEnv.name}` : "Environment"}>
-            <span className={styles.envWrap}>
-              <ActionIcon variant="subtle" size="md" onClick={envHandlers.open}>
-                <Layers size={16} />
-              </ActionIcon>
-              {activeEnv && <span className={styles.envDot} />}
-            </span>
-          </Tooltip>
-          <Tooltip label="Saved requests">
-            <ActionIcon variant="subtle" size="md" onClick={savedHandlers.open}>
-              <Bookmark size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="Explain query">
-            <ActionIcon variant="subtle" size="md" onClick={explainHandlers.open}>
-              <Gauge size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="Inspector">
-            <ActionIcon
-              variant={inspectorOpened ? "light" : "subtle"}
-              size="md"
-              onClick={toggleInspector}
-            >
-              <Eye size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="History">
-            <ActionIcon variant="subtle" size="md" onClick={historyHandlers.open}>
-              <ClockArrowRotateLeft size={16} />
-            </ActionIcon>
-          </Tooltip>
+          <Button size="sm" variant="subtle" onClick={historyHandlers.open}>
+            <Button.Icon side="left">
+              <ClockArrowRotateLeft size={14} />
+            </Button.Icon>
+            History
+          </Button>
+          <Button size="sm" variant="subtle" onClick={savedHandlers.open}>
+            <Button.Icon side="left">
+              <Bookmark size={14} />
+            </Button.Icon>
+            Saved
+          </Button>
+          <Button size="sm" variant="subtle" onClick={envHandlers.open}>
+            <Button.Icon side="left">
+              <Layers size={14} />
+            </Button.Icon>
+            {activeEnv ? activeEnv.name : "Environment"}
+            {activeEnv && <span className={styles.envDot} aria-label="active" />}
+          </Button>
+          <span className={styles.divider} aria-hidden="true" />
+          <Button size="sm" variant="subtle" onClick={explainHandlers.open}>
+            <Button.Icon side="left">
+              <Gauge size={14} />
+            </Button.Icon>
+            Explain
+          </Button>
+          <Button size="sm" variant={inspectorOpened ? "light" : "subtle"} onClick={toggleInspector}>
+            <Button.Icon side="left">
+              <Eye size={14} />
+            </Button.Icon>
+            Inspector
+          </Button>
         </div>
       </header>
 
@@ -180,11 +191,29 @@ export function RestConsolePage() {
             </div>
           ) : (
             <div className={styles.emptyResponse}>
-              <Inbox size={30} className={styles.emptyIcon} />
-              <Text variant="body-1">No response yet</Text>
-              <Text variant="body-2" color="secondary">
-                Build a request and press <span style={{ fontWeight: 600 }}>⌘ Enter</span> to run
-                it.
+              <Text variant="subheader-2">Start with a request</Text>
+              <div className={styles.examples}>
+                {EXAMPLES.map((example) => (
+                  <button
+                    key={`${example.method} ${example.path}`}
+                    type="button"
+                    className={styles.example}
+                    onClick={() => {
+                      chooseMethod(example.method);
+                      choosePath(example.path);
+                    }}
+                  >
+                    <span className={styles.exampleMethod} data-method={example.method}>
+                      {example.method}
+                    </span>
+                    <span className={styles.examplePath}>{example.path}</span>
+                    <span className={styles.exampleNote}>{example.note}</span>
+                  </button>
+                ))}
+              </div>
+              <Text variant="caption-1" color="secondary">
+                <kbd className={styles.kbd}>⌘↵</kbd> send · <kbd className={styles.kbd}>⌘K</kbd> commands
+                and recent requests
               </Text>
             </div>
           )}

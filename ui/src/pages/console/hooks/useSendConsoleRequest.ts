@@ -158,9 +158,8 @@ export function useSendConsoleRequest() {
           isPinned: false,
           mode,
         });
-        console.log("✅ Added to history:", data.requestPath);
       } catch (error) {
-        console.error("❌ Failed to add to history:", error);
+        console.error("Failed to add to history:", error);
         notifications.show({
           title: "History Error",
           message: "Failed to save request to history",
@@ -168,13 +167,14 @@ export function useSendConsoleRequest() {
         });
       }
 
-      // Show notification
-      const isSuccess = data.status >= 200 && data.status < 300;
-      notifications.show({
-        title: isSuccess ? "Request Successful" : "Request Completed",
-        message: `${data.status} ${data.statusText} (${data.durationMs}ms)`,
-        color: isSuccess ? "green" : data.status >= 400 ? "red" : "yellow",
-      });
+      // Success is already visible in the status line; only surface failures.
+      if (data.status >= 400) {
+        notifications.show({
+          title: `${data.status} ${data.statusText}`,
+          message: data.requestPath,
+          color: "red",
+        });
+      }
     },
 
     onError: (error: Error) => {
