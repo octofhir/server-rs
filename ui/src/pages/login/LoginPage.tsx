@@ -48,7 +48,6 @@ export function LoginPage() {
 
 	return (
 		<div className={classes.scene}>
-			<div className={classes.glow} aria-hidden="true" />
 			<div className={classes.shell}>
 				<div className={classes.brand}>
 					<img src={logoUrl} alt="OctoFHIR" className={classes.logo} />

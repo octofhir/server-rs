@@ -1,18 +1,23 @@
 .shell {
-    /* Grid with a content-sized sidebar track + a bounded content track.
-       The sidebar track is `auto` (follows the Sidebar's own width: 256px or
-       64px collapsed); the content track is `minmax(0, 1fr)` so page content
-       can never grow past it or squeeze the sidebar. */
+    /* Content-sized sidebar track + a bounded content track, so page content can
+       never grow past it or squeeze the sidebar. */
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     width: 100%;
     height: 100vh;
     overflow: hidden;
-    background: var(--octo-surface-2, #f1f3f5);
+    background: var(--octo-identity-base-top, #fafafa);
 }
-.main {
+.column {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     height: 100%;
+}
+.main {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
     overflow: auto;
     display: flex;
     flex-direction: column;

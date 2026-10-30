@@ -5,22 +5,9 @@
 	padding: 24px;
 	position: relative;
 	overflow: hidden;
-	background:
-		radial-gradient(120% 80% at 0% 0%, color-mix(in oklab, var(--octo-accent-primary-bg), transparent 20%), transparent 60%),
-		radial-gradient(100% 70% at 100% 100%, color-mix(in oklab, var(--octo-accent-warm-bg), transparent 35%), transparent 65%),
-		var(--octo-surface-1);
+	background: var(--octo-identity-base-top, var(--octo-surface-1));
 }
 
-.glow {
-	position: absolute;
-	inset: -10%;
-	background:
-		radial-gradient(40% 30% at 30% 30%, color-mix(in oklab, var(--octo-accent-primary), transparent 70%), transparent 70%),
-		radial-gradient(35% 30% at 70% 70%, color-mix(in oklab, var(--octo-accent-primary), transparent 70%), transparent 70%);
-	filter: blur(80px);
-	z-index: 0;
-	pointer-events: none;
-}
 
 .shell {
 	position: relative;

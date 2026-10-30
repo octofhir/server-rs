@@ -7,7 +7,7 @@ import {
     type ComponentType,
     type ReactNode,
 } from "react";
-import { ChevronsLeft, ChevronsRight, LogOut, Moon, MoreVertical, Sun } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, LogOut, Moon, Search, Sun } from "lucide-react";
 import { Button } from "../../shared/ui/Button";
 import { Menu } from "../../shared/ui/Menu";
 import { Modal } from "../../shared/ui/Modal";
@@ -48,6 +48,8 @@ export interface SidebarBrand {
     title: ReactNode;
     icon?: IconLike;
     iconSrc?: string;
+    /** Full lockup (mark + wordmark); shown instead of icon + title while expanded. */
+    logoSrc?: string;
     href?: string;
     onClick?: () => void;
 }
@@ -63,8 +65,21 @@ export interface SidebarStatus {
     theme?: "success" | "warning" | "danger" | "neutral";
 }
 
+export type SidebarTone = "ink" | "surface";
+
+export interface SidebarSearch {
+    /** Opens the command palette / jump-to dialog. */
+    onOpen: () => void;
+    label?: ReactNode;
+    /** Shortcut hint rendered as a key cap, e.g. "⌘K". */
+    shortcut?: string;
+}
+
 export interface SidebarProps {
     brand?: SidebarBrand;
+    /** `ink` (default) keeps the rail dark in both schemes; `surface` follows the page surface. */
+    tone?: SidebarTone;
+    search?: SidebarSearch;
     groups: SidebarNavGroup[];
     account?: SidebarAccount | null;
     status?: SidebarStatus;
@@ -100,6 +115,8 @@ function initials(name: ReactNode): string {
 
 export function Sidebar({
     brand,
+    tone = "ink",
+    search,
     groups,
     account,
     status,
@@ -137,7 +154,7 @@ export function Sidebar({
     const renderItem = (item: SidebarNavItem) => {
         const inner = (
             <>
-                <span className={styles.itemIcon}>{renderIcon(item.icon, 18)}</span>
+                <span className={styles.itemIcon}>{renderIcon(item.icon, 16)}</span>
                 <span className={styles.itemLabel}>{item.label}</span>
                 {item.badge != null && <span className={styles.itemBadge}>{item.badge}</span>}
             </>
@@ -171,33 +188,66 @@ export function Sidebar({
         return <div key={item.id}>{control}</div>;
     };
 
+    const statusDot = status ? (
+        <span
+            className={styles.statusDot}
+            data-theme={status.theme ?? "neutral"}
+            title={typeof status.label === "string" ? status.label : undefined}
+        />
+    ) : null;
+
     const accountButton = account ? (
         <button type="button" className={styles.account} aria-label="Account menu">
             <span className={styles.avatar} aria-hidden="true">
                 {initials(account.name)}
+                {statusDot}
             </span>
             <span className={styles.accountText}>
                 <span className={styles.accountName}>{account.name}</span>
-                {account.secondary != null && <span className={styles.accountSecondary}>{account.secondary}</span>}
+                <span className={styles.accountSecondary}>{status?.label ?? account.secondary}</span>
             </span>
-            <MoreVertical size={16} className={styles.accountChevron} />
         </button>
     ) : null;
 
     return (
         <aside
             className={[styles.sidebar, className].filter(Boolean).join(" ")}
+            data-tone={tone}
             data-collapsed={collapsed ? "true" : undefined}
         >
             {brand && (
                 <div className={styles.brandRow}>
-                    <button type="button" className={styles.brand} onClick={brand.onClick}>
-                        <span className={styles.brandIcon}>
-                            {brand.iconSrc ? <img src={brand.iconSrc} alt="" /> : renderIcon(brand.icon, 24)}
-                        </span>
-                        <span className={styles.brandText}>{brand.title}</span>
+                    <button
+                        type="button"
+                        className={styles.brand}
+                        onClick={brand.onClick}
+                        aria-label={typeof brand.title === "string" ? brand.title : undefined}
+                    >
+                        {brand.logoSrc && !collapsed ? (
+                            <img className={styles.brandLogo} src={brand.logoSrc} alt="" />
+                        ) : (
+                            <>
+                                <span className={styles.brandIcon}>
+                                    {brand.iconSrc ? <img src={brand.iconSrc} alt="" /> : renderIcon(brand.icon, 22)}
+                                </span>
+                                {!brand.logoSrc && <span className={styles.brandText}>{brand.title}</span>}
+                            </>
+                        )}
                     </button>
                 </div>
+            )}
+
+            {search && (
+                <button
+                    type="button"
+                    className={styles.search}
+                    onClick={search.onOpen}
+                    aria-label={typeof search.label === "string" ? search.label : "Jump to"}
+                >
+                    <Search size={14} />
+                    <span className={styles.searchLabel}>{search.label ?? "Jump to…"}</span>
+                    {search.shortcut && <kbd className={styles.kbd}>{search.shortcut}</kbd>}
+                </button>
             )}
 
             <nav className={styles.nav} aria-label="Main navigation">
@@ -210,12 +260,7 @@ export function Sidebar({
             </nav>
 
             <div className={styles.footer}>
-                {status && (
-                    <div className={styles.statusRow}>
-                        <span className={styles.statusDot} data-theme={status.theme ?? "neutral"} />
-                        <span className={styles.statusLabel}>{status.label}</span>
-                    </div>
-                )}
+                {!account && statusDot}
 
                 {account && (
                     <Menu position="top-start">
@@ -252,10 +297,7 @@ export function Sidebar({
                         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
                         onClick={() => setCollapsed(!collapsed)}
                     >
-                        <span className={styles.itemIcon}>
-                            {collapsed ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
-                        </span>
-                        <span className={styles.itemLabel}>Collapse</span>
+                        {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
                     </button>
                 )}
             </div>

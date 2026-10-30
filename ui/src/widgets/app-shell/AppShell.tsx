@@ -1,40 +1,53 @@
 import {
+  ActionIcon,
+  CommandPalette,
+  type CommandPaletteItem,
+  LocationBar,
+  type LocationSegment,
   Shell,
   Sidebar,
   type SidebarNavGroup,
   type SidebarStatus,
+  type SidebarTone,
   useColorScheme,
+  useHotkeys,
+  usePersistentState,
 } from "@octofhir/ui-kit";
 import {
+  Activity,
   Boxes,
   Code2,
   Cpu,
   Database,
+  FileCode2,
   FileText,
   FolderTree,
   Globe,
-  House,
   KeyRound,
-  LayoutDashboard,
+  LayoutGrid,
+  LogOut,
   Monitor,
+  Moon,
   NotebookPen,
+  PanelLeft,
   Receipt,
+  Send,
   Settings,
   Shield,
   ShieldCheck,
   Sigma,
   SquareFunction,
+  Sun,
   Table,
   Terminal,
-  TerminalSquare,
   Users,
 } from "lucide-react";
-import { useMemo } from "react";
+import { type ComponentType, useCallback, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useAuth, useHealth, useSettings } from "@/shared/api/hooks";
+import { useAuth, useHealth, useResourceTypes, useSettings } from "@/shared/api/hooks";
 import { ErrorBoundary } from "@/shared/ui";
 
-const logoUrl = `${import.meta.env.BASE_URL}branding/mark.svg`;
+const BRANDING = `${import.meta.env.BASE_URL}branding`;
 
 const statusThemeByHealth: Record<"ok" | "degraded" | "down", SidebarStatus["theme"]> = {
   ok: "success",
@@ -42,220 +55,222 @@ const statusThemeByHealth: Record<"ok" | "degraded" | "down", SidebarStatus["the
   down: "danger",
 };
 
-/** Top-level navigation and layout for the console, built on the ui-kit Sidebar. */
+interface NavEntry {
+  id: string;
+  label: string;
+  icon: ComponentType<{ size?: number }>;
+  path: string;
+  /** Extra path prefixes that also mark this entry active. */
+  aliases?: string[];
+}
+
+interface NavSection {
+  id: string;
+  label: string;
+  items: NavEntry[];
+}
+
+const NAV: NavSection[] = [
+  {
+    id: "data",
+    label: "Data",
+    items: [
+      { id: "resources", label: "Resources", icon: FolderTree, path: "/resources" },
+      { id: "requests", label: "Requests", icon: Send, path: "/console" },
+      { id: "packages", label: "Packages", icon: Boxes, path: "/packages" },
+      { id: "capabilities", label: "Capabilities", icon: FileCode2, path: "/metadata" },
+    ],
+  },
+  {
+    id: "query",
+    label: "Query",
+    items: [
+      { id: "sql", label: "SQL", icon: Terminal, path: "/db-console" },
+      { id: "graphql", label: "GraphQL", icon: Code2, path: "/graphql" },
+      { id: "fhirpath", label: "FHIRPath", icon: Activity, path: "/fhirpath" },
+      { id: "cql", label: "CQL", icon: Sigma, path: "/cql" },
+      { id: "views", label: "Views", icon: Table, path: "/viewdefinition" },
+      { id: "notebooks", label: "Notebooks", icon: NotebookPen, path: "/notebooks" },
+    ],
+  },
+  {
+    id: "access",
+    label: "Access",
+    items: [
+      { id: "users", label: "Users", icon: Users, path: "/auth/users", aliases: ["/users"] },
+      { id: "roles", label: "Roles", icon: ShieldCheck, path: "/auth/roles" },
+      { id: "policies", label: "Policies", icon: Shield, path: "/auth/policies", aliases: ["/access-policies"] },
+      { id: "clients", label: "Clients", icon: KeyRound, path: "/auth/clients", aliases: ["/clients"] },
+      { id: "sessions", label: "Sessions", icon: Monitor, path: "/auth/sessions" },
+      { id: "providers", label: "Identity providers", icon: Globe, path: "/auth/providers" },
+    ],
+  },
+  {
+    id: "system",
+    label: "System",
+    items: [
+      { id: "operations", label: "Operations", icon: SquareFunction, path: "/operations" },
+      { id: "apps", label: "Apps", icon: LayoutGrid, path: "/apps" },
+      { id: "automations", label: "Automations", icon: Cpu, path: "/automations" },
+      { id: "audit", label: "Audit", icon: Receipt, path: "/audit" },
+      { id: "logs", label: "Logs", icon: FileText, path: "/logs" },
+      { id: "database", label: "Database", icon: Database, path: "/database" },
+      { id: "settings", label: "Settings", icon: Settings, path: "/settings" },
+    ],
+  },
+];
+
+function isActive(entry: NavEntry, path: string): boolean {
+  return [entry.path, ...(entry.aliases ?? [])].some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`)
+  );
+}
+
+function findActive(path: string): { section: NavSection; entry: NavEntry } | null {
+  for (const section of NAV) {
+    const entry = section.items.find((item) => isActive(item, path));
+    if (entry) return { section, entry };
+  }
+  return null;
+}
+
+/**
+ * Location as a REST-like path: `fhir / Patient / id` for resources, otherwise
+ * `section / Page / …rest` so the header always reads as an address.
+ */
+function locationSegments(path: string, navigate: (to: string) => void): LocationSegment[] {
+  const decoded = path.split("/").filter(Boolean).map(decodeURIComponent);
+  if (decoded[0] === "resources") {
+    const [, type, id] = decoded;
+    return [
+      { id: "fhir", label: "fhir", onClick: () => navigate("/resources") },
+      ...(type ? [{ id: "type", label: type, onClick: () => navigate(`/resources/${type}`) }] : []),
+      ...(id ? [{ id: "id", label: id }] : []),
+    ];
+  }
+  const active = findActive(path);
+  if (!active) return [{ id: "home", label: "home" }];
+  const rest = path.slice(active.entry.path.length).split("/").filter(Boolean).map(decodeURIComponent);
+  return [
+    { id: "section", label: active.section.label.toLowerCase() },
+    {
+      id: "page",
+      label: active.entry.label,
+      onClick: rest.length ? () => navigate(active.entry.path) : undefined,
+    },
+    ...rest.map((part, index) => ({ id: `rest-${index}`, label: part })),
+  ];
+}
+
+/** Top-level navigation and layout for the console: ink rail, path header, ⌘K palette. */
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { logout, user } = useAuth();
   const { colorScheme, toggleColorScheme } = useColorScheme();
   const { data: health } = useHealth();
+  const { data: resourceTypes } = useResourceTypes();
   useSettings();
 
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [tone, setTone] = usePersistentState<SidebarTone>({
+    key: "octofhir.sidebarTone",
+    defaultValue: "ink",
+    validate: (v): v is SidebarTone => v === "ink" || v === "surface",
+  });
+
   const path = location.pathname;
+
   const groups = useMemo<SidebarNavGroup[]>(
-    () => [
-      {
-        id: "main",
-        label: "Main",
-        items: [
-          {
-            id: "dashboard",
-            label: "Dashboard",
-            icon: House,
-            active: path === "/" || path === "/ui/",
-            onClick: () => navigate("/"),
-          },
-          {
-            id: "resources",
-            label: "Resources",
-            icon: FolderTree,
-            active: path.startsWith("/resources"),
-            onClick: () => navigate("/resources"),
-          },
-          {
-            id: "console",
-            label: "REST Console",
-            icon: Terminal,
-            active: path.startsWith("/console"),
-            onClick: () => navigate("/console"),
-          },
-          {
-            id: "packages",
-            label: "Packages",
-            icon: Boxes,
-            active: path.startsWith("/packages"),
-            onClick: () => navigate("/packages"),
-          },
-        ],
-      },
-      {
-        id: "admin",
-        label: "Administration",
-        items: [
-          {
-            id: "operations",
-            label: "Operations",
-            icon: SquareFunction,
-            active: path.startsWith("/operations"),
-            onClick: () => navigate("/operations"),
-          },
-          {
-            id: "apps",
-            label: "Apps",
-            icon: LayoutDashboard,
-            active: path.startsWith("/apps"),
-            onClick: () => navigate("/apps"),
-          },
-          {
-            id: "automations",
-            label: "Automations",
-            icon: Cpu,
-            active: path.startsWith("/automations"),
-            onClick: () => navigate("/automations"),
-          },
-          {
-            id: "audit",
-            label: "Audit Trail",
-            icon: Receipt,
-            active: path.startsWith("/audit"),
-            onClick: () => navigate("/audit"),
-          },
-        ],
-      },
-      {
-        id: "auth",
-        label: "Auth & Security",
-        items: [
-          {
-            id: "providers",
-            label: "Identity Providers",
-            icon: Globe,
-            active: path.startsWith("/auth/providers"),
-            onClick: () => navigate("/auth/providers"),
-          },
-          {
-            id: "clients",
-            label: "Clients",
-            icon: KeyRound,
-            active: path.startsWith("/auth/clients") || path.startsWith("/clients"),
-            onClick: () => navigate("/auth/clients"),
-          },
-          {
-            id: "users",
-            label: "Users",
-            icon: Users,
-            active: path.startsWith("/auth/users") || path.startsWith("/users"),
-            onClick: () => navigate("/auth/users"),
-          },
-          {
-            id: "roles",
-            label: "Roles",
-            icon: ShieldCheck,
-            active: path.startsWith("/auth/roles"),
-            onClick: () => navigate("/auth/roles"),
-          },
-          {
-            id: "policies",
-            label: "Access Policies",
-            icon: Shield,
-            active: path.startsWith("/auth/policies") || path.startsWith("/access-policies"),
-            onClick: () => navigate("/auth/policies"),
-          },
-          {
-            id: "sessions",
-            label: "Sessions",
-            icon: Monitor,
-            active: path.startsWith("/auth/sessions"),
-            onClick: () => navigate("/auth/sessions"),
-          },
-        ],
-      },
-      {
-        id: "tools",
-        label: "Tools",
-        items: [
-          {
-            id: "database",
-            label: "Database",
-            icon: Database,
-            active: path.startsWith("/database"),
-            onClick: () => navigate("/database"),
-          },
-          {
-            id: "db-console",
-            label: "SQL Console",
-            icon: TerminalSquare,
-            active: path.startsWith("/db-console"),
-            onClick: () => navigate("/db-console"),
-          },
-          {
-            id: "graphql",
-            label: "GraphQL",
-            icon: Code2,
-            active: path.startsWith("/graphql"),
-            onClick: () => navigate("/graphql"),
-          },
-          {
-            id: "fhirpath",
-            label: "FHIRPath",
-            icon: Terminal,
-            active: path.startsWith("/fhirpath"),
-            onClick: () => navigate("/fhirpath"),
-          },
-          {
-            id: "cql",
-            label: "CQL",
-            icon: Sigma,
-            active: path.startsWith("/cql"),
-            onClick: () => navigate("/cql"),
-          },
-          {
-            id: "viewdefinition",
-            label: "ViewDefinition",
-            icon: Table,
-            active: path.startsWith("/viewdefinition"),
-            onClick: () => navigate("/viewdefinition"),
-          },
-          {
-            id: "notebooks",
-            label: "Notebooks",
-            icon: NotebookPen,
-            active: path.startsWith("/notebooks"),
-            onClick: () => navigate("/notebooks"),
-          },
-          {
-            id: "logs",
-            label: "System Logs",
-            icon: FileText,
-            active: path.startsWith("/logs"),
-            onClick: () => navigate("/logs"),
-          },
-          {
-            id: "settings",
-            label: "Settings",
-            icon: Settings,
-            active: path.startsWith("/settings"),
-            onClick: () => navigate("/settings"),
-          },
-        ],
-      },
-    ],
+    () =>
+      NAV.map((section) => ({
+        id: section.id,
+        label: section.label,
+        items: section.items.map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          icon: entry.icon,
+          active: isActive(entry, path),
+          onClick: () => navigate(entry.path),
+        })),
+      })),
     [path, navigate]
   );
 
+  const paletteItems = useMemo<CommandPaletteItem[]>(() => {
+    const pages = NAV.flatMap((section) =>
+      section.items.map((entry) => ({
+        id: `go-${entry.id}`,
+        label: entry.label,
+        group: section.label,
+        icon: entry.icon,
+        hint: entry.path,
+        keywords: [section.label],
+        onSelect: () => navigate(entry.path),
+      }))
+    );
+    const types = (resourceTypes ?? []).map((type) => ({
+      id: `type-${type}`,
+      label: type,
+      group: "Resource types",
+      icon: FolderTree,
+      hint: `fhir/${type}`,
+      keywords: ["resource", "fhir"],
+      onSelect: () => navigate(`/resources/${type}`),
+    }));
+    const actions: CommandPaletteItem[] = [
+      {
+        id: "toggle-theme",
+        label: colorScheme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+        group: "Actions",
+        icon: colorScheme === "dark" ? Sun : Moon,
+        keywords: ["theme", "dark", "light"],
+        onSelect: toggleColorScheme,
+      },
+      {
+        id: "toggle-sidebar-tone",
+        label: tone === "ink" ? "Use light sidebar" : "Use ink sidebar",
+        group: "Actions",
+        icon: PanelLeft,
+        keywords: ["sidebar", "rail", "tone"],
+        onSelect: () => setTone(tone === "ink" ? "surface" : "ink"),
+      },
+      { id: "sign-out", label: "Sign out", group: "Actions", icon: LogOut, onSelect: logout },
+    ];
+    return [...pages, ...actions, ...types];
+  }, [navigate, resourceTypes, colorScheme, toggleColorScheme, tone, setTone, logout]);
+
+  const openPalette = useCallback(
+    (e: KeyboardEvent) => {
+      // The REST console binds ⌘K to its own request palette.
+      if (location.pathname.startsWith("/console")) return;
+      e.preventDefault();
+      setPaletteOpen(true);
+    },
+    [location.pathname]
+  );
+  const hotkeys = useMemo(() => [["mod+k", openPalette]] as const, [openPalette]);
+  useHotkeys(hotkeys);
+
   const sidebar = (
     <Sidebar
-      brand={{ title: "OctoFHIR", iconSrc: logoUrl, onClick: () => navigate("/") }}
+      tone={tone}
+      brand={{
+        title: "OctoFHIR",
+        iconSrc: `${BRANDING}/mark-small.svg`,
+        logoSrc: `${BRANDING}/${tone === "ink" || colorScheme === "dark" ? "logo-dark" : "logo-light"}.svg`,
+        onClick: () => navigate("/"),
+      }}
+      search={{ onOpen: () => setPaletteOpen(true), label: "Jump to…", shortcut: "⌘K" }}
       groups={groups}
       status={{
-        label: health?.status?.toUpperCase() ?? "UNKNOWN",
+        label: `${health?.status ?? "unknown"}`,
         theme: statusThemeByHealth[health?.status ?? "down"],
       }}
       account={
         user
           ? {
               name: user.name || user.preferred_username || user.sub,
-              secondary: "Signed in",
               onSignOut: logout,
             }
           : null
@@ -266,11 +281,28 @@ export function AppShell() {
     />
   );
 
+  const header = (
+    <LocationBar
+      segments={locationSegments(path, navigate)}
+      actions={
+        <ActionIcon
+          variant="subtle"
+          size="sm"
+          aria-label={colorScheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          onClick={toggleColorScheme}
+        >
+          {colorScheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </ActionIcon>
+      }
+    />
+  );
+
   return (
-    <Shell sidebar={sidebar}>
+    <Shell sidebar={sidebar} header={header}>
       <ErrorBoundary>
         <Outlet />
       </ErrorBoundary>
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={paletteItems} />
     </Shell>
   );
 }
