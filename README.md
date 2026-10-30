@@ -4,7 +4,7 @@
 
 Core FHIR server of the OctoFHIR ecosystem, built in Rust.
 
-![Abyxon logo](logo.png)
+![OctoFHIR](logo.png)
 
 ## Quick Start
 
