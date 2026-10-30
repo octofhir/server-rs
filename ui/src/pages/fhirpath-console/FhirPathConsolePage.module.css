@@ -1,11 +1,11 @@
-/* Flat modern 2026 FHIRPath console — mint-branded (FHIR core section). */
 
 :root {
+  /* One accent across every tool (Marigold); names kept so rules stay untouched. */
   --octo-fhirpath-accent: var(--octo-accent-primary);
   --octo-fhirpath-accent-strong: var(--octo-accent-primary);
-  --octo-fhirpath-accent-deep: var(--octo-accent-primary);
-  --octo-fhirpath-accent-soft: color-mix(in oklab, var(--octo-accent-primary) 12%, transparent);
-  --octo-fhirpath-accent-line: color-mix(in oklab, var(--octo-accent-primary) 28%, transparent);
+  --octo-fhirpath-accent-deep: var(--octo-accent-primary-text);
+  --octo-fhirpath-accent-soft: var(--octo-accent-primary-bg);
+  --octo-fhirpath-accent-line: color-mix(in oklab, var(--octo-accent-primary) 35%, var(--octo-border-subtle));
 }
 
 /* ── Root layout ── */
@@ -36,7 +36,7 @@
   border-radius: 8px;
   border: 1px solid var(--octo-fhirpath-accent-strong);
   background: var(--octo-fhirpath-accent-strong);
-  color: #fff;
+  color: var(--octo-accent-on-primary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -139,7 +139,7 @@
 }
 
 .panelTitleIcon {
-  color: var(--octo-fhirpath-accent-strong);
+  color: var(--octo-fhirpath-accent-deep);
   display: inline-flex;
 }
 
@@ -630,7 +630,7 @@
   height: 48px;
   border-radius: 14px;
   background: var(--octo-fhirpath-accent-soft);
-  color: var(--octo-fhirpath-accent-strong);
+  color: var(--octo-fhirpath-accent-deep);
 }
 
 .emptyTitle {

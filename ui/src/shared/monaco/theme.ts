@@ -21,109 +21,111 @@ import { monaco } from "./config";
 export const OCTOFHIR_THEME_DARK = "octofhir-dark";
 export const OCTOFHIR_THEME_LIGHT = "octofhir-light";
 
-// Brand accent (teal/emerald, hue 168) reused for cursor + active matches.
-const ACCENT_DARK = "34d399";
-const ACCENT_LIGHT = "059669";
+// Marigold accent: cursor, function names and selection. Everything else stays restrained
+// (blue keywords, green strings, cyan numbers, muted operators) so code never looks like a rainbow.
+const ACCENT_DARK = "f5bd3b";
+const ACCENT_TEXT_DARK = "f7c95a";
+const ACCENT_TEXT_LIGHT = "855700";
 
 const DARK_RULES: monaco.editor.ITokenThemeRule[] = [
-  // Resource / complex types (Patient, Bundle, HumanName) — violet, bold
-  { token: "type", foreground: "c4b5fd", fontStyle: "bold" },
-  // Function calls (where, ofType, exists) — emerald (brand)
-  { token: "predefined", foreground: ACCENT_DARK },
-  // Properties (name, given, value) — blue
-  { token: "identifier", foreground: "93c5fd" },
-  // Operators/keywords (and, or, is, as) — pink
-  { token: "keyword", foreground: "f9a8d4" },
-  { token: "keyword.special", foreground: "7dd3fc", fontStyle: "italic" },
-  { token: "constant", foreground: "7dd3fc" },
-  { token: "number", foreground: "67e8f9" },
-  { token: "string", foreground: "fcd34d" },
-  { token: "operator", foreground: "94a3b8" },
-  { token: "comment", foreground: "5a6b78", fontStyle: "italic" },
+  { token: "type", foreground: "ededef", fontStyle: "bold" },
+  { token: "predefined", foreground: ACCENT_TEXT_DARK },
+  { token: "identifier", foreground: "c9cad0" },
+  { token: "keyword", foreground: "8fb3ff" },
+  { token: "keyword.special", foreground: "8fb3ff", fontStyle: "italic" },
+  { token: "constant", foreground: "8fb3ff" },
+  { token: "number", foreground: "6fd3e0" },
+  { token: "string", foreground: "86d39d" },
+  { token: "operator", foreground: "8b8b94" },
+  { token: "comment", foreground: "6b6b74", fontStyle: "italic" },
+  // The vs-dark base ships SQL-specific rules (red strings, magenta builtins) that would win
+  // over the generic ones above.
+  { token: "string.sql", foreground: "86d39d" },
+  { token: "predefined.sql", foreground: ACCENT_TEXT_DARK },
+  { token: "operator.sql", foreground: "8b8b94" },
 ];
 
 const LIGHT_RULES: monaco.editor.ITokenThemeRule[] = [
-  // Resource / complex types — violet, bold
-  { token: "type", foreground: "7c3aed", fontStyle: "bold" },
-  // Function calls — emerald (brand)
-  { token: "predefined", foreground: ACCENT_LIGHT },
-  // Properties — blue
-  { token: "identifier", foreground: "2563eb" },
-  // Operators/keywords — magenta
-  { token: "keyword", foreground: "be185d" },
-  { token: "keyword.special", foreground: "0369a1", fontStyle: "italic" },
-  { token: "constant", foreground: "0369a1" },
-  { token: "number", foreground: "0891b2" },
-  { token: "string", foreground: "b45309" },
-  { token: "operator", foreground: "64748b" },
-  { token: "comment", foreground: "8b94a3", fontStyle: "italic" },
+  { token: "type", foreground: "18181b", fontStyle: "bold" },
+  { token: "predefined", foreground: ACCENT_TEXT_LIGHT },
+  { token: "identifier", foreground: "3f3f46" },
+  { token: "keyword", foreground: "1d4ed8" },
+  { token: "keyword.special", foreground: "1d4ed8", fontStyle: "italic" },
+  { token: "constant", foreground: "1d4ed8" },
+  { token: "number", foreground: "0e7490" },
+  { token: "string", foreground: "15803d" },
+  { token: "operator", foreground: "6b6b74" },
+  { token: "comment", foreground: "8b8b94", fontStyle: "italic" },
+  { token: "string.sql", foreground: "15803d" },
+  { token: "predefined.sql", foreground: ACCENT_TEXT_LIGHT },
+  { token: "operator.sql", foreground: "6b6b74" },
 ];
 
-// Chrome colours — mirror tokens.ts scheme.dark (surfaces are already hex there).
+// Chrome colours — mirror tokens.ts scheme.dark.
 const DARK_COLORS: monaco.editor.IColors = {
-  "editor.background": "#06121a", // --octo-surface-1
-  "editor.foreground": "#f8f9fe", // --octo-text-primary
-  "editorGutter.background": "#06121a",
-  "editorLineNumber.foreground": "#5a6b78", // --octo-text-muted
-  "editorLineNumber.activeForeground": "#f8f9fe",
-  "editor.lineHighlightBackground": "#0a1721", // --octo-surface-2
+  "editor.background": "#111214", // --octo-surface-1
+  "editor.foreground": "#ededef", // --octo-text-primary
+  "editorGutter.background": "#111214",
+  "editorLineNumber.foreground": "#6b6b74",
+  "editorLineNumber.activeForeground": "#ededef",
+  "editor.lineHighlightBackground": "#18191c", // --octo-surface-2
   "editor.lineHighlightBorder": "#00000000",
   "editorCursor.foreground": `#${ACCENT_DARK}`,
-  "editor.selectionBackground": "#114036", // --octo-accent-primary-bg-hover
-  "editor.inactiveSelectionBackground": "#0d2a24", // --octo-accent-primary-subtle
-  "editor.selectionHighlightBackground": "#0d2a24",
-  "editorWidget.background": "#0a1721",
-  "editorWidget.border": "#1d3344", // --octo-border-subtle
-  "editorSuggestWidget.background": "#0a1721",
-  "editorSuggestWidget.border": "#1d3344",
-  "editorSuggestWidget.foreground": "#f8f9fe",
-  "editorSuggestWidget.selectedBackground": "#114036",
-  "editorHoverWidget.background": "#0a1721",
-  "editorHoverWidget.border": "#1d3344",
-  "input.background": "#06121a",
-  "input.border": "#1d3344",
-  "dropdown.background": "#0a1721",
-  "dropdown.border": "#1d3344",
-  "editorIndentGuide.background": "#1d3344",
-  "editorIndentGuide.activeBackground": "#2b5068", // --octo-border-strong
-  "scrollbarSlider.background": "#1d334488",
-  "scrollbarSlider.hoverBackground": "#2b5068aa",
-  "scrollbarSlider.activeBackground": "#2b5068cc",
+  "editor.selectionBackground": "#3a2d10", // --octo-accent-primary-bg-hover
+  "editor.inactiveSelectionBackground": "#2b220d", // --octo-accent-primary-bg
+  "editor.selectionHighlightBackground": "#2b220d",
+  "editorWidget.background": "#18191c",
+  "editorWidget.border": "#26272b", // --octo-border-subtle
+  "editorSuggestWidget.background": "#18191c",
+  "editorSuggestWidget.border": "#26272b",
+  "editorSuggestWidget.foreground": "#ededef",
+  "editorSuggestWidget.selectedBackground": "#2b220d",
+  "editorHoverWidget.background": "#18191c",
+  "editorHoverWidget.border": "#26272b",
+  "input.background": "#111214",
+  "input.border": "#26272b",
+  "dropdown.background": "#18191c",
+  "dropdown.border": "#26272b",
+  "editorIndentGuide.background": "#26272b",
+  "editorIndentGuide.activeBackground": "#34353a", // --octo-border-strong
+  "scrollbarSlider.background": "#34353a88",
+  "scrollbarSlider.hoverBackground": "#4a4b52aa",
+  "scrollbarSlider.activeBackground": "#5a5b63cc",
   // Kill Monaco's default drop shadows (widgets + scroll edge) for a flat look.
   "widget.shadow": "#00000000",
   "scrollbar.shadow": "#00000000",
 };
 
-// Chrome colours — mirror tokens.ts scheme.light (oklch surfaces resolved to hex).
+// Chrome colours — mirror tokens.ts scheme.light.
 const LIGHT_COLORS: monaco.editor.IColors = {
-  "editor.background": "#fcfcfd", // --octo-surface-1
-  "editor.foreground": "#1b1e26", // --octo-text-primary
-  "editorGutter.background": "#fcfcfd",
-  "editorLineNumber.foreground": "#9aa1ad", // --octo-text-muted
-  "editorLineNumber.activeForeground": "#1b1e26",
-  "editor.lineHighlightBackground": "#f5f6f9", // --octo-surface-2
+  "editor.background": "#ffffff", // --octo-surface-1
+  "editor.foreground": "#18181b", // --octo-text-primary
+  "editorGutter.background": "#ffffff",
+  "editorLineNumber.foreground": "#a1a1aa",
+  "editorLineNumber.activeForeground": "#18181b",
+  "editor.lineHighlightBackground": "#f4f4f5", // --octo-surface-2
   "editor.lineHighlightBorder": "#00000000",
-  "editorCursor.foreground": `#${ACCENT_LIGHT}`,
-  "editor.selectionBackground": "#cdeede", // --octo-accent-primary-subtle (light)
-  "editor.inactiveSelectionBackground": "#e6f6ef",
-  "editor.selectionHighlightBackground": "#e6f6ef",
-  "editorWidget.background": "#f5f6f9",
-  "editorWidget.border": "#e6e8ec", // --octo-border-subtle
+  "editorCursor.foreground": "#b98309", // --octo-focus-ring
+  "editor.selectionBackground": "#fbe9b8", // --octo-accent-primary-bg-hover
+  "editor.inactiveSelectionBackground": "#fdf3d7", // --octo-accent-primary-bg
+  "editor.selectionHighlightBackground": "#fdf3d7",
+  "editorWidget.background": "#ffffff",
+  "editorWidget.border": "#e4e4e7", // --octo-border-subtle
   "editorSuggestWidget.background": "#ffffff",
-  "editorSuggestWidget.border": "#e6e8ec",
-  "editorSuggestWidget.foreground": "#1b1e26",
-  "editorSuggestWidget.selectedBackground": "#cdeede",
+  "editorSuggestWidget.border": "#e4e4e7",
+  "editorSuggestWidget.foreground": "#18181b",
+  "editorSuggestWidget.selectedBackground": "#fdf3d7",
   "editorHoverWidget.background": "#ffffff",
-  "editorHoverWidget.border": "#e6e8ec",
+  "editorHoverWidget.border": "#e4e4e7",
   "input.background": "#ffffff",
-  "input.border": "#e6e8ec",
+  "input.border": "#e4e4e7",
   "dropdown.background": "#ffffff",
-  "dropdown.border": "#e6e8ec",
-  "editorIndentGuide.background": "#e6e8ec",
-  "editorIndentGuide.activeBackground": "#d4d8df", // --octo-border-strong
-  "scrollbarSlider.background": "#c4cad388",
-  "scrollbarSlider.hoverBackground": "#aab1bcaa",
-  "scrollbarSlider.activeBackground": "#9aa1adcc",
+  "dropdown.border": "#e4e4e7",
+  "editorIndentGuide.background": "#e4e4e7",
+  "editorIndentGuide.activeBackground": "#d4d4d8", // --octo-border-strong
+  "scrollbarSlider.background": "#d4d4d888",
+  "scrollbarSlider.hoverBackground": "#a1a1aaaa",
+  "scrollbarSlider.activeBackground": "#8b8b94cc",
   // Kill Monaco's default drop shadows (widgets + scroll edge) for a flat look.
   "widget.shadow": "#00000000",
   "scrollbar.shadow": "#00000000",

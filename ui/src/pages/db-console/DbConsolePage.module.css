@@ -1,11 +1,11 @@
-/* SQL Console — flat modern 2026, iris/blue-branded workbench (data section). */
 
 :root {
-  --octo-data-accent: var(--octo-accent-info);
-  --octo-data-accent-strong: var(--octo-accent-info);
-  --octo-data-accent-deep: color-mix(in oklab, var(--octo-accent-info) 82%, black);
-  --octo-data-accent-soft: color-mix(in oklab, var(--octo-accent-info) 12%, transparent);
-  --octo-data-accent-line: color-mix(in oklab, var(--octo-accent-info) 28%, transparent);
+  /* One accent across every tool (Marigold); names kept so rules stay untouched. */
+  --octo-data-accent: var(--octo-accent-primary);
+  --octo-data-accent-strong: var(--octo-accent-primary);
+  --octo-data-accent-deep: var(--octo-accent-primary-text);
+  --octo-data-accent-soft: var(--octo-accent-primary-bg);
+  --octo-data-accent-line: color-mix(in oklab, var(--octo-accent-primary) 35%, var(--octo-border-subtle));
 }
 
 /* ─── Shell ─── */
@@ -27,8 +27,7 @@
   height: 44px;
   padding: 0 var(--octo-spacing-md);
   border-bottom: 1px solid var(--octo-border-subtle);
-  background:
-    linear-gradient(180deg, var(--octo-data-accent-soft) 0%, transparent 140%), var(--octo-surface-1);
+  background: var(--octo-surface-1);
   flex-shrink: 0;
 }
 
@@ -77,7 +76,7 @@
   padding: 0 4px;
   border-radius: 8px;
   background: var(--octo-data-accent-strong);
-  color: #fff;
+  color: var(--octo-accent-on-primary);
   font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -107,9 +106,7 @@
 .workspace {
   min-height: 0;
   padding: var(--octo-spacing-sm);
-  background:
-    radial-gradient(120% 90% at 100% 0%, var(--octo-data-accent-soft) 0%, transparent 45%),
-    var(--octo-surface-1);
+  background: var(--octo-surface-1);
 }
 
 .editorPane,
@@ -280,7 +277,6 @@
   width: 100%;
   padding: 5px 12px;
   border: none;
-  border-left: 2px solid transparent;
   background: transparent;
   color: var(--octo-text-primary);
   font-size: 12px;
@@ -292,7 +288,6 @@
 
 .diagRow:hover {
   background: var(--octo-surface-2);
-  border-left-color: var(--octo-data-accent);
 }
 
 .diagIcon {
@@ -352,7 +347,7 @@
   font-family: var(--font-mono, "JetBrains Mono", "Fira Code", monospace);
   font-weight: 700;
   font-size: 13px;
-  color: var(--octo-data-accent-strong);
+  color: var(--octo-data-accent-deep);
   user-select: none;
 }
 
@@ -495,8 +490,7 @@
   font-weight: 600;
   letter-spacing: 0.3px;
   text-transform: uppercase;
-  color: var(--octo-data-accent-strong);
-  opacity: 0.8;
+  color: var(--octo-text-muted);
 }
 
 .cellNull {
@@ -507,7 +501,7 @@
 
 .cellNumber {
   font-variant-numeric: tabular-nums;
-  color: var(--octo-accent-primary-text, #1d4ed8);
+  font-family: var(--octo-typography-mono);
 }
 
 .cellBoolTrue,
@@ -601,7 +595,6 @@
   padding: 10px 12px;
   border: none;
   border-bottom: 1px solid var(--octo-border-subtle);
-  border-left: 3px solid transparent;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -614,7 +607,6 @@
 }
 
 .historyRowActive {
-  border-left-color: var(--octo-data-accent);
   background: var(--octo-data-accent-soft);
 }
 

@@ -1,11 +1,11 @@
-/* Flat modern 2026 CQL console — violet-branded (secondary accent, distinct from FHIRPath mint). */
 
 :root {
-  --octo-cql-accent: var(--octo-accent-secondary);
-  --octo-cql-accent-strong: var(--octo-accent-secondary);
-  --octo-cql-accent-deep: var(--octo-accent-secondary);
-  --octo-cql-accent-soft: color-mix(in oklab, var(--octo-accent-secondary) 12%, transparent);
-  --octo-cql-accent-line: color-mix(in oklab, var(--octo-accent-secondary) 28%, transparent);
+  /* One accent across every tool (Marigold); names kept so rules stay untouched. */
+  --octo-cql-accent: var(--octo-accent-primary);
+  --octo-cql-accent-strong: var(--octo-accent-primary);
+  --octo-cql-accent-deep: var(--octo-accent-primary-text);
+  --octo-cql-accent-soft: var(--octo-accent-primary-bg);
+  --octo-cql-accent-line: color-mix(in oklab, var(--octo-accent-primary) 35%, var(--octo-border-subtle));
 }
 
 /* ── Root layout ── */
@@ -36,7 +36,7 @@
   border-radius: 8px;
   border: 1px solid var(--octo-cql-accent-strong);
   background: var(--octo-cql-accent-strong);
-  color: #fff;
+  color: var(--octo-accent-on-primary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -139,7 +139,7 @@
 }
 
 .panelTitleIcon {
-  color: var(--octo-cql-accent-strong);
+  color: var(--octo-cql-accent-deep);
   display: inline-flex;
 }
 
@@ -253,7 +253,7 @@
   padding: 0 8px;
   border-radius: 999px;
   background: var(--octo-cql-accent-strong);
-  color: #fff;
+  color: var(--octo-accent-on-primary);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -676,7 +676,7 @@
   height: 48px;
   border-radius: 14px;
   background: var(--octo-cql-accent-soft);
-  color: var(--octo-cql-accent-strong);
+  color: var(--octo-cql-accent-deep);
 }
 
 .emptyTitle {

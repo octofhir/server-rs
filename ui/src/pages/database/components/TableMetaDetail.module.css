@@ -1,11 +1,12 @@
 /* Flat modern 2026 detail view — iris/blue-branded (data section). */
 
 :root {
-  --octo-data-accent: var(--octo-accent-info);
-  --octo-data-accent-strong: var(--octo-accent-info);
-  --octo-data-accent-deep: var(--octo-accent-info);
-  --octo-data-accent-soft: color-mix(in oklab, var(--octo-accent-info) 14%, transparent);
-  --octo-data-accent-line: color-mix(in oklab, var(--octo-accent-info) 30%, transparent);
+  /* One accent across every tool (Marigold); names kept so rules stay untouched. */
+  --octo-data-accent: var(--octo-accent-primary);
+  --octo-data-accent-strong: var(--octo-accent-primary);
+  --octo-data-accent-deep: var(--octo-accent-primary-text);
+  --octo-data-accent-soft: var(--octo-accent-primary-bg);
+  --octo-data-accent-line: color-mix(in oklab, var(--octo-accent-primary) 35%, var(--octo-border-subtle));
 }
 
 .root {
@@ -42,7 +43,7 @@
   height: 30px;
   border-radius: 9px;
   background: var(--octo-data-accent-soft);
-  color: var(--octo-data-accent-strong);
+  color: var(--octo-data-accent-deep);
   flex: none;
 }
 
@@ -289,7 +290,7 @@
 
 .indexIcon {
   display: inline-flex;
-  color: var(--octo-data-accent-strong);
+  color: var(--octo-data-accent-deep);
   flex: none;
 }
 

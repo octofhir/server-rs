@@ -255,7 +255,7 @@ export function DbConsolePage() {
         <div className={classes.toolbarTitle}>
           <span className={classes.toolbarMark} />
           <Text size="sm" fw={700}>
-            SQL Console
+            SQL
           </Text>
           <Badge size="xs" variant="light" color="primary">
             readonly
