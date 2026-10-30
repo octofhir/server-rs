@@ -12,9 +12,9 @@
   justify-content: space-between;
   gap: var(--octo-spacing-sm);
   padding: 6px 10px;
-  border-bottom: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.08));
-  background: var(--app-glass-bg, var(--app-surface-1, #fff));
-  backdrop-filter: blur(var(--app-glass-blur, 8px));
+  border-bottom: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-1);
+  backdrop-filter: blur(0px);
 }
 
 .tabs {
@@ -37,7 +37,7 @@
   cursor: pointer;
 }
 .tab:hover {
-  background: var(--app-surface-2, rgba(0, 0, 0, 0.04));
+  background: var(--octo-surface-2);
 }
 .tabActive {
   background: color-mix(in oklch, var(--octo-accent-primary, #10b981) 14%, transparent);

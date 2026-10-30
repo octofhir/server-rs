@@ -1,7 +1,7 @@
 .node {
-  border: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.08));
+  border: 1px solid var(--octo-border-subtle);
   border-radius: 12px;
-  background: var(--app-surface-1, #fff);
+  background: var(--octo-surface-1);
   min-width: 0;
 }
 
@@ -14,7 +14,7 @@
 .node[data-variant="select"],
 .node[data-variant="union"] {
   margin-top: var(--octo-spacing-sm);
-  background: var(--app-surface-2, rgba(0, 0, 0, 0.015));
+  background: var(--octo-surface-2);
 }
 
 /* Soft accent wash for nested groups (replaces the left rail) */
@@ -25,7 +25,7 @@
       color-mix(in oklch, var(--octo-accent-primary, #10b981) 16%, transparent) 0%,
       transparent 58%
     ),
-    var(--app-surface-2, rgba(0, 0, 0, 0.015));
+    var(--octo-surface-2);
 }
 .node[data-variant="union"] {
   background:
@@ -34,7 +34,7 @@
       color-mix(in oklch, var(--octo-accent-secondary, var(--octo-brand-accent, #7c5cff)) 16%, transparent) 0%,
       transparent 58%
     ),
-    var(--app-surface-2, rgba(0, 0, 0, 0.015));
+    var(--octo-surface-2);
 }
 
 .nodeHeader {
@@ -42,7 +42,7 @@
   align-items: center;
   gap: var(--octo-spacing-xs);
   padding: 8px 10px;
-  border-bottom: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.06));
+  border-bottom: 1px solid var(--octo-border-subtle);
   flex-wrap: wrap;
 }
 
@@ -110,7 +110,7 @@
   gap: 4px;
   margin-top: 4px;
   padding-top: 6px;
-  border-top: 1px dashed var(--app-border-subtle, rgba(0, 0, 0, 0.08));
+  border-top: 1px dashed var(--octo-border-subtle);
 }
 
 .emptyHint {

@@ -4,8 +4,8 @@
   width: 240px;
   flex: 0 0 240px;
   min-height: 0;
-  border-right: 1px solid var(--app-border-subtle, var(--octo-border-subtle, rgba(0, 0, 0, 0.08)));
-  background: var(--app-surface-1, var(--octo-surface-1, #fff));
+  border-right: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-1);
 }
 
 /* Collapsed rail */
@@ -17,8 +17,8 @@
   width: 44px;
   flex: 0 0 44px;
   padding-top: 10px;
-  border-right: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.08));
-  background: var(--app-surface-1, #fff);
+  border-right: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-1);
 }
 .railBtn {
   display: inline-flex;
@@ -33,7 +33,7 @@
   cursor: pointer;
 }
 .railBtn:hover {
-  background: var(--app-surface-2, rgba(0, 0, 0, 0.05));
+  background: var(--octo-surface-2);
 }
 .railCount {
   font-size: 11px;
@@ -67,7 +67,7 @@
   cursor: pointer;
 }
 .collapseBtn:hover {
-  background: var(--app-surface-2, rgba(0, 0, 0, 0.05));
+  background: var(--octo-surface-2);
 }
 
 .searchRow {
@@ -99,7 +99,7 @@
   transition: background 90ms ease;
 }
 .item:hover {
-  background: var(--app-surface-2, rgba(0, 0, 0, 0.04));
+  background: var(--octo-surface-2);
 }
 .item[data-selected="true"] {
   background: color-mix(in oklch, var(--octo-accent-primary, #10b981) 14%, transparent);
@@ -140,6 +140,6 @@
     flex-basis: auto;
     max-height: 200px;
     border-right: 0;
-    border-bottom: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.08));
+    border-bottom: 1px solid var(--octo-border-subtle);
   }
 }

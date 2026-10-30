@@ -1,8 +1,8 @@
 .loadingState {
 	display: flex;
 	flex-direction: column;
-	gap: var(--g-spacing-4);
-	padding: var(--g-spacing-4) 0;
+	gap: var(--octo-spacing-lg);
+	padding: var(--octo-spacing-lg) 0;
 }
 
 .skeletonSummary {
@@ -19,20 +19,20 @@
 	display: flex;
 	align-items: flex-start;
 	justify-content: space-between;
-	gap: var(--g-spacing-4);
+	gap: var(--octo-spacing-lg);
 }
 
 .summaryMain {
 	display: flex;
 	min-width: 0;
-	gap: var(--g-spacing-4);
+	gap: var(--octo-spacing-lg);
 }
 
 .summaryText {
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
-	gap: var(--g-spacing-1);
+	gap: 4px;
 }
 
 .summaryDescription {
@@ -47,7 +47,7 @@
 	display: flex;
 	flex-wrap: wrap;
 	justify-content: flex-end;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 }
 
 .labelInline,
@@ -57,11 +57,11 @@
 .channelBadges {
 	display: flex;
 	align-items: center;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 }
 
 .sectionTitle {
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 }
 
 .policyBadges,

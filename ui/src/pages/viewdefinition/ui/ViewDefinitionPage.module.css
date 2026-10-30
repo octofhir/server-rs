@@ -7,7 +7,7 @@
 }
 
 .configSnippet {
-  margin: var(--g-spacing-2) 0 0;
+  margin: var(--octo-spacing-sm) 0 0;
   white-space: pre-wrap;
   font-family: var(--octo-typography-mono);
   font-size: 12px;
@@ -16,12 +16,12 @@
 .actions {
   display: flex;
   align-items: center;
-  gap: var(--g-spacing-2);
+  gap: var(--octo-spacing-sm);
   flex-wrap: wrap;
 }
 
 .disabledBanner {
-  padding-bottom: var(--g-spacing-4);
+  padding-bottom: var(--octo-spacing-lg);
 }
 
 .content {

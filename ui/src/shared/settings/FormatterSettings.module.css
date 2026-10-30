@@ -2,7 +2,7 @@
 .compactRoot,
 .advancedPanel {
 	display: grid;
-	gap: var(--g-spacing-3);
+	gap: var(--octo-spacing-md);
 	min-width: 0;
 }
 
@@ -11,7 +11,7 @@
 }
 
 .compactRoot {
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 	grid-template-columns: minmax(0, 1fr);
 	width: 100%;
 }
@@ -19,7 +19,7 @@
 .pairedControls {
 	align-items: end;
 	display: grid;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 	grid-template-columns: minmax(0, 1fr) auto;
 	min-width: 0;
 }
@@ -37,7 +37,7 @@
 	cursor: pointer;
 	display: inline-flex;
 	font: inherit;
-	gap: var(--g-spacing-1);
+	gap: 4px;
 	justify-self: start;
 	padding: 0;
 }

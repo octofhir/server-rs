@@ -6,14 +6,14 @@
   min-width: 0;
   min-height: 0;
   overflow-x: hidden;
-  gap: var(--mantine-spacing-md, 16px);
-  padding: var(--mantine-spacing-md, 16px);
+  gap: var(--octo-spacing-md);
+  padding: var(--octo-spacing-md);
 }
 
 .body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-  gap: var(--mantine-spacing-md, 16px);
+  gap: var(--octo-spacing-md);
   flex: 1;
   min-width: 0;
   min-height: 0;

@@ -41,7 +41,7 @@
 
 .diffColumnLabel {
   display: block;
-  margin-bottom: var(--g-spacing-1);
+  margin-bottom: 4px;
 }
 
 .diffColumnHeading {

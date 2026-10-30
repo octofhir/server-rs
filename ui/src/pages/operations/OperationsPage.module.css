@@ -2,7 +2,7 @@
 	align-items: center;
 	display: flex;
 	flex-wrap: wrap;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 	min-width: 0;
 	width: 100%;
 }
@@ -20,7 +20,7 @@
 .skeletonRows {
 	display: flex;
 	flex-direction: column;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 }
 
 .skeletonRow {
@@ -51,13 +51,13 @@
 	align-items: center;
 	display: flex;
 	flex-wrap: wrap;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 	justify-content: space-between;
 }
 
 .categoryGrid {
 	display: grid;
-	gap: var(--g-spacing-3);
+	gap: var(--octo-spacing-md);
 }
 
 .categorySection {
@@ -68,7 +68,7 @@
 	align-items: center;
 	display: flex;
 	justify-content: space-between;
-	margin-bottom: var(--g-spacing-3);
+	margin-bottom: var(--octo-spacing-md);
 	min-width: 0;
 }
 
@@ -77,7 +77,7 @@
 	align-items: center;
 	display: flex;
 	flex-wrap: wrap;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 	min-width: 0;
 }
 

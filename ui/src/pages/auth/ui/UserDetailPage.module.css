@@ -75,7 +75,7 @@
 	gap: var(--octo-spacing-xs);
 	padding: 8px 10px;
 	background: var(--octo-surface-1);
-	border-radius: var(--g-border-radius-m);
+	border-radius: var(--octo-radius-md);
 	min-width: 0;
 }
 
@@ -97,7 +97,7 @@
 	gap: var(--octo-spacing-sm);
 	padding: 8px 10px;
 	background: var(--octo-surface-1);
-	border-radius: var(--g-border-radius-m);
+	border-radius: var(--octo-radius-md);
 	min-width: 0;
 }
 

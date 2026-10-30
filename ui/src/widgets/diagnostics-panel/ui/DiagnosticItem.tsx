@@ -42,7 +42,7 @@ export function DiagnosticItem({ diagnostic, onClick }: DiagnosticItemProps) {
 			style={{
 				width: "100%",
 				padding: "8px 12px",
-				borderRadius: "var(--g-border-radius-s)",
+				borderRadius: "var(--octo-radius-sm)",
 				transition: "background-color 0.2s",
 				cursor: onClick ? "pointer" : "default",
 			}}

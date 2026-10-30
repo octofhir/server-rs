@@ -1,6 +1,6 @@
 .root {
 	display: grid;
-	gap: var(--g-spacing-4);
+	gap: var(--octo-spacing-lg);
 	min-height: 0;
 }
 
@@ -28,7 +28,7 @@
 
 .list {
 	display: grid;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 }
 
 .triggerCard,
@@ -38,7 +38,7 @@
 }
 
 .triggerCard {
-	padding: var(--g-spacing-3);
+	padding: var(--octo-spacing-md);
 	background: var(--octo-surface-1);
 }
 
@@ -52,16 +52,16 @@
 }
 
 .formCard {
-	padding: var(--g-spacing-4);
+	padding: var(--octo-spacing-lg);
 	background: var(--octo-surface-2);
 }
 
 .form {
 	display: grid;
-	gap: var(--g-spacing-4);
+	gap: var(--octo-spacing-lg);
 }
 
 .formActions {
 	justify-content: flex-end;
-	margin-top: var(--g-spacing-2);
+	margin-top: var(--octo-spacing-sm);
 }

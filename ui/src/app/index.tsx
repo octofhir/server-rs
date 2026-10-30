@@ -11,7 +11,6 @@ import { ErrorBoundary } from "@/shared/ui";
 import { AppRoutes } from "./routes";
 
 import "@/shared/styles/global.css";
-import "@/shared/styles/app.css";
 
 // Create QueryClient with sensible defaults
 const queryClient = new QueryClient({

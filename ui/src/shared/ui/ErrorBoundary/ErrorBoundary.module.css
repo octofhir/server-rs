@@ -14,7 +14,7 @@
 .panel {
 	width: min(100%, 680px);
 	border: 1px solid var(--octo-border-subtle);
-	border-radius: var(--g-border-radius-xl);
+	border-radius: var(--octo-radius-xl);
 	background: var(--octo-surface-2);
 	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
 	padding: 24px;
@@ -34,7 +34,7 @@
 .icon {
 	width: 44px;
 	height: 44px;
-	border-radius: var(--g-border-radius-l);
+	border-radius: var(--octo-radius-lg);
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -45,16 +45,16 @@
 .copy h1 {
 	margin: 0;
 	color: var(--octo-text-primary);
-	font: var(--g-text-header-1-font-weight) var(--g-text-header-1-font-size) /
-		var(--g-text-header-1-line-height) var(--g-font-family-sans);
+	font: 600 1.125rem /
+		1.3 var(--octo-typography-family);
 	letter-spacing: 0;
 }
 
 .copy p {
 	margin: 6px 0 0;
 	color: var(--octo-text-secondary);
-	font: var(--g-text-body-2-font-weight) var(--g-text-body-2-font-size) /
-		var(--g-text-body-2-line-height) var(--g-font-family-sans);
+	font: 400 0.8125rem /
+		1.5 var(--octo-typography-family);
 }
 
 .actions {
@@ -67,7 +67,7 @@
 .details {
 	margin-top: 20px;
 	border: 1px solid var(--octo-border-subtle);
-	border-radius: var(--g-border-radius-l);
+	border-radius: var(--octo-radius-lg);
 	background: var(--octo-surface-2);
 	overflow: hidden;
 }
@@ -89,7 +89,7 @@
 	border-bottom: 1px solid var(--octo-border-subtle);
 	color: var(--octo-text-primary);
 	background: transparent;
-	font-family: var(--g-font-family-monospace);
+	font-family: var(--octo-typography-mono);
 	font-size: 12px;
 	line-height: 1.45;
 	white-space: pre-wrap;

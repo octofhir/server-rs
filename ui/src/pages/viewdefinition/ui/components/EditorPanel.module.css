@@ -64,7 +64,7 @@
   justify-content: space-between;
   gap: var(--octo-spacing-sm);
   padding-bottom: 2px;
-  border-bottom: 1px solid var(--app-border-subtle, rgba(0, 0, 0, 0.08));
+  border-bottom: 1px solid var(--octo-border-subtle);
 }
 
 .sectionTitle {

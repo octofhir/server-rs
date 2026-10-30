@@ -95,7 +95,7 @@
 	padding: 10px 12px;
 	background: var(--octo-accent-primary-bg);
 	border: 1px solid var(--octo-accent-primary);
-	border-radius: var(--g-border-radius-l);
+	border-radius: var(--octo-radius-lg);
 	margin-bottom: 10px;
 	align-items: center;
 	flex-wrap: wrap;
@@ -127,7 +127,7 @@
 	gap: 6px;
 	padding: 12px;
 	border: 1px solid var(--octo-border-subtle);
-	border-radius: var(--g-border-radius-l);
+	border-radius: var(--octo-radius-lg);
 	background: var(--octo-surface-2);
 	cursor: pointer;
 }

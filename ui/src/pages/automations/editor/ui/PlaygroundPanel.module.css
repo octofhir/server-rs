@@ -3,12 +3,12 @@
 	min-height: 0;
 	display: flex;
 	flex-direction: column;
-	gap: var(--g-spacing-4);
+	gap: var(--octo-spacing-lg);
 }
 
 .inputSection {
 	display: grid;
-	gap: var(--g-spacing-2);
+	gap: var(--octo-spacing-sm);
 }
 
 .inputHeader,
@@ -52,11 +52,11 @@
 	flex: 1;
 	min-height: 0;
 	display: grid;
-	gap: var(--g-spacing-3);
+	gap: var(--octo-spacing-md);
 }
 
 .errorCard {
-	padding: var(--g-spacing-3);
+	padding: var(--octo-spacing-md);
 	border: 1px solid var(--octo-accent-fire);
 	border-radius: 8px;
 	background: var(--octo-accent-fire-bg);
@@ -64,7 +64,7 @@
 
 .collapseHeader {
 	width: 100%;
-	padding: var(--g-spacing-2);
+	padding: var(--octo-spacing-sm);
 	border: none;
 	border-radius: var(--octo-radius-sm, 6px);
 	background: transparent;
@@ -86,7 +86,7 @@
 .outputScroll {
 	max-height: 120px;
 	overflow: auto;
-	padding: var(--g-spacing-2);
+	padding: var(--octo-spacing-sm);
 }
 
 .logsScroll {
@@ -96,12 +96,12 @@
 
 .logsList {
 	display: grid;
-	gap: var(--g-spacing-1);
-	padding: var(--g-spacing-2);
+	gap: 4px;
+	padding: var(--octo-spacing-sm);
 }
 
 .logItem {
-	padding: var(--g-spacing-2);
+	padding: var(--octo-spacing-sm);
 }
 
 .logRow {
@@ -125,6 +125,6 @@
 }
 
 .emptyState {
-	padding: var(--g-spacing-8);
+	padding: var(--octo-spacing-2xl);
 	text-align: center;
 }
