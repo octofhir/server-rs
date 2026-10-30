@@ -3005,3 +3005,47 @@ async fn snapshot_policies_precede_visible_pages_totals_and_iterative_inline_hop
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn system_history_skips_types_without_tables() {
+    let (_container, pool, registry) = setup().await;
+    let storage = PostgresStorage::from_pool(pool.clone());
+    storage
+        .search_registry_slot()
+        .set(registry.clone())
+        .unwrap();
+    storage
+        .create(&json!({"resourceType":"Patient","id":"history-lazy", "name":[{"family":"Lazy"}]}))
+        .await
+        .unwrap();
+
+    // `Basic` is a valid type whose table is only created on first write.
+    let mut tx = pool.begin().await.unwrap();
+    let rows = octofhir_db_postgres::queries::search::execute_history_search_raw_with_tx(
+        &mut tx,
+        &["Basic", "Patient"],
+        &octofhir_storage::SearchParams::new(),
+        &registry,
+        None,
+        10,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].resource.resource_type, "Patient");
+
+    let none = octofhir_db_postgres::queries::search::execute_history_search_raw_with_tx(
+        &mut tx,
+        &["Basic"],
+        &octofhir_storage::SearchParams::new(),
+        &registry,
+        None,
+        10,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(none.is_empty());
+    tx.rollback().await.unwrap();
+}

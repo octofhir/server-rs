@@ -1076,8 +1076,39 @@ pub async fn execute_history_search_raw_with_tx(
     count: usize,
     at: Option<(&str, Option<&str>)>,
 ) -> Result<Vec<octofhir_storage::RawHistoryEntry>, StorageError> {
+    // Resource tables are created lazily on first write, so a type can be
+    // granted and known to the registry without having a history table yet.
+    // It has no revisions either, so leave it out of the UNION instead of
+    // failing the whole system history.
+    let history_tables: Vec<String> = resource_types
+        .iter()
+        .map(|resource_type| {
+            format!(
+                "public.{}_history",
+                SchemaManager::table_name(resource_type)
+            )
+        })
+        .collect();
+    let present: Vec<bool> = query_scalar(
+        "SELECT to_regclass(t.name) IS NOT NULL
+         FROM UNNEST($1::text[]) WITH ORDINALITY AS t(name, ord)
+         ORDER BY t.ord",
+    )
+    .bind(&history_tables)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| StorageError::internal(format!("Failed to locate history tables: {error}")))?;
+    let resource_types: Vec<&str> = resource_types
+        .iter()
+        .zip(present)
+        .filter_map(|(resource_type, exists)| exists.then_some(*resource_type))
+        .collect();
+    if resource_types.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut builders = Vec::new();
-    for resource_type in resource_types {
+    for resource_type in &resource_types {
         let (converted, _) = prepare_raw_query(
             resource_type,
             &params.for_resource_type(resource_type),
