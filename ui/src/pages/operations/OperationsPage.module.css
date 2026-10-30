@@ -104,11 +104,11 @@
 }
 
 .publicIcon {
-	color: var(--octo-accent-primary-text);
+	color: var(--octo-brand-success);
 }
 
 .protectedIcon {
-	color: var(--octo-accent-warm);
+	color: var(--octo-text-muted);
 }
 
 @media (max-width: 760px) {

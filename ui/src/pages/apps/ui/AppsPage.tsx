@@ -75,7 +75,7 @@ export function AppsPage() {
 
   return (
     <WorkspacePageLayout
-      title="API Gateway Apps"
+      title="Apps"
       description="Group custom operations under base paths and common configuration"
       actions={
         <Button leftSection={<IconPlus width={16} height={16} aria-hidden="true" />} onClick={open}>

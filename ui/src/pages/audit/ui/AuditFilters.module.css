@@ -71,3 +71,10 @@
     display: none;
   }
 }
+
+.total {
+  font-family: var(--octo-typography-mono);
+  font-size: 11px;
+  color: var(--octo-text-muted);
+  white-space: nowrap;
+}

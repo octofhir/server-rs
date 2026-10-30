@@ -57,9 +57,10 @@ const VARIANT_BASE: Record<ButtonVariant, string> = {
 };
 
 const COLOR_TONE: Record<string, "info" | "success" | "warning" | "danger" | "utility"> = {
-    primary: "info", blue: "info", deep: "info", indigo: "info",
+    // primary and gray have no tone: they use the base accent / neutral styling.
+    blue: "info", deep: "info", indigo: "info",
     green: "success", red: "danger", fire: "danger",
-    orange: "warning", yellow: "warning", warm: "warning", gray: "utility",
+    orange: "warning", yellow: "warning", warm: "warning",
 };
 
 interface ButtonIconProps {

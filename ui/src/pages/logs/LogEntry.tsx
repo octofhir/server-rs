@@ -13,8 +13,8 @@ type BadgeColor = "neutral" | "primary" | "warning" | "danger";
 
 const LEVEL_COLORS: Record<LogLevel, BadgeColor> = {
 	trace: "neutral",
-	debug: "primary",
-	info: "primary",
+	debug: "neutral",
+	info: "neutral",
 	warn: "warning",
 	error: "danger",
 };

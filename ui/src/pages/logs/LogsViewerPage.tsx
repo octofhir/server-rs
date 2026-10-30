@@ -28,7 +28,7 @@ export function LogsViewerPage() {
 
 	return (
 		<WorkspacePageLayout
-			title="System Logs"
+			title="Logs"
 			description="Real-time server activity and diagnostics"
 			className="page-enter"
 			bodyClassName={classes.body}

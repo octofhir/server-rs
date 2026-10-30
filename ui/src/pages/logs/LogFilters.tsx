@@ -49,7 +49,6 @@ function LogFiltersComponent({
 	};
 
 	const allLevelsSelected = filters.levels.length === LOG_LEVELS.length;
-	const noLevelsSelected = filters.levels.length === 0;
 
 	return (
 		<div className={classes.container}>
@@ -102,9 +101,7 @@ function LogFiltersComponent({
 						]}
 					/>
 
-					<Badge
-						theme={noLevelsSelected ? "normal" : "info"}
-					>
+					<Badge theme="normal">
 						{logCount} logs
 					</Badge>
 

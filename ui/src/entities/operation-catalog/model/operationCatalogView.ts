@@ -27,14 +27,8 @@ export interface OperationAppOption {
 
 export type GroupedOperations = Record<string, OperationDefinition[]>;
 
-const categoryColorById: Record<string, string> = {
-	fhir: "primary",
-	graphql: "deep",
-	system: "warm",
-	auth: "fire",
-	ui: "warm",
-	api: "deep",
-};
+// Categories are grouping labels, not states: keep them neutral.
+const categoryColorById: Record<string, string> = {};
 
 const categoryLabelById: Record<string, string> = {
 	fhir: "FHIR REST API",
@@ -46,9 +40,9 @@ const categoryLabelById: Record<string, string> = {
 };
 
 const methodColorById: Record<string, string> = {
-	GET: "primary",
-	POST: "warm",
-	PUT: "deep",
+	GET: "green",
+	POST: "blue",
+	PUT: "warm",
 	DELETE: "fire",
 	PATCH: "warm",
 };

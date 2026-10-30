@@ -330,14 +330,7 @@ function AuditFiltersComponent({
 					</Button>
 				)}
 
-				<Badge
-					variant="light"
-					color="primary"
-					size="lg"
-					radius="sm"
-				>
-					{totalCount.toLocaleString()} events
-				</Badge>
+				<span className={classes.total}>{totalCount.toLocaleString()} events</span>
 
 				<div className={classes.divider} />
 

@@ -273,12 +273,6 @@ const GROUP_SECTIONS: Array<{ label: string; items: GroupDef[] }> = [
   },
 ];
 
-const railDotClass: Record<GroupKind, string> = {
-  live: classes.railDotLive,
-  restart: classes.railDotRestart,
-  local: classes.railDotLocal,
-};
-
 // =============================================================================
 // Option lists
 // =============================================================================
@@ -389,7 +383,7 @@ export function SettingsPage() {
 
   const statusColor =
     health?.status === "ok"
-      ? "var(--octo-accent-primary)"
+      ? "var(--octo-brand-success)"
       : health?.status === "degraded"
         ? "var(--octo-accent-warm)"
         : "var(--octo-accent-fire)";
@@ -404,11 +398,7 @@ export function SettingsPage() {
         <div className={classes.heroInner}>
           <div className={classes.heroTop}>
             <div className={classes.heroTitleWrap}>
-              <span className={classes.heroIcon}>
-                <SettingsIcon size={22} />
-              </span>
               <div>
-                <div className={classes.eyebrow}>System</div>
                 <h1 className={classes.title}>Settings</h1>
                 <p className={classes.description}>
                   Runtime server configuration, feature flags and local preferences.
@@ -459,7 +449,7 @@ export function SettingsPage() {
           </div>
 
           <div className={classes.statGrid}>
-            <div className={`${classes.statCard} ${classes.statCardAccent}`}>
+            <div className={classes.statCard}>
               <span className={classes.statLabel}>Server status</span>
               <span className={`${classes.statValue} ${classes.statValueAccent}`}>
                 <span className={classes.statDot} style={{ background: statusColor }} />
@@ -501,7 +491,11 @@ export function SettingsPage() {
                       <Icon size={16} />
                     </span>
                     <span className={classes.railLabel}>{item.label}</span>
-                    <span className={`${classes.railDot} ${railDotClass[item.kind]}`} />
+                    {item.kind === "restart" && (
+                      <span className={classes.railTag} title="Applies after a server restart">
+                        restart
+                      </span>
+                    )}
                   </button>
                 );
               })}

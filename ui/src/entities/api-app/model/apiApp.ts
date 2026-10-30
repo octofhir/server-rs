@@ -99,9 +99,9 @@ const statusColorById: Record<AppStatus, string> = {
 };
 
 const methodColorById: Record<string, string> = {
-	GET: "primary",
-	POST: "warm",
-	PUT: "deep",
+	GET: "green",
+	POST: "blue",
+	PUT: "warm",
 	DELETE: "fire",
 	PATCH: "warm",
 };

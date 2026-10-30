@@ -265,7 +265,7 @@ export function AutomationsPage() {
       <div className={classes.tablePanel}>
         {isFeatureUnavailable ? (
           <Alert
-            theme="warning"
+            theme="info"
             icon={<CircleExclamation size={16} />}
             title="Automations are disabled"
             className={classes.unavailableAlert}

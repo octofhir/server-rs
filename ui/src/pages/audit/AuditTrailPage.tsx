@@ -112,7 +112,7 @@ export function AuditTrailPage() {
 
 	return (
 		<WorkspacePageLayout
-			title="Audit Trail"
+			title="Audit"
 			description="Track and analyze all system activity and changes"
 			className="page-enter"
 			bodyClassName={classes.body}

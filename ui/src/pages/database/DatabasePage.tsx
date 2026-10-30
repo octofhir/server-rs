@@ -174,7 +174,6 @@ export function DatabasePage() {
   return (
     <div className={`${classes.container} page-enter`}>
       <PageHeader
-        eyebrow="Maintenance"
         title="Database"
         description="Inspect table sizes, indexes and statistics. Run vacuum, analyze and reindex."
         actions={[
