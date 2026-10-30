@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import {
   Text,
   Badge,
@@ -10,10 +10,7 @@ import {
   ActionIcon,
   Tooltip,
   Tabs,
-  Button,
   Select,
-  Breadcrumbs,
-  Anchor,
   Modal,
   Code,
   useDebouncedValue,
@@ -26,7 +23,6 @@ import {
 import {
   CircleAlert as CircleExclamation,
   Search as Magnifier,
-  ArrowLeft,
   Check,
   TriangleAlert as TriangleExclamation,
   Eye,
@@ -54,7 +50,7 @@ function FhirVersionBadge({
       <Badge
         size="md"
         variant="light"
-        color={isCompatible ? "primary" : "warm"}
+        color={isCompatible ? "green" : "warm"}
         leftSection={isCompatible ? <Check size={14} /> : <TriangleExclamation size={14} />}
       >
         FHIR {packageVersion || "unknown"}
@@ -427,7 +423,6 @@ function PackageStats({
 
 export function PackageDetailPage() {
   const { name, version } = useParams<{ name: string; version: string }>();
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<string | null>("overview");
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
 
@@ -445,21 +440,8 @@ export function PackageDetailPage() {
     <WorkspacePageLayout
       title={name}
       description={`Version ${version}`}
-      kicker={
-        <Breadcrumbs>
-          <Anchor onClick={() => navigate("/packages")}>Packages</Anchor>
-          <Text>{name}</Text>
-        </Breadcrumbs>
-      }
       actions={
         <div className={classes.headerActions}>
-          <Button
-            variant="subtle"
-            leftSection={<ArrowLeft size={16} />}
-            onClick={() => navigate("/packages")}
-          >
-            Back
-          </Button>
           {data && (
             <FhirVersionBadge packageVersion={data.fhirVersion} isCompatible={data.isCompatible} />
           )}

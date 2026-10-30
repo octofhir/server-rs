@@ -46,7 +46,7 @@ function FhirVersionBadge({
 			<Badge
 				size="sm"
 				variant="light"
-				color={compatibility.isCompatible ? "primary" : "warm"}
+				color={compatibility.isCompatible ? "green" : "warm"}
 				leftSection={
 					compatibility.isCompatible ? (
 						<Check size={12} />
@@ -149,9 +149,7 @@ function InstalledPackagesTab({
 										</div>
 									),
 									version: (
-										<Badge size="sm" variant="outline">
-											{pkg.versionLabel}
-										</Badge>
+										<span className={classes.version}>{pkg.versionLabel}</span>
 									),
 									fhirVersion: (
 										<FhirVersionBadge
@@ -288,9 +286,7 @@ function RegistryTab({
 								</Text>
 							),
 							latest: (
-								<Badge size="sm" variant="outline">
-									{pkg.latestVersionLabel}
-								</Badge>
+								<span className={classes.version}>{pkg.latestVersionLabel}</span>
 							),
 							version:
 								selectedPackage === pkg.name ? (
@@ -385,14 +381,9 @@ export function PackagesPage() {
 
 	return (
 		<WorkspacePageLayout
-			title="FHIR Packages"
-			description="Manage installed FHIR packages and install new packages from the registry"
+			title="Packages"
+			description={`Implementation guides and FHIR packages · server runs FHIR ${serverVersion}`}
 			maxWidth={1280}
-			actions={
-				<Badge size="lg" variant="light" color="warm">
-					Server: FHIR {serverVersion}
-				</Badge>
-			}
 		>
 
 			<Tabs value={activeTab} onChange={setActiveTab} className={classes.tabs}>

@@ -71,3 +71,9 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+
+.version {
+	font-family: var(--octo-typography-mono);
+	font-size: 12px;
+	color: var(--octo-text-secondary);
+}
