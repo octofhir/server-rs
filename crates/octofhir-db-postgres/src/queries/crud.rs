@@ -832,12 +832,13 @@ pub async fn update_snapshot(
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing id field"))?;
     let table = SchemaManager::table_name(resource_type);
-    let version_check = match if_match {
-        Some(version) => match stored_version(version) {
-            Some(version) => format!("AND p.txid = {version}::bigint"),
-            None => "AND FALSE".into(),
-        },
-        None => String::new(),
+    // The expected version is bound, not spliced, so each table keeps one
+    // statement text per If-Match shape in the prepared-statement cache.
+    let expected_version = if_match.and_then(stored_version);
+    let version_check = match (if_match, expected_version) {
+        (Some(_), Some(_)) => "AND p.txid = $4::bigint",
+        (Some(_), None) => "AND FALSE",
+        (None, _) => "",
     };
     let sql = format!(
         r#"WITH previous AS MATERIALIZED (
@@ -860,10 +861,14 @@ pub async fn update_snapshot(
         DateTime<Utc>,
         Value,
     );
-    let row: Option<Row> = query_as(AssertSqlSafe(sql))
+    let mut statement = query_as(AssertSqlSafe(sql))
         .bind(id)
         .bind(resource)
-        .bind(canonical_quantities(resource))
+        .bind(canonical_quantities(resource));
+    if let Some(version) = expected_version {
+        statement = statement.bind(version);
+    }
+    let row: Option<Row> = statement
         .fetch_optional(pool)
         .await
         .map_err(|error| mutation_error(error, "Failed to update resource"))?;
@@ -1272,25 +1277,27 @@ pub async fn create_batch_with_tx(
         String::new()
     } else {
         format!(
-            r#"WHERE NOT EXISTS (SELECT 1 FROM "{table}_history" h WHERE h.id = t.id AND h.txid >= {txid}::bigint)"#
+            r#"WHERE NOT EXISTS (SELECT 1 FROM "{table}_history" h WHERE h.id = t.id AND h.txid >= $4::bigint)"#
         )
     };
+    // txid is bound ($4) rather than spliced so the statement text is the
+    // same for every bundle and stays in the prepared-statement cache.
     let sql = format!(
         r#"WITH stamp AS MATERIALIZED (
                SELECT at, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last_updated
                FROM (SELECT octofhir_resource_timestamp() AS at) now
            )
            INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status, ucum)
-           SELECT t.id, {txid}::bigint, stamp.at, stamp.at,
+           SELECT t.id, $4::bigint, stamp.at, stamp.at,
                -- Bundle bodies already carry their reserved id/meta; rebuild
                -- the document only when they do not.
                CASE WHEN t.resource ->> 'id' = t.id
-                     AND t.resource -> 'meta' ->> 'versionId' = '{txid}'
+                     AND t.resource -> 'meta' ->> 'versionId' = $4::bigint::text
                      AND t.resource -> 'meta' ->> 'lastUpdated' = stamp.last_updated
                     THEN t.resource
                     ELSE t.resource || jsonb_build_object('id', t.id, 'meta',
                        COALESCE(t.resource -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
-                           'versionId', '{txid}', 'lastUpdated', stamp.last_updated))
+                           'versionId', $4::bigint::text, 'lastUpdated', stamp.last_updated))
                END,
                'created', t.ucum
            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[]) AS t(id, resource, ucum), stamp
@@ -1310,6 +1317,7 @@ pub async fn create_batch_with_tx(
                 .map(canonical_quantities)
                 .collect::<Vec<_>>(),
         )
+        .bind(txid)
         .fetch_all(&mut **tx)
         .await
         .map_err(|e| {
@@ -1419,7 +1427,7 @@ pub async fn update_batch_with_tx(
                WHERE id = ANY($1::text[]) AND status != 'deleted' ORDER BY id FOR UPDATE
            )
            UPDATE "{table}" t
-           SET txid = {txid}::bigint,
+           SET txid = $4::bigint,
                resource = u.resource,
                ucum = u.ucum,
                status = 'updated'
@@ -1447,6 +1455,7 @@ pub async fn update_batch_with_tx(
                 .map(canonical_quantities)
                 .collect::<Vec<_>>(),
         )
+        .bind(txid)
         .fetch_all(&mut **tx)
         .await
         .map_err(|e| mutation_error(e, "Failed to batch-update resources"))?;
@@ -1608,16 +1617,22 @@ pub async fn update_with_tx_snapshot(
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing id"))?;
     let table = SchemaManager::table_name(resource_type);
-    let version_check = match if_match {
-        Some(version) => match stored_version(version) {
-            Some(version) => format!("AND p.txid = {version}::bigint"),
-            None => "AND FALSE".into(),
-        },
-        None => String::new(),
+    // Versions are bound, not spliced: the statement text depends only on
+    // which optional parameters are present, so it stays cacheable.
+    let expected_version = if_match.and_then(stored_version);
+    let mut next_param = 4;
+    let version_check = match (if_match, expected_version) {
+        (Some(_), Some(_)) => {
+            next_param += 1;
+            "AND p.txid = $4::bigint".to_string()
+        }
+        (Some(_), None) => "AND FALSE".to_string(),
+        (None, _) => String::new(),
     };
-    let version = txid
-        .map(|version| format!("{version}::bigint"))
-        .unwrap_or_else(|| "nextval('_transaction_txid_seq')".into());
+    let version = match txid {
+        Some(_) => format!("${next_param}::bigint"),
+        None => "nextval('_transaction_txid_seq')".to_string(),
+    };
     let sql = format!(
         r#"WITH previous AS MATERIALIZED (
         SELECT id, txid, created_at, updated_at, resource FROM "{table}" WHERE id=$1 AND status!='deleted' FOR UPDATE
@@ -1638,10 +1653,17 @@ pub async fn update_with_tx_snapshot(
         DateTime<Utc>,
         Value,
     );
-    let row: Option<Row> = query_as(AssertSqlSafe(sql))
+    let mut statement = query_as(AssertSqlSafe(sql))
         .bind(id)
         .bind(resource)
-        .bind(canonical_quantities(resource))
+        .bind(canonical_quantities(resource));
+    if let Some(version) = expected_version {
+        statement = statement.bind(version);
+    }
+    if let Some(txid) = txid {
+        statement = statement.bind(txid);
+    }
+    let row: Option<Row> = statement
         .fetch_optional(&mut **tx)
         .await
         .map_err(|error| mutation_error(error, "Failed to update resource"))?;

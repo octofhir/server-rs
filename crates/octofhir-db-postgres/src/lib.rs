@@ -70,7 +70,7 @@ pub mod queries;
 
 // Re-export main types
 pub use bootstrap_lock::BootstrapLock;
-pub use config::PostgresConfig;
+pub use config::{PostgresConfig, default_session_settings};
 pub use error::{PostgresError, Result};
 pub use fcm_storage::{FhirSchemaInfo, FhirSchemaRecord, PostgresPackageStore};
 pub use functional_indexes::{

@@ -1,5 +1,7 @@
 //! Configuration types for the PostgreSQL storage backend.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Configuration for the PostgreSQL storage backend.
@@ -72,6 +74,29 @@ pub struct PostgresConfig {
     /// NULL and both indexes stay empty.
     #[serde(default = "default_profile_column")]
     pub profile_column: bool,
+
+    /// PostgreSQL settings sent in the startup packet of every pooled
+    /// connection, so they cost no extra round trip.
+    ///
+    /// The default turns off JIT and parallel plans. FHIR API statements are
+    /// short and run many at once: JIT compilation costs more than it saves on
+    /// them, and parallel workers add processes that compete with the other
+    /// connections for the same CPUs. Neither setting changes query results.
+    /// Long analytic statements can restore parallelism with `SET LOCAL`.
+    /// Setting this map replaces the default entries.
+    #[serde(default = "default_session_settings")]
+    pub session_settings: BTreeMap<String, String>,
+}
+
+/// Default per-connection settings; see [`PostgresConfig::session_settings`].
+pub fn default_session_settings() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("jit".to_string(), "off".to_string()),
+        (
+            "max_parallel_workers_per_gather".to_string(),
+            "0".to_string(),
+        ),
+    ])
 }
 
 fn default_gin_maintenance() -> bool {
@@ -103,6 +128,7 @@ impl Default for PostgresConfig {
             gin_maintenance_interval_secs: 120,
             document_gin_resource_types: None,
             profile_column: true,
+            session_settings: default_session_settings(),
         }
     }
 }
@@ -179,6 +205,13 @@ impl PostgresConfig {
     #[must_use]
     pub fn with_profile_column(mut self, on: bool) -> Self {
         self.profile_column = on;
+        self
+    }
+
+    /// Sets the settings sent in every connection's startup packet.
+    #[must_use]
+    pub fn with_session_settings(mut self, settings: BTreeMap<String, String>) -> Self {
+        self.session_settings = settings;
         self
     }
 

@@ -10,6 +10,7 @@ use axum::{
     middleware,
     response::IntoResponse,
     routing::{get, post},
+    serve::ListenerExt,
 };
 use octofhir_auth::extractors::BasicAuthState;
 use octofhir_auth::middleware::AuthState;
@@ -34,6 +35,7 @@ use octofhir_db_postgres::PostgresPackageStore;
 use octofhir_graphql::handler::{GraphQLContextTemplate, GraphQLState};
 use octofhir_graphql::{FhirSchemaBuilder, InMemoryModelProvider, LazySchema, SchemaBuilderConfig};
 use time::Duration;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tower_http::compression::CompressionLayer;
 
 use crate::events::{RedisEventSyncBuilder, RedisPublishHook};
@@ -70,6 +72,15 @@ pub struct AppState(pub Arc<AppStateInner>);
 impl AppState {
     pub fn fhir_base_url(&self) -> String {
         format!("{}/fhir", self.base_url.trim_end_matches('/'))
+    }
+
+    /// Waits for a search slot when `search.max_concurrent_queries` is set.
+    /// Hold the returned permit for as long as the search uses the database.
+    pub(crate) async fn acquire_search_slot(&self) -> Option<OwnedSemaphorePermit> {
+        let slots = self.search_query_slots.as_ref()?;
+        // The semaphore is never closed, so acquisition only fails if that
+        // invariant breaks; run unbounded rather than fail the request then.
+        Arc::clone(slots).acquire_owned().await.ok()
     }
 
     pub(crate) fn is_anonymous_context(
@@ -144,6 +155,9 @@ pub struct AppStateInner {
     pub resource_cache: Option<Arc<crate::cache::ResourceCache>>,
     /// Query cache for search SQL template reuse
     pub query_cache: Option<Arc<octofhir_search::QueryCache>>,
+    /// Bounds concurrent searches against PostgreSQL
+    /// (`search.max_concurrent_queries`); `None` leaves them unbounded.
+    pub search_query_slots: Option<Arc<Semaphore>>,
     /// Cached resource types for fast validation
     pub resource_type_set: Arc<ArcSwap<HashSet<String>>>,
     /// Cached CapabilityStatement (built at startup)
@@ -580,6 +594,7 @@ async fn create_storage(
         .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
         .with_document_gin_resource_types(pg_cfg.document_gin_resource_types.clone())
         .with_profile_column(pg_cfg.profile_column)
+        .with_session_settings(pg_cfg.session_settings.clone())
         .with_run_migrations(true);
 
     let mut pg_storage = PostgresStorage::new(postgres_config)
@@ -599,6 +614,7 @@ async fn create_storage(
                     .unwrap_or(pg_cfg.connect_timeout_ms),
             )
             .with_idle_timeout_ms(replica_cfg.idle_timeout_ms.or(pg_cfg.idle_timeout_ms))
+            .with_session_settings(pg_cfg.session_settings.clone())
             .with_run_migrations(false);
 
         let replica_pool = octofhir_db_postgres::pool::create_pool(&replica_config)
@@ -1842,6 +1858,11 @@ async fn build_app_with_runtime(
         query_cache: Some(Arc::new(octofhir_search::QueryCache::new(
             cfg.search.cache_capacity,
         ))),
+        search_query_slots: cfg
+            .search
+            .max_concurrent_queries
+            .filter(|&slots| slots > 0)
+            .map(|slots| Arc::new(Semaphore::new(slots))),
         resource_type_set,
         capability_statement,
         config_manager: Some(config_manager),
@@ -2442,7 +2463,15 @@ impl ServerBuilder {
 impl OctofhirServer {
     pub async fn run(self) -> anyhow::Result<()> {
         let shutdown = shutdown_signal()?;
-        let listener = tokio::net::TcpListener::bind(self.addr).await?;
+        // Responses are written whole, so Nagle's algorithm can only add
+        // delay (up to a delayed-ACK interval) when a write is split.
+        let listener = tokio::net::TcpListener::bind(self.addr)
+            .await?
+            .tap_io(|tcp| {
+                if let Err(err) = tcp.set_nodelay(true) {
+                    tracing::trace!("failed to set TCP_NODELAY: {err}");
+                }
+            });
         tracing::info!("listening on {}", self.addr);
         let background = self.background;
         let signal_background = background.clone();

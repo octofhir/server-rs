@@ -3073,6 +3073,7 @@ async fn execute_authorized_type_search(
     params: &octofhir_storage::SearchParams,
     options: octofhir_db_postgres::queries::RawSearchOptions,
 ) -> Result<octofhir_storage::RawSearchResult, ApiError> {
+    let _slot = state.acquire_search_slot().await;
     if let Some(visibility) = visibility {
         let policies = visibility
             .prepare_snapshots(state, &[resource_type], params)
@@ -3103,6 +3104,7 @@ async fn execute_authorized_aggregate_search(
     params: &octofhir_storage::SearchParams,
     options: octofhir_db_postgres::queries::RawSearchOptions,
 ) -> Result<octofhir_storage::RawSearchResult, ApiError> {
+    let _slot = state.acquire_search_slot().await;
     if let Some(visibility) = visibility {
         let policies = visibility.prepare_snapshots(state, types, params).await?;
         if policies.required() {

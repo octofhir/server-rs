@@ -56,6 +56,12 @@ COPY igs/ ./igs/
 # Copy built UI
 COPY --from=ui-builder /app/ui/dist ./ui/dist
 
+# Published images use the repository's release profile (fat LTO, one codegen
+# unit). For faster local image builds pass
+# `--build-arg RELEASE_LTO=thin --build-arg RELEASE_CODEGEN_UNITS=16`.
+ARG RELEASE_LTO=fat
+ARG RELEASE_CODEGEN_UNITS=1
+
 # Build release binary with cached cargo registry and target dir.
 # `find … -exec touch` refreshes mtimes — BuildKit's deterministic COPY
 # would otherwise leave cargo's incremental cache unable to see source edits.
@@ -63,8 +69,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/work/server-rs/target \
     find crates -name '*.rs' -exec touch {} + \
-    && CARGO_PROFILE_RELEASE_LTO=thin \
-       CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+    && CARGO_PROFILE_RELEASE_LTO=${RELEASE_LTO} \
+       CARGO_PROFILE_RELEASE_CODEGEN_UNITS=${RELEASE_CODEGEN_UNITS} \
        CARGO_PROFILE_RELEASE_DEBUG=0 \
        cargo build --release --locked --bin octofhir-server \
     && cp /work/server-rs/target/release/octofhir-server /usr/local/bin/octofhir-server

@@ -1,7 +1,7 @@
 use octofhir_auth::config::AuthConfig;
 use octofhir_search::TerminologyConfig;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, time::Duration};
+use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
@@ -353,6 +353,16 @@ pub struct PostgresStorageConfig {
     /// this takes effect only for a recreated database.
     #[serde(default = "default_profile_column")]
     pub profile_column: bool,
+
+    /// PostgreSQL settings applied to every pooled connection (primary and
+    /// read replica) through the startup packet.
+    ///
+    /// Defaults to `jit = "off"` and `max_parallel_workers_per_gather = "0"`:
+    /// FHIR API statements are short and concurrent, so JIT compilation and
+    /// parallel workers cost CPU that the other connections need. Neither
+    /// changes query results. Setting the table replaces both defaults.
+    #[serde(default = "octofhir_db_postgres::default_session_settings")]
+    pub session_settings: BTreeMap<String, String>,
 }
 
 /// Read replica configuration. Only `url` is required;
@@ -435,6 +445,7 @@ impl Default for PostgresStorageConfig {
             read_replica: None,
             document_gin_resource_types: None,
             profile_column: default_profile_column(),
+            session_settings: octofhir_db_postgres::default_session_settings(),
         }
     }
 }
@@ -492,6 +503,17 @@ pub struct SearchSettings {
     /// (`ResourceType.param=system|code`, system optional: `...=|8867-4`).
     #[serde(default)]
     pub composite_index: Vec<CompositeIndexSpec>,
+    /// Upper bound on searches running against PostgreSQL at the same time.
+    ///
+    /// Searches beyond the bound wait in FIFO order for a slot. Keeping the
+    /// number of active backends near the database's CPU count avoids
+    /// oversubscribing it: under a container CPU quota, oversubscription shows
+    /// up as stalls of up to one quota period on whichever queries are in
+    /// flight. A value around 1–1.5× the database CPUs is a good start.
+    /// Writes are not limited. Unset (the default) means no bound beyond the
+    /// pool size. Env: `OCTOFHIR__SEARCH__MAX_CONCURRENT_QUERIES`.
+    #[serde(default)]
+    pub max_concurrent_queries: Option<usize>,
 }
 
 /// One targeted partial composite index: index the quantity component of `param`
@@ -594,6 +616,7 @@ impl Default for SearchSettings {
             ucum_indexed_params: Vec::new(),
             max_valueset_expansion: default_max_valueset_expansion(),
             composite_index: Vec::new(),
+            max_concurrent_queries: None,
         }
     }
 }

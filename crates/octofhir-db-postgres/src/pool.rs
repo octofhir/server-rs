@@ -1,9 +1,10 @@
 //! Connection pool management for the PostgreSQL storage backend.
 
+use std::str::FromStr;
 use std::time::Duration;
 
 use sqlx_core::pool::PoolOptions;
-use sqlx_postgres::{PgPool, Postgres};
+use sqlx_postgres::{PgConnectOptions, PgPool, Postgres};
 use tracing::{debug, info, instrument};
 
 use crate::config::PostgresConfig;
@@ -20,6 +21,7 @@ pub async fn create_pool(config: &PostgresConfig) -> Result<PgPool> {
         min_connections = ?config.min_connections,
         connect_timeout_ms = config.connect_timeout_ms,
         max_lifetime_secs = ?config.max_lifetime_secs,
+        session_settings = ?config.session_settings,
         "Creating PostgreSQL connection pool"
     );
 
@@ -41,7 +43,9 @@ pub async fn create_pool(config: &PostgresConfig) -> Result<PgPool> {
         options = options.idle_timeout(Duration::from_millis(idle_timeout));
     }
 
-    let pool = options.connect(&config.url).await?;
+    let connect_options =
+        PgConnectOptions::from_str(&config.url)?.options(config.session_settings.iter());
+    let pool = options.connect_with(connect_options).await?;
 
     debug!("PostgreSQL connection pool created successfully");
 
