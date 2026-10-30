@@ -19,14 +19,7 @@
     overflow: hidden;
     border: 1px solid var(--octo-border-subtle);
     border-radius: 8px;
-    background:
-        radial-gradient(
-            135% 110% at 0% 0%,
-            color-mix(in srgb, var(--stat-accent-color) 16%, transparent) 0%,
-            color-mix(in srgb, var(--stat-accent-color) 5%, transparent) 28%,
-            transparent 58%
-        ),
-        var(--octo-surface-1);
+    background: var(--octo-surface-1);
 }
 
 .item > * {

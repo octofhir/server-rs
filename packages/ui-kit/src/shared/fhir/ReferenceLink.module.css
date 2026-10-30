@@ -3,14 +3,22 @@
     max-width: 100%;
     min-width: 0;
     align-items: center;
-    color: var(--octo-accent-primary-text);
-    font-size: 13px;
+    padding: 1px 6px;
+    border-radius: var(--octo-radius-sm, 3px);
+    background: var(--octo-surface-2);
+    color: var(--octo-text-primary);
+    font-family: var(--octo-typography-mono, monospace);
+    font-size: 12px;
     line-height: 18px;
     text-decoration: none;
 }
 
 .root:hover {
-    color: var(--octo-accent-primary-hover);
+    background: var(--octo-surface-3);
+}
+
+.type {
+    color: var(--octo-accent-primary-text);
 }
 
 .label {

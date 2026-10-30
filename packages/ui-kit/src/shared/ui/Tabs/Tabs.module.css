@@ -1,7 +1,7 @@
 .list {
     position: relative;
     display: flex;
-    gap: var(--octo-spacing-xs, 0.5rem);
+    gap: 16px;
     border-bottom: 1px solid var(--octo-border-subtle, #dee2e6);
 }
 
@@ -10,7 +10,8 @@
     display: inline-flex;
     align-items: center;
     gap: var(--octo-spacing-xs, 0.5rem);
-    padding: 8px 4px;
+    height: 32px;
+    padding: 0 2px;
     margin-bottom: -1px;
     border: none;
     border-bottom: 2px solid transparent;
@@ -28,8 +29,8 @@
 .tab[data-selected],
 .tab[data-state="active"],
 .tab[aria-selected="true"] {
-    color: var(--octo-accent-primary-text, #4263eb);
-    border-bottom-color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-text-primary, #18181b);
+    border-bottom-color: var(--octo-accent-primary, #f2b630);
     font-weight: var(--octo-typography-weight-semibold, 600);
 }
 .tab:focus-visible {
@@ -40,6 +41,6 @@
 .tab[data-disabled] { color: var(--octo-text-muted, #868e96); cursor: not-allowed; }
 
 .panel {
-    padding-top: var(--octo-spacing-md, 1rem);
+    padding-top: var(--octo-spacing-md, 0.75rem);
 }
 .panel:focus-visible { outline: none; }

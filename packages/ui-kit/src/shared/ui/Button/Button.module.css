@@ -37,11 +37,11 @@
 }
 
 /* ---- Sizes ---- */
-.button[data-size="xs"] { height: 24px; padding: 0 8px; font-size: 0.8125rem; }
-.button[data-size="sm"] { height: 28px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.button[data-size="md"] { height: 32px; padding: 0 14px; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.button[data-size="lg"] { height: 38px; padding: 0 18px; font-size: var(--octo-typography-size-md, 1rem); }
-.button[data-size="xl"] { height: 44px; padding: 0 22px; font-size: var(--octo-typography-size-md, 1rem); }
+.button[data-size="xs"] { height: 22px; padding: 0 6px; font-size: var(--octo-typography-size-xs, 0.6875rem); }
+.button[data-size="sm"] { height: 26px; padding: 0 8px; font-size: var(--octo-typography-size-sm, 0.8125rem); }
+.button[data-size="md"] { height: 28px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.8125rem); }
+.button[data-size="lg"] { height: 32px; padding: 0 14px; font-size: var(--octo-typography-size-md, 0.875rem); }
+.button[data-size="xl"] { height: 38px; padding: 0 18px; font-size: var(--octo-typography-size-md, 0.875rem); }
 
 .button[data-width="max"] { width: 100%; }
 

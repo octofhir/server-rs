@@ -1,6 +1,6 @@
 .card {
     box-sizing: border-box;
-    padding: var(--octo-spacing-lg, 1.5rem);
+    padding: var(--octo-spacing-lg, 1rem);
     border: 1px solid transparent;
     border-radius: var(--octo-radius-lg, 12px);
     background: var(--octo-surface-1, #fff);

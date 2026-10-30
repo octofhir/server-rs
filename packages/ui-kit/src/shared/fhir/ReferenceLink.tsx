@@ -19,6 +19,17 @@ export function parseFhirReference(reference: string): ParsedFhirReference {
     };
 }
 
+function PathLabel({ reference }: { reference: string }) {
+    const { resourceType, id } = parseFhirReference(reference);
+    if (!resourceType || !id) return <>{reference}</>;
+    return (
+        <>
+            <span className={classes.type}>{resourceType}/</span>
+            {id}
+        </>
+    );
+}
+
 export function ReferenceLink({ reference, display, className, title, ...props }: ReferenceLinkProps) {
     return (
         <a
@@ -26,7 +37,7 @@ export function ReferenceLink({ reference, display, className, title, ...props }
             title={title ?? reference}
             {...props}
         >
-            <span className={classes.label}>{display ?? reference}</span>
+            <span className={classes.label}>{display ?? <PathLabel reference={reference} />}</span>
         </a>
     );
 }

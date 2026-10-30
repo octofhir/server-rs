@@ -16,15 +16,19 @@
 .root th,
 .root td {
     border-bottom: 1px solid var(--octo-border-subtle, #dee2e6);
-    padding: 10px 12px;
+    padding: 5px 12px;
     text-align: left;
     vertical-align: middle;
 }
 
 .root th {
     background: var(--octo-surface-2, #f1f3f5);
-    color: var(--octo-text-secondary, #495057);
+    font-family: var(--octo-typography-heading, monospace);
+    font-size: 10.5px;
     font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--octo-text-muted, #6b6b74);
     white-space: nowrap;
 }
 
@@ -47,17 +51,17 @@
 
 .spacingXs th,
 .spacingXs td {
-    padding: 6px 8px;
+    padding: 3px 8px;
 }
 
 .spacingMd th,
 .spacingMd td {
-    padding: 12px 16px;
+    padding: 8px 14px;
 }
 
 .spacingLg th,
 .spacingLg td {
-    padding: 16px 20px;
+    padding: 12px 16px;
 }
 
 .scrollContainer {
