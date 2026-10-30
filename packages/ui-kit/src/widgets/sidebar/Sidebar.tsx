@@ -65,7 +65,7 @@ export interface SidebarStatus {
     theme?: "success" | "warning" | "danger" | "neutral";
 }
 
-export type SidebarTone = "ink" | "surface";
+export type SidebarTone = "panel" | "ink" | "surface";
 
 export interface SidebarSearch {
     /** Opens the command palette / jump-to dialog. */
@@ -77,7 +77,7 @@ export interface SidebarSearch {
 
 export interface SidebarProps {
     brand?: SidebarBrand;
-    /** `ink` (default) keeps the rail dark in both schemes; `surface` follows the page surface. */
+    /** `panel` (default) tints the rail with surface-2; `ink` keeps it dark in both schemes; `surface` matches the page. */
     tone?: SidebarTone;
     search?: SidebarSearch;
     groups: SidebarNavGroup[];
@@ -115,7 +115,7 @@ function initials(name: ReactNode): string {
 
 export function Sidebar({
     brand,
-    tone = "ink",
+    tone = "panel",
     search,
     groups,
     account,

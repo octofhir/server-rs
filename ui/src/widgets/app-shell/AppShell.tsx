@@ -8,10 +8,8 @@ import {
   Sidebar,
   type SidebarNavGroup,
   type SidebarStatus,
-  type SidebarTone,
   useColorScheme,
   useHotkeys,
-  usePersistentState,
 } from "@octofhir/ui-kit";
 import {
   Activity,
@@ -29,7 +27,6 @@ import {
   Monitor,
   Moon,
   NotebookPen,
-  PanelLeft,
   Receipt,
   Send,
   Settings,
@@ -162,7 +159,7 @@ function locationSegments(path: string, navigate: (to: string) => void): Locatio
   ];
 }
 
-/** Top-level navigation and layout for the console: ink rail, path header, ⌘K palette. */
+/** Top-level navigation and layout for the console: panel rail, path header, ⌘K palette. */
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -173,11 +170,6 @@ export function AppShell() {
   useSettings();
 
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [tone, setTone] = usePersistentState<SidebarTone>({
-    key: "octofhir.sidebarTone",
-    defaultValue: "ink",
-    validate: (v): v is SidebarTone => v === "ink" || v === "surface",
-  });
 
   const path = location.pathname;
 
@@ -227,18 +219,10 @@ export function AppShell() {
         keywords: ["theme", "dark", "light"],
         onSelect: toggleColorScheme,
       },
-      {
-        id: "toggle-sidebar-tone",
-        label: tone === "ink" ? "Use light sidebar" : "Use ink sidebar",
-        group: "Actions",
-        icon: PanelLeft,
-        keywords: ["sidebar", "rail", "tone"],
-        onSelect: () => setTone(tone === "ink" ? "surface" : "ink"),
-      },
       { id: "sign-out", label: "Sign out", group: "Actions", icon: LogOut, onSelect: logout },
     ];
     return [...pages, ...actions, ...types];
-  }, [navigate, resourceTypes, colorScheme, toggleColorScheme, tone, setTone, logout]);
+  }, [navigate, resourceTypes, colorScheme, toggleColorScheme, logout]);
 
   const openPalette = useCallback(
     (e: KeyboardEvent) => {
@@ -254,11 +238,10 @@ export function AppShell() {
 
   const sidebar = (
     <Sidebar
-      tone={tone}
       brand={{
         title: "OctoFHIR",
         iconSrc: `${BRANDING}/mark-small.svg`,
-        logoSrc: `${BRANDING}/${tone === "ink" || colorScheme === "dark" ? "logo-dark" : "logo-light"}.svg`,
+        logoSrc: `${BRANDING}/${colorScheme === "dark" ? "logo-dark" : "logo-light"}.svg`,
         onClick: () => navigate("/"),
       }}
       search={{ onOpen: () => setPaletteOpen(true), label: "Jump to…", shortcut: "⌘K" }}

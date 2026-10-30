@@ -84,9 +84,12 @@ export function CommandPalette({
 
     const results = useMemo(() => {
         const q = query.trim().toLowerCase();
-        return items
+        const ranked = items
             .map((item, index) => ({ item, index, rank: score(q, item) }))
-            .filter((r): r is { item: CommandPaletteItem; index: number; rank: number } => r.rank !== null)
+            .filter((r): r is { item: CommandPaletteItem; index: number; rank: number } => r.rank !== null);
+        // Fuzzy hits are only a fallback: once the label contains the query, loose matches are noise.
+        const exact = ranked.filter((r) => r.rank < 0);
+        return (exact.length ? exact : ranked)
             .sort((a, b) => (q ? a.rank - b.rank : a.index - b.index))
             .map((r) => r.item);
     }, [items, query]);

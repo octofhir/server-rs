@@ -1,6 +1,7 @@
 /*
- * Navigation rail. Two tones:
- *   ink     — always-dark rail in both schemes (default; the console's signature)
+ * Navigation rail. Three tones:
+ *   panel   — tinted surface-2 rail, neutral active fill, Marigold icon (default)
+ *   ink     — always-dark rail in both schemes
  *   surface — rail on the page surface with a soft Marigold active item
  * Each tone resolves the private --_* vars; everything below reads only those.
  */
@@ -15,6 +16,7 @@
     --_hover: var(--octo-sidebar-hover, #1c1d21);
     --_active-bg: var(--octo-sidebar-active-bg, #2b220d);
     --_active-text: var(--octo-sidebar-active-text, #f7c95a);
+    --_active-icon: var(--_active-text);
     --_line: var(--octo-sidebar-border, #1e1f23);
     --_field: color-mix(in srgb, var(--_text) 18%, transparent);
 
@@ -37,6 +39,18 @@
     --_hover: var(--octo-surface-2, #f4f4f5);
     --_active-bg: var(--octo-accent-primary-bg, #fdf3d7);
     --_active-text: var(--octo-accent-primary-text, #855700);
+    --_line: var(--octo-border-subtle, #e4e4e7);
+    --_field: var(--octo-border-strong, #d4d4d8);
+}
+.sidebar[data-tone="panel"] {
+    --_bg: var(--octo-surface-2, #f4f4f5);
+    --_text: var(--octo-text-secondary, #52525b);
+    --_text-strong: var(--octo-text-primary, #18181b);
+    --_muted: var(--octo-text-muted, #6b6b74);
+    --_hover: var(--octo-surface-3, #ebebed);
+    --_active-bg: var(--octo-surface-3, #ebebed);
+    --_active-text: var(--octo-text-primary, #18181b);
+    --_active-icon: var(--octo-accent-primary-text, #855700);
     --_line: var(--octo-border-subtle, #e4e4e7);
     --_field: var(--octo-border-strong, #d4d4d8);
 }
@@ -166,7 +180,7 @@
     color: var(--_active-text);
     font-weight: 600;
 }
-.item[data-active="true"] .itemIcon { color: var(--_active-text); }
+.item[data-active="true"] .itemIcon { color: var(--_active-icon); }
 .item[data-disabled="true"] { color: var(--_muted); cursor: not-allowed; }
 
 .itemIcon {
@@ -231,8 +245,8 @@
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: var(--_active-bg);
-    color: var(--_active-text);
+    background: var(--octo-accent-primary-bg, #fdf3d7);
+    color: var(--octo-accent-primary-text, #855700);
     font-size: 10.5px;
     font-weight: 700;
 }
