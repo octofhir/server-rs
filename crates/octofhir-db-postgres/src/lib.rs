@@ -75,6 +75,7 @@ pub use error::{PostgresError, Result};
 pub use fcm_storage::{FhirSchemaInfo, FhirSchemaRecord, PostgresPackageStore};
 pub use functional_indexes::{
     CompositePartialIndex, create_composite_partial_indexes, create_default_search_indexes,
+    create_ucum_indexes,
 };
 pub use notification_storage::PostgresNotificationStorage;
 pub use query_analyzer::{

@@ -377,14 +377,6 @@ pub async fn create_default_search_indexes(
                         "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qhull\" ON \"{table}\" \
                          USING gist ((fhir_qty_hull_range_arr(resource, {arr})))"
                     ),
-                    // GiST over the canonical UCUM hull, serving the UCUM arm of the
-                    // predicate. Without it that arm would turn the whole OR into a
-                    // sequential scan. Partial: rows without UCUM quantities stay out.
-                    format!(
-                        "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qucum\" ON \"{table}\" \
-                         USING gist (({})) WHERE ucum IS NOT NULL",
-                        octofhir_search::sql_builder::ucum_hull_expr("ucum", &all_paths)
-                    ),
                 ];
                 for ddl in &qddls {
                     if let Some(body) = index_body(ddl)
@@ -446,6 +438,62 @@ pub struct CompositePartialIndex {
     pub param: String,
     pub system: Option<String>,
     pub code: String,
+}
+
+/// Create GiST indexes over the canonical UCUM hull for the given quantity
+/// parameters (each `"ResourceType.code"`), serving the UCUM arm of their
+/// search predicate. Opt-in: unit-aware matching works without them, but then
+/// a search naming the UCUM system scans the table, while every write to an
+/// indexed type pays for the index. Partial, so rows without UCUM quantities
+/// stay out. Idempotent; unknown or non-quantity parameters are skipped.
+pub async fn create_ucum_indexes(
+    pool: &PgPool,
+    registry: &SearchParameterRegistry,
+    params: &[String],
+) -> usize {
+    let mut created = 0usize;
+    for spec in params {
+        let Some((resource_type, code)) = spec.split_once('.') else {
+            warn!(spec, "skipped UCUM index: expected \"ResourceType.code\"");
+            continue;
+        };
+        let Some(param) = registry.get(resource_type, code) else {
+            warn!(spec, "skipped UCUM index: unknown search parameter");
+            continue;
+        };
+        if param.param_type != SearchParameterType::Quantity {
+            warn!(spec, "skipped UCUM index: not a quantity parameter");
+            continue;
+        }
+        // Same paths as the quantity predicate (types/mod.rs), so the index
+        // expression matches the one the search renders.
+        let mut paths = param
+            .expression
+            .as_deref()
+            .map(|e| octofhir_search::sql_builder::fhirpath_to_jsonb_paths(e, resource_type))
+            .unwrap_or_default();
+        paths.retain(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")));
+        if paths.is_empty() {
+            continue;
+        }
+        let table = resource_type.to_lowercase();
+        let ddl = format!(
+            "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qucum\" ON \"{table}\" \
+             USING gist (({})) WHERE ucum IS NOT NULL",
+            octofhir_search::sql_builder::ucum_hull_expr("ucum", &paths)
+        );
+        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl))
+            .execute(pool)
+            .await
+        {
+            Ok(_) => created += 1,
+            Err(e) => warn!(spec, error = %e, "skipped UCUM index"),
+        }
+    }
+    if created > 0 {
+        info!(created, "created canonical UCUM indexes");
+    }
+    created
 }
 
 /// Create targeted PARTIAL composite indexes: a small btree on the quantity

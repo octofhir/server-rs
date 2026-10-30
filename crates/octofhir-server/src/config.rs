@@ -468,6 +468,14 @@ pub struct SearchSettings {
     /// `OCTOFHIR__SEARCH__INDEXED_PARAMS`) to index only what you search.
     #[serde(default = "default_indexed_params")]
     pub indexed_params: Vec<String>,
+    /// Quantity search parameters that get a GiST index over their canonical
+    /// UCUM values, each as `"ResourceType.code"` (e.g.
+    /// `"Observation.value-quantity"`). Unit-aware matching (1 g finds 1000 mg)
+    /// works without it, but a search that names the UCUM system then scans the
+    /// table, while every write to an indexed type pays for the index. Empty by
+    /// default; env `OCTOFHIR__SEARCH__UCUM_INDEXED_PARAMS`.
+    #[serde(default)]
+    pub ucum_indexed_params: Vec<String>,
     /// Maximum number of concepts a token `:in`/`:not-in`/`:above`/`:below`
     /// ValueSet/hierarchy may expand to before the request is rejected. Each
     /// expanded code becomes an OR branch in the rewritten query, so an
@@ -583,6 +591,7 @@ impl Default for SearchSettings {
             allow_debug_search_plan: false,
             allow_debug_search_explain_analyze: false,
             indexed_params: default_indexed_params(),
+            ucum_indexed_params: Vec::new(),
             max_valueset_expansion: default_max_valueset_expansion(),
             composite_index: Vec::new(),
         }
@@ -1385,7 +1394,8 @@ pub mod loader {
                 .separator("__")
                 .list_separator(",")
                 .with_list_parse_key("packages.load")
-                .with_list_parse_key("search.indexed_params"),
+                .with_list_parse_key("search.indexed_params")
+                .with_list_parse_key("search.ucum_indexed_params"),
         );
         let cfg = builder
             .build()

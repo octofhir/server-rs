@@ -853,6 +853,16 @@ async fn build_app_with_runtime(
     )
     .await;
 
+    // Canonical UCUM indexes (opt-in via `search.ucum_indexed_params`).
+    if !cfg.search.ucum_indexed_params.is_empty() {
+        octofhir_db_postgres::create_ucum_indexes(
+            &db_pool,
+            &cfg_snapshot.registry,
+            &cfg.search.ucum_indexed_params,
+        )
+        .await;
+    }
+
     // Targeted partial composite indexes (opt-in via `search.composite_index`).
     if !cfg.search.composite_index.is_empty() {
         let composite_specs: Vec<octofhir_db_postgres::CompositePartialIndex> = cfg
