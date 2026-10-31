@@ -187,10 +187,18 @@ export function DataTable<T>({
 
     // --- controlled/uncontrolled state plumbing ---
     const [sortingState, setSortingState] = useState<SortingState>(() => toSortingState(sortingProp));
-    const sorting = sortingProp != null ? toSortingState(sortingProp) : sortingState;
+    // Controlled state is converted once per prop change: a fresh array every render makes
+    // TanStack recompute the sorted model and reset the page index, which re-renders forever.
+    const sorting = useMemo(
+        () => (sortingProp != null ? toSortingState(sortingProp) : sortingState),
+        [sortingProp, sortingState]
+    );
 
     const [filterState, setFilterState] = useState<ColumnFiltersState>(() => toFilterState(filtersProp));
-    const columnFilters = filtersProp != null ? toFilterState(filtersProp) : filterState;
+    const columnFilters = useMemo(
+        () => (filtersProp != null ? toFilterState(filtersProp) : filterState),
+        [filtersProp, filterState]
+    );
 
     const [paginationState, setPaginationState] = useState<PaginationState>(() => ({
         pageIndex: paginationProp?.pageIndex ?? 0,
@@ -248,6 +256,7 @@ export function DataTable<T>({
         },
         onPaginationChange: (updater) => {
             const next = typeof updater === "function" ? updater(pagination) : updater;
+            if (next.pageIndex === pagination.pageIndex && next.pageSize === pagination.pageSize) return;
             setPaginationState(next);
             onPaginationChange?.(next);
         },
