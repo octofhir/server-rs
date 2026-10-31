@@ -258,8 +258,8 @@ export function DashboardWorkspace({ onNavigate }: DashboardWorkspaceProps) {
 						<h2 className={classes.welcomeTitle}>This server has no data yet</h2>
 						<p className={classes.welcomeBody}>
 							Load a small sample clinic (30 patients with encounters, vitals and conditions) to try
-							search, the consoles and the resource browser. Every resource carries the{" "}
-							<code className={classes.code}>demo-data</code> tag.
+							search, the consoles and the resource browser. Everything is tagged, so{" "}
+							<code className={classes.code}>?_tag=demo-data</code> finds it again.
 						</p>
 					</div>
 					<div className={classes.welcomeActions}>
