@@ -1421,7 +1421,8 @@ pub mod loader {
                 .list_separator(",")
                 .with_list_parse_key("packages.load")
                 .with_list_parse_key("search.indexed_params")
-                .with_list_parse_key("search.ucum_indexed_params"),
+                .with_list_parse_key("search.ucum_indexed_params")
+                .with_list_parse_key("storage.postgres.document_gin_resource_types"),
         );
         let cfg = builder
             .build()
