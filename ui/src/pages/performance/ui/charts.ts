@@ -1,6 +1,5 @@
 import { type ColorScheme, type EChartsCoreOption, palette } from "@octofhir/ui-kit";
-import type { IntervalPoint, QuantilePoint } from "../lib/model";
-import type { StatusGroup } from "../lib/prometheus";
+import type { IntervalPoint, QuantilePoint, StatusGroup } from "@/entities/server-metrics";
 import { formatAxisMs, formatMs, formatRate } from "./format";
 
 /**

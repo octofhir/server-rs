@@ -6,6 +6,7 @@ import {
   type DataTableSort,
   EmptyState,
   SegmentedRadioGroup,
+  Sparkline,
   useColorScheme,
 } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
@@ -22,8 +23,8 @@ import {
   type RouteStats,
   routeQuantileSeries,
   routeStats,
-} from "../lib/model";
-import { useMetricsFeed } from "../lib/useMetricsFeed";
+  useMetricsFeed,
+} from "@/entities/server-metrics";
 import { meanLatencyOption, quantileOption, throughputOption } from "./charts";
 import { formatMs, formatRate, formatShare } from "./format";
 import classes from "./PerformancePage.module.css";
@@ -37,29 +38,6 @@ const CHART_HEIGHT = 200;
 
 function isWindowKey(value: string | undefined): value is WindowKey {
   return value != null && value in WINDOWS;
-}
-
-/** Tiny inline trend for a stat cell; points are evenly spaced, nulls break the line. */
-function Sparkline({ values }: { values: (number | null)[] }) {
-  const max = Math.max(0, ...values.map((value) => value ?? 0));
-  if (values.length < 2 || max === 0) return <svg className={classes.spark} aria-hidden="true" />;
-  const step = 100 / (values.length - 1);
-  const segments: string[] = [];
-  let current = "";
-  values.forEach((value, index) => {
-    if (value == null) {
-      if (current) segments.push(current);
-      current = "";
-      return;
-    }
-    current += `${current ? "L" : "M"}${(index * step).toFixed(2)},${(23 - (value / max) * 21).toFixed(2)}`;
-  });
-  if (current) segments.push(current);
-  return (
-    <svg className={classes.spark} viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
-      <path d={segments.join(" ")} />
-    </svg>
-  );
 }
 
 function Stat({
@@ -78,7 +56,7 @@ function Stat({
       <span className={classes.label}>{label}</span>
       <span className={classes.value}>{value}</span>
       <span className={classes.caption}>{caption}</span>
-      {trend ? <Sparkline values={trend} /> : null}
+      {trend ? <Sparkline className={classes.spark} values={trend} /> : null}
     </div>
   );
 }

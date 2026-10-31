@@ -24,6 +24,7 @@ import {
 } from "@/shared/api/hooks";
 import type { FhirResource, ServerFeatures } from "@/shared/api/types";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import { ActivityStrip } from "./ActivityStrip";
 import classes from "./DashboardWorkspace.module.css";
 
 dayjs.extend(relativeTime);
@@ -237,6 +238,8 @@ export function DashboardWorkspace({ onNavigate }: DashboardWorkspaceProps) {
 					<span className={classes.caption}>{catalogSummary.caption}</span>
 				</div>
 			</section>
+
+			<ActivityStrip onNavigate={onNavigate} />
 
 			<section className={classes.features} aria-label="Capabilities">
 				{FEATURES.map(([key, label]) => {

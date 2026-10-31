@@ -19,6 +19,29 @@
 	border-left: 1px solid var(--octo-border-subtle);
 }
 
+/* Activity cells open their page. */
+.cellButton {
+	border: 0;
+	background: transparent;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.cellButton:hover {
+	background: var(--octo-surface-hover);
+}
+
+.cellButton:focus-visible {
+	outline: 2px solid var(--octo-accent-primary);
+	outline-offset: -2px;
+}
+
+.activity {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	overflow: hidden;
+}
+
 .label,
 .panelTitle {
 	margin: 0;
