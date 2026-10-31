@@ -5,42 +5,96 @@
   </picture>
 </p>
 
+<h3 align="center">The FHIR server you can drive from the keyboard.</h3>
+
 <p align="center">
-  A fast FHIR server in Rust (R4, R4B, R5, R6) with a keyboard-first web console.
+  A fast FHIR server in Rust on PostgreSQL, with a web console for REST, SQL, GraphQL,
+  FHIRPath and CQL built in.
 </p>
+
+<p align="center">
+  <a href="https://octofhir.github.io/server-rs/">Documentation</a> ·
+  <a href="https://octofhir.github.io/server-rs/getting-started/">Getting started</a> ·
+  <a href="#conformance">Conformance</a> ·
+  <a href="https://octofhir.github.io/server-rs/storybook/">UI kit</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/public/screenshots/resources-light.webp">
+  <img src="docs/public/screenshots/resources-dark.webp" alt="OctoFHIR console: Patient resources with the JSON of the selected one">
+</picture>
 
 > **Note:** OctoFHIR is under active development and not yet production-ready.
 
-## Web console
+## Why OctoFHIR
 
-The server ships its console at `/ui`: a resource browser, REST, SQL, GraphQL, FHIRPath
-and CQL consoles, notebooks, ViewDefinitions, and access management. Press `⌘K` to jump
-anywhere and `?` for keyboard shortcuts.
+- **One binary, one database.** The server, its search engine and the console ship as a
+  single Rust binary on PostgreSQL. Resource tables are created on demand, so loading an
+  Implementation Guide needs no migrations.
+- **Spec-first.** FHIR R4, R4B, R5 and R6, and 98.7% on the [FHIR262](#conformance)
+  conformance suite, the top score in the table below.
+- **A console made for developers.** Every way to ask a FHIR server a question, in one place,
+  with completion that knows your data: type `subject=` and pick a patient by name.
+- **Keyboard-first.** `⌘K` jumps anywhere (`Patient/123` opens it), `g` + a letter switches
+  tools, `j`/`k` walk lists, `?` lists the rest.
+
+## What's inside
+
+| Server | Console |
+|---|---|
+| REST API: CRUD, history, conditional ops, transactions and batches | Resource browser with search in the URL, bulk actions and Undo |
+| Search: chains, `_include`/`_revinclude`, composites, modifiers, sorting | REST console with completion for types, parameters and values |
+| GraphQL generated from the FHIR schemas | SQL console with a Postgres language server |
+| SQL on FHIR `ViewDefinition`s | FHIRPath and CQL workbenches |
+| Terminology: `$expand`, `$validate-code`, `$subsumes`, `$translate` | Notebooks that mix REST, SQL, FHIRPath, CQL, GraphQL and charts |
+| Bulk Data `$export` | Capability matrix and package manager for IGs |
+| OAuth 2.0 and SMART on FHIR, external identity providers | Users, roles, clients, sessions and access policies |
+| Access policies as scripts, audit trail | Logs, audit and live server settings |
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/public/screenshots/rest-console-dark.webp" alt="REST console completing a reference by practitioner name"></td>
+    <td width="33%"><img src="docs/public/screenshots/sql-console-dark.webp" alt="SQL console querying patients"></td>
+    <td width="33%"><img src="docs/public/screenshots/palette-dark.webp" alt="Command palette with recent places"></td>
+  </tr>
+  <tr>
+    <td align="center">REST with value completion</td>
+    <td align="center">SQL over the same data</td>
+    <td align="center"><code>⌘K</code> to go anywhere</td>
+  </tr>
+</table>
+
+## Quick start
+
+Requires Docker (for PostgreSQL) and Rust 1.85+.
 
 ```bash
-cd ui && pnpm install && pnpm dev   # dev server on http://localhost:4000/ui/
+git clone https://github.com/octofhir/server-rs.git && cd server-rs
+docker compose up -d          # PostgreSQL on :5450
+cargo run                     # FHIR API on http://localhost:8888/fhir
 ```
 
-## Quick Start
+Open the console at <http://localhost:8888/ui> and sign in as `admin` / `admin123`.
 
 ```bash
-cargo run                    # Run server
-cargo test                   # Run tests
-cargo build --release        # Build release binary
+curl -X POST http://localhost:8888/auth/token \
+  -d "grant_type=password&username=admin&password=admin123"
 ```
+
+Configuration lives in `octofhir.toml`; point `OCTOFHIR_CONFIG` at another file, or override any
+key with `OCTOFHIR__SECTION__KEY` environment variables.
 
 ## Development
 
 ```bash
-cargo watch -x run           # Auto-reload on changes
-cargo clippy                 # Lint
-cargo fmt                    # Format code
-cargo doc --open             # Generate and open docs
+cargo watch -x run            # server with auto-reload
+cargo test                    # tests
+cargo clippy                  # lint
+cd ui && pnpm install && pnpm dev   # console with hot reload on http://localhost:4000/ui/
 ```
 
-## Configuration
-
-Configuration via `octofhir.toml`. Override path with `OCTOFHIR_CONFIG` env var.
+The console's components live in [`packages/ui-kit`](packages/ui-kit) (Storybook:
+`pnpm -C packages/ui-kit storybook`).
 
 ## Conformance
 
@@ -85,3 +139,7 @@ just inferno-ui          # Open http://localhost
 # Run the tests in the Inferno UI, then:
 just inferno-results     # Generate conformance-results/<timestamp>/
 ```
+
+## License
+
+Licensed under either of MIT or Apache-2.0, at your option.
