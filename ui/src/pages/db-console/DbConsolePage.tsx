@@ -10,6 +10,7 @@ import {
 import { History as HistoryIcon } from "lucide-react";
 import type * as monaco from "monaco-editor";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { applyResultLimit, formatSqlError, parseTimeoutMs } from "@/entities/db-query";
 import { useQueryHistory, useSaveHistory, useSqlMutation } from "@/shared/api/hooks";
 import type { SqlResponse } from "@/shared/api/types";
@@ -164,6 +165,23 @@ export function DbConsolePage() {
     },
     [editorInstance]
   );
+
+  // `?sql=` (e.g. a suggested index from the advisor) lands in the editor once it exists. It is
+  // never run on arrival: the statement may be DDL, so the user reads it and runs it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedSql = searchParams.get("sql");
+  useEffect(() => {
+    if (!linkedSql || !editorInstance) return;
+    loadIntoEditor(linkedSql);
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("sql");
+        return next;
+      },
+      { replace: true }
+    );
+  }, [linkedSql, editorInstance, loadIntoEditor, setSearchParams]);
 
   const handleSelectHistory = useCallback(
     (entry: StreamEntry) => {

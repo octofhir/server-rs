@@ -13,6 +13,7 @@ import { getDbColumnViews, getDbIndexViews } from "@/entities/db-schema";
 import type { DbSchemaTableView } from "@/entities/db-schema";
 import { useDropIndex, useRunMaintenance, useTableDetail } from "@/shared/api/hooks";
 import type { MaintenanceOp } from "@/shared/api/types";
+import { IndexAdvice } from "./IndexAdvice";
 import classes from "./TableMetaDetail.module.css";
 
 interface TableMetaDetailProps {
@@ -293,6 +294,9 @@ export function TableMetaDetail({ table }: TableMetaDetailProps) {
                 </div>
               )}
             </section>
+
+            {/* The advisor knows FHIR resource tables, which live in the public schema. */}
+            {schema === "public" && <IndexAdvice table={name} />}
           </div>
         )}
       </div>

@@ -401,3 +401,47 @@
   justify-content: center;
   padding: 40px;
 }
+
+/* Index advice */
+.adviceForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.adviceActions {
+  display: flex;
+  gap: 6px;
+}
+
+.adviceTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.adviceCategory {
+  font-family: var(--octo-typography-mono);
+  font-size: 11px;
+  color: var(--octo-text-muted);
+}
+
+.adviceReason {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--octo-text-primary);
+}
+
+.adviceTradeoff,
+.adviceNote {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--octo-text-muted);
+}
+
+.adviceNote {
+  margin-top: 8px;
+}
