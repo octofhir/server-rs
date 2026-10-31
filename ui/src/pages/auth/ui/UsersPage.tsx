@@ -57,13 +57,19 @@ import {
 } from "../lib/useUsers";
 import { DeleteUserModal } from "./DeleteUserModal";
 import classes from "./UsersPage.module.css";
+import { useUrlFilters } from "@/shared/lib/url-filters";
+
+/** Filters kept in the URL: `?q=anna&role=admin&status=active`. */
+type UserUrlFilters = { q?: string; role?: string; status?: string };
+const USER_URL_KEYS = { text: ["q", "role", "status"] } as const;
 
 export function UsersPage() {
   const navigate = useNavigate();
-  const [search, setSearch] = useState("");
+  const [urlFilters, setUrlFilters, clearFilters] = useUrlFilters<UserUrlFilters>(USER_URL_KEYS);
+  const search = urlFilters.q ?? "";
   const debouncedSearch = useDebouncedValue(search, 500);
-  const [roleFilter, setRoleFilter] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const roleFilter = urlFilters.role ?? null;
+  const statusFilter = urlFilters.status ?? null;
   const [opened, { open, close }] = useDisclosure(false);
   const [resetPasswordOpened, { open: openResetPassword, close: closeResetPassword }] =
     useDisclosure(false);
@@ -85,11 +91,6 @@ export function UsersPage() {
 
   const users = getBundleResources<UserResource>(data);
   const isFiltered = Boolean(debouncedSearch || roleFilter || statusFilter);
-  const clearFilters = () => {
-    setSearch("");
-    setRoleFilter(null);
-    setStatusFilter(null);
-  };
   const roleNames = getBundleResources<RoleResource>(rolesData).map((role) => role.name);
   const availableRoles = roleNames.length ? roleNames : ["admin", "practitioner", "patient"];
 
@@ -205,14 +206,14 @@ export function UsersPage() {
             placeholder="Search by username or email..."
             startContent={<Magnifier width={16} />}
             value={search}
-            onChange={(value) => setSearch(value)}
+            onChange={(value) => setUrlFilters({ q: value })}
             className={classes.searchInput}
           />
           <Select
             placeholder="Filter by role"
             options={availableRoles.map((r) => ({ value: r, content: r }))}
             value={roleFilter}
-            onUpdate={(value) => setRoleFilter(value ?? null)}
+            onUpdate={(value) => setUrlFilters({ role: value ?? undefined })}
             clearable
             searchable
             w={180}
@@ -224,7 +225,7 @@ export function UsersPage() {
               { value: "inactive", content: "Inactive" },
             ]}
             value={statusFilter}
-            onUpdate={(value) => setStatusFilter(value ?? null)}
+            onUpdate={(value) => setUrlFilters({ status: value ?? undefined })}
             clearable
             w={140}
           />

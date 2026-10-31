@@ -8,11 +8,19 @@ import { AuditEventList } from "./ui/AuditEventList";
 import { AuditEventDetail } from "./ui/AuditEventDetail";
 import { AuditAnalytics } from "./ui/AuditAnalytics";
 import type { AuditEvent, AuditEventUIFilters } from "@/shared/api/types";
+import { useUrlFilters } from "@/shared/lib/url-filters";
 import classes from "./AuditTrailPage.module.css";
+
+/** Every audit filter lives in the URL, so a filtered trail can be bookmarked or shared. */
+type AuditUrlFilters = { [K in keyof AuditEventUIFilters]: AuditEventUIFilters[K] };
+const AUDIT_URL_KEYS = {
+	text: ["search", "actorId", "resourceType", "resourceId", "startTime", "endTime", "ipAddress"],
+	lists: ["action", "outcome", "actorType"],
+} as const;
 
 export function AuditTrailPage() {
 	const [activeTab, setActiveTab] = useState<string | null>("events");
-	const [filters, setFilters] = useState<AuditEventUIFilters>({});
+	const [filters, setFilters, clearUrlFilters] = useUrlFilters<AuditUrlFilters>(AUDIT_URL_KEYS);
 	const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null);
 
 	// Fetch audit events with infinite scroll
@@ -57,9 +65,9 @@ export function AuditTrailPage() {
 		Boolean(filters.search);
 
 	const clearAllFilters = useCallback(() => {
-		setFilters({});
+		clearUrlFilters();
 		setSelectedEvent(null);
-	}, []);
+	}, [clearUrlFilters]);
 
 	// Flatten events from infinite query pages
 	const events = useMemo(() => {
@@ -70,10 +78,13 @@ export function AuditTrailPage() {
 		return eventsData?.pages[0]?.total || 0;
 	}, [eventsData]);
 
-	const handleFiltersChange = useCallback((newFilters: Partial<AuditEventUIFilters>) => {
-		setFilters((prev) => ({ ...prev, ...newFilters }));
-		setSelectedEvent(null);
-	}, []);
+	const handleFiltersChange = useCallback(
+		(newFilters: Partial<AuditEventUIFilters>) => {
+			setFilters(newFilters);
+			setSelectedEvent(null);
+		},
+		[setFilters],
+	);
 
 	const handleRefresh = useCallback(() => {
 		refetchEvents();
