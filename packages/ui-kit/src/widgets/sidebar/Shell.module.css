@@ -3,6 +3,9 @@
        never grow past it or squeeze the sidebar. */
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
+    /* One viewport-high row: without it the implicit `auto` row grows with the page and
+       full-height tools (split views, consoles) spill below the window. */
+    grid-template-rows: minmax(0, 1fr);
     width: 100%;
     height: 100vh;
     overflow: hidden;
