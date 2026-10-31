@@ -25,21 +25,34 @@ export const userKeys = {
 };
 
 // Hooks
+/** Upper bound for one users page; filters run in the browser over this set. */
+const USER_PAGE_LIMIT = 500;
+
 export function useUsers(params: UserFilterParams = {}) {
   return useQuery({
     queryKey: userKeys.list(params),
     queryFn: async () => {
-      const searchParams: Record<string, string | number> = {};
-      if (params.count) searchParams._count = params.count;
-      if (params.offset) searchParams._offset = params.offset;
-      if (params.search) searchParams.username = params.search;
-      if (params.role) searchParams.role = params.role;
-      if (params.status) searchParams.status = params.status;
-      if (params.active !== undefined) searchParams.active = params.active.toString();
-
-      return fhirClient.search<UserResource>("User", searchParams);
+      // The server defines no search parameters for User (it ignores username, role, active…),
+      // so fetch the list once and filter here.
+      const bundle = await fhirClient.search<UserResource>("User", {
+        _count: params.count ?? USER_PAGE_LIMIT,
+        ...(params.offset ? { _offset: params.offset } : {}),
+      });
+      const keep = getBundleResources<UserResource>(bundle).filter((user) => matchesUserFilters(user, params));
+      return { ...bundle, total: keep.length, entry: keep.map((resource) => ({ resource })) };
     },
   });
+}
+
+function matchesUserFilters(user: UserResource, params: UserFilterParams): boolean {
+  const text = params.search?.trim().toLowerCase();
+  if (text && ![user.username, user.email, user.name].some((value) => value?.toLowerCase().includes(text))) {
+    return false;
+  }
+  if (params.role && !user.roles?.includes(params.role)) return false;
+  if (params.status && (user.status ?? (user.active ? "active" : "inactive")) !== params.status) return false;
+  if (params.active !== undefined && user.active !== params.active) return false;
+  return true;
 }
 
 export function useUser(id: string | null) {

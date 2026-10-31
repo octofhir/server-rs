@@ -97,6 +97,10 @@ export function getBundleResources<T extends FhirResource>(
     return [];
   }
 
-  const resources = bundle.entry.map((entry) => entry.resource).filter(isFhirResource);
+  // `search.mode: "outcome"` entries are server notes (e.g. "unknown parameter ignored"), not results.
+  const resources = bundle.entry
+    .filter((entry) => entry.search?.mode !== "outcome")
+    .map((entry) => entry.resource)
+    .filter(isFhirResource);
   return (guard ? resources.filter(guard) : resources) as T[];
 }

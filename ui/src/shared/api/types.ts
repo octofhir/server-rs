@@ -59,6 +59,8 @@ export interface FhirResource {
 export interface FhirBundleEntry<T extends FhirResource = FhirResource> {
   resource?: T;
   fullUrl?: string;
+  /** `outcome` marks server notes (OperationOutcome) rather than matches. */
+  search?: { mode?: "match" | "include" | "outcome"; score?: number };
 }
 
 export interface FhirBundle<T extends FhirResource = FhirResource> {

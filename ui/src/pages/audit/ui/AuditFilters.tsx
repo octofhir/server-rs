@@ -167,7 +167,7 @@ function AuditFiltersComponent({
 		<div className={classes.container}>
 			<div className={classes.filtersRow}>
 				<TextInput
-					placeholder="Search events..."
+					placeholder="Search by actor…"
 					leftSection={<Magnifier size={14} />}
 					value={filters.search || ""}
 					onChange={(value) => handleSearchChange(value)}

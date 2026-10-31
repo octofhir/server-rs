@@ -62,8 +62,9 @@ export function buildAuditFhirSearchParams(
 ): Record<string, string | number> {
 	const params: Record<string, string | number> = {};
 
+	// The server has no full-text `_content` on AuditEvent (it answers 400); search who acted.
 	if (filters.search) {
-		params._content = filters.search;
+		params["agent-name:contains"] = filters.search;
 	}
 
 	if (filters.action?.length) {
