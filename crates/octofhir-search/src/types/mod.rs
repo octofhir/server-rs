@@ -284,8 +284,13 @@ fn dispatch_search_inner(
                     }
                 }
                 Some(SpecialParameterType::Filter) => {
+                    let Some(registry) = registry else {
+                        return Err(SqlBuilderError::NotImplemented(
+                            "_filter needs the search parameter registry".to_string(),
+                        ));
+                    };
                     if let Some(value) = param.values.first() {
-                        build_filter_search(builder, &value.raw, resource_type)
+                        build_filter_search(builder, &value.raw, resource_type, registry)
                     } else {
                         Err(SqlBuilderError::InvalidSearchValue(
                             "_filter requires a value".to_string(),

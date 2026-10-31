@@ -2,6 +2,7 @@
 //!
 //! Special search parameters: _near, _text, _content, _filter, _list, _query
 
+use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 
 /// Special parameter types.
@@ -122,8 +123,9 @@ pub fn build_filter_search(
     builder: &mut SqlBuilder,
     value: &str,
     resource_type: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<(), SqlBuilderError> {
-    crate::filter::build_filter_sql(builder, value, resource_type)
+    crate::filter::build_filter_sql(builder, value, resource_type, registry)
 }
 
 /// Build SQL for _list parameter.
@@ -224,19 +226,6 @@ mod tests {
         build_content_search(&mut builder, "patient").unwrap();
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("resource::text"));
-    }
-
-    #[test]
-    fn test_build_filter_search() {
-        let mut builder = SqlBuilder::new();
-        build_filter_search(&mut builder, "name eq John", "Patient").unwrap();
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("resource->>'name'") && clause.contains("="));
-
-        let mut builder = SqlBuilder::new();
-        build_filter_search(&mut builder, "name co Smith", "Patient").unwrap();
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("ILIKE"));
     }
 
     #[test]

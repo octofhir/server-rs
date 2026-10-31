@@ -24,7 +24,13 @@
 //! subject.name co "john"
 //! ```
 
+use crate::ir::search_type_name;
+use crate::ir::sql::SqlExpr;
+use crate::parameters::{SearchModifier, SearchParameterType, SearchPrefix};
+use crate::parser::{ParsedParam, ParsedValue};
+use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::types::dispatch_search_with_registry;
 
 /// Comparison operators supported in _filter expressions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +77,23 @@ impl FilterOp {
             "eb" => Some(Self::Eb),
             "ap" => Some(Self::Ap),
             _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Eq => "eq",
+            Self::Ne => "ne",
+            Self::Co => "co",
+            Self::Sw => "sw",
+            Self::Ew => "ew",
+            Self::Gt => "gt",
+            Self::Lt => "lt",
+            Self::Ge => "ge",
+            Self::Le => "le",
+            Self::Sa => "sa",
+            Self::Eb => "eb",
+            Self::Ap => "ap",
         }
     }
 }
@@ -358,124 +381,131 @@ pub fn parse_filter(input: &str) -> Result<FilterExpression, SqlBuilderError> {
     Ok(expr)
 }
 
-/// Convert a path (potentially chained) to a JSONB accessor.
-fn path_to_jsonb(path: &str) -> String {
-    let parts: Vec<&str> = path.split('.').collect();
-    if parts.len() == 1 {
-        format!("resource->>'{}'", parts[0])
-    } else {
-        // For chained paths like subject.name, we need to access nested JSON
-        let mut accessor = "resource".to_string();
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last part - extract as text
-                accessor = format!("{}->>'{}'", accessor, part);
-            } else {
-                // Intermediate parts - traverse JSON
-                accessor = format!("{}->'{}'", accessor, part);
-            }
-        }
-        accessor
+/// The `(modifier, prefix)` that make the ordinary search parameter behave like
+/// `op`, or None when `op` has no counterpart for that parameter type.
+fn comparison_to_search(
+    param_type: SearchParameterType,
+    op: FilterOp,
+) -> Option<(Option<SearchModifier>, Option<SearchPrefix>)> {
+    use SearchParameterType as T;
+    let prefix = |p| Some((None, Some(p)));
+    match (param_type, op) {
+        (T::String, FilterOp::Eq) => Some((Some(SearchModifier::Exact), None)),
+        (T::String, FilterOp::Co) => Some((Some(SearchModifier::Contains), None)),
+        (T::String, FilterOp::Sw) => Some((None, None)),
+        (T::Token | T::Uri | T::Reference, FilterOp::Eq) => Some((None, None)),
+        (T::Token, FilterOp::Ne) => Some((Some(SearchModifier::Not), None)),
+        (T::Date | T::Number | T::Quantity, op) => match op {
+            FilterOp::Eq => prefix(SearchPrefix::Eq),
+            FilterOp::Ne => prefix(SearchPrefix::Ne),
+            FilterOp::Gt => prefix(SearchPrefix::Gt),
+            FilterOp::Lt => prefix(SearchPrefix::Lt),
+            FilterOp::Ge => prefix(SearchPrefix::Ge),
+            FilterOp::Le => prefix(SearchPrefix::Le),
+            FilterOp::Sa => prefix(SearchPrefix::Sa),
+            FilterOp::Eb => prefix(SearchPrefix::Eb),
+            FilterOp::Ap => prefix(SearchPrefix::Ap),
+            FilterOp::Co | FilterOp::Sw | FilterOp::Ew => None,
+        },
+        _ => None,
     }
 }
 
-/// Build SQL condition from a filter expression.
+/// Escape the FHIR search value delimiters, so a `_filter` string value is
+/// matched literally rather than split into an OR list or a token pair.
+fn escape_search_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        if matches!(c, '\\' | ',' | '$' | '|') {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
+/// Render one `_filter` expression as a SQL condition. Each comparison is the
+/// ordinary search parameter it names, with the operator mapped onto that
+/// parameter's modifier or prefix, so it shares the search's semantics and
+/// indexes; `and`/`or`/`not` combine the rendered conditions.
 fn build_condition(
     builder: &mut SqlBuilder,
     expr: &FilterExpression,
-) -> Result<String, SqlBuilderError> {
+    resource_type: &str,
+    registry: &SearchParameterRegistry,
+) -> Result<SqlExpr, SqlBuilderError> {
     match expr {
         FilterExpression::Comparison { path, op, value } => {
-            let json_path = path_to_jsonb(path);
-            let p = builder.add_text_param(value);
-
-            let condition = match op {
-                FilterOp::Eq => format!("{json_path} = ${p}"),
-                FilterOp::Ne => format!("{json_path} != ${p}"),
-                FilterOp::Gt => format!("{json_path} > ${p}"),
-                FilterOp::Lt => format!("{json_path} < ${p}"),
-                FilterOp::Ge => format!("{json_path} >= ${p}"),
-                FilterOp::Le => format!("{json_path} <= ${p}"),
-                FilterOp::Co => {
-                    let like_p = builder.add_text_param(format!("%{}%", value));
-                    format!("{json_path} ILIKE ${like_p}")
-                }
-                FilterOp::Sw => {
-                    let like_p = builder.add_text_param(format!("{}%", value));
-                    format!("{json_path} ILIKE ${like_p}")
-                }
-                FilterOp::Ew => {
-                    let like_p = builder.add_text_param(format!("%{}", value));
-                    format!("{json_path} ILIKE ${like_p}")
-                }
-                FilterOp::Sa => {
-                    // Starts after - for date/time ranges
-                    format!("{json_path} > ${p}")
-                }
-                FilterOp::Eb => {
-                    // Ends before - for date/time ranges
-                    format!("{json_path} < ${p}")
-                }
-                FilterOp::Ap => {
-                    // Approximately - within 10% for numbers, same day for dates
-                    // For simplicity, treat as equal for now
-                    // TODO: Implement proper approximate matching
-                    format!("{json_path} = ${p}")
-                }
+            if path.contains('.') {
+                return Err(SqlBuilderError::NotImplemented(format!(
+                    "_filter: chained parameter '{path}' is not supported"
+                )));
+            }
+            let definition = registry.get(resource_type, path).ok_or_else(|| {
+                SqlBuilderError::InvalidSearchValue(format!(
+                    "_filter: unknown search parameter '{path}' for {resource_type}"
+                ))
+            })?;
+            let (modifier, prefix) =
+                comparison_to_search(definition.param_type, *op).ok_or_else(|| {
+                    SqlBuilderError::NotImplemented(format!(
+                        "_filter: operator '{}' is not supported for {} parameter '{path}'",
+                        op.as_str(),
+                        search_type_name(definition.param_type),
+                    ))
+                })?;
+            let raw = match definition.param_type {
+                SearchParameterType::String => escape_search_value(value),
+                _ => value.clone(),
             };
-
-            Ok(condition)
+            let param = ParsedParam {
+                name: path.clone(),
+                modifier,
+                values: vec![ParsedValue { prefix, raw }],
+            };
+            let first = builder.condition_count();
+            dispatch_search_with_registry(builder, &param, &definition, resource_type, registry)?;
+            let rendered = builder.take_conditions_from(first);
+            Ok(match rendered.len() {
+                1 => rendered.into_iter().next().unwrap(),
+                _ => SqlExpr::And(rendered),
+            })
         }
         FilterExpression::Logical { op, left, right } => {
-            let left_cond = build_condition(builder, left)?;
-            let right_cond = build_condition(builder, right)?;
-            let op_str = match op {
-                LogicalOp::And => "AND",
-                LogicalOp::Or => "OR",
-            };
-            Ok(format!("({} {} {})", left_cond, op_str, right_cond))
+            let left = build_condition(builder, left, resource_type, registry)?;
+            let right = build_condition(builder, right, resource_type, registry)?;
+            Ok(match op {
+                LogicalOp::And => SqlExpr::And(vec![left, right]),
+                LogicalOp::Or => SqlExpr::Or(vec![left, right]),
+            })
         }
-        FilterExpression::Not(inner) => {
-            let inner_cond = build_condition(builder, inner)?;
-            Ok(format!("NOT ({})", inner_cond))
-        }
+        FilterExpression::Not(inner) => Ok(SqlExpr::Not(Box::new(build_condition(
+            builder,
+            inner,
+            resource_type,
+            registry,
+        )?))),
     }
 }
 
-/// Build SQL for a _filter parameter using the full expression parser.
-///
-/// This function parses the filter expression and generates the corresponding
-/// SQL WHERE clause condition.
-///
-/// # Arguments
-///
-/// * `builder` - SQL builder to add conditions to
-/// * `value` - The _filter parameter value
-/// * `_resource_type` - The resource type being searched (for future enhancements)
-///
-/// # Examples
+/// Add the SQL condition of a `_filter` value to `builder`. Comparisons name
+/// search parameters of `resource_type` (see [`build_condition`]); an unknown
+/// parameter, a chained path or an operator the parameter type cannot express
+/// is an error rather than a filter that silently matches nothing.
 ///
 /// ```ignore
-/// // Simple comparison
-/// build_filter_sql(builder, "name eq \"Smith\"", "Patient")?;
-///
-/// // Logical operators
-/// build_filter_sql(builder, "status ne \"cancelled\" or priority eq \"urgent\"", "Task")?;
-///
-/// // Nested with parentheses
-/// build_filter_sql(builder, "not (status eq \"draft\")", "DocumentReference")?;
-///
-/// // Chained paths
-/// build_filter_sql(builder, "subject.name co \"john\"", "Observation")?;
+/// build_filter_sql(builder, "name co \"smi\" and birthdate ge 1990", "Patient", registry)?;
+/// build_filter_sql(builder, "not (status eq draft)", "Task", registry)?;
 /// ```
 pub fn build_filter_sql(
     builder: &mut SqlBuilder,
     value: &str,
-    _resource_type: &str,
+    resource_type: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<(), SqlBuilderError> {
     let expr = parse_filter(value)?;
-    let condition = build_condition(builder, &expr)?;
-    builder.add_raw_condition(condition);
+    let condition = build_condition(builder, &expr, resource_type, registry)?;
+    builder.add_condition(condition);
     Ok(())
 }
 
@@ -579,80 +609,89 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_build_simple_condition() {
-        let mut builder = SqlBuilder::new();
-        build_filter_sql(&mut builder, "name eq \"Smith\"", "Patient").unwrap();
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("resource->>'name'"));
-        assert!(clause.contains("="));
-    }
-
-    #[test]
-    fn test_build_contains_condition() {
-        let mut builder = SqlBuilder::new();
-        build_filter_sql(&mut builder, "name co john", "Patient").unwrap();
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("ILIKE"));
-    }
-
-    #[test]
-    fn test_build_and_condition() {
-        let mut builder = SqlBuilder::new();
-        build_filter_sql(
-            &mut builder,
-            "name eq Smith and status eq active",
-            "Patient",
-        )
-        .unwrap();
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("AND"));
-    }
-
-    #[test]
-    fn test_build_or_condition() {
-        let mut builder = SqlBuilder::new();
-        build_filter_sql(
-            &mut builder,
-            "status eq cancelled or status eq draft",
-            "Task",
-        )
-        .unwrap();
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("OR"));
-    }
-
-    #[test]
-    fn test_build_not_condition() {
-        let mut builder = SqlBuilder::new();
-        build_filter_sql(&mut builder, "not (status eq draft)", "Task").unwrap();
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("NOT"));
-    }
-
-    #[test]
-    fn test_build_chained_path_condition() {
-        let mut builder = SqlBuilder::new();
-        build_filter_sql(&mut builder, "subject.name co john", "Observation").unwrap();
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("resource->'subject'->>'name'"));
-    }
-
-    #[test]
-    fn test_all_operators() {
-        let ops = [
-            "eq", "ne", "co", "sw", "ew", "gt", "lt", "ge", "le", "sa", "eb", "ap",
-        ];
-        for op in ops {
-            let mut builder = SqlBuilder::new();
-            let filter = format!("field {} value", op);
-            build_filter_sql(&mut builder, &filter, "Test").unwrap();
-            let clause = builder.build_where_clause();
-            assert!(
-                clause.is_some(),
-                "Operator '{}' should produce a valid clause",
-                op
+    fn registry() -> SearchParameterRegistry {
+        let registry = SearchParameterRegistry::new();
+        for (code, param_type, expression) in [
+            ("name", SearchParameterType::String, "Patient.name"),
+            ("gender", SearchParameterType::Token, "Patient.gender"),
+            ("birthdate", SearchParameterType::Date, "Patient.birthDate"),
+        ] {
+            registry.register(
+                crate::parameters::SearchParameter::new(
+                    code,
+                    format!("http://example.org/{code}"),
+                    param_type,
+                    vec!["Patient".to_string()],
+                )
+                .with_expression(expression),
             );
         }
+        registry
+    }
+
+    fn filter_sql(filter: &str) -> Result<String, SqlBuilderError> {
+        let mut builder = SqlBuilder::new();
+        build_filter_sql(&mut builder, filter, "Patient", &registry())?;
+        Ok(builder.build_where_clause().unwrap())
+    }
+
+    #[test]
+    fn comparisons_render_their_search_parameter() {
+        // `co` is the string `:contains` search, not a raw JSON key lookup.
+        let sql = filter_sql("name co \"smi\"").unwrap();
+        assert!(!sql.contains("resource->>'name'"), "SQL={sql}");
+        let mut direct = SqlBuilder::new();
+        let definition = registry().get("Patient", "name").unwrap();
+        dispatch_search_with_registry(
+            &mut direct,
+            &ParsedParam {
+                name: "name".into(),
+                modifier: Some(SearchModifier::Contains),
+                values: vec![ParsedValue {
+                    prefix: None,
+                    raw: "smi".into(),
+                }],
+            },
+            &definition,
+            "Patient",
+            &registry(),
+        )
+        .unwrap();
+        assert_eq!(sql, direct.build_where_clause().unwrap());
+    }
+
+    #[test]
+    fn logical_operators_combine_conditions() {
+        let sql = filter_sql("gender eq female and (birthdate ge 1990-01-01 or not (name sw jo))")
+            .unwrap();
+        assert!(
+            sql.contains(" AND ") && sql.contains(" OR ") && sql.contains("NOT"),
+            "SQL={sql}"
+        );
+    }
+
+    #[test]
+    fn unsupported_filters_are_errors_not_empty_results() {
+        assert!(matches!(
+            filter_sql("agent-name co adm"),
+            Err(SqlBuilderError::InvalidSearchValue(_))
+        ));
+        assert!(matches!(
+            filter_sql("general-practitioner.name co x"),
+            Err(SqlBuilderError::NotImplemented(_))
+        ));
+        assert!(matches!(
+            filter_sql("name ew son"),
+            Err(SqlBuilderError::NotImplemented(_))
+        ));
+        assert!(matches!(
+            filter_sql("birthdate co 1990"),
+            Err(SqlBuilderError::NotImplemented(_))
+        ));
+    }
+
+    #[test]
+    fn string_values_are_matched_literally() {
+        assert_eq!(escape_search_value(r"a,b$c|d\e"), r"a\,b\$c\|d\\e");
     }
 }

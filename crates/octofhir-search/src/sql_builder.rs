@@ -1393,6 +1393,18 @@ impl SqlBuilder {
         self.conditions.push(condition);
     }
 
+    /// Number of conditions accumulated so far.
+    pub fn condition_count(&self) -> usize {
+        self.conditions.len()
+    }
+
+    /// Remove and return the conditions added since [`Self::condition_count`]
+    /// returned `start`, so a caller can compose them (e.g. under `OR`/`NOT`)
+    /// instead of AND-ing them into the query.
+    pub fn take_conditions_from(&mut self, start: usize) -> Vec<crate::ir::sql::SqlExpr> {
+        self.conditions.split_off(start.min(self.conditions.len()))
+    }
+
     /// Add a raw SQL string condition (escape hatch for opaque/literal SQL).
     pub fn add_raw_condition(&mut self, sql: impl Into<String>) {
         self.conditions
