@@ -45,6 +45,16 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      # FHIR packages the integration tests install; saves downloads from packages.fhir.org.
+      - name: Cache FHIR packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.fcm
+            ~/.fhir/packages
+          key: ${{ runner.os }}-fhir-packages-${{ hashFiles('octofhir.toml') }}
+          restore-keys: ${{ runner.os }}-fhir-packages-
+
       - name: Create UI dist placeholder
         run: |
           mkdir -p ui/dist

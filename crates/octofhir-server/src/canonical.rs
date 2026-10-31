@@ -1002,6 +1002,33 @@ fn parse_simple_spec(s: &str) -> Result<LoadedPackage, String> {
     })
 }
 
+/// Attempts at a package registry request that fails at the network level.
+const REGISTRY_ATTEMPTS: u32 = 4;
+
+/// Package metadata, retried with backoff (0.5, 1, 2 s) when the registry can't be reached.
+/// packages.fhir.org drops connections now and then; one blip shouldn't fail a server start
+/// (or a test fixture). Errors the registry answers with are returned at once.
+async fn fetch_metadata_with_retry(
+    client: &octofhir_canonical_manager::registry::RegistryClient,
+    name: &str,
+    version: &str,
+) -> octofhir_canonical_manager::Result<octofhir_canonical_manager::registry::PackageMetadata> {
+    let mut attempt = 1;
+    loop {
+        match client.get_package_metadata(name, version).await {
+            Err(octofhir_canonical_manager::FcmError::Network(error))
+                if attempt < REGISTRY_ATTEMPTS =>
+            {
+                let delay = std::time::Duration::from_millis(500 << (attempt - 1));
+                tracing::warn!(package = %format!("{name}@{version}"), attempt, error = %error, "package registry unreachable, retrying");
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
 async fn preflight_validate_all(
     client: &octofhir_canonical_manager::registry::RegistryClient,
     roots: &[(String, String)],
@@ -1016,8 +1043,7 @@ async fn preflight_validate_all(
         if !visited.insert(key.clone()) {
             continue;
         }
-        let meta = client
-            .get_package_metadata(&name, &version)
+        let meta = fetch_metadata_with_retry(client, &name, &version)
             .await
             .map_err(|e| format!("failed to fetch package metadata for {key}: {e}"))?;
         let pkg_ver = map_metadata_version(&meta.fhir_version);
