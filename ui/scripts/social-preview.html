@@ -1,0 +1,80 @@
+<!doctype html>
+<!-- GitHub social preview (1280×640). Render: python3 ui/scripts/render-social-preview.py -->
+<html>
+<head>
+<meta charset="utf-8" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=block" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 640px; }
+  body {
+    position: relative;
+    overflow: hidden;
+    background: #111214;
+    color: #ededef;
+    font-family: Inter, system-ui, sans-serif;
+  }
+  .copy { position: absolute; left: 72px; top: 92px; width: 520px; }
+  .logo { height: 58px; display: block; }
+  h1 {
+    margin-top: 48px;
+    font-size: 46px;
+    line-height: 1.12;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  h1 em { font-style: normal; color: #f5bd3b; }
+  p {
+    margin-top: 22px;
+    font-size: 21px;
+    line-height: 1.45;
+    color: #a1a1aa;
+  }
+  .facts {
+    position: absolute;
+    left: 72px;
+    bottom: 64px;
+    display: flex;
+    gap: 10px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .facts span {
+    padding: 7px 11px;
+    border: 1px solid #2a2b30;
+    border-radius: 6px;
+    background: #18191c;
+    color: #c8c8cc;
+  }
+  .facts b { color: #f5bd3b; font-weight: 600; }
+  /* A window onto the REST console (sidebar cropped) with the name completion open. */
+  .shot {
+    position: absolute;
+    left: 610px;
+    top: 96px;
+    width: 640px;
+    height: 448px;
+    border: 1px solid #2a2b30;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  }
+  .shot img { display: block; width: 858px; margin-left: -124px; margin-top: -4px; }
+</style>
+</head>
+<body>
+  <div class="copy">
+    <img class="logo" src="../public/branding/logo-dark.svg" alt="octo/fhir" />
+    <h1>The FHIR server<br />you can <em>drive from<br />the keyboard</em></h1>
+    <p>Rust core, PostgreSQL storage and a console for REST, SQL, GraphQL, FHIRPath and CQL.</p>
+  </div>
+  <div class="facts">
+    <span>R4 · R4B · R5 · R6</span>
+    <span>FHIR262 <b>98.7%</b></span>
+    <span>open source</span>
+  </div>
+  <div class="shot"><img src="../../docs/public/screenshots/rest-console-dark.webp" alt="" /></div>
+</body>
+</html>
