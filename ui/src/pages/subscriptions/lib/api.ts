@@ -15,11 +15,20 @@ export interface SubscriptionResource extends FhirResource {
   endpoint?: string;
 }
 
+export interface TopicFilter {
+  resource?: string;
+  filterParameter: string;
+  /** FHIRPath the server evaluates against the changed resource. */
+  filterDefinition?: string;
+  description?: string;
+}
+
 export interface TopicResource extends FhirResource {
   url?: string;
   title?: string;
   status?: string;
-  resourceTrigger?: { resource?: string; supportedInteraction?: string[] }[];
+  resourceTrigger?: { resource?: string; supportedInteraction?: string[]; fhirPathCriteria?: string }[];
+  canFilterBy?: TopicFilter[];
 }
 
 export interface EventLogEntry {

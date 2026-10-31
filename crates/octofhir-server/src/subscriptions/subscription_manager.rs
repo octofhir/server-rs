@@ -184,10 +184,13 @@ impl SubscriptionManager {
         // Topic URL can be in different places depending on FHIR version:
         // - R5: subscription.topic
         // - R4 Backport: subscription.criteria (URL format)
+        // The backport appends filters to the topic URL (`<topic>?patient=Patient/1`); they
+        // are read by `parse_filters`, the topic is the part before `?`.
         let topic_url = resource
             .get("topic")
             .and_then(|v| v.as_str())
             .or_else(|| resource.get("criteria").and_then(|v| v.as_str()))
+            .map(|url| url.split_once('?').map_or(url, |(topic, _)| topic))
             .ok_or_else(|| {
                 SubscriptionError::InvalidSubscription("Missing topic or criteria".to_string())
             })?

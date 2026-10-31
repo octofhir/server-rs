@@ -7,6 +7,7 @@ const draft = {
   channel: "rest-hook" as const,
   endpoint: " https://crm.example.org/hook ",
   headers: "Authorization: Bearer abc\nnot a header",
+  filters: {},
 };
 
 describe("buildSubscription", () => {
@@ -34,14 +35,39 @@ describe("buildSubscription", () => {
   });
 });
 
+describe("subscription filters", () => {
+  const filtered = { ...draft, filters: { patient: "Patient/1", status: " " } };
+  it("go on the topic URL in the backport", () => {
+    expect(buildSubscription(filtered, "R4").criteria).toBe(
+      "http://example.org/topics/patient-change?patient=Patient%2F1"
+    );
+  });
+  it("go to filterBy in R5", () => {
+    const subscription = buildSubscription(filtered, "R5") as unknown as Record<string, unknown>;
+    expect(subscription.filterBy).toEqual([{ filterParameter: "patient", value: "Patient/1" }]);
+  });
+});
+
 describe("buildTopic", () => {
   it("defaults the canonical URL to the title under this origin", async () => {
     const { buildTopic } = await import("./NewTopicDialog");
     const topic = buildTopic(
-      { title: "Patient changes", url: "", resource: "Patient", interactions: ["create", "update"] },
+      {
+        title: "Patient changes",
+        url: "",
+        resource: "Patient",
+        interactions: ["create", "update"],
+        criteria: "active = true",
+        filters: [{ name: "org", expression: "managingOrganization.reference" }],
+      },
       "https://fhir.example.org"
     );
     expect(topic.url).toBe("https://fhir.example.org/topics/patient-changes");
-    expect(topic.resourceTrigger).toEqual([{ resource: "Patient", supportedInteraction: ["create", "update"] }]);
+    expect(topic.resourceTrigger).toEqual([
+      { resource: "Patient", supportedInteraction: ["create", "update"], fhirPathCriteria: "active = true" },
+    ]);
+    expect(topic.canFilterBy).toEqual([
+      { resource: "Patient", filterParameter: "org", filterDefinition: "managingOrganization.reference" },
+    ]);
   });
 });

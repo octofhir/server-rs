@@ -165,3 +165,21 @@
 	display: flex;
 	gap: 16px;
 }
+
+.filterRow {
+	display: grid;
+	grid-template-columns: 140px minmax(0, 1fr) auto;
+	gap: 6px;
+	align-items: center;
+}
+
+.addFilter {
+	align-self: flex-start;
+}
+
+.filterName {
+	font-family: var(--octo-typography-mono);
+	font-size: 12px;
+	color: var(--octo-text-secondary);
+	white-space: nowrap;
+}

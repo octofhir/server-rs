@@ -96,6 +96,8 @@ impl OperationHandler for StatusOperation {
             .get("topic")
             .and_then(|v| v.as_str())
             .or_else(|| subscription.get("criteria").and_then(|v| v.as_str()))
+            // Backport filters ride on the topic URL after `?`.
+            .map(|url| url.split_once('?').map_or(url, |(topic, _)| topic))
             .unwrap_or("");
 
         let stats = state

@@ -16,9 +16,11 @@ interface Draft {
   endpoint: string;
   /** `Name: value` per line. */
   headers: string;
+  /** Values for the topic's filter parameters; empty ones are left out. */
+  filters: Record<string, string>;
 }
 
-const EMPTY: Draft = { reason: "", topic: null, channel: "rest-hook", endpoint: "", headers: "" };
+const EMPTY: Draft = { reason: "", topic: null, channel: "rest-hook", endpoint: "", headers: "", filters: {} };
 
 function headerLines(text: string): [string, string][] {
   return text.split("\n").flatMap((line): [string, string][] => {
@@ -34,6 +36,9 @@ function headerLines(text: string): [string, string][] {
  */
 export function buildSubscription(draft: Draft, fhirVersion: string | undefined): SubscriptionResource {
   const headers = headerLines(draft.headers);
+  const filters = Object.entries(draft.filters)
+    .map(([name, value]): [string, string] => [name, value.trim()])
+    .filter(([, value]) => value !== "");
   const endpoint =
     draft.channel === "rest-hook"
       ? draft.endpoint.trim()
@@ -51,13 +56,17 @@ export function buildSubscription(draft: Draft, fhirVersion: string | undefined)
       contentType: "application/fhir+json",
       content: "full-resource",
       ...(headers.length > 0 ? { parameter: headers.map(([name, value]) => ({ name, value })) } : {}),
+      ...(filters.length > 0
+        ? { filterBy: filters.map(([filterParameter, value]) => ({ filterParameter, value })) }
+        : {}),
     } as SubscriptionResource;
   }
   return {
     resourceType: "Subscription",
     status: "requested",
     reason: draft.reason.trim() || "Subscription",
-    criteria: draft.topic ?? "",
+    // The backport carries filters on the topic URL.
+    criteria: filters.length > 0 ? `${draft.topic ?? ""}?${new URLSearchParams(filters).toString()}` : (draft.topic ?? ""),
     channel: {
       type: draft.channel,
       endpoint,
@@ -95,6 +104,7 @@ export function NewSubscriptionDialog({
       }),
   });
 
+  const topicFilters = topics.find((topic) => topic.url === draft.topic)?.canFilterBy ?? [];
   const topicOptions = topics
     .filter((topic) => topic.url)
     .map((topic) => ({ value: topic.url ?? "", label: topic.title ? `${topic.title} · ${topic.url}` : (topic.url ?? "") }));
@@ -134,9 +144,24 @@ export function NewSubscriptionDialog({
           placeholder={topicOptions.length === 0 ? "No active topics yet" : "Pick a topic"}
           data={topicOptions}
           value={draft.topic}
-          onChange={(topic) => update({ topic })}
+          onChange={(topic) => update({ topic, filters: {} })}
           emptyMessage="No topic matches"
         />
+        {topicFilters.length > 0 && (
+          <div className={classes.field}>
+            <span className={classes.fieldLabel}>Only changes where</span>
+            {topicFilters.map((filter) => (
+              <TextInput
+                key={filter.filterParameter}
+                aria-label={filter.filterParameter}
+                leftSection={<span className={classes.filterName}>{filter.filterParameter} =</span>}
+                placeholder={filter.filterDefinition ?? "any value"}
+                value={draft.filters[filter.filterParameter] ?? ""}
+                onChange={(value) => update({ filters: { ...draft.filters, [filter.filterParameter]: value } })}
+              />
+            ))}
+          </div>
+        )}
         <div className={classes.field}>
           <span className={classes.fieldLabel}>Channel</span>
           <SegmentedRadioGroup
