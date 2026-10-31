@@ -12,8 +12,8 @@
 //! - :of-type: identifier type filtering
 
 use crate::ir::{
-    render_token_identifier_clauses_as_or, render_token_path_clauses_as_or,
-    render_token_scalar_code_clauses_as_or,
+    render_token_identifier_clauses_as_or, render_token_indexed_code_clauses_as_or,
+    render_token_path_clauses_as_or, render_token_scalar_code_clauses_as_or,
 };
 #[cfg(test)]
 use crate::parameters::SearchModifier;
@@ -173,6 +173,23 @@ pub fn build_gin_code_search(
 ) -> Result<(), SqlBuilderError> {
     let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::SimpleCode)?;
     if let Some(sql) = render_token_simple_code_clauses_as_or(builder, &clauses, path_segments)? {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
+/// Code search on a top-level code element that has its own text btree
+/// (`SearchParameter::scalar_code_index`), e.g. `Encounter.status`.
+pub fn build_indexed_code_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    path_segments: &[String],
+) -> Result<(), SqlBuilderError> {
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::SimpleCode)?;
+    let text_path = build_jsonb_accessor(builder.resource_column(), path_segments, true);
+    if let Some(sql) =
+        render_token_indexed_code_clauses_as_or(builder, &clauses, path_segments, &text_path)?
+    {
         builder.add_condition(sql);
     }
     Ok(())
@@ -490,6 +507,47 @@ mod tests {
         assert_eq!(clause, "(resource @> $1::jsonb) = false");
         assert!(clause.contains("@>"));
         assert!(!clause.contains("NOT ("));
+    }
+
+    #[test]
+    fn indexed_code_search_collapses_codes_into_one_any() {
+        let mut builder = SqlBuilder::new();
+        let mut param = make_param("status", "finished", None);
+        param.values.push(ParsedValue {
+            prefix: None,
+            raw: "in-progress".to_string(),
+        });
+
+        build_indexed_code_search(&mut builder, &param, &["status".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert_eq!(clause, "resource->>'status' = ANY(ARRAY[$1, $2]::text[])");
+    }
+
+    #[test]
+    fn indexed_code_search_single_code_is_plain_equality() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param(
+            "status",
+            "http://hl7.org/fhir/encounter-status|finished",
+            None,
+        );
+
+        build_indexed_code_search(&mut builder, &param, &["status".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert_eq!(clause, "resource->>'status' = $1");
+    }
+
+    #[test]
+    fn indexed_code_search_keeps_containment_for_not() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("status", "finished", Some(SearchModifier::Not));
+
+        build_indexed_code_search(&mut builder, &param, &["status".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert_eq!(clause, "(resource @> $1::jsonb) = false");
     }
 
     #[test]

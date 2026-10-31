@@ -385,6 +385,9 @@ pub struct SearchParameter {
     /// Name of the per-param typed extraction SQL function, set at bootstrap when
     /// the function was created. None = use the generic extraction path.
     pub typed_extract_fn: Option<String>,
+    /// Set at bootstrap when a btree on `resource->>'<code>'` was created for
+    /// this top-level code element; token searches then compare the text value.
+    pub scalar_code_index: bool,
 }
 
 impl SearchParameter {
@@ -424,6 +427,7 @@ impl SearchParameter {
             element_type_hint: ElementTypeHint::Unknown,
             user_defined: false,
             typed_extract_fn: None,
+            scalar_code_index: false,
         }
     }
 
@@ -431,6 +435,13 @@ impl SearchParameter {
     #[must_use]
     pub fn with_typed_extract_fn(mut self, fn_name: impl Into<String>) -> Self {
         self.typed_extract_fn = Some(fn_name.into());
+        self
+    }
+
+    /// Mark the top-level code element as served by its own text btree.
+    #[must_use]
+    pub fn with_scalar_code_index(mut self) -> Self {
+        self.scalar_code_index = true;
         self
     }
 

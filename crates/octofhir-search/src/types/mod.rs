@@ -38,8 +38,8 @@ pub use string::{build_array_string_search, build_human_name_search, build_strin
 pub use token::{
     build_code_search, build_gin_code_array_search, build_gin_code_search,
     build_gin_identifier_search, build_gin_token_search, build_identifier_search,
-    build_token_coding_array_search, build_token_coding_subtree_search, build_token_search,
-    parse_token_value,
+    build_indexed_code_search, build_token_coding_array_search, build_token_coding_subtree_search,
+    build_token_search, parse_token_value,
 };
 pub use uri::{build_uri_array_search, build_uri_search, build_uri_text_array_search};
 
@@ -178,8 +178,13 @@ fn dispatch_search_inner(
                     build_jsonb_accessor(builder.resource_column(), &path_segments, true);
                 build_code_search(builder, param, &text_path)
             } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
-                // GIN-optimized simple code search (e.g., Patient.gender)
-                build_gin_code_search(builder, param, &path_segments)
+                if definition.scalar_code_index && path_segments.len() == 1 {
+                    // Top-level code with its own text btree (e.g. Encounter.status).
+                    build_indexed_code_search(builder, param, &path_segments)
+                } else {
+                    // GIN-optimized simple code search (e.g., Patient.gender)
+                    build_gin_code_search(builder, param, &path_segments)
+                }
             } else if definition.element_type_hint.is_simple_scalar_array() {
                 // Array of codes (e.g. AllergyIntolerance.category 0..*).
                 build_gin_code_array_search(builder, param, &path_segments)

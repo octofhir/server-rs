@@ -318,6 +318,34 @@ pub async fn create_default_search_indexes(
                      USING gin (fhir_text_blob(fhir_extract_text(resource, '{paths_json}'::jsonb)) gin_trgm_ops)"
                 )
             }
+            // Top-level code token params (e.g. Encounter.status, Patient.gender): a
+            // btree on the text value. Unlike a bitmap over the document GIN it has
+            // statistics and returns rows lazily, so a code most rows share stops
+            // after `_count` matches. The registry flag switches the predicate
+            // (types/token.rs) to the identical `resource->>'<code>'` expression.
+            SearchParameterType::Token
+                if matches!(&param.element_type_hint, ElementTypeHint::SimpleCode)
+                    && segments.len() == 1 =>
+            {
+                let text = build_jsonb_accessor("resource", &segments, true);
+                let ddl = format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_code\" ON \"{table}\" (({text}))"
+                );
+                match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl))
+                    .execute(pool)
+                    .await
+                {
+                    Ok(_) => {
+                        registry_updates.push((*param).clone().with_scalar_code_index());
+                        created += 1;
+                        debug!(resource_type, code, "created code functional index");
+                    }
+                    Err(e) => {
+                        warn!(resource_type, code, error = %e, "skipped code functional index");
+                    }
+                }
+                continue;
+            }
             // CodeableConcept/Coding token params — repeating (e.g. Observation.category,
             // predicate `<subtree> @> '[...]'`) or scalar (e.g. Encounter.class, predicate
             // `<subtree> @> '{...}'`). A dedicated GIN on just that subtree is small and

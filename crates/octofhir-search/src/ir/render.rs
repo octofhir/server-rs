@@ -615,6 +615,50 @@ pub fn render_token_simple_code_array_clauses_as_or(
     Ok(or_exprs(exprs))
 }
 
+/// Like [`render_token_simple_code_clauses_as_or`] for a top-level code that has
+/// its own btree on `text_path` (`resource->>'status'`). The plain-code clauses
+/// collapse into one `text_path = ANY(...)`: the btree and its statistics let the
+/// planner stop a common code after `_count` rows instead of bitmapping every
+/// match through the document GIN. Negated and `:missing` clauses keep the
+/// containment form, whose `:not` also matches resources without the element.
+pub fn render_token_indexed_code_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    path_segments: &[String],
+    text_path: &str,
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let mut codes = Vec::new();
+    let mut exprs = Vec::new();
+    for clause in clauses {
+        match &clause.predicate {
+            TokenPredicate::AnySystemCode { .. }
+            | TokenPredicate::NoSystemCode { .. }
+            | TokenPredicate::SystemCode { .. }
+                if !clause.negated =>
+            {
+                codes.push(simple_code_token_value(&clause.predicate)?);
+            }
+            _ => exprs.push(token_apply_negation(
+                clause,
+                token_simple_code_clause_expr(builder, clause, path_segments, false)?,
+            )),
+        }
+    }
+    let params = codes
+        .into_iter()
+        .map(|code| format!("${}", builder.add_text_param(code)))
+        .collect::<Vec<_>>();
+    match params.as_slice() {
+        [] => {}
+        [param] => exprs.push(SqlExpr::Raw(format!("{text_path} = {param}"))),
+        _ => exprs.push(SqlExpr::Raw(format!(
+            "{text_path} = ANY(ARRAY[{}]::text[])",
+            params.join(", ")
+        ))),
+    }
+    Ok(or_exprs(exprs))
+}
+
 /// Render scalar text-path code token clauses as one OR group.
 pub fn render_token_scalar_code_clauses_as_or(
     builder: &mut SqlBuilder,
