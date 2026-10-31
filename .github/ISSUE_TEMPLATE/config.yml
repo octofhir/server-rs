@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/octofhir/server-rs/discussions
+    about: Ask how to do something or float an idea before it becomes an issue.
+  - name: Security vulnerability
+    url: https://github.com/octofhir/server-rs/security/advisories/new
+    about: Report security problems privately, not as public issues.
+  - name: Documentation
+    url: https://octofhir.github.io/server-rs/
+    about: Guides for setup, search, authentication and deployment.

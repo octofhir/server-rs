@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in the server or the console doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! Please don't include real patient data in examples.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Requests (curl or REST console), resources or console steps that show the problem.
+      placeholder: |
+        1. POST /fhir/Patient with …
+        2. GET /fhir/Patient?name=…
+        3. …
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - REST API / search
+        - Transactions / bundles
+        - Validation / terminology
+        - Authentication / access policies
+        - GraphQL / SQL on FHIR / CQL
+        - Web console
+        - Deployment / configuration
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag or commit (`git rev-parse --short HEAD`).
+      placeholder: ghcr.io/octofhir/octofhir-server:latest or 771ada3
+    validations:
+      required: true
+  - type: dropdown
+    id: fhir-version
+    attributes:
+      label: FHIR version
+      options: [R4, R4B, R5, R6]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or response
+      description: Server log lines or the OperationOutcome you got back.
+      render: shell
