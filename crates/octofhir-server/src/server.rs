@@ -1723,7 +1723,8 @@ async fn build_app_with_runtime(
             subscription_manager.clone(),
             event_matcher.clone(),
             event_storage.clone(),
-            true, // enabled
+            cfg.subscriptions.enabled,
+            cfg.subscriptions.email.is_some(),
         );
         hook_registry
             .register_resource(Arc::new(subscription_hook))
@@ -1740,7 +1741,8 @@ async fn build_app_with_runtime(
             event_matcher,
             event_storage,
             websocket_registry,
-            enabled: true,
+            enabled: cfg.subscriptions.enabled,
+            email_configured: cfg.subscriptions.email.is_some(),
             delivery_shutdown: None,
         }
     };
@@ -1759,11 +1761,26 @@ async fn build_app_with_runtime(
 
     // Start subscription delivery processor in background
     let delivery_shutdown = {
-        let processor = crate::subscriptions::delivery::DeliveryProcessor::new(
+        let mut processor = crate::subscriptions::delivery::DeliveryProcessor::new(
             subscription_state.event_storage.clone(),
             subscription_state.subscription_manager.clone(),
             subscription_state.websocket_registry.clone(),
         );
+        if let Some(email) = cfg.subscriptions.email.clone() {
+            processor = match (email.smtp_host, email.sendgrid_api_key) {
+                (Some(host), _) => processor.with_smtp_email(
+                    host,
+                    email.smtp_port,
+                    email.smtp_tls,
+                    email.smtp_username,
+                    email.smtp_password,
+                    email.from,
+                ),
+                (None, Some(api_key)) => processor.with_sendgrid_email(api_key, email.from),
+                // Rejected by AppConfig::validate.
+                (None, None) => processor,
+            };
+        }
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let shutdown_handle = Arc::new(shutdown_tx);
 

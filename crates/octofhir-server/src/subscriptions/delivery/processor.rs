@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use tokio::sync::{Notify, watch};
 
+use super::email::SmtpTls;
 use super::websocket::WebSocketRegistry;
 use super::{DeliveryChannel, EmailChannel, RestHookChannel};
 use crate::subscriptions::error::SubscriptionResult;
@@ -72,12 +73,13 @@ impl DeliveryProcessor {
         mut self,
         host: String,
         port: u16,
+        tls: SmtpTls,
         username: Option<String>,
         password: Option<String>,
         from_email: String,
     ) -> Self {
         self.email_channel = Some(EmailChannel::with_smtp(
-            host, port, username, password, from_email,
+            host, port, tls, username, password, from_email,
         ));
         self
     }

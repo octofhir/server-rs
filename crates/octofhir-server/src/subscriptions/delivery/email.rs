@@ -3,10 +3,26 @@
 //! Sends subscription notifications via email using configured SMTP or API providers.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{DeliveryChannel, SubscriptionResult};
-use crate::subscriptions::types::{ActiveSubscription, DeliveryResult, SubscriptionEvent};
+use crate::subscriptions::types::{
+    ActiveSubscription, DeliveryResult, SubscriptionChannel, SubscriptionEvent,
+};
+
+/// How the SMTP connection is secured.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SmtpTls {
+    /// Plain connection upgraded with STARTTLS (submission port 587).
+    #[default]
+    Starttls,
+    /// TLS from the first byte (port 465).
+    Implicit,
+    /// No encryption, for a relay on a trusted network or a local test server.
+    None,
+}
 
 /// Email delivery channel.
 ///
@@ -17,6 +33,8 @@ pub struct EmailChannel {
     smtp_host: Option<String>,
     /// SMTP port (default 587)
     smtp_port: u16,
+    /// Transport security for the SMTP connection
+    smtp_tls: SmtpTls,
     /// SMTP username
     smtp_username: Option<String>,
     /// SMTP password
@@ -34,6 +52,7 @@ impl EmailChannel {
     pub fn with_smtp(
         host: String,
         port: u16,
+        tls: SmtpTls,
         username: Option<String>,
         password: Option<String>,
         from_email: String,
@@ -41,6 +60,7 @@ impl EmailChannel {
         Self {
             smtp_host: Some(host),
             smtp_port: port,
+            smtp_tls: tls,
             smtp_username: username,
             smtp_password: password,
             from_email,
@@ -54,6 +74,7 @@ impl EmailChannel {
         Self {
             smtp_host: None,
             smtp_port: 587,
+            smtp_tls: SmtpTls::default(),
             smtp_username: None,
             smtp_password: None,
             from_email,
@@ -281,8 +302,6 @@ This is an automated notification from your FHIR server subscription.
             )
         })?;
 
-        let start = std::time::Instant::now();
-
         let email = Message::builder()
             .from(self.from_email.parse().map_err(|e| {
                 crate::subscriptions::error::SubscriptionError::DeliveryError(format!(
@@ -303,10 +322,17 @@ This is an automated notification from your FHIR server subscription.
                 crate::subscriptions::error::SubscriptionError::DeliveryError(e.to_string())
             })?;
 
-        let mut mailer_builder =
-            AsyncSmtpTransport::<Tokio1Executor>::relay(host).map_err(|e| {
-                crate::subscriptions::error::SubscriptionError::DeliveryError(e.to_string())
-            })?;
+        // `relay` is implicit TLS; the default submission port 587 expects STARTTLS.
+        let mut mailer_builder = match self.smtp_tls {
+            SmtpTls::Starttls => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host),
+            SmtpTls::Implicit => AsyncSmtpTransport::<Tokio1Executor>::relay(host),
+            SmtpTls::None => Ok(AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+                host,
+            )),
+        }
+        .map_err(|e| {
+            crate::subscriptions::error::SubscriptionError::DeliveryError(e.to_string())
+        })?;
 
         mailer_builder = mailer_builder.port(self.smtp_port);
 
@@ -316,9 +342,11 @@ This is an automated notification from your FHIR server subscription.
         }
 
         let mailer = mailer_builder.build();
+        let start = std::time::Instant::now();
+        let sent = mailer.send(email).await;
         let elapsed = start.elapsed().as_millis() as u32;
 
-        match mailer.send(email).await {
+        match sent {
             Ok(_) => Ok(DeliveryResult {
                 success: true,
                 http_status: None,
@@ -348,12 +376,21 @@ impl DeliveryChannel for EmailChannel {
         subscription: &ActiveSubscription,
         event: &SubscriptionEvent,
     ) -> SubscriptionResult<DeliveryResult> {
-        // Get the email address from subscription contact or channel endpoint
-        let to_email = subscription.contact.as_ref().ok_or_else(|| {
-            crate::subscriptions::error::SubscriptionError::DeliveryError(
-                "No email address configured for subscription".to_string(),
-            )
-        })?;
+        // The channel endpoint (`mailto:` URL) names the recipient; `contact` is a fallback.
+        let endpoint = match &subscription.channel {
+            SubscriptionChannel::Email { address } => {
+                Some(address.trim_start_matches("mailto:").trim())
+            }
+            _ => None,
+        };
+        let to_email = endpoint
+            .filter(|address| !address.is_empty())
+            .or(subscription.contact.as_deref())
+            .ok_or_else(|| {
+                crate::subscriptions::error::SubscriptionError::DeliveryError(
+                    "No email address configured for subscription".to_string(),
+                )
+            })?;
 
         let subject = Self::build_subject(subscription, event);
         let body = Self::build_body(subscription, event);

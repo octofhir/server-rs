@@ -89,6 +89,9 @@ pub struct SubscriptionState {
     /// Whether subscriptions are enabled
     pub enabled: bool,
 
+    /// Whether `[subscriptions.email]` configures a provider for email channels
+    pub email_configured: bool,
+
     /// Shutdown handle for delivery processor (kept alive for server lifetime)
     pub delivery_shutdown: Option<Arc<tokio::sync::watch::Sender<bool>>>,
 }
@@ -122,7 +125,8 @@ impl SubscriptionState {
             event_matcher,
             event_storage,
             websocket_registry,
-            enabled: true,           // TODO: Make configurable
+            enabled: app_state.config.subscriptions.enabled,
+            email_configured: app_state.config.subscriptions.email.is_some(),
             delivery_shutdown: None, // Set by server.rs when delivery processor starts
         })
     }
@@ -135,6 +139,7 @@ impl SubscriptionState {
             self.event_matcher.clone(),
             self.event_storage.clone(),
             self.enabled,
+            self.email_configured,
         )
     }
 }

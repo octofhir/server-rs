@@ -51,7 +51,7 @@ The server then decides, right after the write:
 | Outcome | When |
 |---------|------|
 | `active` | The topic exists and the channel can be delivered to. A rest-hook subscriber first receives a **handshake** notification. |
-| `error` | The topic URL matches no active topic, or the channel is one this server can't deliver to. The reason is stored in `Subscription.error`. |
+| `error` | The topic URL matches no active topic, or the channel is one this server can't deliver to (see below). The reason is stored in `Subscription.error`. |
 
 To turn a subscription off, set its status to `off`. Setting it back to `requested` asks the
 server to check and activate it again (and re-sends the handshake).
@@ -62,7 +62,8 @@ server to check and activate it again (and re-sends the handshake).
 |---------|---------|
 | `rest-hook` | HTTP `POST` of a `subscription-notification` Bundle to `endpoint`, with the subscription's custom headers. |
 | `websocket` | Connect to `GET /fhir/Subscription/{id}/$events` with a WebSocket upgrade; the server sends a handshake, heartbeats every `heartbeatPeriod` seconds and notifications. |
-| `email`, `message` | Not delivered; such subscriptions are put in `error`. |
+| `email` | Sent to the `mailto:` endpoint through the provider in [`[subscriptions.email]`](/server-rs/configuration/) (SMTP or SendGrid). Without a provider the subscription is put in `error`. |
+| `message` | Not supported; such subscriptions are put in `error`. |
 
 ## Delivery and Retries
 

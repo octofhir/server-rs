@@ -310,6 +310,25 @@ log_search_operations = true
 exclude_resource_types = ["AuditEvent"]
 ```
 
+### Subscriptions
+
+```toml
+[subscriptions]
+enabled = true            # activate requested subscriptions and deliver notifications
+
+# Optional: lets `email` channel subscriptions be delivered (otherwise they are put in error)
+[subscriptions.email]
+from = "fhir@example.org"
+smtp_host = "smtp.example.org"
+smtp_port = 587           # default
+smtp_tls = "starttls"     # starttls (default), implicit (port 465) or none
+smtp_username = "fhir"
+smtp_password = "..."
+# sendgrid_api_key = "..." # instead of SMTP
+```
+
+See [Subscriptions](/server-rs/subscriptions/).
+
 ---
 
 ## Observability

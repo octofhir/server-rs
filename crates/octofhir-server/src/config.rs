@@ -58,12 +58,22 @@ pub struct AppConfig {
     /// Bulk import configuration ($import operation)
     #[serde(default)]
     pub bulk_import: BulkImportConfig,
+
+    /// FHIR Subscriptions (topic-based notifications)
+    #[serde(default)]
+    pub subscriptions: SubscriptionsConfig,
 }
 
 // Default derived via field defaults
 
 impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(email) = &self.subscriptions.email
+            && email.smtp_host.is_none()
+            && email.sendgrid_api_key.is_none()
+        {
+            return Err("subscriptions.email needs smtp_host or sendgrid_api_key".into());
+        }
         // Server validations
         if self.server.port == 0 {
             return Err("server.port must be > 0".into());
@@ -1145,6 +1155,73 @@ impl Default for BulkExportConfig {
             batch_size: default_bulk_export_batch_size(),
             default_resource_types: Vec::new(),
         }
+    }
+}
+
+/// FHIR Subscriptions configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscriptionsConfig {
+    /// Activate requested subscriptions and notify subscribers of matching changes.
+    #[serde(default = "default_subscriptions_enabled")]
+    pub enabled: bool,
+
+    /// Provider for `email` channel subscriptions. Without it they are put in `error`.
+    #[serde(default)]
+    pub email: Option<SubscriptionEmailConfig>,
+}
+
+impl Default for SubscriptionsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_subscriptions_enabled(),
+            email: None,
+        }
+    }
+}
+
+fn default_subscriptions_enabled() -> bool {
+    true
+}
+
+/// Outgoing mail for `email` channel subscriptions: an SMTP relay or SendGrid.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SubscriptionEmailConfig {
+    /// Sender address of notification emails.
+    pub from: String,
+    /// SMTP relay host. Set this or `sendgrid_api_key`.
+    #[serde(default)]
+    pub smtp_host: Option<String>,
+    #[serde(default = "default_smtp_port")]
+    pub smtp_port: u16,
+    /// starttls (default), implicit (port 465) or none (trusted relay, local testing).
+    #[serde(default)]
+    pub smtp_tls: crate::subscriptions::delivery::email::SmtpTls,
+    #[serde(default)]
+    pub smtp_username: Option<String>,
+    #[serde(default)]
+    pub smtp_password: Option<String>,
+    /// SendGrid API key, used when no SMTP host is set.
+    #[serde(default)]
+    pub sendgrid_api_key: Option<String>,
+}
+
+fn default_smtp_port() -> u16 {
+    587
+}
+
+/// Credentials stay out of logs that print the configuration.
+impl std::fmt::Debug for SubscriptionEmailConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redact = |value: &Option<String>| value.as_ref().map(|_| "***");
+        f.debug_struct("SubscriptionEmailConfig")
+            .field("from", &self.from)
+            .field("smtp_host", &self.smtp_host)
+            .field("smtp_port", &self.smtp_port)
+            .field("smtp_tls", &self.smtp_tls)
+            .field("smtp_username", &self.smtp_username)
+            .field("smtp_password", &redact(&self.smtp_password))
+            .field("sendgrid_api_key", &redact(&self.sendgrid_api_key))
+            .finish()
     }
 }
 

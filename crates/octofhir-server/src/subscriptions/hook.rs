@@ -37,6 +37,9 @@ pub struct SubscriptionHook {
 
     /// Whether subscriptions are enabled
     enabled: bool,
+
+    /// Whether an email provider is configured, so `email` channels can be served.
+    email_configured: bool,
 }
 
 impl SubscriptionHook {
@@ -47,6 +50,7 @@ impl SubscriptionHook {
         event_matcher: Arc<EventMatcher>,
         event_storage: Arc<SubscriptionEventStorage>,
         enabled: bool,
+        email_configured: bool,
     ) -> Self {
         Self {
             topic_registry,
@@ -54,6 +58,7 @@ impl SubscriptionHook {
             event_matcher,
             event_storage,
             enabled,
+            email_configured,
         }
     }
 
@@ -94,13 +99,14 @@ impl SubscriptionHook {
                 .set_error(&subscription.id, &reason)
                 .await;
         }
-        // The delivery processor has no message transport and is never given an email
-        // provider, so these channels would fail every notification.
+        // The delivery processor has no message transport, and email needs a provider in
+        // [subscriptions.email]; otherwise every notification on these channels would fail.
         let unsupported = match subscription.channel {
             SubscriptionChannel::Message { .. } => Some("The message channel is not supported"),
-            SubscriptionChannel::Email { .. } => {
+            SubscriptionChannel::Email { .. } if !self.email_configured => {
                 Some("Email delivery is not configured on this server")
             }
+            SubscriptionChannel::Email { .. } => None,
             SubscriptionChannel::RestHook { .. } | SubscriptionChannel::WebSocket { .. } => None,
         };
         if let Some(reason) = unsupported {
