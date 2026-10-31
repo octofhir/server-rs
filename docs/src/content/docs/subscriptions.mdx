@@ -1,0 +1,110 @@
+---
+title: Subscriptions
+description: Topic-based FHIR subscriptions with rest-hook and WebSocket delivery, a delivery log and test notifications
+---
+
+OctoFHIR implements topic-based subscriptions: a `SubscriptionTopic` describes which changes
+can be subscribed to, and a `Subscription` asks for notifications about one topic on one
+channel. Both are ordinary FHIR resources; R5 resources and the R4/R4B
+[Subscriptions Backport](http://hl7.org/fhir/uv/subscriptions-backport/) shape are accepted.
+
+## Topics
+
+A topic names the resource types and interactions that trigger notifications:
+
+```json
+{
+  "resourceType": "SubscriptionTopic",
+  "url": "http://example.org/topics/patient-change",
+  "status": "active",
+  "title": "Patient changes",
+  "resourceTrigger": [
+    { "resource": "Patient", "supportedInteraction": ["create", "update"] }
+  ]
+}
+```
+
+Only `active` topics are matched. Creating or changing a topic takes effect immediately; no
+restart is needed.
+
+## Subscribing
+
+Create the subscription with status `requested` and point it at the topic URL (`topic` in
+R5, `criteria` in the backport):
+
+```json
+{
+  "resourceType": "Subscription",
+  "status": "requested",
+  "reason": "Sync patients to the CRM",
+  "criteria": "http://example.org/topics/patient-change",
+  "channel": {
+    "type": "rest-hook",
+    "endpoint": "https://crm.example.org/fhir-hook",
+    "payload": "application/fhir+json"
+  }
+}
+```
+
+The server then decides, right after the write:
+
+| Outcome | When |
+|---------|------|
+| `active` | The topic exists and the channel can be delivered to. A rest-hook subscriber first receives a **handshake** notification. |
+| `error` | The topic URL matches no active topic, or the channel is one this server can't deliver to. The reason is stored in `Subscription.error`. |
+
+To turn a subscription off, set its status to `off`. Setting it back to `requested` asks the
+server to check and activate it again (and re-sends the handshake).
+
+### Channels
+
+| Channel | Support |
+|---------|---------|
+| `rest-hook` | HTTP `POST` of a `subscription-notification` Bundle to `endpoint`, with the subscription's custom headers. |
+| `websocket` | Connect to `GET /fhir/Subscription/{id}/$events` with a WebSocket upgrade; the server sends a handshake, heartbeats every `heartbeatPeriod` seconds and notifications. |
+| `email`, `message` | Not delivered; such subscriptions are put in `error`. |
+
+## Delivery and Retries
+
+Notifications are queued and delivered in the background. A failed delivery is retried with
+exponential backoff (1, 2, 4, 8 minutes); after five attempts the event is marked failed and
+counted as an error for the subscription.
+
+## Status
+
+`$status` reports the subscription's state, how many events it has produced and the last
+delivery error, if any:
+
+```bash
+GET /fhir/Subscription/{id}/$status
+```
+
+```json
+{
+  "resourceType": "SubscriptionStatus",
+  "status": "active",
+  "type": "query-status",
+  "eventsSinceSubscriptionStart": "42",
+  "subscription": { "reference": "Subscription/{id}" },
+  "topic": "http://example.org/topics/patient-change",
+  "error": [{ "text": "error sending request for url (https://crm.example.org/fhir-hook)" }]
+}
+```
+
+## Delivery Log and Test Notifications
+
+Two console endpoints help when notifications don't arrive:
+
+```bash
+# Recent notifications (newest first) with the latest delivery attempt of each
+GET /api/subscriptions/{id}/events?limit=50
+
+# Queue a heartbeat to check the channel end to end (active subscriptions only)
+POST /api/subscriptions/{id}/ping
+```
+
+Each event in the log carries its type (`handshake`, `heartbeat`, `event-notification`), the
+focus resource, the delivery status (`pending`, `delivered`, `failed`, ...), the number of
+attempts, the HTTP status and response time of the last attempt, its error and the next retry
+time. The web console's **Subscriptions** page shows the same data live and has a
+**Send test** button.

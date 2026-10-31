@@ -142,6 +142,9 @@ GET /_bulk-files/550e8400.../Patient.ndjson
 Authorization: Bearer {token}
 ```
 
+`Accept: application/fhir+ndjson` (or `application/ndjson`) is accepted on file URLs, as is
+`application/fhir+json` or `*/*`.
+
 **Response:**
 
 ```
@@ -158,7 +161,38 @@ To cancel an in-progress export:
 DELETE /_async-status/550e8400-e29b-41d4-a716-446655440000
 ```
 
-**Response: 204 No Content**
+**Response: 202 Accepted** for exports. Sending `DELETE` for a finished export tells the
+server the files are no longer needed; it then removes the job and its output.
+
+### 5. List Your Jobs
+
+The FHIR async pattern only defines per-job URLs. To find jobs started elsewhere (another
+browser, a script, the REST console), list your own unexpired jobs, newest first:
+
+```bash
+GET /_async-status
+Authorization: Bearer {token}
+```
+
+```json
+{
+  "jobs": [
+    {
+      "jobId": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "in_progress",
+      "progress": 0.4,
+      "requestType": "bulk_export",
+      "requestMethod": "GET",
+      "requestUrl": "https://fhir.example.org/fhir/Patient/$export?_type=Observation",
+      "createdAt": "2026-10-31T18:55:42Z",
+      "expiresAt": "2026-11-01T18:55:42Z"
+    }
+  ]
+}
+```
+
+A job is listed only to the caller that started it, with the same check as
+`GET /_async-status/{id}`. The web console's **Bulk data** page is built on this list.
 
 ## Configuration
 

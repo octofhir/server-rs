@@ -166,6 +166,10 @@ Content-Type: application/fhir+json
 }
 ```
 
+`GET` with query parameters and `POST` with a `Parameters` resource behave the same for
+`$expand`, `$lookup`, `$validate-code`, `$subsumes`, `$translate` and `$closure`. Value sets,
+code systems and concept maps are resolved from installed packages.
+
 ### Expansion Parameters
 
 | Parameter | Type | Description |

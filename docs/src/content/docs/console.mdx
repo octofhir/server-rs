@@ -1,0 +1,40 @@
+---
+title: Web Console
+description: The built-in console for browsing data, querying, validating, exporting and watching the server
+---
+
+The server ships a web console at `/ui`. It is keyboard-first: `⌘K` opens the command
+palette everywhere, `g` followed by a letter jumps to a page, and `?` lists every shortcut.
+
+## Data
+
+| Page | What it does |
+|------|--------------|
+| **Resources** (`g r`) | Browse and search any resource type, edit JSON with schema completion, delete with undo. **History** (`h`) lists every version with a diff against the previous or the current one and restores an old version (with undo). |
+| **Requests** (`g e`) | A REST console with search-aware autocomplete, saved history and an Explain panel that shows the SQL and plan behind a search. |
+| **Packages** (`g p`) | Install FHIR packages (IGs) and browse their profiles, value sets and other canonical resources. |
+| **Bulk data** (`g b`) | Start `$export` (system, Patient or Group, by type and `_since`) or `$import` from NDJSON URLs, follow progress and download the output files. |
+
+## Query
+
+| Page | What it does |
+|------|--------------|
+| **SQL** (`g s`) | A Postgres console with completion, formatting, history and charts of results. |
+| **GraphQL** (`g g`), **FHIRPath** (`g f`), **CQL** (`g q`) | Consoles for each language against live data. |
+| **Views** (`g v`) | Author and preview SQL-on-FHIR ViewDefinitions. |
+| **Terminology** (`g t`) | Search value sets, code systems and concept maps across installed packages; expand and filter value sets, check codes, browse concept hierarchies with `$lookup`, test `$subsumes` and `$translate`. |
+| **Validation** (`g x`) | Validate up to 5,000 stored resources at once against the base specification or a profile. Issues are grouped by message and path so systematic problems stand out. |
+| **Notebooks** (`g n`) | Notebooks that mix Markdown with REST, SQL, GraphQL, FHIRPath, CQL and ViewDefinition cells, inputs and charts. |
+
+## System
+
+| Page | What it does |
+|------|--------------|
+| **Subscriptions** | Every subscription with its status and channel, a live delivery log (status, HTTP code, time, retries, errors), **Send test** and on/off. See [Subscriptions](/server-rs/subscriptions/). |
+| **Performance** (`g m`) | Live throughput by response class, latency (mean, or p50/p95/p99 per route) and the database pool, read from `/metrics`, with a per-route table over 1, 5 or 15 minutes. |
+| **Database** | Table sizes, dead rows and maintenance (vacuum, analyze, reindex). For FHIR tables, **Index advice** suggests indexes from the table's shape, from observed SQL (with `pg_stat_statements`) or from pasted request URLs; **Open in SQL** puts the `CREATE INDEX` into the SQL console without running it. |
+| **Audit**, **Logs** | The audit trail and the live server log. |
+| **Users**, **Roles**, **Policies**, **Clients**, **Sessions**, **Identity providers** | Access management. |
+
+The **Overview** shows server health, live throughput, running bulk jobs and subscriptions in
+error, and offers to load a small demo dataset on an empty server.

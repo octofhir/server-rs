@@ -34,6 +34,7 @@ export default defineConfig({
       sidebar: [
         { label: 'Overview', link: '' },
         { label: 'Getting Started', link: 'getting-started/' },
+        { label: 'Web Console', link: 'console/' },
         { label: 'Configuration', link: 'configuration/' },
         {
           label: 'Authentication',
@@ -65,6 +66,7 @@ export default defineConfig({
             { label: 'Transactions', link: 'transactions/' },
             { label: 'Bulk Data Export', link: 'bulk-export/' },
             { label: 'Terminology', link: 'terminology/' },
+            { label: 'Subscriptions', link: 'subscriptions/' },
             { label: 'Notifications', link: 'notifications/' },
           ]
         },
