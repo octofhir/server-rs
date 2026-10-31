@@ -1,3 +1,33 @@
+/* OctoFHIR brand: graphite neutrals with one Marigold accent (mirrors packages/ui-kit tokens). */
+:root {
+  --sl-color-accent-low: #2b220d;
+  --sl-color-accent: #f5bd3b;
+  --sl-color-accent-high: #f7c95a;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #ededef;
+  --sl-color-gray-2: #c8c8cc;
+  --sl-color-gray-3: #8b8b93;
+  --sl-color-gray-4: #5a5b63;
+  --sl-color-gray-5: #34353a;
+  --sl-color-gray-6: #18191c;
+  --sl-color-black: #111214;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #fdf3d7;
+  --sl-color-accent: #855700;
+  --sl-color-accent-high: #3d2a00;
+  --sl-color-white: #18181b;
+  --sl-color-gray-1: #27272a;
+  --sl-color-gray-2: #3f3f46;
+  --sl-color-gray-3: #52525b;
+  --sl-color-gray-4: #71717a;
+  --sl-color-gray-5: #d4d4d8;
+  --sl-color-gray-6: #f4f4f5;
+  --sl-color-gray-7: #fafafa;
+  --sl-color-black: #ffffff;
+}
+
 /* Use dedicated dark logo; no color filter to preserve contrast */
 :root[data-theme='dark'] .sl-logo img {
   filter: none !important;

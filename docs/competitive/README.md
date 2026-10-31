@@ -1,4 +1,4 @@
-# OctoFHIR (Abyxon) Competitive Analysis
+# OctoFHIR Competitive Analysis
 
 ## Purpose
 

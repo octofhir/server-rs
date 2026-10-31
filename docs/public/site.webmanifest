@@ -1,6 +1,6 @@
 {
-  "name": "Abyxon Docs",
-  "short_name": "Abyxon",
+  "name": "OctoFHIR Docs",
+  "short_name": "OctoFHIR",
   "icons": [
     {
       "src": "android-chrome-192x192.png",
@@ -13,7 +13,7 @@
       "type": "image/png"
     }
   ],
-  "theme_color": "#0b4d7a",
+  "theme_color": "#111214",
   "background_color": "#ffffff",
   "display": "standalone"
 }
