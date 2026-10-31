@@ -12,10 +12,9 @@ import {
   type StatusTone,
   TextInput,
 } from "@octofhir/ui-kit";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { useUnit } from "effector-react";
 import { Download, PackageOpen, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useResourceTypesCategorized } from "@/shared/api/hooks";
@@ -29,15 +28,29 @@ import {
   type ImportInput,
   type JobState,
   type JobStatus,
+  listJobs,
+  localPath,
+  type ServerJob,
   startExport,
   startImport,
 } from "../lib/api";
-import { $jobs, jobForgotten, jobStarted, type TrackedJob } from "../lib/jobs";
 import classes from "./BulkDataPage.module.css";
 
 dayjs.extend(relativeTime);
 
 const POLL_MS = 2000;
+/** While nothing runs the list is refreshed rarely, to pick up jobs started elsewhere. */
+const IDLE_POLL_MS = 15_000;
+const JOBS_KEY = ["bulk-data", "jobs"] as const;
+
+const KIND_LABELS: Record<string, string> = {
+  bulk_export: "Export",
+  bulk_import: "Import",
+  viewdefinition_export: "View export",
+};
+
+/** Request types whose result is a Bulk Data manifest with output files. */
+const MANIFEST_TYPES = new Set(["bulk_export", "viewdefinition_export"]);
 
 const STATE_VIEW: Record<JobState, { label: string; tone: StatusTone }> = {
   queued: { label: "Queued", tone: "neutral" },
@@ -62,8 +75,27 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : "The server rejected the request.";
 }
 
-interface JobRow extends TrackedJob {
+interface JobRow {
+  id: string;
+  kind: string;
+  /** e.g. `GET /fhir/Patient/$export?_type=Observation` */
+  request: string;
+  startedAt: string;
   status: JobStatus | undefined;
+}
+
+function listedStatus(job: ServerJob): JobStatus {
+  const state: JobState =
+    job.status === "in_progress" ? "in-progress" : job.status === "queued" ? "queued" : job.status;
+  return { state, progress: job.progress, output: [], errors: [], message: job.errorMessage ?? undefined };
+}
+
+function requestLabel(job: ServerJob): string {
+  try {
+    return `${job.requestMethod} ${decodeURIComponent(localPath(job.requestUrl))}`;
+  } catch {
+    return `${job.requestMethod} ${localPath(job.requestUrl)}`;
+  }
 }
 
 function summary(status: JobStatus | undefined): string {
@@ -77,8 +109,8 @@ const COLUMNS: DataTableColumn<JobRow>[] = [
   {
     id: "kind",
     header: "Job",
-    width: 72,
-    cell: (job) => <span className={classes.kind}>{job.kind === "export" ? "Export" : "Import"}</span>,
+    width: 96,
+    cell: (job) => <span className={classes.kind}>{KIND_LABELS[job.kind] ?? job.kind}</span>,
   },
   {
     id: "request",
@@ -131,12 +163,13 @@ function ExportForm() {
   // Shown and remembered decoded (`_type=Patient,Observation`), sent encoded.
   const path = decodeURIComponent(exportPath(request));
   const blocked = level === "group" && !request.groupId;
+  const queryClient = useQueryClient();
 
   const submit = async () => {
     setPending(true);
     try {
-      const id = await startExport(request);
-      jobStarted({ id, kind: "export", request: `GET ${path}`, startedAt: new Date().toISOString() });
+      await startExport(request);
+      await queryClient.invalidateQueries({ queryKey: JOBS_KEY });
     } catch (error) {
       notify({ theme: "danger", title: "Export was not started", content: errorText(error) });
     } finally {
@@ -189,6 +222,7 @@ function ImportForm() {
   const typeNames = useMemo(() => (catalog?.types ?? []).map((type) => type.name).sort(), [catalog]);
   const [inputs, setInputs] = useState<ImportInput[]>([{ type: "", url: "" }]);
   const [pending, setPending] = useState(false);
+  const queryClient = useQueryClient();
 
   const ready = inputs.filter((input) => input.type && /^https?:\/\//.test(input.url.trim()));
   const update = (index: number, patch: Partial<ImportInput>) =>
@@ -198,9 +232,8 @@ function ImportForm() {
     setPending(true);
     try {
       const sources = ready.map((input) => ({ type: input.type, url: input.url.trim() }));
-      const id = await startImport(sources);
-      const label = sources.map((source) => source.type).join(", ");
-      jobStarted({ id, kind: "import", request: `POST /fhir/$import · ${label}`, startedAt: new Date().toISOString() });
+      await startImport(sources);
+      await queryClient.invalidateQueries({ queryKey: JOBS_KEY });
       setInputs([{ type: "", url: "" }]);
     } catch (error) {
       notify({ theme: "danger", title: "Import was not started", content: errorText(error) });
@@ -318,25 +351,49 @@ function JobDetail({ job, onClose }: { job: JobRow; onClose: () => void }) {
 }
 
 export function BulkDataPage() {
-  const jobs = useUnit($jobs);
+  const queryClient = useQueryClient();
   const [mode, setMode] = useState<"export" | "import">("export");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const statuses = useQueries({
-    queries: jobs.map((job) => ({
-      queryKey: ["bulk-data", "status", job.id],
-      queryFn: () => fetchJobStatus(job.id),
-      refetchInterval: (query: { state: { data?: JobStatus } }) => (isRunning(query.state.data) ? POLL_MS : false),
-      staleTime: (query: { state: { data?: JobStatus } }) => (isRunning(query.state.data) ? 0 : Number.POSITIVE_INFINITY),
+  const list = useQuery({
+    queryKey: JOBS_KEY,
+    queryFn: listJobs,
+    refetchInterval: (query) =>
+      query.state.data?.some((job) => job.status === "queued" || job.status === "in_progress")
+        ? POLL_MS
+        : IDLE_POLL_MS,
+  });
+  const jobs = list.data ?? [];
+
+  // Finished exports carry their file manifest in `_async-status/{id}`; it never changes.
+  const manifestJobs = jobs.filter((job) => job.status === "completed" && MANIFEST_TYPES.has(job.requestType));
+  const manifests = useQueries({
+    queries: manifestJobs.map((job) => ({
+      queryKey: ["bulk-data", "manifest", job.jobId],
+      queryFn: () => fetchJobStatus(job.jobId),
+      staleTime: Number.POSITIVE_INFINITY,
     })),
   });
-  const rows: JobRow[] = jobs.map((job, index) => ({ ...job, status: statuses[index]?.data }));
+  const manifestById = new Map(manifestJobs.map((job, index) => [job.jobId, manifests[index]?.data]));
+
+  const rows: JobRow[] = jobs.map((job) => ({
+    id: job.jobId,
+    kind: job.requestType,
+    request: requestLabel(job),
+    startedAt: job.createdAt,
+    status: manifestById.get(job.jobId) ?? listedStatus(job),
+  }));
   const selected = rows.find((row) => row.id === selectedId) ?? null;
 
-  const cancel = (job: JobRow) =>
+  const remove = (job: JobRow) =>
     cancelJob(job.id)
-      .then(() => statuses[jobs.findIndex((entry) => entry.id === job.id)]?.refetch())
-      .catch((error: unknown) => notify({ theme: "danger", title: "Could not cancel", content: errorText(error) }));
+      .then(() => {
+        if (selectedId === job.id) setSelectedId(null);
+        return queryClient.invalidateQueries({ queryKey: JOBS_KEY });
+      })
+      .catch((error: unknown) =>
+        notify({ theme: "danger", title: "The server kept the job", content: errorText(error) })
+      );
 
   return (
     <WorkspacePageLayout
@@ -362,11 +419,13 @@ export function BulkDataPage() {
       <section className={classes.panel} aria-label="Jobs">
         <header className={classes.panelHeader}>
           <h2 className={classes.panelTitle}>Jobs</h2>
-          <span className={classes.muted}>started from this browser</span>
+          <span className={classes.muted}>yours, kept until they expire</span>
         </header>
         <DataTable
           aria-label="Bulk data jobs"
           data={rows}
+          loading={list.isPending}
+          loadingRowCount={3}
           columns={COLUMNS}
           getRowId={(job) => job.id}
           activeRowId={selectedId ?? undefined}
@@ -383,19 +442,19 @@ export function BulkDataPage() {
                     }))
                   : []),
                 ...(isRunning(job.status)
-                  ? [{ text: "Cancel job", iconStart: <X size={14} />, action: () => void cancel(job) }]
+                  ? [{ text: "Cancel job", iconStart: <X size={14} />, action: () => void remove(job) }]
                   : []),
               ],
-              [
-                {
-                  text: "Remove from list",
-                  iconStart: <Trash2 size={14} />,
-                  action: () => {
-                    if (selectedId === job.id) setSelectedId(null);
-                    jobForgotten(job.id);
-                  },
-                },
-              ],
+              isRunning(job.status)
+                ? []
+                : [
+                    {
+                      text: "Delete job and files",
+                      iconStart: <Trash2 size={14} />,
+                      theme: "danger" as const,
+                      action: () => void remove(job),
+                    },
+                  ],
             ].filter((group) => group.length > 0)
           }
           emptyState={

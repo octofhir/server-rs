@@ -115,12 +115,34 @@ export async function fetchJobStatus(id: string): Promise<JobStatus> {
   }
 }
 
+/** A job as `GET /fhir/_async-status` lists it. */
+export interface ServerJob {
+  jobId: string;
+  status: "queued" | "in_progress" | "completed" | "failed" | "cancelled";
+  progress: number;
+  requestType: string;
+  requestMethod: string;
+  requestUrl: string;
+  createdAt: string;
+  completedAt?: string | null;
+  expiresAt: string;
+  errorMessage?: string | null;
+}
+
+/** The caller's unexpired async jobs, newest first. */
+export async function listJobs(): Promise<ServerJob[]> {
+  const response = await fhirClient.rawRequest("GET", "/fhir/_async-status");
+  const jobs = (response.data as { jobs?: unknown } | undefined)?.jobs;
+  return Array.isArray(jobs) ? (jobs as ServerJob[]) : [];
+}
+
+/** `DELETE` stops a running job, or tells the server a finished job's files are no longer needed. */
 export async function cancelJob(id: string): Promise<void> {
   await fhirClient.rawRequest("DELETE", `/fhir/_async-status/${id}`);
 }
 
 /** Path part of a manifest URL; the server may advertise a host the browser can't reach. */
-function localPath(url: string): string {
+export function localPath(url: string): string {
   try {
     const parsed = new URL(url, window.location.origin);
     return `${parsed.pathname}${parsed.search}`;
