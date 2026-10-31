@@ -10,12 +10,13 @@
 use axum::{
     body::{Body, to_bytes},
     extract::Request,
-    http::header::CONTENT_TYPE,
+    http::{StatusCode, header::CONTENT_TYPE},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use memchr::memmem;
 use serde_json::Value;
+use std::sync::LazyLock;
 
 /// Keys a password hash has been stored under (the auth model accepts both spellings).
 const PASSWORD_HASH_KEYS: [&str; 2] = ["passwordHash", "password_hash"];
@@ -23,13 +24,13 @@ const PASSWORD_HASH_KEYS: [&str; 2] = ["passwordHash", "password_hash"];
 /// Client and App secret keys; stored values are argon2 hashes.
 const SECRET_KEYS: [&str; 2] = ["clientSecret", "secret"];
 
-/// Quoted JSON keys whose presence makes a response worth parsing.
-const MARKERS: [&[u8]; 4] = [
-    b"\"passwordHash\"",
-    b"\"password_hash\"",
-    b"\"clientSecret\"",
-    b"\"secret\"",
-];
+/// Prefilters for the credential keys: every password key starts with `"password` and every
+/// secret key ends with `ecret"`, so two substring searches cover all four. A hit only means
+/// the body is parsed; [`scrub`] decides what is removed.
+static PASSWORD_KEY: LazyLock<memmem::Finder<'static>> =
+    LazyLock::new(|| memmem::Finder::new(b"\"password"));
+static SECRET_KEY: LazyLock<memmem::Finder<'static>> =
+    LazyLock::new(|| memmem::Finder::new(b"ecret\""));
 
 /// Hashed credential fields per resource type.
 fn secret_fields(resource_type: &str) -> &'static [&'static str] {
@@ -111,9 +112,7 @@ fn scrub_document(json: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn mentions_credentials(body: &[u8]) -> bool {
-    MARKERS
-        .iter()
-        .any(|marker| memmem::find(body, marker).is_some())
+    PASSWORD_KEY.find(body).is_some() || SECRET_KEY.find(body).is_some()
 }
 
 /// Scrubs credential hashes from JSON and NDJSON responses.
@@ -134,7 +133,8 @@ pub async fn scrub_credentials_middleware(request: Request, next: Next) -> Respo
 
     let (mut parts, body) = response.into_parts();
     let Ok(bytes) = to_bytes(body, usize::MAX).await else {
-        return Response::from_parts(parts, Body::empty());
+        // Never hand out a truncated body that may have skipped the scrub.
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     if !mentions_credentials(&bytes) {
         return Response::from_parts(parts, Body::from(bytes));
