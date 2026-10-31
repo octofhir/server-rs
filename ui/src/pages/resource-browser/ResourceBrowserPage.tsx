@@ -14,6 +14,7 @@ import {
   Resizable,
   ScrollArea,
   SegmentedControl,
+  SegmentedRadioGroup,
   SelectionBar,
   Skeleton,
   Text,
@@ -58,7 +59,9 @@ import {
 import type { FhirBundle, FhirOperationOutcome, FhirResource } from "@/shared/api/types";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
+import type { ResourceVersion } from "./lib/versions";
 import classes from "./ResourceBrowserPage.module.css";
+import { ResourceHistory } from "./ui/ResourceHistory";
 
 dayjs.extend(relativeTime);
 
@@ -137,6 +140,7 @@ export function ResourceBrowserPage() {
   const [categoryFilter, setCategoryFilter] = useState<FhirCatalogCategoryFilter>("all");
   const searchRef = useRef<HTMLInputElement>(null);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [detailView, setDetailView] = useState<"json" | "history">("json");
   const [editedResource, setEditedResource] = useState("");
   const [currentBundle, setCurrentBundle] = useState<FhirBundle | null>(null);
   // The applied search lives in the URL (`?q=name=anna`) so it survives reloads and can be shared.
@@ -207,6 +211,12 @@ export function ResourceBrowserPage() {
       setIsEditMode(false);
     }
   }, [selectedResource]);
+
+  // A newly opened resource starts on its JSON.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed off the open resource only
+  useEffect(() => {
+    setDetailView("json");
+  }, [selectedType, selectedId]);
 
   // Global "/" shortcut focuses the type search (only on the catalog level)
   useEffect(() => {
@@ -320,6 +330,39 @@ export function ResourceBrowserPage() {
     });
   };
 
+  // Saving an old version makes it the newest one; Undo saves what was current before.
+  const restoreVersion = async (version: ResourceVersion & { resource: FhirResource }) => {
+    const previous = selectedResource;
+    try {
+      const saved = await updateMutation.mutateAsync(restorable(version.resource));
+      notify({
+        theme: "success",
+        title: `Restored v${version.versionId}`,
+        content: saved.meta?.versionId ? `Saved as v${saved.meta.versionId}` : undefined,
+        autoHiding: 8000,
+        action: previous
+          ? {
+              label: "Undo",
+              onClick: () => {
+                updateMutation
+                  .mutateAsync(restorable(previous))
+                  .then(() => notify({ theme: "success", title: "Restore undone", autoHiding: 2500 }))
+                  .catch((error: unknown) =>
+                    notify({ theme: "danger", title: "Undo failed", content: getErrorMessage(error, "") })
+                  );
+              },
+            }
+          : undefined,
+      });
+    } catch (error) {
+      notify({
+        theme: "danger",
+        title: `Could not restore v${version.versionId}`,
+        content: getErrorMessage(error, "The server rejected the old version."),
+      });
+    }
+  };
+
   const resourceRowMenu = (row: ResourceRow): DropdownMenuItems => {
     const address = `${row.resource.resourceType}/${row.id}`;
     return [
@@ -376,7 +419,11 @@ export function ResourceBrowserPage() {
       } else if (event.key === "e") {
         event.preventDefault();
         setSaveError(null);
+        setDetailView("json");
         setIsEditMode(true);
+      } else if (event.key === "h") {
+        event.preventDefault();
+        setDetailView((view) => (view === "history" ? "json" : "history"));
       } else if (event.key === "j" || event.key === "k") {
         const index = resourceRows.findIndex((row) => row.id === selectedId);
         const next = resourceRows[index + (event.key === "j" ? 1 : -1)];
@@ -788,6 +835,18 @@ export function ResourceBrowserPage() {
             <ReferenceLink reference={`${selectedType}/${selectedId}`} />
           </div>
           <div className={classes.detailActions}>
+            {!isEditMode && (
+              <SegmentedRadioGroup
+                size="sm"
+                aria-label="Resource view"
+                value={detailView}
+                onChange={(value) => setDetailView(value === "history" ? "history" : "json")}
+                options={[
+                  { value: "json", label: "JSON" },
+                  { value: "history", label: "History" },
+                ]}
+              />
+            )}
             {isEditMode ? (
               <div className={classes.editActions}>
                 <Button
@@ -813,6 +872,7 @@ export function ResourceBrowserPage() {
                 variant="outline"
                 onClick={() => {
                   setSaveError(null);
+                  setDetailView("json");
                   setIsEditMode(true);
                 }}
               >
@@ -852,6 +912,13 @@ export function ResourceBrowserPage() {
               Retry
             </Button>,
           ]}
+        />
+      ) : detailView === "history" && selectedType && selectedId ? (
+        <ResourceHistory
+          resourceType={selectedType}
+          id={selectedId}
+          restoring={updateMutation.isPending}
+          onRestore={(version) => void restoreVersion(version)}
         />
       ) : (
         <div className={classes.detailsBody}>

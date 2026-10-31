@@ -61,6 +61,9 @@ export interface FhirBundleEntry<T extends FhirResource = FhirResource> {
   fullUrl?: string;
   /** `outcome` marks server notes (OperationOutcome) rather than matches. */
   search?: { mode?: "match" | "include" | "outcome"; score?: number };
+  /** Set on history and transaction bundles. */
+  request?: { method: string; url: string };
+  response?: { status: string; etag?: string; lastModified?: string };
 }
 
 export interface FhirBundle<T extends FhirResource = FhirResource> {

@@ -383,6 +383,23 @@ class OctoFhirClient extends FhirClient {
       url: `${baseUrl}/${resourceType}/${id}`,
     });
   }
+
+  /**
+   * Versions of one resource, newest first. History is served under `/fhir` only, internal
+   * types included (their root paths have no `_history`).
+   */
+  async history<T extends FhirResource = FhirResource>(
+    resourceType: string,
+    id: string,
+    count = 50
+  ): Promise<Bundle<T>> {
+    const response = await this.customRequest({
+      method: "GET",
+      url: `/fhir/${resourceType}/${id}/_history?_count=${count}`,
+    });
+    const bundle = assertFhirBundle(response.data, `history ${resourceType}/${id}`) as Bundle<T>;
+    return backfillBundleResourceType(bundle, resourceType);
+  }
 }
 
 // Default instance - uses custom routing logic

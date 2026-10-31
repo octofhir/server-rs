@@ -44,6 +44,7 @@ export {
   useDeleteResource,
   useFollowBundleLink,
   useResource,
+  useResourceHistory,
   useResourceSearch,
   useUpdateResource,
 } from "./useFhirQueries";

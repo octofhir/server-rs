@@ -99,6 +99,13 @@ const DARK_COLORS: monaco.editor.IColors = {
   // Kill Monaco's default drop shadows (widgets + scroll edge) for a flat look.
   "widget.shadow": "#00000000",
   "scrollbar.shadow": "#00000000",
+  // Diffs: status hues at low alpha so long removals don't flood the panel.
+  "diffEditor.insertedLineBackground": "#4ade8014",
+  "diffEditor.insertedTextBackground": "#4ade8033",
+  "diffEditor.removedLineBackground": "#fb718514",
+  "diffEditor.removedTextBackground": "#fb718533",
+  "diffEditor.unchangedRegionBackground": "#18191c", // --octo-surface-2
+  "diffEditor.unchangedRegionForeground": "#a1a1aa",
 };
 
 // Chrome colours — mirror tokens.ts scheme.light.
@@ -140,6 +147,13 @@ const LIGHT_COLORS: monaco.editor.IColors = {
   // Kill Monaco's default drop shadows (widgets + scroll edge) for a flat look.
   "widget.shadow": "#00000000",
   "scrollbar.shadow": "#00000000",
+  // Diffs: status hues at low alpha so long removals don't flood the panel.
+  "diffEditor.insertedLineBackground": "#16a34a14",
+  "diffEditor.insertedTextBackground": "#16a34a33",
+  "diffEditor.removedLineBackground": "#be123c12",
+  "diffEditor.removedTextBackground": "#be123c2e",
+  "diffEditor.unchangedRegionBackground": "#f4f4f5", // --octo-surface-2
+  "diffEditor.unchangedRegionForeground": "#71717a",
 };
 
 let themesDefined = false;

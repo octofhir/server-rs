@@ -7,6 +7,7 @@ export const fhirKeys = {
 	all: ["fhir"] as const,
 	capabilities: () => [...fhirKeys.all, "capabilities"] as const,
 	resource: (type: string, id: string) => [...fhirKeys.all, "resource", type, id] as const,
+	history: (type: string, id: string) => [...fhirKeys.all, "history", type, id] as const,
 	search: (type: string, params?: Record<string, string | number>) =>
 		[...fhirKeys.all, "search", type, params ?? {}] as const,
 	searchList: (type: string) => [...fhirKeys.all, "search", type] as const,
@@ -34,6 +35,21 @@ export function useResource<T extends FhirResource = FhirResource>(
 	return useQuery({
 		queryKey: fhirKeys.resource(resourceType, id),
 		queryFn: () => fhirClient.read<T>(resourceType, id),
+		enabled: options?.enabled ?? (!!resourceType && !!id),
+	});
+}
+
+/**
+ * Hook to list the versions of one resource, newest first.
+ */
+export function useResourceHistory<T extends FhirResource = FhirResource>(
+	resourceType: string,
+	id: string,
+	options?: { enabled?: boolean }
+) {
+	return useQuery({
+		queryKey: fhirKeys.history(resourceType, id),
+		queryFn: () => fhirClient.history<T>(resourceType, id),
 		enabled: options?.enabled ?? (!!resourceType && !!id),
 	});
 }
@@ -84,6 +100,7 @@ export function useUpdateResource<T extends FhirResource = FhirResource>() {
 			// Update the specific resource in cache
 			if (data.id) {
 				queryClient.setQueryData(fhirKeys.resource(data.resourceType, data.id), data);
+				queryClient.invalidateQueries({ queryKey: fhirKeys.history(data.resourceType, data.id) });
 			}
 			// Invalidate search queries for this resource type
 			queryClient.invalidateQueries({
@@ -108,6 +125,7 @@ export function useDeleteResource() {
 			queryClient.removeQueries({
 				queryKey: fhirKeys.resource(resourceType, id),
 			});
+			queryClient.invalidateQueries({ queryKey: fhirKeys.history(resourceType, id) });
 			// Invalidate search queries
 			queryClient.invalidateQueries({
 				queryKey: fhirKeys.searchList(resourceType),

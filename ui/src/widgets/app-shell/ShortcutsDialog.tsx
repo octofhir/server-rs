@@ -17,6 +17,7 @@ const GENERAL: Array<[string[], string]> = [
   [["x"], "Select the focused row"],
   [["⇧", "F10"], "Row actions (or right-click)"],
   [["e"], "Edit the open resource"],
+  [["h"], "Resource history"],
   [["⌘", "S"], "Save while editing"],
   [["⌘", "↵"], "Run in consoles"],
   [["Esc"], "Close dialogs"],
