@@ -72,7 +72,7 @@ docker pull ghcr.io/octofhir/octofhir-server:latest
 The [deployment guide](https://octofhir.github.io/server-rs/deployment/) has a ready
 `docker-compose.yml` with PostgreSQL.
 
-**From source.** Requires Docker (for PostgreSQL) and Rust 1.85+.
+**From source.** Requires Docker (for PostgreSQL) and Rust 1.98+.
 
 ```bash
 git clone https://github.com/octofhir/server-rs.git && cd server-rs
