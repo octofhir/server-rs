@@ -5,6 +5,7 @@ import {
   Button,
   DataTable,
   type DataTableColumn,
+  type DropdownMenuItems,
   EmptyState,
   getResourceDisplayName,
   notify,
@@ -22,8 +23,12 @@ import {
   ChevronRight,
   CircleAlert as CircleExclamation,
   Code,
+  Copy,
   FileText,
+  Hash,
   Search as Magnifier,
+  Send,
+  Trash2,
   X as Xmark,
 } from "lucide-react";
 import dayjs from "dayjs";
@@ -40,6 +45,7 @@ import { getFhirBundleResources } from "@/entities/fhir-resource";
 import { HttpError } from "@/shared/api/fhirClient";
 import { assertFhirResource, isRecord } from "@/shared/api/guards";
 import {
+  useDeleteResource,
   useFollowBundleLink,
   useJsonSchema,
   useResource,
@@ -248,6 +254,73 @@ export function ResourceBrowserPage() {
   const handleResourceSelect = (id: string) => {
     if (!selectedType) return;
     navigate(`/resources/${selectedType}/${id}`);
+  };
+
+  const deleteMutation = useDeleteResource();
+
+  const copyText = (text: string, what: string) => {
+    void navigator.clipboard.writeText(text).then(() =>
+      notify({ theme: "success", title: `Copied ${what}`, content: text, autoHiding: 2500 })
+    );
+  };
+
+  // Linear-style delete: act at once, offer Undo (a PUT brings the resource back under its id).
+  const deleteWithUndo = async (resource: FhirResource) => {
+    if (!resource.id) return;
+    const { resourceType, id } = resource;
+    try {
+      await deleteMutation.mutateAsync({ resourceType, id });
+    } catch (error) {
+      notify({ theme: "danger", title: "Delete failed", content: getErrorMessage(error, `${resourceType}/${id}`) });
+      return;
+    }
+    if (selectedId === id) navigate(`/resources/${resourceType}`);
+    const name = getResourceDisplayName(resource, `${resourceType}/${id}`);
+    notify({
+      title: `Deleted ${name}`,
+      content: `${resourceType}/${id}`,
+      autoHiding: 8000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          // Server-owned version fields go; an emptied meta must go too (`{}` is invalid FHIR).
+          const { meta: original, ...rest } = resource;
+          const { versionId: _version, lastUpdated: _updated, ...meta } = original ?? {};
+          updateMutation
+            .mutateAsync(Object.keys(meta).length ? { ...rest, meta } : rest)
+            .then(() => notify({ theme: "success", title: `Restored ${name}`, autoHiding: 2500 }))
+            .catch((error: unknown) =>
+              notify({ theme: "danger", title: "Restore failed", content: getErrorMessage(error, id) })
+            );
+        },
+      },
+    });
+  };
+
+  const resourceRowMenu = (row: ResourceRow): DropdownMenuItems => {
+    const address = `${row.resource.resourceType}/${row.id}`;
+    return [
+      [
+        { text: "Open", iconStart: <FileText size={14} />, action: () => handleResourceSelect(row.id) },
+        {
+          text: "Open in Requests",
+          iconStart: <Send size={14} />,
+          action: () => navigate(`/console?${new URLSearchParams({ url: `/fhir/${address}` }).toString()}`),
+        },
+      ],
+      [
+        { text: "Copy reference", iconStart: <Copy size={14} />, action: () => copyText(address, "reference") },
+        { text: "Copy id", iconStart: <Hash size={14} />, action: () => copyText(row.id, "id") },
+      ],
+      [
+        {
+          text: "Delete",
+          iconStart: <Trash2 size={14} />,
+          theme: "danger",
+          action: () => void deleteWithUndo(row.resource),
+        },
+      ],
+    ];
   };
 
   const handleCloseDetails = () => {
@@ -608,6 +681,7 @@ export function ResourceBrowserPage() {
           fillHeight
           selectedRowIds={selectedId ? [selectedId] : []}
           onRowClick={(row) => handleResourceSelect(row.id)}
+          rowMenu={resourceRowMenu}
           emptyState={
             <EmptyState
               className={classes.stateBlock}

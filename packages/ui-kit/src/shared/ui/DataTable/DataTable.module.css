@@ -245,3 +245,13 @@
     outline: 2px solid var(--octo-focus-ring, #91a7ff);
     outline-offset: 1px;
 }
+
+/* Right-click area: the table body plus the empty space under short tables. */
+.menuArea {
+    display: block;
+    min-height: 100%;
+}
+
+.tr[data-menu-open="true"] {
+    background: var(--octo-surface-hover);
+}

@@ -16,8 +16,10 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 import { Checkbox } from "../Checkbox";
 import type { Size } from "../layout-utils";
+import type { DropdownMenuItems } from "../Menu";
 import { Skeleton } from "../Skeleton";
 import classes from "./DataTable.module.css";
+import { RowContextMenu } from "./RowContextMenu";
 
 /** A single column definition. Canonical, framework-agnostic surface over TanStack Table. */
 export interface DataTableColumn<T> {
@@ -112,6 +114,8 @@ export interface DataTableProps<T> {
     loadingRowCount?: number;
     emptyState?: ReactNode;
     onRowClick?: (row: T) => void;
+    /** Right-click (or the menu key) on a row opens these actions. */
+    rowMenu?: (row: T) => DropdownMenuItems;
 
     className?: string;
     "aria-label"?: string;
@@ -154,9 +158,27 @@ export function DataTable<T>({
     loadingRowCount = 8,
     emptyState = "No data",
     onRowClick,
+    rowMenu,
     className,
     "aria-label": ariaLabel,
 }: DataTableProps<T>) {
+    // The row under the pointer is recorded on `contextmenu` before the menu asks to open.
+    const pendingMenuRow = useRef<Row<T> | null>(null);
+    const [menu, setMenu] = useState<{ rowId: string; items: DropdownMenuItems } | null>(null);
+    const onMenuOpenChange = (open: boolean) => {
+        const row = pendingMenuRow.current;
+        setMenu(open && row && rowMenu ? { rowId: row.id, items: rowMenu(row.original) } : null);
+        if (!open) pendingMenuRow.current = null;
+    };
+    const rowMenuProps = (row: Row<T>) =>
+        rowMenu
+            ? {
+                  menuOpen: menu?.rowId === row.id,
+                  onContextMenu: () => {
+                      pendingMenuRow.current = row;
+                  },
+              }
+            : {};
     const serverMode = rowCount != null;
     const paginationEnabled = paginated || paginationProp != null || serverMode;
 
@@ -353,98 +375,109 @@ export function DataTable<T>({
                     maxHeight: fillHeight ? undefined : virtualized || stickyHeader ? maxHeight : undefined,
                 }}
             >
-                <table
-                    className={[
-                        classes.table,
-                        striped && classes.striped,
-                        highlightOnHover && classes.highlight,
-                        withColumnBorders && classes.columnBorders,
-                        stickyHeader && classes.stickyHeader,
-                        onRowClick && classes.clickable,
-                    ]
-                        .filter(Boolean)
-                        .join(" ")}
-                    data-size={size}
-                    aria-label={ariaLabel}
+                <TableMenuArea
+                    enabled={rowMenu != null}
+                    items={menu?.items ?? null}
+                    open={menu != null}
+                    onOpenChange={onMenuOpenChange}
                 >
-                    <thead className={classes.thead}>
-                        <tr>
-                            {selectHeaderCell}
-                            {columns.map(renderHeaderCell)}
-                        </tr>
-                        {hasFilterRow && (
-                            <tr className={classes.filterRow}>
-                                {selectable && <th className={classes.selectCell} />}
-                                {columns.map(renderFilterCell)}
+                    <table
+                        className={[
+                            classes.table,
+                            striped && classes.striped,
+                            highlightOnHover && classes.highlight,
+                            withColumnBorders && classes.columnBorders,
+                            stickyHeader && classes.stickyHeader,
+                            onRowClick && classes.clickable,
+                        ]
+                            .filter(Boolean)
+                            .join(" ")}
+                        data-size={size}
+                        aria-label={ariaLabel}
+                    >
+                        <thead className={classes.thead}>
+                            <tr>
+                                {selectHeaderCell}
+                                {columns.map(renderHeaderCell)}
                             </tr>
-                        )}
-                    </thead>
-                    <tbody className={classes.tbody}>
-                        {loading
-                            ? loadingKeys.map((key) => (
-                                  <tr key={key} className={classes.tr}>
-                                      {selectable && (
-                                          <td className={classes.selectCell}>
-                                              <Skeleton w={16} h={16} radius={4} />
-                                          </td>
-                                      )}
-                                      {columns.map((c) => (
-                                          <td key={c.id} className={classes.td}>
-                                              <Skeleton h="0.9em" />
-                                          </td>
-                                      ))}
-                                  </tr>
-                              ))
-                            : showEmpty
-                              ? (
-                                  <tr>
-                                      <td className={classes.emptyCell} colSpan={colCount}>
-                                          {emptyState}
-                                      </td>
-                                  </tr>
-                              )
-                              : virtualized && virtualItems
-                                ? (
-                                      <>
-                                          {padTop > 0 && (
-                                              <tr className={classes.spacerRow}>
-                                                  <td colSpan={colCount} style={{ height: padTop, padding: 0, border: 0 }} />
-                                              </tr>
+                            {hasFilterRow && (
+                                <tr className={classes.filterRow}>
+                                    {selectable && <th className={classes.selectCell} />}
+                                    {columns.map(renderFilterCell)}
+                                </tr>
+                            )}
+                        </thead>
+                        <tbody className={classes.tbody}>
+                            {loading
+                                ? loadingKeys.map((key) => (
+                                      <tr key={key} className={classes.tr}>
+                                          {selectable && (
+                                              <td className={classes.selectCell}>
+                                                  <Skeleton w={16} h={16} radius={4} />
+                                              </td>
                                           )}
-                                          {virtualItems.map((vi) => {
-                                              const row = rows[vi.index];
-                                              return (
-                                                  <DataTableRow
-                                                      key={row.id}
-                                                      row={row}
-                                                      measureRef={rowVirtualizer.measureElement}
-                                                      index={vi.index}
-                                                      selectCell={selectBodyCell(row)}
-                                                      onRowClick={onRowClick}
-                                                  >
-                                                      {renderDataCells(row)}
-                                                  </DataTableRow>
-                                              );
-                                          })}
-                                          {padBottom > 0 && (
-                                              <tr className={classes.spacerRow}>
-                                                  <td colSpan={colCount} style={{ height: padBottom, padding: 0, border: 0 }} />
-                                              </tr>
-                                          )}
-                                      </>
+                                          {columns.map((c) => (
+                                              <td key={c.id} className={classes.td}>
+                                                  <Skeleton h="0.9em" />
+                                              </td>
+                                          ))}
+                                      </tr>
+                                  ))
+                                : showEmpty
+                                  ? (
+                                      <tr>
+                                          <td className={classes.emptyCell} colSpan={colCount}>
+                                              {emptyState}
+                                          </td>
+                                      </tr>
                                   )
-                                : rows.map((row) => (
-                                      <DataTableRow
-                                          key={row.id}
-                                          row={row}
-                                          selectCell={selectBodyCell(row)}
-                                          onRowClick={onRowClick}
-                                      >
-                                          {renderDataCells(row)}
-                                      </DataTableRow>
-                                  ))}
-                    </tbody>
-                </table>
+                                  : virtualized && virtualItems
+                                    ? (
+                                          <>
+                                              {padTop > 0 && (
+                                                  <tr className={classes.spacerRow}>
+                                                      <td colSpan={colCount} style={{ height: padTop, padding: 0, border: 0 }} />
+                                                  </tr>
+                                              )}
+                                              {virtualItems.map((vi) => {
+                                                  const row = rows[vi.index];
+                                                  return (
+                                                      <DataTableRow
+                                                          key={row.id}
+                                                          row={row}
+                                                          measureRef={rowVirtualizer.measureElement}
+                                                          index={vi.index}
+                                                          selectCell={selectBodyCell(row)}
+                                                          onRowClick={onRowClick}
+                                                          selectable={selectable}
+                                                          {...rowMenuProps(row)}
+                                                      >
+                                                          {renderDataCells(row)}
+                                                      </DataTableRow>
+                                                  );
+                                              })}
+                                              {padBottom > 0 && (
+                                                  <tr className={classes.spacerRow}>
+                                                      <td colSpan={colCount} style={{ height: padBottom, padding: 0, border: 0 }} />
+                                                  </tr>
+                                              )}
+                                          </>
+                                      )
+                                    : rows.map((row) => (
+                                          <DataTableRow
+                                              key={row.id}
+                                              row={row}
+                                              selectCell={selectBodyCell(row)}
+                                              onRowClick={onRowClick}
+                                              selectable={selectable}
+                                              {...rowMenuProps(row)}
+                                          >
+                                              {renderDataCells(row)}
+                                          </DataTableRow>
+                                      ))}
+                        </tbody>
+                    </table>
+                </TableMenuArea>
             </div>
             {paginationEnabled && !showEmpty && (
                 <DataTablePager
@@ -462,31 +495,67 @@ export function DataTable<T>({
     );
 }
 
+function TableMenuArea({
+    enabled,
+    children,
+    ...menu
+}: {
+    enabled: boolean;
+    children: ReactNode;
+    items: DropdownMenuItems | null;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+}) {
+    return enabled ? <RowContextMenu {...menu}>{children}</RowContextMenu> : <>{children}</>;
+}
+
 interface DataTableRowProps<T> {
     row: Row<T>;
     children: ReactNode;
     selectCell: ReactNode;
     onRowClick?: (row: T) => void;
+    selectable?: boolean;
+    menuOpen?: boolean;
+    onContextMenu?: () => void;
     measureRef?: (node: Element | null) => void;
     index?: number;
 }
 
-function DataTableRow<T>({ row, children, selectCell, onRowClick, measureRef, index }: DataTableRowProps<T>) {
+function DataTableRow<T>({
+    row,
+    children,
+    selectCell,
+    onRowClick,
+    selectable,
+    menuOpen,
+    onContextMenu,
+    measureRef,
+    index,
+}: DataTableRowProps<T>) {
     const clickable = onRowClick != null;
+    const focusable = clickable || selectable || onContextMenu != null;
     return (
         <tr
             ref={measureRef}
             data-index={index}
             className={classes.tr}
             data-selected={row.getIsSelected() ? "true" : undefined}
-            tabIndex={clickable ? 0 : undefined}
+            data-menu-open={menuOpen ? "true" : undefined}
+            tabIndex={focusable ? 0 : undefined}
             onClick={clickable ? () => onRowClick(row.original) : undefined}
+            onContextMenu={onContextMenu}
             onKeyDown={
-                clickable
+                focusable
                     ? (e) => {
-                          if (e.key === "Enter" || e.key === " ") {
+                          if (clickable && (e.key === "Enter" || e.key === " ")) {
                               e.preventDefault();
                               onRowClick(row.original);
+                              return;
+                          }
+                          // Linear-style: x toggles the focused row's selection.
+                          if (selectable && e.key === "x" && row.getCanSelect()) {
+                              e.preventDefault();
+                              row.toggleSelected();
                               return;
                           }
                           // Keyboard-first lists: ↑/↓ or k/j move between rows.

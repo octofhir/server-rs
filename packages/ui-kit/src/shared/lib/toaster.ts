@@ -12,6 +12,8 @@ export interface NotifyOptions {
     theme?: NotifyTheme;
     /** Auto-dismiss delay in ms, or `false` to keep until dismissed. Default 5000. */
     autoHiding?: number | false;
+    /** One inline action, e.g. Undo; clicking it also dismisses the toast. */
+    action?: { label: string; onClick: () => void };
 }
 
 export interface Toast extends NotifyOptions {

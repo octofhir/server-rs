@@ -20,16 +20,27 @@ function ToastCard({ toast }: { toast: Toast }) {
     }, [toast.name, toast.autoHiding]);
 
     const Icon = ICONS[toast.theme];
-    const duration = typeof toast.autoHiding === "number" ? toast.autoHiding : toast.autoHiding === false ? null : 5000;
     return (
         <div className={styles.toast} data-theme={toast.theme} role="status">
             <span className={styles.iconWrap}>
-                <Icon size={17} />
+                <Icon size={15} />
             </span>
             <div className={styles.body}>
                 {toast.title != null && <div className={styles.title}>{toast.title}</div>}
                 {toast.content != null && <div className={styles.content}>{toast.content}</div>}
             </div>
+            {toast.action && (
+                <button
+                    type="button"
+                    className={styles.action}
+                    onClick={() => {
+                        toastStore.remove(toast.name);
+                        toast.action?.onClick();
+                    }}
+                >
+                    {toast.action.label}
+                </button>
+            )}
             <button
                 type="button"
                 className={styles.close}
@@ -38,9 +49,6 @@ function ToastCard({ toast }: { toast: Toast }) {
             >
                 <X size={14} />
             </button>
-            {duration != null && (
-                <div className={styles.progress} style={{ animationDuration: `${duration}ms` }} />
-            )}
         </div>
     );
 }

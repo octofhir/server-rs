@@ -1,7 +1,8 @@
 import { Button, Collapse, Text, useDisclosure, useHotkeys } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import { Bookmark, History as ClockArrowRotateLeft, Eye, Gauge, Layers } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { HttpMethod } from "@/shared/api";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
@@ -55,6 +56,16 @@ export function RestConsolePage() {
   });
   const [chooseMethod, choosePath] = useUnit([setMethod, setRawPath]);
   usePaletteContribution("rest-console", useConsolePaletteItems());
+
+  // `/console?url=/fhir/Patient/123` (from "Open in Requests") loads that GET into the bar.
+  const [urlParams, setUrlParams] = useSearchParams();
+  useEffect(() => {
+    const url = urlParams.get("url");
+    if (!url) return;
+    chooseMethod("GET");
+    choosePath(url);
+    setUrlParams({}, { replace: true });
+  }, [urlParams, setUrlParams, chooseMethod, choosePath]);
 
   const sendMutation = useSendConsoleRequest();
   // Keep the active-environment variable resolver in sync (even with panels closed).
