@@ -68,3 +68,8 @@
     width: 100%;
     overflow: auto;
 }
+
+/* A row whose context menu is open stays marked. */
+.root tbody tr[data-popup-open] td {
+    background: var(--octo-surface-hover);
+}

@@ -12,3 +12,4 @@ export {
 	type DropdownMenuItems,
 	type DropdownMenuProps,
 } from "./DropdownMenu";
+export { ContextMenu, type ContextMenuProps } from "./ContextMenu";

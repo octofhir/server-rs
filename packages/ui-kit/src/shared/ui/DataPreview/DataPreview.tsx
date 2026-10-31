@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ContextMenu, type DropdownMenuItems } from "../Menu";
 import classes from "./DataPreview.module.css";
 
 export interface DataPreviewColumn {
@@ -16,6 +17,8 @@ export interface DataPreviewProps {
     maxHeight?: number | string;
     className?: string;
     getRowKey?: (row: DataPreviewRow, index: number) => string;
+    /** Right-click actions for a row (usually the same items as its "…" menu). */
+    getRowMenu?: (row: DataPreviewRow, index: number) => DropdownMenuItems;
 }
 
 function formatSize(value?: number | string) {
@@ -30,6 +33,7 @@ export function DataPreview({
     maxHeight,
     className,
     getRowKey,
+    getRowMenu,
 }: DataPreviewProps) {
     if (!columns.length || !rows.length) {
         return <div className={classes.empty}>{emptyText}</div>;
@@ -51,13 +55,23 @@ export function DataPreview({
                     </tr>
                 </thead>
                 <tbody>
-                    {rows.map((row, rowIndex) => (
-                        <tr key={getRowKey?.(row, rowIndex) ?? rowIndex}>
-                            {columns.map((column) => (
-                                <td key={column.id}>{row[column.id] ?? null}</td>
-                            ))}
-                        </tr>
-                    ))}
+                    {rows.map((row, rowIndex) => {
+                        const key = getRowKey?.(row, rowIndex) ?? rowIndex;
+                        const tr = (
+                            <tr key={key}>
+                                {columns.map((column) => (
+                                    <td key={column.id}>{row[column.id] ?? null}</td>
+                                ))}
+                            </tr>
+                        );
+                        return getRowMenu ? (
+                            <ContextMenu key={key} items={getRowMenu(row, rowIndex)}>
+                                {tr}
+                            </ContextMenu>
+                        ) : (
+                            tr
+                        );
+                    })}
                 </tbody>
             </table>
         </div>

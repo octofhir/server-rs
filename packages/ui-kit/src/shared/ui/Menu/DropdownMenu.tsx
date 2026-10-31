@@ -17,6 +17,25 @@ export interface DropdownMenuItem {
 /** Items, optionally grouped — a nested array renders as a divided section. */
 export type DropdownMenuItems = (DropdownMenuItem | DropdownMenuItem[])[];
 
+/** Consecutive plain items share a section; each nested array is a section of its own. */
+export function groupMenuItems(items: DropdownMenuItems): DropdownMenuItem[][] {
+    const groups: DropdownMenuItem[][] = [];
+    let loose: DropdownMenuItem[] | null = null;
+    for (const entry of items) {
+        if (Array.isArray(entry)) {
+            groups.push(entry);
+            loose = null;
+        } else {
+            if (!loose) {
+                loose = [];
+                groups.push(loose);
+            }
+            loose.push(entry);
+        }
+    }
+    return groups.filter((group) => group.length > 0);
+}
+
 export interface DropdownMenuProps {
     items: DropdownMenuItems;
     /** Trigger icon (defaults to a vertical ellipsis). */
@@ -44,7 +63,7 @@ export function DropdownMenu({
     switcher,
     renderSwitcher,
 }: DropdownMenuProps) {
-    const groups = items.map((entry) => (Array.isArray(entry) ? entry : [entry]));
+    const groups = groupMenuItems(items);
     const trigger = renderSwitcher?.({}) ?? switcher ?? (
         <ActionIcon
             variant={defaultSwitcherProps?.variant ?? "subtle"}

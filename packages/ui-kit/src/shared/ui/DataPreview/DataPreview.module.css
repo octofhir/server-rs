@@ -55,3 +55,8 @@
     text-align: center;
     background: var(--octo-surface-1);
 }
+
+/* A row whose context menu is open stays marked. */
+.table tbody tr[data-popup-open] td {
+    background: var(--octo-surface-hover);
+}
