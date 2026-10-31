@@ -38,7 +38,7 @@ const EXAMPLES: Array<{ method: HttpMethod; path: string; note: string }> = [
 ];
 
 export function RestConsolePage() {
-  const { isPending, data, resourceTypes, allSuggestions, searchParamsByResource } =
+  const { data, resourceTypes, allSuggestions, searchParamsByResource } =
     useRestConsoleMeta();
 
   const {
@@ -160,7 +160,6 @@ export function RestConsolePage() {
             allSuggestions={allSuggestions}
             searchParamsByResource={searchParamsByResource}
             capabilities={data}
-            isLoading={isPending}
             isSending={sendMutation.isPending}
             onSend={handleSend}
           />

@@ -18,7 +18,6 @@ interface RequestBarProps {
   allSuggestions: AutocompleteSuggestion[];
   searchParamsByResource: Record<string, RestConsoleSearchParam[]>;
   capabilities?: RestConsoleResponse;
-  isLoading?: boolean;
   isSending?: boolean;
   onSend: () => void;
 }
@@ -27,7 +26,6 @@ export function RequestBar({
   allSuggestions,
   searchParamsByResource,
   capabilities,
-  isLoading,
   isSending,
   onSend,
 }: RequestBarProps) {
@@ -71,7 +69,6 @@ export function RequestBar({
           onChange={handleChange}
           onExecute={onSend}
           metadata={metadata}
-          disabled={isLoading}
           borderless
         />
       </div>

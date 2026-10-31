@@ -302,7 +302,7 @@ export function ResourceBrowserPage() {
     const single = deleted.length === 1 ? deleted[0] : null;
     const label = single
       ? getResourceDisplayName(single, `${single.resourceType}/${single.id}`)
-      : `${deleted.length} ${selectedType ?? "resources"}`;
+      : `${deleted.length} resources`;
     notify({
       title: `Deleted ${label}`,
       content: single ? `${single.resourceType}/${single.id}` : undefined,
