@@ -14,6 +14,8 @@ const GENERAL: Array<[string[], string]> = [
   [["↑", "↓"], "Move in lists"],
   [["j", "k"], "Move in lists (vim)"],
   [["↵"], "Open the focused row"],
+  [["x"], "Select the focused row"],
+  [["⇧", "F10"], "Row actions (or right-click)"],
   [["⌘", "↵"], "Run in consoles"],
   [["Esc"], "Close dialogs"],
 ];

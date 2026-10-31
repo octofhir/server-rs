@@ -552,6 +552,20 @@ function DataTableRow<T>({
                               onRowClick(row.original);
                               return;
                           }
+                          // Shift+F10 is the keyboard right-click; browsers on macOS don't map it.
+                          if (onContextMenu && e.key === "F10" && e.shiftKey) {
+                              e.preventDefault();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              e.currentTarget.dispatchEvent(
+                                  new MouseEvent("contextmenu", {
+                                      bubbles: true,
+                                      cancelable: true,
+                                      clientX: rect.left + 24,
+                                      clientY: rect.bottom,
+                                  }),
+                              );
+                              return;
+                          }
                           // Linear-style: x toggles the focused row's selection.
                           if (selectable && e.key === "x" && row.getCanSelect()) {
                               e.preventDefault();
