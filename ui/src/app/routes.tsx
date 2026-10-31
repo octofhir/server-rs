@@ -29,6 +29,7 @@ import { PackageDetailPage, PackagesPage } from "@/pages/packages";
 import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { SessionsPage } from "@/pages/sessions";
 import { SettingsPage } from "@/pages/settings";
+import { SubscriptionsPage } from "@/pages/subscriptions";
 import { TerminologyPage } from "@/pages/terminology";
 import { ValidationPage } from "@/pages/validation";
 import { ViewDefinitionPage } from "@/pages/viewdefinition";
@@ -90,6 +91,7 @@ export function AppRoutes() {
         <Route path="/automations" element={<AutomationsPage />} />
         <Route path="/automations/new" element={<AutomationEditorPage />} />
         <Route path="/automations/:id" element={<AutomationEditorPage />} />
+        <Route path="/subscriptions" element={<SubscriptionsPage />} />
 
         {/* Auth */}
         <Route path="/auth/providers" element={<IdentityProvidersPage />} />

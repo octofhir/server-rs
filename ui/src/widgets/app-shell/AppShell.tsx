@@ -12,6 +12,7 @@ import {
 } from "@octofhir/ui-kit";
 import {
   Activity,
+  BellRing,
   BookOpen,
   Boxes,
   Code2,
@@ -129,6 +130,7 @@ const NAV: NavSection[] = [
       { id: "operations", label: "Operations", icon: SquareFunction, path: "/operations", goKey: "o" },
       { id: "apps", label: "Apps", icon: LayoutGrid, path: "/apps" },
       { id: "automations", label: "Automations", icon: Cpu, path: "/automations" },
+      { id: "subscriptions", label: "Subscriptions", icon: BellRing, path: "/subscriptions" },
       { id: "audit", label: "Audit", icon: Receipt, path: "/audit", goKey: "a" },
       { id: "logs", label: "Logs", icon: FileText, path: "/logs", goKey: "l" },
       { id: "performance", label: "Performance", icon: Gauge, path: "/performance", goKey: "m" },
