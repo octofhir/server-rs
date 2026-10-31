@@ -6,7 +6,7 @@
 
 <p align="center">
   A fast FHIR server in Rust on PostgreSQL, with a web console for REST, SQL, GraphQL,
-  FHIRPath and CQL built in.
+  FHIRPath and CQL, live performance, subscriptions and bulk data built in.
 </p>
 
 <p align="center">
@@ -39,12 +39,15 @@
 
 | Server | Console |
 |---|---|
-| REST API: CRUD, history, conditional ops, transactions and batches | Resource browser with search in the URL, bulk actions and Undo |
+| REST API: CRUD, history, conditional ops, transactions and batches | Resource browser with search in the URL, bulk actions, Undo, and version history with diff and restore |
 | Search: chains, `_include`/`_revinclude`, composites, modifiers, sorting | REST console with completion for types, parameters and values |
-| GraphQL generated from the FHIR schemas | SQL console with a Postgres language server |
-| SQL on FHIR `ViewDefinition`s | FHIRPath and CQL workbenches |
-| Terminology: `$expand`, `$validate-code`, `$subsumes`, `$translate` | Notebooks that mix REST, SQL, FHIRPath, CQL, GraphQL and charts |
-| Bulk Data `$export` | Capability matrix and package manager for IGs |
+| GraphQL generated from the FHIR schemas | SQL console with a Postgres language server, and index advice per resource table |
+| SQL on FHIR `ViewDefinition`s | FHIRPath and CQL workbenches; notebooks that mix them with REST, SQL and charts |
+| Terminology: `$expand`, `$lookup`, `$validate-code`, `$subsumes`, `$translate` | Terminology workbench over every installed package |
+| Validation against the base spec or any profile, `$validate` | Bulk validation of stored data with issues grouped by message and path |
+| Bulk Data `$export` and `$import` | Export, import from a file or URLs, job progress and downloads |
+| Topic-based subscriptions: rest-hook, WebSocket, email, `$status`, `$events` | Subscriptions with a live delivery log, test pings, topics and filters |
+| Prometheus `/metrics` with latency histograms | Live performance: throughput, p50/p95/p99 per route, the DB pool |
 | OAuth 2.0 and SMART on FHIR, external identity providers | Users, roles, clients, sessions and access policies |
 | Access policies as scripts, audit trail | Logs, audit and live server settings |
 
@@ -58,6 +61,16 @@
     <td align="center">REST with value completion</td>
     <td align="center">SQL over the same data</td>
     <td align="center"><code>⌘K</code> to go anywhere</td>
+  </tr>
+  <tr>
+    <td width="33%"><img src="docs/public/screenshots/performance-dark.webp" alt="Performance page: live throughput and p50/p95/p99 latency"></td>
+    <td width="33%"><img src="docs/public/screenshots/subscriptions-dark.webp" alt="Subscriptions with the delivery log of a rest-hook"></td>
+    <td width="33%"><img src="docs/public/screenshots/history-dark.webp" alt="Resource history with a diff against the previous version"></td>
+  </tr>
+  <tr>
+    <td align="center">Live throughput and p99</td>
+    <td align="center">Subscriptions you can debug</td>
+    <td align="center">History, diff and restore</td>
   </tr>
 </table>
 
