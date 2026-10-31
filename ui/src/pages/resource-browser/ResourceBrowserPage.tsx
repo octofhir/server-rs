@@ -29,7 +29,7 @@ import {
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   type FhirCatalogCategoryFilter,
   filterFhirCatalogTypes,
@@ -124,8 +124,10 @@ export function ResourceBrowserPage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedResource, setEditedResource] = useState("");
   const [currentBundle, setCurrentBundle] = useState<FhirBundle | null>(null);
-  const [queryText, setQueryText] = useState("");
-  const [appliedQuery, setAppliedQuery] = useState("");
+  // The applied search lives in the URL (`?q=name=anna`) so it survives reloads and can be shared.
+  const [urlParams, setUrlParams] = useSearchParams();
+  const appliedQuery = urlParams.get("q") ?? "";
+  const [queryText, setQueryText] = useState(appliedQuery);
   const searchParams = useMemo(() => ({ _count: 50, ...parseQuery(appliedQuery) }), [appliedQuery]);
   const [saveError, setSaveError] = useState<{
     message: string;
@@ -166,9 +168,11 @@ export function ResourceBrowserPage() {
     setCurrentBundle(null);
     setIsEditMode(false);
     setSaveError(null);
-    setQueryText("");
-    setAppliedQuery("");
   }, [selectedType]);
+
+  useEffect(() => {
+    setQueryText(appliedQuery);
+  }, [appliedQuery]);
 
   // Update current bundle when search bundle changes
   useEffect(() => {
@@ -533,7 +537,8 @@ export function ResourceBrowserPage() {
           className={classes.queryForm}
           onSubmit={(event) => {
             event.preventDefault();
-            setAppliedQuery(queryText);
+            const next = queryText.trim();
+            setUrlParams(next ? { q: next } : {});
           }}
         >
           <TextInput

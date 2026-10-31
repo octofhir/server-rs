@@ -4,3 +4,4 @@ export {
   paletteOpenChanged,
   usePaletteContribution,
 } from "./model";
+export { $recentPlaces, placeVisited, type RecentPlace } from "./recent";

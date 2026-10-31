@@ -39,11 +39,17 @@ import {
   Users,
 } from "lucide-react";
 import { useUnit } from "effector-react";
-import { type ComponentType, useEffect, useMemo, useState } from "react";
+import { type ComponentType, useCallback, useEffect, useMemo, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, useHealth, useResourceTypes, useSettings } from "@/shared/api/hooks";
-import { $paletteContributions, $paletteOpen, paletteOpenChanged } from "@/shared/command-palette";
+import {
+  $paletteContributions,
+  $paletteOpen,
+  $recentPlaces,
+  paletteOpenChanged,
+  placeVisited,
+} from "@/shared/command-palette";
 import { ErrorBoundary } from "@/shared/ui";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 
@@ -165,6 +171,61 @@ function locationSegments(path: string, navigate: (to: string) => void): Locatio
   ];
 }
 
+/** Readable name of a place for the recent list; null for places not worth remembering. */
+function placeLabel(path: string): string | null {
+  const decoded = path.split("/").filter(Boolean).map(decodeURIComponent);
+  if (decoded[0] === "resources") return decoded.length > 1 ? decoded.slice(1).join("/") : null;
+  const active = findActive(path);
+  if (!active) return null;
+  const rest = path.slice(active.entry.path.length).split("/").filter(Boolean).map(decodeURIComponent);
+  return [active.entry.label, ...rest].join(" / ");
+}
+
+function placeIcon(path: string): ComponentType<{ size?: number }> {
+  if (path.startsWith("/resources/")) return path.split("/").length > 3 ? FileText : FolderTree;
+  return findActive(path.split("?")[0])?.entry.icon ?? FileText;
+}
+
+const RESOURCE_ADDRESS = /^([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/;
+const RESOURCE_SEARCH = /^([A-Za-z]+)\?(.+)$/;
+
+/** `Patient/123` opens that resource; `Patient?name=anna` runs the search in the browser. */
+function resourceQueryItems(
+  query: string,
+  types: string[],
+  navigate: (to: string) => void
+): CommandPaletteItem[] {
+  const canonical = (name: string) => types.find((type) => type.toLowerCase() === name.toLowerCase());
+  const address = RESOURCE_ADDRESS.exec(query);
+  const addressType = address && canonical(address[1]);
+  if (address && addressType) {
+    return [
+      {
+        id: "open-address",
+        label: `Open ${addressType}/${address[2]}`,
+        icon: FileText,
+        hint: "↵",
+        onSelect: () => navigate(`/resources/${addressType}/${encodeURIComponent(address[2])}`),
+      },
+    ];
+  }
+  const search = RESOURCE_SEARCH.exec(query);
+  const searchType = search && canonical(search[1]);
+  if (search && searchType) {
+    return [
+      {
+        id: "search-type",
+        label: `Search ${searchType}?${search[2]}`,
+        icon: FolderTree,
+        hint: "↵",
+        onSelect: () =>
+          navigate(`/resources/${searchType}?${new URLSearchParams({ q: search[2] }).toString()}`),
+      },
+    ];
+  }
+  return [];
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return (
@@ -191,13 +252,22 @@ export function AppShell() {
       return false;
     }
   });
-  const [paletteOpen, setPaletteOpen, contributions] = useUnit([
+  const [paletteOpen, setPaletteOpen, contributions, recentPlaces, visit] = useUnit([
     $paletteOpen,
     paletteOpenChanged,
     $paletteContributions,
+    $recentPlaces,
+    placeVisited,
   ]);
 
   const path = location.pathname;
+  const placePath = `${path}${location.search}`;
+
+  useEffect(() => {
+    const label = placeLabel(path);
+    const query = new URLSearchParams(location.search).get("q");
+    if (label) visit({ path: placePath, label: query ? `${label}?${query}` : label });
+  }, [path, placePath, location.search, visit]);
 
   const groups = useMemo<SidebarNavGroup[]>(
     () =>
@@ -251,6 +321,25 @@ export function AppShell() {
     const pageItems = Object.values(contributions).flat();
     return [...pageItems, ...pages, ...actions, ...types];
   }, [navigate, resourceTypes, colorScheme, toggleColorScheme, logout, contributions]);
+
+  const recentItems = useMemo<CommandPaletteItem[]>(
+    () =>
+      recentPlaces
+        .filter((place) => place.path !== placePath)
+        .map((place) => ({
+          id: `recent-${place.path}`,
+          label: place.label,
+          group: "Recent",
+          icon: placeIcon(place.path),
+          onSelect: () => navigate(place.path),
+        })),
+    [recentPlaces, placePath, navigate]
+  );
+
+  const queryItems = useCallback(
+    (query: string) => resourceQueryItems(query, resourceTypes ?? [], navigate),
+    [resourceTypes, navigate]
+  );
 
   // Capture phase: Monaco-based inputs (REST URL bar, SQL editor) treat ⌘K as a chord
   // prefix and stop the event before it would bubble to a document listener.
@@ -359,7 +448,14 @@ export function AppShell() {
       <ErrorBoundary>
         <Outlet />
       </ErrorBoundary>
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={paletteItems} />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        items={paletteItems}
+        recent={recentItems}
+        queryItems={queryItems}
+        placeholder="Jump to a page, or type Patient/123 or Patient?name=anna…"
+      />
       <ShortcutsDialog
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}

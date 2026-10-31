@@ -32,6 +32,10 @@ export interface CommandPaletteProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     items: CommandPaletteItem[];
+    /** Listed first while the query is empty (recently visited places). */
+    recent?: CommandPaletteItem[];
+    /** Items derived from the query itself (e.g. "Open Patient/123"), listed above the matches. */
+    queryItems?: (query: string) => CommandPaletteItem[];
     placeholder?: string;
     emptyLabel?: ReactNode;
 }
@@ -68,6 +72,8 @@ export function CommandPalette({
     open,
     onOpenChange,
     items,
+    recent,
+    queryItems,
     placeholder = "Jump to a page or run a command…",
     emptyLabel = "Nothing matches.",
 }: CommandPaletteProps) {
@@ -83,16 +89,17 @@ export function CommandPalette({
     }, [open]);
 
     const results = useMemo(() => {
-        const q = query.trim().toLowerCase();
+        const raw = query.trim();
+        const q = raw.toLowerCase();
+        if (!q) return [...(recent ?? []), ...items];
         const ranked = items
             .map((item, index) => ({ item, index, rank: score(q, item) }))
             .filter((r): r is { item: CommandPaletteItem; index: number; rank: number } => r.rank !== null);
         // Fuzzy hits are only a fallback: once the label contains the query, loose matches are noise.
         const exact = ranked.filter((r) => r.rank < 0);
-        return (exact.length ? exact : ranked)
-            .sort((a, b) => (q ? a.rank - b.rank : a.index - b.index))
-            .map((r) => r.item);
-    }, [items, query]);
+        const matches = (exact.length ? exact : ranked).sort((a, b) => a.rank - b.rank).map((r) => r.item);
+        return [...(queryItems?.(raw) ?? []), ...matches];
+    }, [items, recent, queryItems, query]);
 
     useEffect(() => {
         listRef.current?.querySelector(`[data-index="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
