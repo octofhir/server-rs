@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
 import { AppDetailPage, AppsPage } from "@/pages/apps";
 import { AuditTrailPage } from "@/pages/audit";
+import { BulkDataPage } from "@/pages/bulk-data";
 import {
   AccessPoliciesPage,
   ClientsPage,
@@ -77,6 +78,7 @@ export function AppRoutes() {
         {/* Packages */}
         <Route path="/packages" element={<PackagesPage />} />
         <Route path="/packages/:name/:version" element={<PackageDetailPage />} />
+        <Route path="/bulk" element={<BulkDataPage />} />
 
         {/* Admin */}
         <Route path="/operations" element={<OperationsPage />} />
