@@ -8216,6 +8216,51 @@ pub async fn async_job_status(
     Ok((status_code, headers, Json(response)).into_response())
 }
 
+/// Jobs listed by `GET /_async-status`, newest first.
+const ASYNC_JOB_LIST_LIMIT: i64 = 200;
+
+/// GET /_async-status
+///
+/// Lists the caller's unexpired asynchronous jobs (the ones `GET /_async-status/{job-id}`
+/// would show them), newest first. Not part of the FHIR async pattern, which only knows
+/// individual job URLs; consoles use it to find jobs started elsewhere.
+pub async fn async_job_list(
+    State(state): State<crate::server::AppState>,
+    context: crate::operations::OperationContext,
+) -> Result<impl IntoResponse, ApiError> {
+    let Some(client_id) = context.auth().map(|auth| auth.client_id().to_owned()) else {
+        return Ok(Json(json!({ "jobs": [] })));
+    };
+    let anonymous_access = state.config.auth.policy.anonymous_access;
+    let jobs: Vec<Value> = state
+        .async_job_manager
+        .list_client_jobs(&client_id, ASYNC_JOB_LIST_LIMIT)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to list jobs: {}", e)))?
+        .into_iter()
+        .filter(|job| {
+            job.authorize_owner(context.auth(), anonymous_access)
+                .is_ok()
+        })
+        .map(|job| {
+            json!({
+                "jobId": job.id,
+                "status": job.status,
+                "progress": job.progress,
+                "requestType": job.request_type,
+                "requestMethod": job.request_method,
+                "requestUrl": job.request_url,
+                "createdAt": job.created_at.to_rfc3339(),
+                "updatedAt": job.updated_at.to_rfc3339(),
+                "completedAt": job.completed_at.map(|dt| dt.to_rfc3339()),
+                "expiresAt": job.expires_at.to_rfc3339(),
+                "errorMessage": job.error_message,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "jobs": jobs })))
+}
+
 /// GET /_async-status/{job-id}/result
 ///
 /// Retrieve the result of a completed asynchronous job.

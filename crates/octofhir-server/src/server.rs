@@ -2198,6 +2198,7 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
 
     let mut fhir_router = Router::new()
         // Async job status endpoints (FHIR asynchronous request pattern)
+        .route("/_async-status", get(handlers::async_job_list))
         .route(
             "/_async-status/{job_id}",
             get(handlers::async_job_status).delete(handlers::async_job_cancel),
