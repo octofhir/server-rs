@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="ui/public/branding/logo-dark.svg">
-    <img src="ui/public/branding/logo-light.svg" alt="OctoFHIR" width="320">
-  </picture>
+  <img src="ui/public/branding/readme-banner.svg" alt="OctoFHIR" width="480">
 </p>
 
 <h3 align="center">The FHIR server you can drive from the keyboard.</h3>
@@ -66,7 +63,16 @@
 
 ## Quick start
 
-Requires Docker (for PostgreSQL) and Rust 1.85+.
+**With Docker.** The server image is published to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/octofhir/octofhir-server:latest
+```
+
+The [deployment guide](https://octofhir.github.io/server-rs/deployment/) has a ready
+`docker-compose.yml` with PostgreSQL.
+
+**From source.** Requires Docker (for PostgreSQL) and Rust 1.85+.
 
 ```bash
 git clone https://github.com/octofhir/server-rs.git && cd server-rs
@@ -142,4 +148,10 @@ just inferno-results     # Generate conformance-results/<timestamp>/
 
 ## License
 
-Licensed under either of MIT or Apache-2.0, at your option.
+OctoFHIR is source-available under the [Functional Source License 1.1](LICENSE.md)
+(`FSL-1.1-ALv2`). Use it, modify it and run it in production for your own organisation or your
+clients; what the license does not allow is selling or hosting OctoFHIR itself, or a substitute
+for it, as a commercial product or service. Each release becomes Apache-2.0 two years after it is
+published.
+
+For commercial licensing, contact the author.
