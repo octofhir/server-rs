@@ -50,6 +50,7 @@ import {
   paletteOpenChanged,
   placeVisited,
 } from "@/shared/command-palette";
+import { isTypingTarget } from "@/shared/lib/keyboard";
 import { ErrorBoundary } from "@/shared/ui";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 
@@ -224,14 +225,6 @@ function resourceQueryItems(
     ];
   }
   return [];
-}
-
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return (
-    target.isContentEditable ||
-    target.closest("input, textarea, select, [contenteditable='true'], .monaco-editor") !== null
-  );
 }
 
 /** Top-level navigation and layout for the console: panel rail, path header, ⌘K palette. */

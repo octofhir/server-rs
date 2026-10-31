@@ -44,6 +44,7 @@ import {
 import { getFhirBundleResources } from "@/entities/fhir-resource";
 import { HttpError } from "@/shared/api/fhirClient";
 import { assertFhirResource, isRecord } from "@/shared/api/guards";
+import { isTypingTarget } from "@/shared/lib/keyboard";
 import {
   useDeleteResource,
   useFollowBundleLink,
@@ -332,6 +333,37 @@ export function ResourceBrowserPage() {
     }
     navigate("/resources");
   };
+
+  // Detail-panel keys (Linear-style): j/k step through the list, e edits, Esc closes, ⌘S saves.
+  // Capture phase: a focused table row also handles j/k (moving focus), and the open
+  // resource should follow it rather than be blocked by it.
+  useEffect(() => {
+    if (!selectedId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        if (!isEditMode) return;
+        event.preventDefault();
+        void handleSave();
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey || isEditMode) return;
+      if (isTypingTarget(event.target) || document.querySelector("[role='dialog'], [role='menu']")) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        handleCloseDetails();
+      } else if (event.key === "e") {
+        event.preventDefault();
+        setSaveError(null);
+        setIsEditMode(true);
+      } else if (event.key === "j" || event.key === "k") {
+        const index = resourceRows.findIndex((row) => row.id === selectedId);
+        const next = resourceRows[index + (event.key === "j" ? 1 : -1)];
+        if (next) handleResourceSelect(next.id);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  });
 
   const handleNextPage = async () => {
     if (currentBundle) {

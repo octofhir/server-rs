@@ -98,8 +98,8 @@ export function JsonEditor({
         configureJsonSchema(monaco, model, schemaRef.current, resourceTypeRef.current);
       }
 
-      // Focus the editor
-      editor.focus();
+      // Take focus only for editing; a read-only viewer would swallow page shortcuts (j/k, e, Esc).
+      if (!readOnly) editor.focus();
 
       // Setup validation listener if callback provided
       if (onValidationError) {
@@ -120,7 +120,7 @@ export function JsonEditor({
         }
       }
     },
-    [onExecute, onValidationError]
+    [onExecute, onValidationError, readOnly]
   );
 
   // Handle value changes from React
