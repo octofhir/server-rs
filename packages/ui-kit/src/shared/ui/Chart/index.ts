@@ -2,13 +2,14 @@ export { buildChartOption } from "./buildChartOption";
 export { Chart, type ChartProps, type ChartRenderer } from "./Chart";
 export { deriveColumns } from "./deriveColumns";
 export { type DiscoverOptions, discoverFields } from "./discoverFields";
-export { type EChartsCoreOption, type EChartsType, echarts } from "./echarts";
+export type { EChartsCoreOption, EChartsType } from "./echarts";
 export {
   buildOctoTheme,
   OCTO_THEME_DARK,
   OCTO_THEME_LIGHT,
   registerOctoThemes,
 } from "./echartsTheme";
+export { loadEcharts } from "./loadEcharts";
 export { getByPath, isFlattenPath, type PathOp, parsePath } from "./fieldPath";
 export { inferColumnType, isNumericType } from "./inferColumn";
 export { suggestChartSpec } from "./suggest";

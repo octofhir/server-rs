@@ -1,7 +1,8 @@
-import { type CSSProperties, forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { type CSSProperties, forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import styles from "./Chart.module.css";
-import { type EChartsCoreOption, type EChartsType, echarts } from "./echarts";
+import type { EChartsCoreOption, EChartsType } from "./echarts";
+import { loadEcharts } from "./loadEcharts";
 import { useChartTheme } from "./useChartTheme";
 
 export type ChartRenderer = "canvas" | "svg";
@@ -39,8 +40,9 @@ export interface ChartProps {
 
 /**
  * Imperative ECharts wrapper. Owns the instance lifecycle (init / setOption /
- * resize / dispose) and applies the brand theme by default. The underlying
- * `EChartsType` instance is exposed through the forwarded ref.
+ * resize / dispose) and applies the brand theme by default. ECharts itself is
+ * loaded on the first mount (see `loadEcharts`). The underlying `EChartsType`
+ * instance is exposed through the forwarded ref once it exists.
  */
 export const Chart = forwardRef<EChartsType | null, ChartProps>(function Chart(
   {
@@ -65,6 +67,8 @@ export const Chart = forwardRef<EChartsType | null, ChartProps>(function Chart(
   const instanceRef = useRef<EChartsType | null>(null);
   const onInitRef = useRef(onInit);
   onInitRef.current = onInit;
+  // The instance that option, loading and event effects apply to; set once ECharts loads.
+  const [instance, setInstance] = useState<EChartsType | null>(null);
 
   const defaultTheme = useChartTheme();
   const activeTheme = theme ?? defaultTheme;
@@ -76,47 +80,54 @@ export const Chart = forwardRef<EChartsType | null, ChartProps>(function Chart(
     const dom = containerRef.current;
     if (!dom) return;
 
-    // useDirtyRect is intentionally off: it leaves trails / flicker on pie
-    // charts and label lines (known ECharts artifact).
-    const instance = echarts.init(dom, activeTheme, { renderer });
-    instanceRef.current = instance;
-    if (group) instance.group = group;
-    onInitRef.current?.(instance);
+    let created: EChartsType | null = null;
+    let cancelled = false;
+    void loadEcharts().then((echarts) => {
+      if (cancelled) return;
+      // useDirtyRect is intentionally off: it leaves trails / flicker on pie
+      // charts and label lines (known ECharts artifact).
+      created = echarts.init(dom, activeTheme, { renderer });
+      if (group) created.group = group;
+      instanceRef.current = created;
+      onInitRef.current?.(created);
+      setInstance(created);
+    });
 
     return () => {
-      instance.dispose();
+      cancelled = true;
+      created?.dispose();
       instanceRef.current = null;
+      setInstance(null);
     };
   }, [renderer, activeTheme, group]);
 
   // Apply option.
   useEffect(() => {
-    instanceRef.current?.setOption(option, { notMerge, lazyUpdate });
-  }, [option, notMerge, lazyUpdate]);
+    instance?.setOption(option, { notMerge, lazyUpdate });
+  }, [instance, option, notMerge, lazyUpdate]);
 
   // Loading state.
   useEffect(() => {
-    const instance = instanceRef.current;
     if (!instance) return;
     if (loading) instance.showLoading();
     else instance.hideLoading();
-  }, [loading]);
+  }, [instance, loading]);
 
   // Bind events.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-bind only when handlers or theme/renderer (re-init) change.
   useEffect(() => {
-    const instance = instanceRef.current;
     if (!instance || !onEvents) return;
     const entries = Object.entries(onEvents);
     for (const [name, handler] of entries) {
       instance.on(name, (params: unknown) => handler(params, instance));
     }
     return () => {
+      // A re-init disposes the old instance before this cleanup runs.
+      if (instance.isDisposed()) return;
       for (const [name] of entries) {
         instance.off(name);
       }
     };
-  }, [onEvents, renderer, activeTheme]);
+  }, [instance, onEvents]);
 
   // Resize observer → rAF-debounced resize.
   useEffect(() => {

@@ -1,13 +1,13 @@
 /**
  * OctoFHIR ECharts theme. Builds a theme object straight from the brand
  * `palette` + design `tokens` so every chart renders with the emerald-led
- * brand palette instead of stock ECharts colors. Registers `octo-light` and
- * `octo-dark` at module load.
+ * brand palette instead of stock ECharts colors. `loadEcharts` registers
+ * `octo-light` and `octo-dark` once the ECharts chunk arrives.
  */
 import type { ColorScheme } from "../../theme/color-scheme";
 import { palette } from "../../theme/colors";
 import { tokens } from "../../theme/tokens";
-import { echarts } from "./echarts";
+import type { echarts } from "./echarts";
 
 export const OCTO_THEME_LIGHT = "octo-light";
 export const OCTO_THEME_DARK = "octo-dark";
@@ -96,14 +96,8 @@ export function buildOctoTheme(scheme: ColorScheme): object {
   };
 }
 
-let registered = false;
-
-/** Register both brand themes once. Idempotent. */
-export function registerOctoThemes(): void {
-  if (registered) return;
-  echarts.registerTheme(OCTO_THEME_LIGHT, buildOctoTheme("light"));
-  echarts.registerTheme(OCTO_THEME_DARK, buildOctoTheme("dark"));
-  registered = true;
+/** Register both brand themes into a loaded ECharts instance. */
+export function registerOctoThemes(instance: typeof echarts): void {
+  instance.registerTheme(OCTO_THEME_LIGHT, buildOctoTheme("light"));
+  instance.registerTheme(OCTO_THEME_DARK, buildOctoTheme("dark"));
 }
-
-registerOctoThemes();
