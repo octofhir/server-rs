@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useId } from "react";
 import { Autocomplete as BaseAutocomplete } from "@base-ui/react/autocomplete";
 import { Search, X } from "lucide-react";
 import { Field } from "../Field/Field";
@@ -99,6 +99,8 @@ export function Autocomplete({
     style,
     "aria-label": ariaLabel,
 }: AutocompleteProps) {
+    const generatedId = useId();
+    const controlId = id ?? generatedId;
     const items = useMemo(() => normalize(data ?? options), [data, options]);
     const itemToStringValue = useMemo(() => {
         const map = new Map(items.map((o) => [o.value, o.textValue]));
@@ -111,6 +113,7 @@ export function Autocomplete({
     return (
         <Field
             label={label}
+            controlId={controlId}
             description={description}
             error={error}
             required={required}
@@ -137,7 +140,7 @@ export function Autocomplete({
                 >
                     <span className={inputStyles.affix}>{leftSection ?? <Search size={16} />}</span>
                     <BaseAutocomplete.Input
-                        id={id}
+                        id={controlId}
                         placeholder={placeholder}
                         className={[inputStyles.input, styles.input].join(" ")}
                         aria-label={ariaLabel}

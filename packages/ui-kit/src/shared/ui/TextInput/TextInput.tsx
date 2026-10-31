@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef, type ReactNode, useId } from "react";
 import { Input as BaseInput } from "@base-ui/react/input";
 import { Field } from "../Field/Field";
 import type { Size } from "../layout-utils";
@@ -43,6 +43,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
 		error,
 		disabled,
 		label,
+		id,
 		description,
 		required,
 		w,
@@ -56,11 +57,14 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
 	},
 	ref,
 ) {
+    const generatedId = useId();
+    const controlId = id ?? generatedId;
 	const left = startContent ?? leftSection;
 	const right = endContent ?? rightSection;
 	return (
 		<Field
 			label={label}
+			controlId={controlId}
 			description={description}
 			error={error}
 			required={required}
@@ -77,6 +81,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
 				{left != null && <span className={styles.affix}>{left}</span>}
 				<BaseInput
 					ref={ref}
+					id={controlId}
 					className={styles.input}
 					value={value}
 					defaultValue={defaultValue}

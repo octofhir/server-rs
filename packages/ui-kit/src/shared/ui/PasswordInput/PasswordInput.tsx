@@ -1,4 +1,4 @@
-import { forwardRef, useState, type ReactNode } from "react";
+import { forwardRef, useState, type ReactNode, useId } from "react";
 import { Input as BaseInput } from "@base-ui/react/input";
 import { Eye, EyeOff } from "lucide-react";
 import { Field } from "../Field/Field";
@@ -39,6 +39,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         error,
         disabled,
         label,
+        id,
         description,
         required,
         w,
@@ -51,10 +52,13 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
     },
     ref,
 ) {
+    const generatedId = useId();
+    const controlId = id ?? generatedId;
     const [visible, setVisible] = useState(false);
     return (
         <Field
             label={label}
+            controlId={controlId}
             description={description}
             error={error}
             required={required}
@@ -71,6 +75,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
                 {leftSection != null && <span className={styles.affix}>{leftSection}</span>}
                 <BaseInput
                     ref={ref}
+                    id={controlId}
                     className={styles.input}
                     type={visible ? "text" : "password"}
                     value={value}

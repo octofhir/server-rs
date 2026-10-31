@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { Check, ChevronDown } from "lucide-react";
 import { Field } from "../Field/Field";
@@ -94,6 +94,8 @@ export function Select({
     style,
     ...props
 }: SelectProps) {
+    const generatedId = useId();
+    const controlId = id ?? generatedId;
     const items = normalize(data ?? options);
     const labels = new Map<string, ReactNode>();
     for (const item of items) {
@@ -107,6 +109,7 @@ export function Select({
     return (
         <Field
             label={label}
+            controlId={controlId}
             description={description}
             error={error}
             required={required}
@@ -126,7 +129,7 @@ export function Select({
             }}
         >
             <BaseSelect.Trigger
-                id={id}
+                id={controlId}
                 className={[inputStyles.wrapper, styles.trigger].filter(Boolean).join(" ")}
                 data-size={size}
                 data-error={error ? "true" : undefined}

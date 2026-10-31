@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef, type ReactNode, useId } from "react";
 import { NumberField } from "@base-ui/react/number-field";
 import { Minus, Plus } from "lucide-react";
 import { Field } from "../Field/Field";
@@ -41,6 +41,7 @@ export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(functi
         size = "md",
         error,
         label,
+        id,
         description,
         required,
         w,
@@ -50,9 +51,12 @@ export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(functi
     },
     ref,
 ) {
+    const generatedId = useId();
+    const controlId = id ?? generatedId;
     return (
         <Field
             label={label}
+            controlId={controlId}
             description={description}
             error={error}
             required={required}
@@ -81,7 +85,7 @@ export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(functi
                     <NumberField.Decrement className={styles.iconButton} aria-label="Decrement">
                         <Minus size={14} />
                     </NumberField.Decrement>
-                    <NumberField.Input ref={ref} className={styles.input} {...props} />
+                    <NumberField.Input ref={ref} id={controlId} className={styles.input} {...props} />
                     <NumberField.Increment className={styles.iconButton} aria-label="Increment">
                         <Plus size={14} />
                     </NumberField.Increment>

@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useId } from "react";
 import { Combobox as BaseCombobox } from "@base-ui/react/combobox";
 import { Check, ChevronDown, X } from "lucide-react";
 import { Field } from "../Field/Field";
@@ -115,6 +115,8 @@ export function Combobox(props: ComboboxProps) {
         defaultValue,
         "aria-label": ariaLabel,
     } = props;
+    const generatedId = useId();
+    const controlId = id ?? generatedId;
 
     const items = useMemo(() => normalize(data ?? options), [data, options]);
     const itemToStringLabel = useMemo(() => {
@@ -133,6 +135,7 @@ export function Combobox(props: ComboboxProps) {
     return (
         <Field
             label={label}
+            controlId={controlId}
             description={description}
             error={error}
             required={required}
@@ -166,7 +169,7 @@ export function Combobox(props: ComboboxProps) {
                         <BaseCombobox.Chips className={styles.chips}>
                             <ComboboxChipList itemToStringLabel={itemToStringLabel} />
                             <BaseCombobox.Input
-                                id={id}
+                                id={controlId}
                                 placeholder={placeholder}
                                 className={[inputStyles.input, styles.input].join(" ")}
                                 aria-label={ariaLabel}
@@ -174,7 +177,7 @@ export function Combobox(props: ComboboxProps) {
                         </BaseCombobox.Chips>
                     ) : (
                         <BaseCombobox.Input
-                            id={id}
+                            id={controlId}
                             placeholder={placeholder}
                             className={[inputStyles.input, styles.input].join(" ")}
                             aria-label={ariaLabel}

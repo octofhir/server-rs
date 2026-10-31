@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef, type ReactNode, useId } from "react";
 import { Field } from "../Field/Field";
 import type { Size } from "../layout-utils";
 import styles from "../input.module.css";
@@ -31,6 +31,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
         rows,
         minRows,
         label,
+        id,
         description,
         required,
         w,
@@ -40,9 +41,12 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
     },
     ref,
 ) {
+    const generatedId = useId();
+    const controlId = id ?? generatedId;
     return (
         <Field
             label={label}
+            controlId={controlId}
             description={description}
             error={error}
             required={required}
@@ -58,6 +62,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
             >
                 <textarea
                     ref={ref}
+                    id={controlId}
                     className={[styles.input, styles.textarea].join(" ")}
                     value={value}
                     defaultValue={defaultValue}

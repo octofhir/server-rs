@@ -5,6 +5,8 @@ import styles from "../input.module.css";
 export interface FieldProps extends SpacingProps {
 	/** Field label rendered above the control. */
 	label?: ReactNode;
+	/** id of the control the label names, so assistive tech and clicks reach it. */
+	controlId?: string;
 	/** Helper text rendered below the control. */
 	description?: ReactNode;
 	/** Error message; a string replaces the description and tints the control. */
@@ -22,6 +24,7 @@ export interface FieldProps extends SpacingProps {
  */
 export function Field({
 	label,
+	controlId,
 	description,
 	error,
 	required,
@@ -37,7 +40,7 @@ export function Field({
 			style={{ ...getSpacingStyles(spacing), ...style }}
 		>
 			{label != null && (
-				<label className={styles.label}>
+				<label className={styles.label} htmlFor={controlId}>
 					{label}
 					{required && <span className={styles.required}>*</span>}
 				</label>
