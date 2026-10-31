@@ -163,7 +163,8 @@
     outline-offset: -2px;
 }
 
-.tr[data-selected="true"] {
+.tr[data-selected="true"],
+.tr[data-active="true"] {
     background: var(--octo-accent-primary-subtle, #edf2ff);
 }
 
@@ -177,10 +178,22 @@
 }
 
 .selectCell {
-    width: 40px;
-    padding: 0 8px;
+    width: 32px;
+    padding: 0 0 0 10px;
     text-align: center;
     vertical-align: middle;
+}
+
+/* Checkboxes stay out of the way until a row is hovered or focused, or something is selected. */
+.table:not([data-has-selection]) .selectCell > * {
+    opacity: 0;
+    transition: opacity 80ms ease;
+}
+.table:not([data-has-selection]) .tr:hover .selectCell > *,
+.table:not([data-has-selection]) .tr:focus-within .selectCell > *,
+.table:not([data-has-selection]) .tr:focus .selectCell > *,
+.table:not([data-has-selection]) thead:hover .selectCell > * {
+    opacity: 1;
 }
 
 .spacerRow {

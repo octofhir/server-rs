@@ -107,6 +107,8 @@ export interface DataTableProps<T> {
     selectable?: boolean;
     selectedRowIds?: string[];
     onSelectedRowIdsChange?: (ids: string[]) => void;
+    /** The row that is open elsewhere (e.g. in a side panel); highlighted apart from selection. */
+    activeRowId?: string;
 
     // --- states & interaction ---
     loading?: boolean;
@@ -154,6 +156,7 @@ export function DataTable<T>({
     selectable,
     selectedRowIds,
     onSelectedRowIdsChange,
+    activeRowId,
     loading,
     loadingRowCount = 8,
     emptyState = "No data",
@@ -393,6 +396,7 @@ export function DataTable<T>({
                             .filter(Boolean)
                             .join(" ")}
                         data-size={size}
+                        data-has-selection={Object.values(selection).some(Boolean) ? "true" : undefined}
                         aria-label={ariaLabel}
                     >
                         <thead className={classes.thead}>
@@ -450,6 +454,7 @@ export function DataTable<T>({
                                                           selectCell={selectBodyCell(row)}
                                                           onRowClick={onRowClick}
                                                           selectable={selectable}
+                                                          active={row.id === activeRowId}
                                                           {...rowMenuProps(row)}
                                                       >
                                                           {renderDataCells(row)}
@@ -470,6 +475,7 @@ export function DataTable<T>({
                                               selectCell={selectBodyCell(row)}
                                               onRowClick={onRowClick}
                                               selectable={selectable}
+                                              active={row.id === activeRowId}
                                               {...rowMenuProps(row)}
                                           >
                                               {renderDataCells(row)}
@@ -515,6 +521,7 @@ interface DataTableRowProps<T> {
     selectCell: ReactNode;
     onRowClick?: (row: T) => void;
     selectable?: boolean;
+    active?: boolean;
     menuOpen?: boolean;
     onContextMenu?: () => void;
     measureRef?: (node: Element | null) => void;
@@ -527,6 +534,7 @@ function DataTableRow<T>({
     selectCell,
     onRowClick,
     selectable,
+    active,
     menuOpen,
     onContextMenu,
     measureRef,
@@ -540,6 +548,7 @@ function DataTableRow<T>({
             data-index={index}
             className={classes.tr}
             data-selected={row.getIsSelected() ? "true" : undefined}
+            data-active={active ? "true" : undefined}
             data-menu-open={menuOpen ? "true" : undefined}
             tabIndex={focusable ? 0 : undefined}
             onClick={clickable ? () => onRowClick(row.original) : undefined}

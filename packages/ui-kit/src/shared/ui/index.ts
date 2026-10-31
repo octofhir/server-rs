@@ -61,6 +61,7 @@ export * from "./ChartBuilder";
 export * from "./Modal";
 export * from "./Tooltip";
 export * from "./Menu";
+export * from "./SelectionBar";
 export * from "./Popover";
 export * from "./Portal";
 export * from "./Drawer";
