@@ -2331,11 +2331,15 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
 
     // Apply middleware stack (outer to inner):
     // DefaultBodyLimit → trace_metrics(+request_id) → cors → compression →
-    //   auth_combined(+content_negotiation) → audit → handler
-    // 6 layers total (down from 10), reducing Tower BoxCloneSyncService clone overhead.
+    //   auth_combined(+content_negotiation) → audit → scrub_credentials → handler
+    // 7 layers total (down from 10), reducing Tower BoxCloneSyncService clone overhead.
     // Note: Layers wrap from outside-in, so first .layer() is closest to handler.
 
     router = router
+        // Credential hashes stored inside User/Client/App never leave the server
+        .layer(middleware::from_fn(
+            crate::secrets::scrub_credentials_middleware,
+        ))
         // Audit middleware runs closest to handler, after auth context is set
         .layer(middleware::from_fn_with_state(
             state.clone(),

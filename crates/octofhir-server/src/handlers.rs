@@ -2157,6 +2157,11 @@ pub async fn update_resource(
         .map(parse_prefer_return);
 
     let mut payload = payload;
+    if crate::secrets::has_secrets(&resource_type)
+        && let Some(stored) = state.storage.read(&resource_type, &id).await.ok().flatten()
+    {
+        crate::secrets::carry_over_secrets(&resource_type, &mut payload, &stored.resource);
+    }
     preprocess_payload(&resource_type, &mut payload).await?;
 
     // Validate payload structure (zero-allocation check)
@@ -2429,6 +2434,9 @@ pub async fn conditional_update_resource(
         } else {
             validate_for_checked_write(&candidate, &state).await?
         };
+        if let Some(stored) = &previous {
+            crate::secrets::carry_over_secrets(&resource_type, &mut candidate, &stored.resource);
+        }
         preprocess_payload(&resource_type, &mut candidate).await?;
         let result = match conditional
             .update(
@@ -5252,6 +5260,14 @@ async fn process_transaction(
             entry_references.insert(*original_idx, references);
             if method == "POST" || method == "PUT" {
                 let resource_type = res["resourceType"].as_str().unwrap_or_default().to_owned();
+                if method == "PUT"
+                    && crate::secrets::has_secrets(&resource_type)
+                    && let Some(id) = res["id"].as_str()
+                    && let Some(stored) =
+                        state.storage.read(&resource_type, id).await.ok().flatten()
+                {
+                    crate::secrets::carry_over_secrets(&resource_type, res, &stored.resource);
+                }
                 preprocess_payload(&resource_type, res).await?;
             }
         }

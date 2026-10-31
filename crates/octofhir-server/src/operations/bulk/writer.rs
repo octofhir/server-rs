@@ -212,6 +212,12 @@ impl NdjsonWriter {
             .entry(resource_type.to_string())
             .or_insert_with(|| TypeWriter::new(resource_type, job_dir, max_per_file, file_prefix));
 
+        // Exported files leave the server: credential hashes must not go with them.
+        if crate::secrets::has_secrets(resource_type) {
+            let mut scrubbed = resource.clone();
+            crate::secrets::scrub(&mut scrubbed);
+            return writer.write_resource(&scrubbed).await;
+        }
         writer.write_resource(resource).await
     }
 

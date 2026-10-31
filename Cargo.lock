@@ -4389,6 +4389,7 @@ dependencies = [
  "insta",
  "json-patch",
  "lettre",
+ "memchr",
  "metrics",
  "metrics-exporter-prometheus",
  "mimalloc",

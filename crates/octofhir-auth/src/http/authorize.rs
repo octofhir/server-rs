@@ -469,7 +469,6 @@ async fn handle_login(
                 user_id = %u.id,
                 username = %u.username,
                 has_password_hash = u.password_hash.is_some(),
-                password_hash_prefix = ?u.password_hash.as_ref().map(|h| h.chars().take(20).collect::<String>()),
                 active = u.active,
                 "User found"
             );
