@@ -210,10 +210,11 @@ impl SubscriptionManager {
             OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
         });
 
-        // Parse heartbeat period (from channel.heartbeatPeriod or extension)
+        // Parse heartbeat period (R4 channel.heartbeatPeriod, R5 heartbeatPeriod)
         let heartbeat_period = resource
             .get("channel")
             .and_then(|c| c.get("heartbeatPeriod"))
+            .or_else(|| resource.get("heartbeatPeriod"))
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
 
@@ -250,9 +251,10 @@ impl SubscriptionManager {
         &self,
         resource: &serde_json::Value,
     ) -> SubscriptionResult<SubscriptionChannel> {
-        let channel = resource
-            .get("channel")
-            .ok_or_else(|| SubscriptionError::InvalidSubscription("Missing channel".to_string()))?;
+        let Some(channel) = resource.get("channel") else {
+            // R5 has no `channel` element: the channel fields sit on the Subscription.
+            return r5_channel(resource);
+        };
 
         // R5: channel.type.coding[0].code
         // R4: channel.type
@@ -391,5 +393,106 @@ impl SubscriptionManager {
         }
 
         Vec::new()
+    }
+}
+
+/// Channel of an R5 Subscription: `channelType` (a Coding), `endpoint`, headers as
+/// `parameter` name/value pairs, `content`, `contentType` and `heartbeatPeriod`.
+fn r5_channel(resource: &serde_json::Value) -> SubscriptionResult<SubscriptionChannel> {
+    let channel_type = resource
+        .get("channelType")
+        .and_then(|coding| coding.get("code"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            SubscriptionError::InvalidSubscription("Missing channel or channelType".to_string())
+        })?;
+    let endpoint = resource
+        .get("endpoint")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    match channel_type {
+        "rest-hook" => {
+            let headers = resource
+                .get("parameter")
+                .and_then(|v| v.as_array())
+                .map(|parameters| {
+                    parameters
+                        .iter()
+                        .filter_map(|parameter| {
+                            let name = parameter.get("name")?.as_str()?;
+                            let value = parameter.get("value")?.as_str()?;
+                            Some((name.to_string(), value.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(SubscriptionChannel::RestHook {
+                endpoint,
+                headers,
+                payload_content: resource
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .map(PayloadContent::from)
+                    .unwrap_or_default(),
+                content_type: resource
+                    .get("contentType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("application/fhir+json")
+                    .to_string(),
+            })
+        }
+        "websocket" => Ok(SubscriptionChannel::WebSocket {
+            heartbeat_period: resource
+                .get("heartbeatPeriod")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(60),
+        }),
+        "email" => Ok(SubscriptionChannel::Email { address: endpoint }),
+        "message" => Ok(SubscriptionChannel::Message { endpoint }),
+        other => Err(SubscriptionError::InvalidSubscription(format!(
+            "Unsupported channel type: {other}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod r5_channel_tests {
+    use super::r5_channel;
+    use crate::subscriptions::types::{PayloadContent, SubscriptionChannel};
+    use serde_json::json;
+
+    #[test]
+    fn reads_rest_hook_fields_from_the_subscription() {
+        let subscription = json!({
+            "resourceType": "Subscription",
+            "channelType": {"system": "http://terminology.hl7.org/CodeSystem/subscription-channel-type", "code": "rest-hook"},
+            "endpoint": "https://example.org/hook",
+            "parameter": [{"name": "Authorization", "value": "Bearer abc"}],
+            "content": "id-only"
+        });
+        let SubscriptionChannel::RestHook {
+            endpoint,
+            headers,
+            payload_content,
+            content_type,
+        } = r5_channel(&subscription).unwrap()
+        else {
+            panic!("expected a rest-hook channel");
+        };
+        assert_eq!(endpoint, "https://example.org/hook");
+        assert_eq!(
+            headers,
+            vec![("Authorization".to_string(), "Bearer abc".to_string())]
+        );
+        assert_eq!(payload_content, PayloadContent::IdOnly);
+        assert_eq!(content_type, "application/fhir+json");
+    }
+
+    #[test]
+    fn a_subscription_without_any_channel_is_invalid() {
+        assert!(r5_channel(&json!({"resourceType": "Subscription"})).is_err());
     }
 }
