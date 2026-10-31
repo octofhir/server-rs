@@ -14,6 +14,7 @@ import {
   Resizable,
   ScrollArea,
   SegmentedControl,
+  SelectionBar,
   Skeleton,
   Text,
   TextInput,
@@ -111,6 +112,13 @@ function isCatalogCategoryFilter(value: string): value is FhirCatalogCategoryFil
   return value === "all" || value === "fhir" || value === "system" || value === "custom";
 }
 
+/** A deleted resource as it can be PUT back: server-owned version fields go, and so does an emptied meta. */
+function restorable(resource: FhirResource): FhirResource {
+  const { meta: original, ...rest } = resource;
+  const { versionId: _version, lastUpdated: _updated, ...meta } = original ?? {};
+  return Object.keys(meta).length ? { ...rest, meta } : rest;
+}
+
 function isOperationOutcome(value: unknown): value is FhirOperationOutcome {
   return isRecord(value) && value.resourceType === "OperationOutcome";
 }
@@ -136,6 +144,8 @@ export function ResourceBrowserPage() {
   const appliedQuery = urlParams.get("q") ?? "";
   const [queryText, setQueryText] = useState(appliedQuery);
   const searchParams = useMemo(() => ({ _count: 50, ...parseQuery(appliedQuery) }), [appliedQuery]);
+  // Rows ticked for bulk actions (x or the checkbox); separate from the row open in the panel.
+  const [checked, setChecked] = useState<string[]>([]);
   const [saveError, setSaveError] = useState<{
     message: string;
     operationOutcome?: FhirOperationOutcome;
@@ -175,10 +185,12 @@ export function ResourceBrowserPage() {
     setCurrentBundle(null);
     setIsEditMode(false);
     setSaveError(null);
+    setChecked([]);
   }, [selectedType]);
 
   useEffect(() => {
     setQueryText(appliedQuery);
+    setChecked([]);
   }, [appliedQuery]);
 
   // Update current bundle when search bundle changes
@@ -261,37 +273,47 @@ export function ResourceBrowserPage() {
 
   const copyText = (text: string, what: string) => {
     void navigator.clipboard.writeText(text).then(() =>
-      notify({ theme: "success", title: `Copied ${what}`, content: text, autoHiding: 2500 })
+      notify({
+        theme: "success",
+        title: `Copied ${what}`,
+        content: text.includes("\n") ? undefined : text,
+        autoHiding: 2500,
+      })
     );
   };
 
   // Linear-style delete: act at once, offer Undo (a PUT brings the resource back under its id).
-  const deleteWithUndo = async (resource: FhirResource) => {
-    if (!resource.id) return;
-    const { resourceType, id } = resource;
-    try {
-      await deleteMutation.mutateAsync({ resourceType, id });
-    } catch (error) {
-      notify({ theme: "danger", title: "Delete failed", content: getErrorMessage(error, `${resourceType}/${id}`) });
-      return;
+  // Linear-style delete: act at once, offer Undo (a PUT brings each resource back under its id).
+  const deleteWithUndo = async (targets: FhirResource[]) => {
+    const results = await Promise.allSettled(
+      targets.map((resource) =>
+        deleteMutation.mutateAsync({ resourceType: resource.resourceType, id: resource.id ?? "" }).then(() => resource)
+      )
+    );
+    const deleted = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const failed = results.length - deleted.length;
+    if (failed > 0) {
+      notify({ theme: "danger", title: `${failed} of ${results.length} not deleted` });
     }
-    if (selectedId === id) navigate(`/resources/${resourceType}`);
-    const name = getResourceDisplayName(resource, `${resourceType}/${id}`);
+    if (deleted.length === 0) return;
+    if (deleted.some((resource) => resource.id === selectedId)) navigate(`/resources/${selectedType}`);
+    setChecked([]);
+
+    const single = deleted.length === 1 ? deleted[0] : null;
+    const label = single
+      ? getResourceDisplayName(single, `${single.resourceType}/${single.id}`)
+      : `${deleted.length} ${selectedType ?? "resources"}`;
     notify({
-      title: `Deleted ${name}`,
-      content: `${resourceType}/${id}`,
+      title: `Deleted ${label}`,
+      content: single ? `${single.resourceType}/${single.id}` : undefined,
       autoHiding: 8000,
       action: {
         label: "Undo",
         onClick: () => {
-          // Server-owned version fields go; an emptied meta must go too (`{}` is invalid FHIR).
-          const { meta: original, ...rest } = resource;
-          const { versionId: _version, lastUpdated: _updated, ...meta } = original ?? {};
-          updateMutation
-            .mutateAsync(Object.keys(meta).length ? { ...rest, meta } : rest)
-            .then(() => notify({ theme: "success", title: `Restored ${name}`, autoHiding: 2500 }))
+          Promise.all(deleted.map((resource) => updateMutation.mutateAsync(restorable(resource))))
+            .then(() => notify({ theme: "success", title: `Restored ${label}`, autoHiding: 2500 }))
             .catch((error: unknown) =>
-              notify({ theme: "danger", title: "Restore failed", content: getErrorMessage(error, id) })
+              notify({ theme: "danger", title: "Restore failed", content: getErrorMessage(error, label) })
             );
         },
       },
@@ -318,7 +340,7 @@ export function ResourceBrowserPage() {
           text: "Delete",
           iconStart: <Trash2 size={14} />,
           theme: "danger",
-          action: () => void deleteWithUndo(row.resource),
+          action: () => void deleteWithUndo([row.resource]),
         },
       ],
     ];
@@ -635,8 +657,31 @@ export function ResourceBrowserPage() {
   );
 
   // Level 2: resources of the selected type
+  const checkedResources = resourceRows.filter((row) => checked.includes(row.id)).map((row) => row.resource);
+
   const renderResourcesTable = () => (
     <div className={classes.tablePanel}>
+      <SelectionBar
+        count={checkedResources.length}
+        onClear={() => setChecked([])}
+        actions={[
+          {
+            label: "Copy references",
+            icon: <Copy size={14} />,
+            onClick: () =>
+              copyText(
+                checkedResources.map((resource) => `${resource.resourceType}/${resource.id}`).join("\n"),
+                `${checkedResources.length} references`
+              ),
+          },
+          {
+            label: "Delete",
+            icon: <Trash2 size={14} />,
+            danger: true,
+            onClick: () => void deleteWithUndo(checkedResources),
+          },
+        ]}
+      />
       <div className={classes.listToolbar}>
         <form
           className={classes.queryForm}
@@ -711,7 +756,10 @@ export function ResourceBrowserPage() {
           loadingRowCount={8}
           stickyHeader
           fillHeight
-          selectedRowIds={selectedId ? [selectedId] : []}
+          selectable
+          selectedRowIds={checked}
+          onSelectedRowIdsChange={setChecked}
+          activeRowId={selectedId ?? undefined}
           onRowClick={(row) => handleResourceSelect(row.id)}
           rowMenu={resourceRowMenu}
           emptyState={

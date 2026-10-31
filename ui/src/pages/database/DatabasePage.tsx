@@ -88,8 +88,6 @@ export function DatabasePage() {
   );
 
   // Stable ref — passing a fresh array every render makes react-table loop.
-  const selectedRowIds = useMemo(() => (selectedId ? [selectedId] : []), [selectedId]);
-
   const columns: DataTableColumn<DbSchemaTableView>[] = useMemo(
     () => [
       {
@@ -234,7 +232,7 @@ export function DatabasePage() {
               stickyHeader
               loading={isLoading}
               onRowClick={(row) => setSelectedId(row.id)}
-              selectedRowIds={selectedRowIds}
+              activeRowId={selectedId ?? undefined}
               emptyState={
                 <EmptyState title="No tables" description="Nothing matches the current filters." />
               }
