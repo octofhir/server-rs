@@ -278,6 +278,60 @@ impl SubscriptionEventStorage {
         }
     }
 
+    /// Recent events of one subscription, newest first, each with its latest delivery attempt.
+    pub async fn recent_events(
+        &self,
+        subscription_id: &str,
+        limit: i64,
+    ) -> SubscriptionResult<Vec<EventLogEntry>> {
+        let rows = query(
+            r#"
+            SELECT
+                e.id, e.event_type, e.event_number, e.focus_resource_type, e.focus_resource_id,
+                e.focus_event, e.status, e.attempts, e.last_error, e.created_at, e.delivered_at,
+                e.next_retry_at, d.http_status, d.response_time_ms, d.error_message
+            FROM subscription_event e
+            LEFT JOIN LATERAL (
+                SELECT http_status, response_time_ms, error_message
+                FROM subscription_delivery
+                WHERE event_id = e.id
+                ORDER BY attempt_number DESC
+                LIMIT 1
+            ) d ON true
+            WHERE e.subscription_id = $1
+            ORDER BY e.created_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(subscription_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(EventLogEntry {
+                    id: row.try_get::<Uuid, _>("id")?.to_string(),
+                    event_type: row.try_get("event_type")?,
+                    event_number: row.try_get("event_number")?,
+                    focus_resource_type: row.try_get("focus_resource_type")?,
+                    focus_resource_id: row.try_get("focus_resource_id")?,
+                    focus_event: row.try_get("focus_event")?,
+                    status: row.try_get("status")?,
+                    attempts: row.try_get("attempts")?,
+                    error: row
+                        .try_get::<Option<String>, _>("error_message")?
+                        .or(row.try_get("last_error")?),
+                    http_status: row.try_get("http_status")?,
+                    response_time_ms: row.try_get("response_time_ms")?,
+                    created_at: row.try_get("created_at")?,
+                    delivered_at: row.try_get("delivered_at")?,
+                    next_retry_at: row.try_get("next_retry_at")?,
+                })
+            })
+            .collect()
+    }
+
     /// Record a delivery attempt.
     pub async fn record_delivery_attempt(
         &self,
@@ -386,4 +440,29 @@ pub struct SubscriptionStats {
     pub last_delivery_at: Option<OffsetDateTime>,
     pub last_event_number: i64,
     pub topic_url: Option<String>,
+}
+
+/// One queued notification and how its delivery went, for the console's event log.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventLogEntry {
+    pub id: String,
+    pub event_type: String,
+    pub event_number: i64,
+    pub focus_resource_type: Option<String>,
+    pub focus_resource_id: Option<String>,
+    pub focus_event: Option<String>,
+    /// pending, processing, delivered, failed or expired.
+    pub status: String,
+    pub attempts: i32,
+    /// The latest attempt's error, else the queue's last error.
+    pub error: Option<String>,
+    pub http_status: Option<i32>,
+    pub response_time_ms: Option<i32>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub delivered_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub next_retry_at: Option<OffsetDateTime>,
 }

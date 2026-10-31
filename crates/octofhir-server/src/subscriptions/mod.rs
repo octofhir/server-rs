@@ -43,6 +43,7 @@
 //! - `websocket` - WebSocket connection at `/fhir/Subscription/{id}/$events`
 //! - `email` - Email notifications (via configured SMTP)
 
+pub mod api;
 pub mod delivery;
 pub mod error;
 pub mod event_matcher;

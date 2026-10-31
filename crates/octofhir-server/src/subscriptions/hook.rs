@@ -17,7 +17,8 @@ use super::storage::SubscriptionEventStorage;
 use super::subscription_manager::SubscriptionManager;
 use super::topic_registry::TopicRegistry;
 use super::types::{
-    NotificationBundleBuilder, SubscriptionEventType, SubscriptionStatus, TriggerInteraction,
+    NotificationBundleBuilder, SubscriptionChannel, SubscriptionEventType, SubscriptionStatus,
+    TriggerInteraction,
 };
 
 /// Hook that captures resource events and dispatches to matching subscriptions.
@@ -54,6 +55,68 @@ impl SubscriptionHook {
             event_storage,
             enabled,
         }
+    }
+
+    /// Moves a subscription written as `requested` to `active`, or to `error` with the reason
+    /// it can't be served. Rest-hook subscribers get a handshake once active. The status write
+    /// fires this hook again, which ignores anything that is no longer `requested`.
+    async fn activate_requested(&self, event: &ResourceEvent) -> SubscriptionResult<()> {
+        if event.event_type == ResourceEventType::Deleted {
+            return Ok(());
+        }
+        let Some(resource) = event.resource.as_deref() else {
+            return Ok(());
+        };
+        if resource.get("status").and_then(|v| v.as_str()) != Some("requested") {
+            return Ok(());
+        }
+
+        let subscription = match self.subscription_manager.parse_subscription(resource) {
+            Ok(subscription) => subscription,
+            Err(e) => {
+                return self
+                    .subscription_manager
+                    .set_error(&event.resource_id, &e.to_string())
+                    .await;
+            }
+        };
+        if self
+            .topic_registry
+            .get_topic(&subscription.topic_url)
+            .is_none()
+        {
+            let reason = format!(
+                "Unknown SubscriptionTopic {}: no active topic has this URL",
+                subscription.topic_url
+            );
+            return self
+                .subscription_manager
+                .set_error(&subscription.id, &reason)
+                .await;
+        }
+        // The delivery processor has no message transport and is never given an email
+        // provider, so these channels would fail every notification.
+        let unsupported = match subscription.channel {
+            SubscriptionChannel::Message { .. } => Some("The message channel is not supported"),
+            SubscriptionChannel::Email { .. } => {
+                Some("Email delivery is not configured on this server")
+            }
+            SubscriptionChannel::RestHook { .. } | SubscriptionChannel::WebSocket { .. } => None,
+        };
+        if let Some(reason) = unsupported {
+            return self
+                .subscription_manager
+                .set_error(&subscription.id, reason)
+                .await;
+        }
+
+        self.subscription_manager.activate(&subscription.id).await?;
+        if matches!(subscription.channel, SubscriptionChannel::RestHook { .. }) {
+            self.event_storage
+                .enqueue_handshake(&subscription.id, &subscription.topic_url)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Process a resource event and dispatch to matching subscriptions.
@@ -218,8 +281,26 @@ impl ResourceHook for SubscriptionHook {
 
         // Skip internal/system resources that typically shouldn't trigger subscriptions
         match event.resource_type.as_str() {
-            // Skip subscription-related resources to avoid loops
-            "Subscription" | "SubscriptionTopic" | "SubscriptionStatus" => {
+            // Subscription resources never notify subscribers (that would loop), but the
+            // server owns their lifecycle: requested subscriptions are activated and topic
+            // changes take effect without a restart.
+            "Subscription" => {
+                if let Err(e) = self.activate_requested(event).await {
+                    tracing::error!(
+                        resource_id = event.resource_id,
+                        error = %e,
+                        "Failed to activate subscription"
+                    );
+                }
+                return Ok(());
+            }
+            "SubscriptionTopic" => {
+                if let Err(e) = self.topic_registry.reload().await {
+                    tracing::error!(error = %e, "Failed to reload subscription topics");
+                }
+                return Ok(());
+            }
+            "SubscriptionStatus" => {
                 return Ok(());
             }
             // Skip AuditEvent to prevent audit loops

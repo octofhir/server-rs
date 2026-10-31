@@ -126,7 +126,8 @@ impl SubscriptionManager {
         .bind(subscription_id)
         .bind(
             resource
-                .get("criteria")
+                .get("topic")
+                .or_else(|| resource.get("criteria"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(""),
         )
@@ -170,7 +171,7 @@ impl SubscriptionManager {
     }
 
     /// Parse a Subscription FHIR resource into our internal representation.
-    fn parse_subscription(
+    pub(crate) fn parse_subscription(
         &self,
         resource: &serde_json::Value,
     ) -> SubscriptionResult<ActiveSubscription> {

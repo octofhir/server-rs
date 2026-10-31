@@ -2052,6 +2052,14 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         // Operations registry API
         .route("/api/operations", get(handlers::api_operations))
         .route(
+            "/api/subscriptions/{id}/events",
+            get(crate::subscriptions::api::subscription_event_log),
+        )
+        .route(
+            "/api/subscriptions/{id}/ping",
+            post(crate::subscriptions::api::subscription_ping),
+        )
+        .route(
             "/api/operations/{id}",
             get(handlers::api_operation_get).patch(handlers::api_operation_patch),
         )

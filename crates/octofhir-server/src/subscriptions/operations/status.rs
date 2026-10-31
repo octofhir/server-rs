@@ -98,20 +98,39 @@ impl OperationHandler for StatusOperation {
             .or_else(|| subscription.get("criteria").and_then(|v| v.as_str()))
             .unwrap_or("");
 
+        let stats = state
+            .subscription_state
+            .event_storage
+            .get_subscription_stats(id)
+            .await
+            .map_err(|e| OperationError::Internal(e.to_string()))?;
+
         // Build SubscriptionStatus resource
         // Note: SubscriptionStatus is an R5 resource. For R4 with Backport IG,
         // we return a Parameters resource with equivalent information.
-        let status_resource = json!({
+        let mut status_resource = json!({
             "resourceType": "SubscriptionStatus",
             "id": format!("{}-status", id),
             "status": status,
             "type": "query-status",
+            // integer64 is a JSON string in FHIR R5.
+            "eventsSinceSubscriptionStart": stats.events_since_subscription_start.to_string(),
             "subscription": {
                 "reference": format!("Subscription/{}", id)
             },
             "topic": topic,
             "notificationEvent": []
         });
+        // The latest delivery failure, or why the server put the subscription in error.
+        let error = stats.last_error_message.or_else(|| {
+            subscription
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        });
+        if let Some(error) = error {
+            status_resource["error"] = json!([{ "text": error }]);
+        }
 
         // TODO: In R5, we would return SubscriptionStatus directly.
         // For R4 compatibility, we could wrap in Parameters if needed.
