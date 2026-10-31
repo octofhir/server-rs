@@ -11,12 +11,35 @@ const GAP_MS = POLL_INTERVAL_MS * 3;
 
 export const metricsScraped = createEvent<MetricsSnapshot>();
 
+function sameCounters(a: RouteCounters, b: RouteCounters): boolean {
+  return (
+    a.timed === b.timed &&
+    a.seconds === b.seconds &&
+    a.requests.ok === b.requests.ok &&
+    a.requests.client === b.requests.client &&
+    a.requests.server === b.requests.server &&
+    a.quantiles.p50 === b.quantiles.p50 &&
+    a.quantiles.p95 === b.quantiles.p95 &&
+    a.quantiles.p99 === b.quantiles.p99
+  );
+}
+
+/** Routes that did not change keep the previous scrape's object, so idle routes cost nothing per scrape. */
+function shareUnchanged(previous: MetricsSnapshot | undefined, next: MetricsSnapshot): MetricsSnapshot {
+  if (!previous) return next;
+  for (const [key, route] of Object.entries(next.routes)) {
+    const before = previous.routes[key];
+    if (before && sameCounters(before, route)) next.routes[key] = before;
+  }
+  return next;
+}
+
 /**
  * Recent scrapes, oldest first. The store outlives the page, so leaving Performance and coming
  * back keeps the history; the time spent away shows as a gap.
  */
 export const $snapshots = createStore<MetricsSnapshot[]>([]).on(metricsScraped, (list, snapshot) =>
-  [...list, snapshot].slice(-MAX_SNAPSHOTS)
+  [...list, shareUnchanged(list.at(-1), snapshot)].slice(-MAX_SNAPSHOTS)
 );
 
 /** Counter increase between scrapes; a smaller value means the server restarted. */
