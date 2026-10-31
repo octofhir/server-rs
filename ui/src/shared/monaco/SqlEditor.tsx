@@ -15,6 +15,7 @@ import {
   startPgLsp,
   stopPgLsp,
 } from "./lspClient";
+import { bindEditorKey } from "./keybinding";
 
 export interface SqlEditorProps {
   /** Controlled value of the editor */
@@ -75,7 +76,7 @@ export function SqlEditor({
       ensurePgLanguageRegistered();
 
       // Add Ctrl+Enter command for execute and forward current value
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      bindEditorKey(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, "Run query", () => {
         const currentValue = editor.getValue?.() ?? "";
         onExecute?.(currentValue);
       });

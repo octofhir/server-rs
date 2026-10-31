@@ -2,6 +2,7 @@ import Editor, { type OnChange, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { useCallback, useEffect, useRef } from "react";
 import { useOctoMonacoTheme } from "./theme";
+import { bindEditorKey } from "./keybinding";
 
 export interface AutomationScriptEditorProps {
   /** Script content */
@@ -508,12 +509,12 @@ export function AutomationScriptEditor({
       }
 
       // Add Ctrl+Enter to execute
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      bindEditorKey(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, "Run", () => {
         onExecute?.();
       });
 
       // Add Ctrl+S to save
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      bindEditorKey(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, "Save", () => {
         onSave?.();
       });
 

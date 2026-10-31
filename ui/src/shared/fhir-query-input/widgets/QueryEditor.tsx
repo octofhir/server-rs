@@ -10,6 +10,7 @@ import {
   updateDiagnosticsFromContent,
 } from "../adapters/monaco";
 import type { QueryInputMetadata } from "../core/types";
+import { bindEditorKey } from "@/shared/monaco/keybinding";
 
 const MIN_HEIGHT = 36;
 const TRIGGERS = ["/", "?", "&", ":", "=", ",", "."];
@@ -63,8 +64,10 @@ export function QueryEditor({
 
       // Prevent Enter from inserting newline — single-line mode
       // Only block when suggest widget is NOT visible so Enter can still accept completions
-      editor.addCommand(
+      bindEditorKey(
+        editor,
         monaco.KeyCode.Enter,
+        "Keep single line",
         () => {
           // Do nothing — keep single line
         },
@@ -72,7 +75,7 @@ export function QueryEditor({
       );
 
       // Ctrl+Enter to execute (use ref to avoid stale closure)
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () =>
+      bindEditorKey(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, "Send request", () =>
         onExecuteRef.current?.()
       );
 

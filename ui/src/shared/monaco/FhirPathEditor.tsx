@@ -27,6 +27,7 @@ import {
   OCTOFHIR_THEME_DARK,
   OCTOFHIR_THEME_LIGHT,
 } from "./lspClient";
+import { bindEditorKey } from "./keybinding";
 
 // Re-export for convenience
 export type { ConstantInfo };
@@ -163,7 +164,7 @@ export const FhirPathEditor = forwardRef<FhirPathEditorHandle, FhirPathEditorPro
         ensureFhirPathLanguageRegistered();
 
         // Disable multi-line (treat Enter as submit/blur)
-        editor.addCommand(monaco.KeyCode.Enter, () => {
+        bindEditorKey(editor, monaco.KeyCode.Enter, "Submit", () => {
           // First try to accept any active suggestion
           const suggestController = editor.getContribution("editor.contrib.suggestController") as {
             acceptSelectedSuggestion?: () => void;
@@ -184,7 +185,7 @@ export const FhirPathEditor = forwardRef<FhirPathEditorHandle, FhirPathEditorPro
         });
 
         // Handle Escape to blur
-        editor.addCommand(monaco.KeyCode.Escape, () => {
+        bindEditorKey(editor, monaco.KeyCode.Escape, "Leave editor", () => {
           editor.trigger("keyboard", "hideSuggestWidget", {});
           onBlur?.();
         });

@@ -17,6 +17,7 @@ import {
   OCTOFHIR_THEME_LIGHT,
 } from "@/shared/monaco/lspClient";
 import { CQL_LANGUAGE_ID, ensureCqlLanguageRegistered } from "../cqlLanguage";
+import { bindEditorKey } from "@/shared/monaco/keybinding";
 
 ensureOctofhirThemes();
 ensureCqlLanguageRegistered();
@@ -65,7 +66,7 @@ export const CqlSourceEditor = forwardRef<CqlSourceEditorHandle, CqlSourceEditor
       editorRef.current = editor;
       ensureOctofhirThemes();
       ensureCqlLanguageRegistered();
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      bindEditorKey(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, "Evaluate", () => {
         onSubmitRef.current?.();
       });
     }, []);

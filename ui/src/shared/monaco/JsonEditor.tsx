@@ -3,6 +3,7 @@ import { useColorScheme } from "@octofhir/ui-kit";
 import type * as Monaco from "monaco-editor";
 import { useCallback, useEffect, useRef } from "react";
 import { ensureOctofhirThemes, OCTOFHIR_THEME_DARK, OCTOFHIR_THEME_LIGHT } from "./lspClient";
+import { bindEditorKey } from "./keybinding";
 
 ensureOctofhirThemes();
 
@@ -87,7 +88,7 @@ export function JsonEditor({
 
       // Add Ctrl+Enter command for execute
       if (onExecute) {
-        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+        bindEditorKey(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, "Run", () => {
           onExecute();
         });
       }
