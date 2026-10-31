@@ -30,6 +30,7 @@ import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { SessionsPage } from "@/pages/sessions";
 import { SettingsPage } from "@/pages/settings";
 import { TerminologyPage } from "@/pages/terminology";
+import { ValidationPage } from "@/pages/validation";
 import { ViewDefinitionPage } from "@/pages/viewdefinition";
 import { RouteGuard } from "@/shared/ui-react/RouteGuard";
 import { AppShell } from "@/widgets/app-shell";
@@ -123,6 +124,7 @@ export function AppRoutes() {
         <Route path="/metadata" element={<CapabilityStatementPage />} />
         <Route path="/viewdefinition" element={<ViewDefinitionPage />} />
         <Route path="/terminology" element={<TerminologyPage />} />
+        <Route path="/validation" element={<ValidationPage />} />
       </Route>
     </Routes>
   );

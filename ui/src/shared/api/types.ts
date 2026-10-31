@@ -85,6 +85,8 @@ export interface FhirOperationOutcome {
     code: string;
     diagnostics?: string;
     location?: string[];
+    expression?: string[];
+    details?: { text?: string };
   }>;
 }
 
