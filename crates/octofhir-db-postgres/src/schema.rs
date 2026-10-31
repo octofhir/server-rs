@@ -468,8 +468,10 @@ impl SchemaManager {
         Self::HISTORYLESS_TABLES.contains(&table)
     }
 
-    /// Lists the resource tables that keep history (excludes history, system and
-    /// [`Self::HISTORYLESS_TABLES`]), i.e. the sources of system-level history.
+    /// Lists the resource tables that have a `{table}_history` companion, i.e.
+    /// the sources of system-level history. Tables without one — the
+    /// [`Self::HISTORYLESS_TABLES`] or any other jsonb table someone created in
+    /// the schema — would otherwise fail the whole history UNION.
     #[instrument(skip(self))]
     pub async fn list_tables(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
@@ -486,17 +488,16 @@ impl SchemaManager {
                  AND sc.column_name = 'status' AND sc.udt_name = 'resource_status')
              AND table_name NOT LIKE '%\\_history' ESCAPE '\\'
              AND table_name NOT LIKE '\\_%' ESCAPE '\\'
+             AND EXISTS (SELECT 1 FROM information_schema.tables AS ht
+                 WHERE ht.table_schema = 'public'
+                 AND ht.table_name = tables.table_name || '_history')
              ORDER BY table_name",
         )
         .fetch_all(&self.pool)
         .await
         .map_err(PostgresError::from)?;
 
-        Ok(rows
-            .into_iter()
-            .map(|(t,)| t)
-            .filter(|t| !Self::skips_history(t))
-            .collect())
+        Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 }
 
