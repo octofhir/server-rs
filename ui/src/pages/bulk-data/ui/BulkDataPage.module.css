@@ -130,3 +130,20 @@
 	font-size: 12px;
 	color: var(--octo-text-primary);
 }
+
+.importResult {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.importErrors {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 160px;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}

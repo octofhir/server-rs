@@ -35,6 +35,7 @@ import {
   startImport,
 } from "../lib/api";
 import classes from "./BulkDataPage.module.css";
+import { FileImport } from "./FileImport";
 
 dayjs.extend(relativeTime);
 
@@ -353,6 +354,7 @@ function JobDetail({ job, onClose }: { job: JobRow; onClose: () => void }) {
 export function BulkDataPage() {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"export" | "import">("export");
+  const [importSource, setImportSource] = useState<"file" | "urls">("file");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const list = useQuery({
@@ -398,7 +400,7 @@ export function BulkDataPage() {
   return (
     <WorkspacePageLayout
       title="Bulk data"
-      description="Export resources as NDJSON or import them from URLs, as background jobs."
+      description="Export resources as NDJSON, or import them from a file or from URLs."
       className="page-enter"
     >
       <section className={classes.panel} aria-label="New job">
@@ -413,7 +415,23 @@ export function BulkDataPage() {
             ]}
           />
         </header>
-        {mode === "export" ? <ExportForm /> : <ImportForm />}
+        {mode === "export" ? (
+          <ExportForm />
+        ) : (
+          <>
+            <SegmentedRadioGroup
+              aria-label="Import from"
+              size="sm"
+              value={importSource}
+              onChange={(value) => setImportSource(value === "urls" ? "urls" : "file")}
+              options={[
+                { value: "file", label: "A file" },
+                { value: "urls", label: "URLs ($import)" },
+              ]}
+            />
+            {importSource === "file" ? <FileImport /> : <ImportForm />}
+          </>
+        )}
       </section>
 
       <section className={classes.panel} aria-label="Jobs">
