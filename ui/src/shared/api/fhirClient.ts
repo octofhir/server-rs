@@ -51,6 +51,20 @@ function backfillResourceType(data: unknown, resourceType: string): unknown {
   return data;
 }
 
+/**
+ * Path and query of a server-built link. Links carry the server's configured base URL
+ * (`http://0.0.0.0:8888/...` in development, or an internal host behind a proxy); requesting
+ * that origin from the console skips the session cookie and logs the user out.
+ */
+export function sameOriginPath(url: string): string {
+  try {
+    const parsed = new URL(url, globalThis.location?.origin ?? "http://localhost");
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
 export class FhirClient {
   private baseUrl: string;
   private defaultTimeout: number;
@@ -271,7 +285,7 @@ export class FhirClient {
 
     const response = await this.request({
       method: "GET",
-      url: link.url,
+      url: sameOriginPath(link.url),
     });
 
     return assertFhirBundle(response.data, `follow bundle link ${relation}`);

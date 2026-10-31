@@ -5,7 +5,7 @@ import {
 	transformAuditBundleToList,
 	transformFhirAuditEvent,
 } from "@/entities/audit-event";
-import { fhirClient } from "@/shared/api/fhirClient";
+import { fhirClient, sameOriginPath } from "@/shared/api/fhirClient";
 import { assertFhirBundle, isRecord } from "@/shared/api/guards";
 import type {
 	AuditEvent,
@@ -89,7 +89,7 @@ async function fetchAuditEvents(
 	if (cursor) {
 		const response = await fhirClient.customRequest({
 			method: "GET",
-			url: cursor,
+			url: sameOriginPath(cursor),
 		});
 		return transformAuditBundleToList(assertFhirBundle(response.data, "fetch audit events"));
 	}

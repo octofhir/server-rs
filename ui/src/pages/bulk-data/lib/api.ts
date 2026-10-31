@@ -1,4 +1,4 @@
-import { fhirClient, HttpError } from "@/shared/api/fhirClient";
+import { fhirClient, HttpError, sameOriginPath } from "@/shared/api/fhirClient";
 import type { HttpResponse } from "@/shared/api/types";
 
 export type ExportLevel = "system" | "patient" | "group";
@@ -141,19 +141,9 @@ export async function cancelJob(id: string): Promise<void> {
   await fhirClient.rawRequest("DELETE", `/fhir/_async-status/${id}`);
 }
 
-/** Path part of a manifest URL; the server may advertise a host the browser can't reach. */
-export function localPath(url: string): string {
-  try {
-    const parsed = new URL(url, window.location.origin);
-    return `${parsed.pathname}${parsed.search}`;
-  } catch {
-    return url;
-  }
-}
-
 export async function downloadFile(file: OutputFile): Promise<void> {
   // The server's content negotiation rejects `Accept: application/fhir+ndjson` with 415.
-  const response = await fhirClient.rawRequest("GET", localPath(file.url), undefined, {
+  const response = await fhirClient.rawRequest("GET", sameOriginPath(file.url), undefined, {
     headers: { Accept: "*/*" },
   });
   const text = typeof response.data === "string" ? response.data : JSON.stringify(response.data);

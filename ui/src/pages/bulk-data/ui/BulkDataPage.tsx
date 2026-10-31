@@ -18,6 +18,7 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import { Download, PackageOpen, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useResourceTypesCategorized } from "@/shared/api/hooks";
+import { sameOriginPath } from "@/shared/api/fhirClient";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
   cancelJob,
@@ -29,7 +30,6 @@ import {
   type JobState,
   type JobStatus,
   listJobs,
-  localPath,
   type ServerJob,
   startExport,
   startImport,
@@ -92,9 +92,9 @@ function listedStatus(job: ServerJob): JobStatus {
 
 function requestLabel(job: ServerJob): string {
   try {
-    return `${job.requestMethod} ${decodeURIComponent(localPath(job.requestUrl))}`;
+    return `${job.requestMethod} ${decodeURIComponent(sameOriginPath(job.requestUrl))}`;
   } catch {
-    return `${job.requestMethod} ${localPath(job.requestUrl)}`;
+    return `${job.requestMethod} ${sameOriginPath(job.requestUrl)}`;
   }
 }
 
