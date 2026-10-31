@@ -67,5 +67,6 @@ jobs:
           OCTOFHIR__STORAGE__POSTGRES__USER: postgres
           OCTOFHIR__STORAGE__POSTGRES__PASSWORD: postgres
           OCTOFHIR__STORAGE__POSTGRES__DATABASE: octofhir
-        run: cargo test --all --all-features
+        # Run every test binary so one red run lists every failure.
+        run: cargo test --all --all-features --no-fail-fast
 
