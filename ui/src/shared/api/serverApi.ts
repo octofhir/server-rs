@@ -702,6 +702,15 @@ class ServerApiClient {
     }
   }
 
+  /** Prometheus text exposition from `/metrics`. */
+  async getMetricsText(): Promise<string> {
+    const response = await this.request("/metrics");
+    if (typeof response.data !== "string") {
+      throw new Error("Metrics endpoint returned no text");
+    }
+    return response.data;
+  }
+
   async getBuildInfo(): Promise<BuildInfo> {
     const response = await this.request("/api/build-info");
     return assertResponse(response.data, isBuildInfo, "getBuildInfo");

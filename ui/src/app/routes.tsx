@@ -32,6 +32,9 @@ import { ViewDefinitionPage } from "@/pages/viewdefinition";
 import { RouteGuard } from "@/shared/ui-react/RouteGuard";
 import { AppShell } from "@/widgets/app-shell";
 
+// Charts pull in ECharts, so the page loads on first visit.
+const PerformancePage = lazy(() => import("@/pages/performance").then((m) => ({ default: m.PerformancePage })));
+
 // Dev-only design specimens; the DEV guard lets the bundler drop the chunk from production builds.
 const StyleguidePage = import.meta.env.DEV
   ? lazy(() => import("@/pages/styleguide").then((m) => ({ default: m.StyleguidePage })))
@@ -105,6 +108,14 @@ export function AppRoutes() {
 
         {/* Other */}
         <Route path="/logs" element={<LogsViewerPage />} />
+        <Route
+          path="/performance"
+          element={
+            <Suspense fallback={null}>
+              <PerformancePage />
+            </Suspense>
+          }
+        />
         <Route path="/audit" element={<AuditTrailPage />} />
         <Route path="/metadata" element={<CapabilityStatementPage />} />
         <Route path="/viewdefinition" element={<ViewDefinitionPage />} />
