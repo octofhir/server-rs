@@ -34,7 +34,7 @@ cargo bench                                    # Run benchmarks (or: just bench)
 
 # UI (React + Vite, uses pnpm)
 cd ui && pnpm install        # Install dependencies
-cd ui && pnpm dev            # Dev server on http://localhost:5173
+cd ui && pnpm dev            # Dev server on http://localhost:4000/ui/
 cd ui && pnpm build          # Production build (output to ui/dist/)
 cd ui && pnpm typecheck      # TypeScript check
 cd ui && pnpm lint           # oxlint

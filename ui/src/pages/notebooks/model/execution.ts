@@ -239,7 +239,7 @@ export async function runCell(cell: Cell, scope: Scope): Promise<Output> {
         const init: RequestInit = {
           method,
           credentials: "include",
-          headers: { Accept: "application/fhir+json", ...(cell.source.headers ?? {}) },
+          headers: { Accept: "application/fhir+json", ...cell.source.headers },
         };
         if (method !== "GET" && cell.source.body != null) {
           (init.headers as Record<string, string>)["Content-Type"] = "application/fhir+json";
