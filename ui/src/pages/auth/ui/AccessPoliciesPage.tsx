@@ -23,6 +23,7 @@ import {
   TextInput,
   useDebouncedValue,
   useDisclosure,
+  type DropdownMenuItems,
 } from "@octofhir/ui-kit";
 import {
   Check,
@@ -108,6 +109,22 @@ export function AccessPoliciesPage() {
 
   const policies = getBundleResources<AccessPolicyResource>(data);
   const isFiltered = debouncedSearch.length > 0;
+
+  const policyActions = (policy: (typeof policies)[number]): DropdownMenuItems => [
+    {
+      text: "Edit",
+      iconStart: <Pencil width={14} />,
+      action: () => handleEdit(policy),
+    },
+    [
+      {
+        text: "Delete",
+        iconStart: <TrashBin width={14} />,
+        theme: "danger",
+        action: () => setDeleteTarget(policy),
+      },
+    ],
+  ];
 
   return (
     <WorkspacePageLayout
@@ -226,25 +243,12 @@ export function AccessPoliciesPage() {
                       "aria-label": "Policy actions",
                     }}
                     popupProps={{ placement: "bottom-end" }}
-                    items={[
-                      {
-                        text: "Edit",
-                        iconStart: <Pencil width={14} />,
-                        action: () => handleEdit(policy),
-                      },
-                      [
-                        {
-                          text: "Delete",
-                          iconStart: <TrashBin width={14} />,
-                          theme: "danger",
-                          action: () => setDeleteTarget(policy),
-                        },
-                      ],
-                    ]}
+                    items={policyActions(policy)}
                   />
                 ),
               };
             })}
+            getRowMenu={(_row, index) => policyActions(policies[index])}
             getRowKey={(row, index) => String(row.id ?? policies[index]?.id ?? index)}
           />
         )}

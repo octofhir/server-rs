@@ -17,6 +17,7 @@ import {
   TextInput,
   useDebouncedValue,
   useDisclosure,
+  type DropdownMenuItems,
 } from "@octofhir/ui-kit";
 import {
   EllipsisVertical,
@@ -82,6 +83,24 @@ export function RolesPage() {
     setEditingRole(null);
     close();
   };
+
+  const roleActions = (role: (typeof roles)[number]): DropdownMenuItems => [
+    {
+      text: "Edit",
+      iconStart: <Pencil width={14} />,
+      disabled: role.isSystem,
+      action: () => handleEdit(role),
+    },
+    [
+      {
+        text: "Delete",
+        iconStart: <TrashBin width={14} />,
+        theme: "danger",
+        disabled: role.isSystem,
+        action: () => handleDeleteClick(role),
+      },
+    ],
+  ];
 
   return (
     <WorkspacePageLayout
@@ -201,27 +220,12 @@ export function RolesPage() {
                       "aria-label": "Role actions",
                     }}
                     popupProps={{ placement: "bottom-end" }}
-                    items={[
-                      {
-                        text: "Edit",
-                        iconStart: <Pencil width={14} />,
-                        disabled: role.isSystem,
-                        action: () => handleEdit(role),
-                      },
-                      [
-                        {
-                          text: "Delete",
-                          iconStart: <TrashBin width={14} />,
-                          theme: "danger",
-                          disabled: role.isSystem,
-                          action: () => handleDeleteClick(role),
-                        },
-                      ],
-                    ]}
+                    items={roleActions(role)}
                   />
                 ),
               };
             })}
+            getRowMenu={(_row, index) => roleActions(roles[index])}
             getRowKey={(_row, index) => roles[index]?.id ?? roles[index]?.name ?? `${index}`}
           />
         )}

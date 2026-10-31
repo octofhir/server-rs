@@ -20,6 +20,7 @@ import {
   TextInput,
   useDebouncedValue,
   useDisclosure,
+  type DropdownMenuItems,
 } from "@octofhir/ui-kit";
 import {
   RotateCw as ArrowRotateRight,
@@ -120,6 +121,31 @@ export function ClientsPage() {
 
   const clients = getBundleResources<ClientResource>(data);
   const isFiltered = debouncedSearch.length > 0;
+
+  const clientActions = (client: (typeof clients)[number]): DropdownMenuItems => [
+    {
+      text: "Edit",
+      iconStart: <Pencil width={14} />,
+      action: () => handleEdit(client),
+    },
+    ...(client.confidential
+      ? [
+          {
+            text: "Regenerate Secret",
+            iconStart: <ArrowRotateRight width={14} />,
+            action: () => handleRegenerateSecret(client),
+          },
+        ]
+      : []),
+    [
+      {
+        text: "Delete",
+        iconStart: <TrashBin width={14} />,
+        theme: "danger" as const,
+        action: () => handleDeleteClick(client),
+      },
+    ],
+  ];
 
   return (
     <WorkspacePageLayout
@@ -250,34 +276,12 @@ export function ClientsPage() {
                       "aria-label": "Client actions",
                     }}
                     popupProps={{ placement: "bottom-end" }}
-                    items={[
-                      {
-                        text: "Edit",
-                        iconStart: <Pencil width={14} />,
-                        action: () => handleEdit(client),
-                      },
-                      ...(client.confidential
-                        ? [
-                            {
-                              text: "Regenerate Secret",
-                              iconStart: <ArrowRotateRight width={14} />,
-                              action: () => handleRegenerateSecret(client),
-                            },
-                          ]
-                        : []),
-                      [
-                        {
-                          text: "Delete",
-                          iconStart: <TrashBin width={14} />,
-                          theme: "danger" as const,
-                          action: () => handleDeleteClick(client),
-                        },
-                      ],
-                    ]}
+                    items={clientActions(client)}
                   />
                 ),
               };
             })}
+            getRowMenu={(_row, index) => clientActions(clients[index])}
             getRowKey={(_row, index) =>
               clients[index]?.id ?? clients[index]?.clientId ?? `${index}`
             }

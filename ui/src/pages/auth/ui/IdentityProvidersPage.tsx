@@ -18,6 +18,7 @@ import {
   TextInput,
   useDebouncedValue,
   useDisclosure,
+  type DropdownMenuItems,
 } from "@octofhir/ui-kit";
 import {
   EllipsisVertical,
@@ -77,6 +78,22 @@ export function IdentityProvidersPage() {
 
   const providers = getBundleResources<IdentityProviderResource>(data);
   const isFiltered = debouncedSearch.length > 0;
+
+  const providerActions = (provider: (typeof providers)[number]): DropdownMenuItems => [
+    {
+      text: "Edit",
+      iconStart: <Pencil width={14} />,
+      action: () => handleEdit(provider),
+    },
+    [
+      {
+        text: "Delete",
+        iconStart: <TrashBin width={14} />,
+        theme: "danger",
+        action: () => setDeleteTarget(provider),
+      },
+    ],
+  ];
 
   return (
     <WorkspacePageLayout
@@ -193,25 +210,12 @@ export function IdentityProvidersPage() {
                       "aria-label": "Provider actions",
                     }}
                     popupProps={{ placement: "bottom-end" }}
-                    items={[
-                      {
-                        text: "Edit",
-                        iconStart: <Pencil width={14} />,
-                        action: () => handleEdit(provider),
-                      },
-                      [
-                        {
-                          text: "Delete",
-                          iconStart: <TrashBin width={14} />,
-                          theme: "danger",
-                          action: () => setDeleteTarget(provider),
-                        },
-                      ],
-                    ]}
+                    items={providerActions(provider)}
                   />
                 ),
               };
             })}
+            getRowMenu={(_row, index) => providerActions(providers[index])}
             getRowKey={(_row, index) =>
               providers[index]?.id ?? providers[index]?.name ?? `${index}`
             }

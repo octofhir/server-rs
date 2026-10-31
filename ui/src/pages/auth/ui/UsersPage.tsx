@@ -19,6 +19,8 @@ import {
   TextInput,
   useDebouncedValue,
   useDisclosure,
+  ContextMenu,
+  type DropdownMenuItems,
 } from "@octofhir/ui-kit";
 import {
   EllipsisVertical,
@@ -158,6 +160,32 @@ export function UsersPage() {
 
   const allSelected = users.length > 0 && users.every((u) => u.id && selectedUsers.has(u.id));
   const someSelected = selectedUsers.size > 0;
+
+  const userActions = (user: (typeof users)[number]): DropdownMenuItems => [
+    {
+      text: "View details",
+      iconStart: <Eye width={14} />,
+      action: () => handleViewDetails(user),
+    },
+    {
+      text: "Edit",
+      iconStart: <Pencil width={14} />,
+      action: () => handleEdit(user),
+    },
+    {
+      text: "Reset password",
+      iconStart: <Key width={14} />,
+      action: () => handleResetPasswordClick(user),
+    },
+    [
+      {
+        text: "Delete",
+        iconStart: <TrashBin width={14} />,
+        theme: "danger",
+        action: () => handleDeleteClick(user),
+      },
+    ],
+  ];
 
   return (
     <WorkspacePageLayout
@@ -315,91 +343,69 @@ export function UsersPage() {
                   const statusView = getUserStatusView(user);
 
                   return (
-                    <Table.Tr key={user.id}>
-                      <Table.Td className={classes.selectionCell}>
-                        <Checkbox
-                          checked={user.id ? selectedUsers.has(user.id) : false}
-                          onChange={(e) => user.id && handleSelectUser(user.id, e)}
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <div className={classes.userCell}>
-                          <div className={classes.avatar}>{getUserInitials(user)}</div>
-                          <div className={classes.userInfo}>
-                            <Text variant="body-2" className={classes.userName}>
-                              {user.name || user.username}
-                            </Text>
-                            <Text variant="caption-1" color="secondary" className={classes.userEmail}>
-                              {user.email || user.username}
-                            </Text>
+                    <ContextMenu key={user.id} items={userActions(user)}>
+                      <Table.Tr>
+                        <Table.Td className={classes.selectionCell}>
+                          <Checkbox
+                            checked={user.id ? selectedUsers.has(user.id) : false}
+                            onChange={(e) => user.id && handleSelectUser(user.id, e)}
+                          />
+                        </Table.Td>
+                        <Table.Td>
+                          <div className={classes.userCell}>
+                            <div className={classes.avatar}>{getUserInitials(user)}</div>
+                            <div className={classes.userInfo}>
+                              <Text variant="body-2" className={classes.userName}>
+                                {user.name || user.username}
+                              </Text>
+                              <Text variant="caption-1" color="secondary" className={classes.userEmail}>
+                                {user.email || user.username}
+                              </Text>
+                            </div>
                           </div>
-                        </div>
-                      </Table.Td>
-                      <Table.Td>
-                        <div className={classes.roleList}>
-                          {user.roles?.map((role) => {
-                            const roleView = getUserRoleView(role);
-                            return (
-                              <Badge key={role} size="sm" theme={roleView.theme}>
-                                {roleView.role}
-                              </Badge>
-                            );
-                          })}
-                          {(!user.roles || user.roles.length === 0) && (
-                            <Text variant="body-1" color="secondary">
-                              No roles
-                            </Text>
-                          )}
-                        </div>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge size="sm" theme={statusView.theme}>
-                          {statusView.label}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text variant="body-1" color="secondary" className={classes.lastLogin}>
-                          {formatUserLastLogin(user.lastLogin)}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td className={classes.actionsCell}>
-                        <DropdownMenu
-                          size="sm"
-                          icon={<EllipsisVertical width={16} />}
-                          defaultSwitcherProps={{
-                            variant: "subtle",
-                            size: "sm",
-                            "aria-label": "User actions",
-                          }}
-                          popupProps={{ placement: "bottom-end" }}
-                          items={[
-                            {
-                              text: "View details",
-                              iconStart: <Eye width={14} />,
-                              action: () => handleViewDetails(user),
-                            },
-                            {
-                              text: "Edit",
-                              iconStart: <Pencil width={14} />,
-                              action: () => handleEdit(user),
-                            },
-                            {
-                              text: "Reset password",
-                              iconStart: <Key width={14} />,
-                              action: () => handleResetPasswordClick(user),
-                            },
-                            [
-                              {
-                                text: "Delete",
-                                iconStart: <TrashBin width={14} />,
-                                theme: "danger",
-                                action: () => handleDeleteClick(user),
-                              },
-                            ],
-                          ]}
-                        />
-                      </Table.Td>
-                    </Table.Tr>
+                        </Table.Td>
+                        <Table.Td>
+                          <div className={classes.roleList}>
+                            {user.roles?.map((role) => {
+                              const roleView = getUserRoleView(role);
+                              return (
+                                <Badge key={role} size="sm" theme={roleView.theme}>
+                                  {roleView.role}
+                                </Badge>
+                              );
+                            })}
+                            {(!user.roles || user.roles.length === 0) && (
+                              <Text variant="body-1" color="secondary">
+                                No roles
+                              </Text>
+                            )}
+                          </div>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge size="sm" theme={statusView.theme}>
+                            {statusView.label}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text variant="body-1" color="secondary" className={classes.lastLogin}>
+                            {formatUserLastLogin(user.lastLogin)}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td className={classes.actionsCell}>
+                          <DropdownMenu
+                            size="sm"
+                            icon={<EllipsisVertical width={16} />}
+                            defaultSwitcherProps={{
+                              variant: "subtle",
+                              size: "sm",
+                              "aria-label": "User actions",
+                            }}
+                            popupProps={{ placement: "bottom-end" }}
+                            items={userActions(user)}
+                          />
+                        </Table.Td>
+                      </Table.Tr>
+                    </ContextMenu>
                   );
                 })
               )}
