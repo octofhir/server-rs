@@ -18,6 +18,9 @@ const config: StorybookConfig = {
     options: {},
   },
 
+  // Brand assets (logo, favicon) come from the console so there is one source of truth.
+  staticDirs: [{ from: "../../../ui/public/branding", to: "/branding" }],
+
   viteFinal: async (config, { configType }) => {
     config.css = {
       ...config.css,
