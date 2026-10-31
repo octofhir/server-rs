@@ -235,6 +235,8 @@ impl LookupOperation {
 
     /// Extract parameters from a FHIR Parameters resource or query params.
     fn extract_params(params: &Value) -> Result<LookupParams, OperationError> {
+        let params = super::lenient_parameters(params);
+        let params: &Value = &params;
         if params.get("resourceType").and_then(|v| v.as_str()) == Some("Parameters") {
             let mut lookup_params = LookupParams::default();
 

@@ -218,6 +218,8 @@ impl TranslateOperation {
 
     /// Extract parameters from a FHIR Parameters resource or query params.
     fn extract_params(params: &Value) -> Result<TranslateParams, OperationError> {
+        let params = super::lenient_parameters(params);
+        let params: &Value = &params;
         if params.get("resourceType").and_then(|v| v.as_str()) == Some("Parameters") {
             let mut translate_params = TranslateParams::default();
 
