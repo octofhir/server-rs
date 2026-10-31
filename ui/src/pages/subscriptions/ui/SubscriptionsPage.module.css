@@ -142,3 +142,21 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+
+.form {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.fieldLabel {
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--octo-text-secondary);
+}

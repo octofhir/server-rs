@@ -11,7 +11,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { BellRing, FileJson, Power, Send } from "lucide-react";
+import { BellRing, FileJson, Plus, Power, Send } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
@@ -27,6 +27,7 @@ import {
   type TopicResource,
   topicUrl,
 } from "../lib/api";
+import { NewSubscriptionDialog } from "./NewSubscriptionDialog";
 import classes from "./SubscriptionsPage.module.css";
 
 dayjs.extend(relativeTime);
@@ -311,8 +312,9 @@ function TopicsPanel({ topics }: { topics: TopicResource[] }) {
 }
 
 export function SubscriptionsPage() {
-  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const subscriptions = useQuery({ queryKey: LIST_KEY, queryFn: listSubscriptions, refetchInterval: 10_000 });
   const topics = useQuery({ queryKey: ["subscriptions", "topics"], queryFn: listTopics });
   const rows = subscriptions.data ?? [];
@@ -324,8 +326,11 @@ export function SubscriptionsPage() {
       description="Who gets notified about which changes, and whether the notifications arrive."
       className="page-enter"
       actions={
-        <Button variant="outline" onClick={() => navigate("/resources/Subscription")}>
-          Manage resources
+        <Button variant="filled" onClick={() => setCreating(true)}>
+          <Button.Icon side="left">
+            <Plus size={14} />
+          </Button.Icon>
+          New subscription
         </Button>
       }
     >
@@ -351,6 +356,18 @@ export function SubscriptionsPage() {
       </section>
       {selected && <EventLogPanel key={selected.id} subscription={selected} />}
       <TopicsPanel topics={topics.data ?? []} />
+      <NewSubscriptionDialog
+        open={creating}
+        topics={(topics.data ?? []).filter((topic) => topic.status === "active")}
+        onClose={() => setCreating(false)}
+        onCreated={(created) => {
+          setCreating(false);
+          setSelectedId(created.id ?? null);
+          // The server activates (or rejects) it right after the write.
+          void queryClient.invalidateQueries({ queryKey: LIST_KEY });
+          setTimeout(() => void queryClient.invalidateQueries({ queryKey: LIST_KEY }), 800);
+        }}
+      />
     </WorkspacePageLayout>
   );
 }
