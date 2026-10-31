@@ -14,12 +14,14 @@ use octofhir_search::SearchParameterRegistry;
 use octofhir_search::loader::ElementTypeResolver;
 use octofhir_search::parameters::{ElementTypeHint, SearchParameterType};
 use octofhir_search::sql_builder::{
-    AnnotatedPath, build_jsonb_accessor, build_typed_extract_fn, date_lower_paths,
-    date_upper_paths, extraction_paths, fhirpath_to_jsonb_path, paths_to_json,
-    paths_to_jsonpath_array,
+    AnnotatedPath, build_jsonb_accessor, build_typed_extract_fn,
+    composite_code_value_jsonpath_array, composite_token_containment_sql, date_lower_paths,
+    date_upper_paths, extraction_paths, fhirpath_to_jsonb_path, fhirpath_to_jsonb_paths,
+    paths_to_json, paths_to_jsonpath_array, quantity_paths_multi_valued,
 };
 use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::PgPool;
+use std::hash::{Hash, Hasher};
 use tracing::{debug, info, warn};
 
 /// Normalizes a scalar-or-array JSONB value to an array (null -> `[]`). Used by the
@@ -55,6 +57,18 @@ const FHIR_QTY_HULL_RANGE_ARR_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_qty_h
      LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
        SELECT CASE WHEN min(x::numeric) IS NULL THEN NULL \
                    ELSE numrange(min(x::numeric), max(x::numeric), '[]') END \
+       FROM unnest(jps) AS jp \
+       CROSS JOIN LATERAL jsonb_array_elements_text(jsonb_path_query_array(res, jp)) AS x; \
+     $$;";
+
+/// Distinct integer floors of every value matched by ANY of `jps` (NULL when none).
+/// Backs a GIN index for the two-sided `eq`/`ap` window of a multi-valued quantity
+/// param, probed as `fhir_qty_floor_buckets(resource, <paths>) && ARRAY[<floors>]`:
+/// unlike the hull, it only matches rows holding a value near the window, not every
+/// row whose values merely straddle it.
+const FHIR_QTY_FLOOR_BUCKETS_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_qty_floor_buckets(res jsonb, jps jsonpath[]) RETURNS numeric[] \
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
+       SELECT array_agg(DISTINCT floor(x::numeric)) \
        FROM unnest(jps) AS jp \
        CROSS JOIN LATERAL jsonb_array_elements_text(jsonb_path_query_array(res, jp)) AS x; \
      $$;";
@@ -152,6 +166,14 @@ pub async fn create_default_search_indexes(
             .await
     {
         warn!(error = %e, "failed to create quantity array-hull helper");
+    }
+    // Value-floor buckets — the eq/ap predicate of multi-valued quantity params.
+    if let Err(e) =
+        sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_QTY_FLOOR_BUCKETS_DDL.to_string()))
+            .execute(pool)
+            .await
+    {
+        warn!(error = %e, "failed to create quantity floor-bucket helper");
     }
     // Canonical UCUM hull — used by the UCUM arm of every quantity predicate.
     if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_UCUM_HULL_DDL.to_string()))
@@ -354,26 +376,36 @@ pub async fn create_default_search_indexes(
                 // predicate uses, so the expressions are textually identical and the
                 // planner uses the index.
                 let arr = octofhir_search::sql_builder::quantity_value_jsonpath_array(&all_paths);
-                let ddl = format!(
+                let mut ddls = vec![format!(
                     "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qhull\" ON \"{table}\" \
                      USING gist ((fhir_qty_hull_range_arr(resource, {arr})))"
-                );
-                if let Some(body) = index_body(&ddl)
-                    && !seen_bodies.insert(body)
-                {
-                    debug!(resource_type, code, "skipped duplicate quantity index");
-                    continue;
+                )];
+                // Several values per resource: eq/ap probe the value floors instead,
+                // since the hull of straddling values matches most rows.
+                if quantity_paths_multi_valued(&all_paths) {
+                    ddls.push(format!(
+                        "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qbucket\" ON \"{table}\" \
+                         USING gin ((fhir_qty_floor_buckets(resource, {arr})))"
+                    ));
                 }
-                match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl))
-                    .execute(pool)
-                    .await
-                {
-                    Ok(_) => {
-                        created += 1;
-                        debug!(resource_type, code, "created quantity functional index");
+                for ddl in ddls {
+                    if let Some(body) = index_body(&ddl)
+                        && !seen_bodies.insert(body)
+                    {
+                        debug!(resource_type, code, "skipped duplicate quantity index");
+                        continue;
                     }
-                    Err(e) => {
-                        warn!(resource_type, code, error = %e, "skipped quantity functional index");
+                    match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl))
+                        .execute(pool)
+                        .await
+                    {
+                        Ok(_) => {
+                            created += 1;
+                            debug!(resource_type, code, "created quantity functional index");
+                        }
+                        Err(e) => {
+                            warn!(resource_type, code, error = %e, "skipped quantity functional index");
+                        }
                     }
                 }
                 continue;
@@ -487,11 +519,6 @@ pub async fn create_composite_partial_indexes(
     registry: &SearchParameterRegistry,
     specs: &[CompositePartialIndex],
 ) -> usize {
-    use octofhir_search::sql_builder::{
-        composite_token_containment_sql, fhirpath_to_jsonb_path, fhirpath_to_jsonb_paths,
-        quantity_value_jsonpath_array,
-    };
-    use std::hash::{Hash, Hasher};
     let mut created = 0usize;
     let mut seen = std::collections::HashSet::new();
     for spec in specs {
@@ -525,18 +552,12 @@ pub async fn create_composite_partial_indexes(
             warn!(param = %spec.param, "composite partial: needs one token + one quantity component");
             continue;
         };
-        // Value union (top-level AND component[*]) — exactly the array the composite
-        // render's `fhir_qty_extract_*` predicate builds. Drop SampledData (no scalar).
+        // Value union (top-level AND component[*]). Drop SampledData (no scalar).
         let quant_paths: Vec<Vec<String>> =
             fhirpath_to_jsonb_paths(&quant.expression, &spec.resource_type)
                 .into_iter()
                 .filter(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")))
                 .collect();
-        if quant_paths.is_empty() {
-            warn!(param = %spec.param, "composite partial: quantity component has no value path — skipped");
-            continue;
-        }
-        let arr = quantity_value_jsonpath_array(&quant_paths);
         // WHERE = the SAME code containment the render emits (shared helper) so the
         // query predicate implies the partial-index predicate byte-for-byte.
         let token_paths = {
@@ -550,10 +571,19 @@ pub async fn create_composite_partial_indexes(
                 p
             }
         };
+        // Only the values beside the pinned code — exactly the array the composite
+        // render's hull predicate builds.
+        let Some(arr) = composite_code_value_jsonpath_array(&quant_paths, &token_paths, &spec.code)
+        else {
+            warn!(param = %spec.param, "composite partial: no location pairs the code with a value — skipped");
+            continue;
+        };
         let where_clause =
             composite_token_containment_sql("resource", &token_paths, None, &spec.code);
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        (&spec.resource_type, &spec.param, &spec.code).hash(&mut hasher);
+        // The indexed expression is part of the name, so a changed expression
+        // builds a new index instead of `IF NOT EXISTS` keeping the stale one.
+        (&spec.resource_type, &spec.param, &spec.code, &arr).hash(&mut hasher);
         let hash = hasher.finish();
         let table = spec.resource_type.to_lowercase();
         let pname: String = spec
@@ -561,8 +591,8 @@ pub async fn create_composite_partial_indexes(
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect();
-        // One partial GiST on the value hull, pinned to the code — matching the
-        // render's `fhir_qty_hull_range_arr(resource, <arr>) && numrange(...)`.
+        // One partial GiST on the code's value hull — matching the render's
+        // `fhir_qty_hull_range_arr(resource, <arr>) && numrange(...)`.
         let ddl = format!(
             "CREATE INDEX IF NOT EXISTS \"idx_{table}_{pname}_pthull_{hash:016x}\" ON \"{table}\" \
              USING gist ((fhir_qty_hull_range_arr(resource, {arr}))) WHERE {where_clause}"

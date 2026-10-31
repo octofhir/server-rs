@@ -364,6 +364,33 @@ fn quantity_union_index_cond(
     Some(format!("{hullfn} && {range}"))
 }
 
+/// Index-servable `eq`/`ap` condition for a multi-valued quantity param: the integer
+/// floors the window covers, overlapped with `fhir_qty_floor_buckets(resource, arr)`
+/// (the floors of every value). A value inside the window has its floor among those
+/// buckets, so this is a superset that the `@?` recheck makes exact. None for other
+/// prefixes, or when the window spans too many integers to enumerate.
+fn quantity_bucket_index_cond(
+    col: &str,
+    arr: &str,
+    prefix: crate::parameters::SearchPrefix,
+    number: &RenderDecimalParts,
+) -> Option<String> {
+    use crate::parameters::SearchPrefix;
+    let buckets = match prefix {
+        SearchPrefix::Eq => number.implicit_eq_floor_buckets()?,
+        SearchPrefix::Ap => number.approximate_floor_buckets()?,
+        _ => return None,
+    };
+    let list = buckets
+        .iter()
+        .map(i128::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "fhir_qty_floor_buckets({col}, {arr}) && ARRAY[{list}]::numeric[]"
+    ))
+}
+
 /// Exact `@?` recheck over every value location, OR'd: `col @? '<loc> ? (<value cond>
 /// [&& system] [&& code])'`. Needed for `eq`/`ne`/`ap` (the min/max prefilter is a
 /// superset) and whenever system/code constrain the match (min/max says nothing about
@@ -420,6 +447,7 @@ pub fn render_quantity_union_clauses_as_or(
     let col = builder.resource_column().to_string();
     let arr = crate::sql_builder::quantity_value_jsonpath_array(paths);
     let hullfn = format!("fhir_qty_hull_range_arr({col}, {arr})");
+    let multi_valued = crate::sql_builder::quantity_paths_multi_valued(paths);
     let mut exprs = Vec::new();
     for clause in clauses {
         match &clause.predicate {
@@ -438,7 +466,10 @@ pub fn render_quantity_union_clauses_as_or(
             } => {
                 let number =
                     RenderDecimalParts::parse(value).map_err(|_| invalid_quantity_number(value))?;
-                let index_cond = quantity_union_index_cond(&hullfn, *prefix, &number);
+                let index_cond = multi_valued
+                    .then(|| quantity_bucket_index_cond(&col, &arr, *prefix, &number))
+                    .flatten()
+                    .or_else(|| quantity_union_index_cond(&hullfn, *prefix, &number));
                 // The hull prefilter is exact for single-bound prefixes with no
                 // unit constraint; otherwise an `@?` recheck enforces the exact match.
                 let need_recheck = matches!(
@@ -1780,7 +1811,12 @@ fn render_composite_clause_expr(
     {
         return Ok(prefilter);
     }
-    let exact = render_composite_exact(builder, components, comp_segs, top_paths)?;
+    // Behind a prefilter the exact check is a row filter only. Left as `@?`, the
+    // document GIN could serve it (code equality is extractable) and the planner,
+    // with no statistics on `resource`, takes that bitmap over the partial hull
+    // index and rechecks every row carrying the code.
+    let exact_indexable = prefilter.is_none();
+    let exact = render_composite_exact(builder, components, comp_segs, top_paths, exact_indexable)?;
     Ok(match prefilter {
         Some(prefilter) => SqlExpr::And(vec![prefilter, exact]),
         None => exact,
@@ -1788,11 +1824,14 @@ fn render_composite_clause_expr(
 }
 
 /// Exact composite render: every component predicate bound to the same location.
+/// `indexable` renders the jsonpath as `@?` (GIN-servable); otherwise as the
+/// equivalent `jsonb_path_exists(.., silent => true)`, which no index matches.
 fn render_composite_exact(
     builder: &mut SqlBuilder,
     components: &[CompositeComponentPredicate],
     comp_segs: Option<Vec<Vec<String>>>,
     top_paths: Option<Vec<Vec<String>>>,
+    indexable: bool,
 ) -> Result<SqlExpr, SqlBuilderError> {
     // When a component arm exists, fold every location into ONE `@?` jsonpath
     // `$ ? (<top> || <component>)`. The component existence filter makes the
@@ -1819,10 +1858,12 @@ fn render_composite_exact(
         }
         if !jp_arms.is_empty() {
             let filter = format!("$ ? ({})", jp_arms.join(" || ")).replace('\'', "''");
-            return Ok(SqlExpr::Raw(format!(
-                "{} @? '{filter}'",
-                builder.resource_column()
-            )));
+            let col = builder.resource_column();
+            return Ok(SqlExpr::Raw(if indexable {
+                format!("{col} @? '{filter}'")
+            } else {
+                format!("jsonb_path_exists({col}, '{filter}', '{{}}', true)")
+            }));
         }
     }
 
@@ -1848,9 +1889,10 @@ fn render_composite_exact(
 
 /// Index prefilter for a token+quantity composite (the `code-value-quantity`
 /// family): `<code containment at every location> AND <value hull> && <range>`.
-/// It matches the targeted partial hull index pinned to the code. The two halves
-/// are not correlated — the code and the value may come from different
-/// components — so the caller adds the exact same-element check whenever the
+/// It matches the targeted partial hull index pinned to the code. The hull spans
+/// only values sharing an element with the code, so for single-bound prefixes it
+/// selects exactly the matching rows; `eq`/`ap` spans and the system half are not
+/// correlated, so the caller still adds the exact same-element check whenever the
 /// composite can match inside `component`. Returns None when the composite isn't
 /// exactly one token + one quantity component, so the caller uses only the exact
 /// render.
@@ -1870,19 +1912,26 @@ fn render_token_quantity_composite_prefilter(
         .iter()
         .position(|c| c.spec.search_type == SearchParameterType::Quantity)?;
     let col = builder.resource_column().to_string();
+    let token_value = &components[token_idx].value;
+    let (system, code) = match token_value.split_once('|') {
+        Some((s, c)) if !s.is_empty() => (Some(s), c),
+        Some((_, c)) => (None, c),
+        None => (None, token_value.as_str()),
+    };
+    if code.is_empty() || paths[token_idx].is_empty() {
+        return None;
+    }
 
-    // Value prefilter: the hull over EVERY value location (top + component),
-    // matching the `*-value-quantity` hull index. SampledData has no `.value`
-    // scalar, so drop it to match the index.
+    // Value prefilter: the hull over the values that share an element with `code`
+    // (top-level and each component), matching the partial composite index.
+    // SampledData has no `.value` scalar, so drop it to match the index.
     let qpaths: Vec<Vec<String>> = paths[quant_idx]
         .iter()
         .filter(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")))
         .cloned()
         .collect();
-    if qpaths.is_empty() {
-        return None;
-    }
-    let arr = crate::sql_builder::quantity_value_jsonpath_array(&qpaths);
+    let arr =
+        crate::sql_builder::composite_code_value_jsonpath_array(&qpaths, &paths[token_idx], code)?;
     let hullfn = format!("fhir_qty_hull_range_arr({col}, {arr})");
     let (prefix_str, num_str) = extract_prefix(&components[quant_idx].value);
     let prefix = match prefix_str {
@@ -1902,15 +1951,6 @@ fn render_token_quantity_composite_prefilter(
     // Code prefilter: inline whole-resource containment at every token location, OR'd
     // (top-level `code`, and `component.code` array-wrapped). Inlined (not bound) so the
     // generic resource GIN serves it.
-    let token_value = &components[token_idx].value;
-    let (system, code) = match token_value.split_once('|') {
-        Some((s, c)) if !s.is_empty() => (Some(s), c),
-        Some((_, c)) => (None, c),
-        None => (None, token_value.as_str()),
-    };
-    if paths[token_idx].is_empty() {
-        return None;
-    }
     // Build via the SAME helper the partial-index DDL uses, so the query's containment
     // matches the partial's `WHERE` byte-for-byte and the planner uses the partial.
     // Partial indexes are pinned to the bare code, which a system-qualified token
@@ -3477,6 +3517,31 @@ impl RenderDecimalParts {
             format_decimal(centered + delta, scale),
         )
     }
+
+    /// Integer floors spanned by [`Self::implicit_eq_bounds`].
+    fn implicit_eq_floor_buckets(&self) -> Option<Vec<i128>> {
+        let centered = self.mantissa.checked_mul(10)?;
+        floor_buckets(centered - 5, centered + 5, self.scale + 1)
+    }
+
+    /// Integer floors spanned by [`Self::approximate_bounds`].
+    fn approximate_floor_buckets(&self) -> Option<Vec<i128>> {
+        let centered = self.mantissa.checked_mul(10)?;
+        let delta = self.mantissa.abs();
+        floor_buckets(centered - delta, centered + delta, self.scale + 1)
+    }
+}
+
+/// Most integer buckets a quantity window may enumerate before the render falls
+/// back to the hull.
+const MAX_QUANTITY_FLOOR_BUCKETS: i128 = 16;
+
+/// Every integer `floor(v)` for `v` in `[lo, hi]`, both given as mantissas at
+/// `scale` (exact decimal arithmetic). None past [`MAX_QUANTITY_FLOOR_BUCKETS`].
+fn floor_buckets(lo: i128, hi: i128, scale: u32) -> Option<Vec<i128>> {
+    let unit = 10i128.checked_pow(scale)?;
+    let (first, last) = (lo.div_euclid(unit), hi.div_euclid(unit));
+    (last - first < MAX_QUANTITY_FLOOR_BUCKETS).then(|| (first..=last).collect())
 }
 
 fn invalid_number(value: &str) -> SqlBuilderError {
@@ -4525,5 +4590,61 @@ mod tests {
         assert!(sql.starts_with("("));
         assert!(sql.ends_with("= false"));
         assert!(!sql.contains("NOT ("));
+    }
+
+    #[test]
+    fn quantity_floor_buckets_cover_the_window() {
+        // eq 100 -> [99.5, 100.5): floors 99 and 100.
+        let n = RenderDecimalParts::parse("100").unwrap();
+        assert_eq!(n.implicit_eq_floor_buckets(), Some(vec![99, 100]));
+        // eq 7.25 -> [7.245, 7.255): one floor.
+        let n = RenderDecimalParts::parse("7.25").unwrap();
+        assert_eq!(n.implicit_eq_floor_buckets(), Some(vec![7]));
+        // Negative values floor downwards: eq -3 -> [-3.5, -2.5).
+        let n = RenderDecimalParts::parse("-3").unwrap();
+        assert_eq!(n.implicit_eq_floor_buckets(), Some(vec![-4, -3]));
+        // ap 10 -> [9, 11]: three floors; ap 100 -> [90, 110] is too wide.
+        let n = RenderDecimalParts::parse("10").unwrap();
+        assert_eq!(n.approximate_floor_buckets(), Some(vec![9, 10, 11]));
+        let n = RenderDecimalParts::parse("100").unwrap();
+        assert_eq!(n.approximate_floor_buckets(), None);
+    }
+
+    #[test]
+    fn multi_valued_quantity_eq_probes_floor_buckets() {
+        let mut builder = SqlBuilder::new();
+        let clauses = vec![QuantityClause {
+            resource_type: "Observation".to_string(),
+            param_code: "component-value-quantity".to_string(),
+            predicate: QuantityPredicate::Comparison {
+                prefix: crate::parameters::SearchPrefix::Eq,
+                value: "100".to_string(),
+                system: None,
+                code: None,
+            },
+        }];
+        let paths = vec![vec!["component".to_string(), "valueQuantity".to_string()]];
+        let sql = render_sql_expr(
+            &render_quantity_union_clauses_as_or(&mut builder, &clauses, &paths)
+                .unwrap()
+                .unwrap(),
+        );
+        assert!(
+            sql.contains("fhir_qty_floor_buckets(resource, ARRAY['$.\"component\"[*].\"valueQuantity\".\"value\"'::jsonpath]::jsonpath[]) && ARRAY[99, 100]::numeric[]"),
+            "SQL={sql}"
+        );
+        assert!(!sql.contains("fhir_qty_hull_range_arr"), "SQL={sql}");
+        // The exact recheck stays.
+        assert!(sql.contains("@.\"value\" >= 99.5"), "SQL={sql}");
+
+        // A single-valued location keeps the exact hull window.
+        let paths = vec![vec!["valueQuantity".to_string()]];
+        let sql = render_sql_expr(
+            &render_quantity_union_clauses_as_or(&mut builder, &clauses, &paths)
+                .unwrap()
+                .unwrap(),
+        );
+        assert!(sql.contains("fhir_qty_hull_range_arr"), "SQL={sql}");
+        assert!(!sql.contains("fhir_qty_floor_buckets"), "SQL={sql}");
     }
 }

@@ -1801,6 +1801,64 @@ fn composite_token_match_sql(
     }
 }
 
+/// Whether a quantity param's value locations can hold several values per resource
+/// (e.g. `component[*].valueQuantity`). Their `[min, max]` hull is then only a loose
+/// superset for a two-sided `eq`/`ap` window — the values usually straddle it — so
+/// such params also get an integer-bucket GIN (`fhir_qty_floor_buckets`) for those
+/// prefixes. Shared by the index DDL and the search render so both agree.
+pub fn quantity_paths_multi_valued(paths: &[Vec<String>]) -> bool {
+    paths.iter().any(|p| p.len() > 1)
+}
+
+/// SQL `jsonpath[]` literal of a token+quantity composite's values that share an
+/// element with the token `code`: per location (top-level, or one `component[*]`
+/// element) only the values whose sibling token carries `code`, e.g.
+/// `$."component"[*] ? (exists(@."code"."coding"[*] ? (@."code" == "8462-4")))."valueQuantity"."value"`.
+/// The hull over it is therefore the hull of exactly the same-element values, so
+/// `hull && range` is exact for a single-bound prefix even when another component
+/// (systolic beside diastolic) holds values on the other side of the bound. Locations
+/// where the token has no path cannot satisfy the composite and are left out. Used
+/// by BOTH the partial composite index and the composite render so the two
+/// expressions match textually. None when no location pairs a token and a value.
+pub fn composite_code_value_jsonpath_array(
+    quant_paths: &[Vec<String>],
+    token_paths: &[Vec<String>],
+    code: &str,
+) -> Option<String> {
+    let q = |v: &str| v.replace('\\', "\\\\").replace('"', "\\\"");
+    let member = |segs: &[String]| {
+        segs.iter()
+            .map(|s| format!(".\"{}\"", q(s)))
+            .collect::<Vec<_>>()
+            .join("[*]")
+    };
+    let in_component = |p: &[String]| p.first().map(String::as_str) == Some("component");
+    let items: Vec<String> = quant_paths
+        .iter()
+        .filter_map(|qp| {
+            let nested = in_component(qp);
+            let tp = token_paths.iter().find(|tp| in_component(tp) == nested)?;
+            let (root, token_segs, value_segs) = if nested {
+                ("$.\"component\"[*]", &tp[1..], &qp[1..])
+            } else {
+                ("$", &tp[..], &qp[..])
+            };
+            if token_segs.is_empty() || value_segs.is_empty() {
+                return None;
+            }
+            let jp = format!(
+                "{root} ? (exists(@{}.\"coding\"[*] ? (@.\"code\" == \"{}\"))){}.\"value\"",
+                member(token_segs),
+                q(code),
+                member(value_segs),
+            )
+            .replace('\'', "''");
+            Some(format!("'{jp}'::jsonpath"))
+        })
+        .collect();
+    (!items.is_empty()).then(|| format!("ARRAY[{}]::jsonpath[]", items.join(", ")))
+}
+
 /// SQL `jsonpath[]` literal of every quantity `.value` location for `paths`, e.g.
 /// `ARRAY['$."valueQuantity"."value"'::jsonpath, '$."component"[*]."valueQuantity"."value"'::jsonpath]`.
 /// Folds the top-level AND component locations of a (combo) quantity param into ONE

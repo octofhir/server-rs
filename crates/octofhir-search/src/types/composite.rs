@@ -179,15 +179,22 @@ mod tests {
 
         build_composite_search(&mut builder, "8480-6$lt100", &components).unwrap();
         let clause = builder.build_where_clause().unwrap();
+        // The hull spans only values of components carrying the code.
         assert!(
-            clause.contains("fhir_qty_hull_range_arr(resource,")
-                && clause.contains("numrange(NULL, 100, '()')"),
+            clause.contains(
+                "fhir_qty_hull_range_arr(resource, ARRAY['$.\"component\"[*] ? \
+                 (exists(@.\"code\".\"coding\"[*] ? (@.\"code\" == \"8480-6\")))\
+                 .\"valueQuantity\".\"value\"'::jsonpath]::jsonpath[]) && numrange(NULL, 100, '()')"
+            ),
             "CLAUSE={clause}"
         );
+        // The same-element recheck is a row filter no index can serve, so the
+        // document GIN never wins over the partial hull index.
         assert!(
-            clause.contains("@? '$ ? (") && clause.contains("component"),
+            clause.contains("jsonb_path_exists(resource, '$ ? (exists(@.\"component\"[*]"),
             "CLAUSE={clause}"
         );
+        assert!(!clause.contains("@?"), "CLAUSE={clause}");
     }
 
     /// Lock the `code-value-quantity` fix with the *real* FHIR component
