@@ -150,6 +150,8 @@ export function Combobox(props: ComboboxProps) {
                 name={name}
                 itemToStringLabel={itemToStringLabel}
                 filter={filter === "server" ? null : undefined}
+                // Typing highlights the first match, so Enter picks it (keyboard-first).
+                autoHighlight
                 onValueChange={handleValueChange}
                 onInputValueChange={onInputChange ? (text) => onInputChange(text) : undefined}
             >
