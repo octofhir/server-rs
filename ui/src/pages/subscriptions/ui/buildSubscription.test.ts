@@ -33,3 +33,15 @@ describe("buildSubscription", () => {
     expect(subscription.channel).toBeUndefined();
   });
 });
+
+describe("buildTopic", () => {
+  it("defaults the canonical URL to the title under this origin", async () => {
+    const { buildTopic } = await import("./NewTopicDialog");
+    const topic = buildTopic(
+      { title: "Patient changes", url: "", resource: "Patient", interactions: ["create", "update"] },
+      "https://fhir.example.org"
+    );
+    expect(topic.url).toBe("https://fhir.example.org/topics/patient-changes");
+    expect(topic.resourceTrigger).toEqual([{ resource: "Patient", supportedInteraction: ["create", "update"] }]);
+  });
+});

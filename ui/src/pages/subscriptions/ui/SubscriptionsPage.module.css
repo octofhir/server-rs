@@ -160,3 +160,8 @@
 	font-weight: 500;
 	color: var(--octo-text-secondary);
 }
+
+.checks {
+	display: flex;
+	gap: 16px;
+}

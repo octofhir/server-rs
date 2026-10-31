@@ -6,12 +6,13 @@ import { useSettings } from "@/shared/api/hooks";
 import type { SubscriptionResource, TopicResource } from "../lib/api";
 import classes from "./SubscriptionsPage.module.css";
 
-type Channel = "rest-hook" | "websocket";
+type Channel = "rest-hook" | "websocket" | "email";
 
 interface Draft {
   reason: string;
   topic: string | null;
   channel: Channel;
+  /** REST hook URL, or the recipient's address for email. */
   endpoint: string;
   /** `Name: value` per line. */
   headers: string;
@@ -33,7 +34,12 @@ function headerLines(text: string): [string, string][] {
  */
 export function buildSubscription(draft: Draft, fhirVersion: string | undefined): SubscriptionResource {
   const headers = headerLines(draft.headers);
-  const endpoint = draft.channel === "rest-hook" ? draft.endpoint.trim() : undefined;
+  const endpoint =
+    draft.channel === "rest-hook"
+      ? draft.endpoint.trim()
+      : draft.channel === "email"
+        ? `mailto:${draft.endpoint.trim()}`
+        : undefined;
   if (/^R[5-9]/i.test(fhirVersion ?? "")) {
     return {
       resourceType: "Subscription",
@@ -93,7 +99,10 @@ export function NewSubscriptionDialog({
     .filter((topic) => topic.url)
     .map((topic) => ({ value: topic.url ?? "", label: topic.title ? `${topic.title} · ${topic.url}` : (topic.url ?? "") }));
   const ready =
-    draft.topic != null && (draft.channel === "websocket" || /^https?:\/\//.test(draft.endpoint.trim()));
+    draft.topic != null &&
+    (draft.channel === "websocket" ||
+      (draft.channel === "email" && /^[^\s@]+@[^\s@]+$/.test(draft.endpoint.trim())) ||
+      (draft.channel === "rest-hook" && /^https?:\/\//.test(draft.endpoint.trim())));
 
   return (
     <Modal
@@ -133,10 +142,13 @@ export function NewSubscriptionDialog({
           <SegmentedRadioGroup
             aria-label="Channel"
             value={draft.channel}
-            onChange={(value) => update({ channel: value === "websocket" ? "websocket" : "rest-hook" })}
+            onChange={(value) =>
+              update({ channel: value === "websocket" || value === "email" ? value : "rest-hook", endpoint: "" })
+            }
             options={[
               { value: "rest-hook", label: "REST hook" },
               { value: "websocket", label: "WebSocket" },
+              { value: "email", label: "Email" },
             ]}
           />
         </div>
@@ -157,6 +169,14 @@ export function NewSubscriptionDialog({
               minRows={2}
             />
           </>
+        ) : draft.channel === "email" ? (
+          <TextInput
+            label="Recipient"
+            placeholder="care-team@example.org"
+            description="Needs an email provider in the server's [subscriptions.email] config."
+            value={draft.endpoint}
+            onChange={(endpoint) => update({ endpoint })}
+          />
         ) : (
           <p className={classes.muted}>
             Clients connect to <code>/fhir/Subscription/{"{id}"}/$events</code> with a WebSocket upgrade once the

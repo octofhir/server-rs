@@ -28,6 +28,7 @@ import {
   topicUrl,
 } from "../lib/api";
 import { NewSubscriptionDialog } from "./NewSubscriptionDialog";
+import { NewTopicDialog } from "./NewTopicDialog";
 import classes from "./SubscriptionsPage.module.css";
 
 dayjs.extend(relativeTime);
@@ -282,15 +283,23 @@ function EventLogPanel({ subscription }: { subscription: SubscriptionResource })
   );
 }
 
-function TopicsPanel({ topics }: { topics: TopicResource[] }) {
+function TopicsPanel({ topics, onNew }: { topics: TopicResource[]; onNew: () => void }) {
   return (
     <section className={classes.panel} aria-label="Topics">
       <header className={classes.panelHeader}>
         <h2 className={classes.panelTitle}>Topics</h2>
         <span className={classes.muted}>{topics.length} defined · subscriptions point at a topic URL</span>
+        <div className={classes.actions}>
+          <Button size="sm" variant="outline" onClick={onNew}>
+            <Button.Icon side="left">
+              <Plus size={13} />
+            </Button.Icon>
+            New topic
+          </Button>
+        </div>
       </header>
       {topics.length === 0 ? (
-        <p className={classes.muted}>No SubscriptionTopic resources yet; create one to describe what can be subscribed to.</p>
+        <p className={classes.muted}>No topics yet. A topic says which changes can be subscribed to; create one first.</p>
       ) : (
         <ul className={classes.topics}>
           {topics.map((topic) => (
@@ -315,6 +324,7 @@ export function SubscriptionsPage() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [creatingTopic, setCreatingTopic] = useState(false);
   const subscriptions = useQuery({ queryKey: LIST_KEY, queryFn: listSubscriptions, refetchInterval: 10_000 });
   const topics = useQuery({ queryKey: ["subscriptions", "topics"], queryFn: listTopics });
   const rows = subscriptions.data ?? [];
@@ -355,7 +365,15 @@ export function SubscriptionsPage() {
         />
       </section>
       {selected && <EventLogPanel key={selected.id} subscription={selected} />}
-      <TopicsPanel topics={topics.data ?? []} />
+      <TopicsPanel topics={topics.data ?? []} onNew={() => setCreatingTopic(true)} />
+      <NewTopicDialog
+        open={creatingTopic}
+        onClose={() => setCreatingTopic(false)}
+        onCreated={() => {
+          setCreatingTopic(false);
+          void queryClient.invalidateQueries({ queryKey: ["subscriptions", "topics"] });
+        }}
+      />
       <NewSubscriptionDialog
         open={creating}
         topics={(topics.data ?? []).filter((topic) => topic.status === "active")}
