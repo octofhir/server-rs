@@ -2,7 +2,10 @@ import type * as Monaco from "monaco-editor";
 import { getCursorContext } from "../../core/cursor-context";
 import { getSuggestions } from "../../core/suggestions";
 import type { QueryInputMetadata, QuerySuggestion } from "../../core/types";
-import { resolveValueSuggestions } from "../../services/value-sources";
+import {
+  resolveResourceIdSuggestions,
+  resolveValueSuggestions,
+} from "../../services/value-sources";
 import { LANGUAGE_ID } from "./language";
 
 const SUGGESTION_KIND_MAP: Record<string, number> = {
@@ -80,18 +83,34 @@ export function createCompletionProvider(
 
       const itemRange = fragmentRange ?? range;
       const items = suggestions.map((s, i) => toMonacoItem(s, itemRange, i));
-      if (context.type !== "query-value") return { suggestions: items };
+      // Lists are capped and pre-filtered by the fragment, so Monaco must ask again on every
+      // keystroke instead of filtering a stale first page (`Patient.na` would miss `name`).
+      // While an id is being typed (`Patient/ann`), the id segment is what a pick replaces.
+      const typingId = context.type === "next-after-id";
+      const live =
+        context.type === "query-value"
+          ? resolveValueSuggestions(context, metadata)
+          : context.type === "resource-id" || typingId
+            ? resolveResourceIdSuggestions(
+                typingId ? { ...context, fragment: context.resourceId ?? "" } : context,
+                metadata
+              )
+            : null;
+      if (!live) return { suggestions: items, incomplete: true };
+      const liveRange = typingId
+        ? { ...itemRange, startColumn: before.lastIndexOf("/") + 2 }
+        : itemRange;
 
-      // Codes and referenced resources come from the server; static ones show either way.
-      return resolveValueSuggestions(context, metadata).then(
-        ({ suggestions: live, incomplete }) => ({
+      // Codes and existing resources come from the server and lead; static ones follow.
+      return live.then(
+        (found) => ({
           suggestions: [
-            ...items,
-            ...live.map((s, i) => toMonacoItem(s, itemRange, items.length + i)),
+            ...found.map((s, i) => ({ ...toMonacoItem(s, liveRange, i), sortText: sortKey(0, i) })),
+            ...items.map((item, i) => ({ ...item, sortText: sortKey(1, found.length + i) })),
           ],
-          incomplete,
+          incomplete: true,
         }),
-        () => ({ suggestions: items })
+        () => ({ suggestions: items, incomplete: true })
       );
     },
   };
@@ -112,8 +131,18 @@ function toMonacoItem(
     detail: suggestion.detail,
     documentation: suggestion.documentation,
     range,
-    sortText: String(suggestion.sortPriority).padStart(3, "0") + String(index).padStart(4, "0"),
+    sortText: sortKey(suggestion.sortPriority, index),
+    // `name=`, `subject:Patient.` and `Patient/` expect more: keep the popup going.
+    command: CONTINUES.test(suggestion.insertText)
+      ? { id: "editor.action.triggerSuggest", title: "Suggest" }
+      : undefined,
   };
+}
+
+const CONTINUES = /[=.:/?&]$/;
+
+function sortKey(priority: number, index: number): string {
+  return String(priority).padStart(3, "0") + String(index).padStart(4, "0");
 }
 
 function getFragmentRange(
@@ -173,8 +202,8 @@ function getFragmentRange(
     }
   }
 
-  // Resource type: replace from after last "/"
-  if (contextType === "resource-type") {
+  // Resource type or id: replace from after last "/"
+  if (contextType === "resource-type" || contextType === "resource-id") {
     const lastSlash = before.lastIndexOf("/");
     if (lastSlash >= 0) {
       return {

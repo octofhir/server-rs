@@ -172,16 +172,9 @@ function getNextAfterIdSuggestions(
     }));
 }
 
+/** Ids are existing resources, looked up by the editor adapter; nothing static to offer. */
 function getResourceIdSuggestions(): QuerySuggestion[] {
-  return [
-    {
-      label: "{id}",
-      insertText: "{id}",
-      kind: "structural",
-      detail: "Enter resource ID",
-      sortPriority: 0,
-    },
-  ];
+  return [];
 }
 
 function getOperationSuggestions(

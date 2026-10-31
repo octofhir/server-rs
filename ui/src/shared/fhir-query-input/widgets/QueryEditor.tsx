@@ -12,6 +12,7 @@ import {
 import type { QueryInputMetadata } from "../core/types";
 
 const MIN_HEIGHT = 36;
+const TRIGGERS = ["/", "?", "&", ":", "=", ",", "."];
 const MAX_HEIGHT = 200;
 
 export interface QueryEditorProps {
@@ -80,6 +81,18 @@ export function QueryEditor({
       if (model) {
         updateDiagnosticsFromContent(monaco, model, metadataRef.current, basePath);
       }
+
+      // Monaco ignores trigger characters typed while its popup is already open
+      // (e.g. the "." in `subject:Patient.`), so re-open it explicitly.
+      disposablesRef.current.push(
+        editor.onDidChangeModelContent((event) => {
+          const [change] = event.changes;
+          if (event.changes.length === 1 && TRIGGERS.includes(change.text)) {
+            editor.trigger("fhir-query", "hideSuggestWidget", {});
+            editor.trigger("fhir-query", "editor.action.triggerSuggest", {});
+          }
+        })
+      );
 
       // Auto-expand height based on content
       const updateHeight = () => {

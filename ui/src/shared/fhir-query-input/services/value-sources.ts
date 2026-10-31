@@ -18,36 +18,36 @@ const referenceCache = new Map<string, Promise<QuerySuggestion[]>>();
 export async function resolveValueSuggestions(
   context: CursorContext,
   metadata: QueryInputMetadata
-): Promise<{ suggestions: QuerySuggestion[]; incomplete: boolean }> {
-  const none = { suggestions: [], incomplete: false };
+): Promise<QuerySuggestion[]> {
   const { resourceType, paramName, modifier } = context;
-  if (!resourceType || !paramName || paramName.startsWith("_") || modifier) return none;
+  if (!resourceType || !paramName || paramName.startsWith("_") || modifier) return [];
   const param = metadata.searchParamsByResource[resourceType]?.find((p) => p.code === paramName);
-  if (!param) return none;
+  if (!param) return [];
   const fragment = currentValue(context.fragment);
 
   if (param.type === "token") {
     const values = await elementValues(resourceType, paramName);
-    if (values?.kind === "boolean") {
-      return { suggestions: staticValues(["true", "false"], "boolean"), incomplete: false };
-    }
-    if (values?.kind === "codes") {
-      return {
-        suggestions: staticValues(values.codes, `${resourceType}.${paramName}`),
-        incomplete: false,
-      };
-    }
-    return none;
+    if (values?.kind === "boolean") return staticValues(["true", "false"], "boolean");
+    if (values?.kind === "codes") return staticValues(values.codes, `${resourceType}.${paramName}`);
+    return [];
   }
   if (param.type === "reference" && param.targets.length) {
     const targets = param.targets.slice(0, MAX_REFERENCE_TARGETS);
     const lists = await Promise.all(
-      targets.map((target) => referenceSuggestions(target, fragment, metadata))
+      targets.map((target) => resourceSuggestions(target, fragment, metadata, "address"))
     );
-    // Results depend on what is typed (name search), so ask again on every keystroke.
-    return { suggestions: lists.flat(), incomplete: true };
+    return lists.flat();
   }
-  return none;
+  return [];
+}
+
+/** `Patient/` lists existing patients by name; the id is what gets inserted. */
+export function resolveResourceIdSuggestions(
+  context: CursorContext,
+  metadata: QueryInputMetadata
+): Promise<QuerySuggestion[]> {
+  if (!context.resourceType) return Promise.resolve([]);
+  return resourceSuggestions(context.resourceType, context.fragment, metadata, "id");
 }
 
 /** The value being typed: after the last comma (comma = OR). */
@@ -99,20 +99,21 @@ function resourceSchema(resourceType: string): Promise<Record<string, unknown> |
   return pending;
 }
 
-function referenceSuggestions(
+function resourceSuggestions(
   target: string,
   fragment: string,
-  metadata: QueryInputMetadata
+  metadata: QueryInputMetadata,
+  insert: "address" | "id"
 ): Promise<QuerySuggestion[]> {
-  // `Practitioner/abc` already names the type: filter on the part after the slash.
-  const typed = fragment.includes("/") ? fragment.slice(fragment.indexOf("/") + 1) : fragment;
+  // Letters are a name to search for; ids (digits, dashes) are filtered client-side.
+  const typingAddress = fragment.includes("/");
   const hasName = metadata.searchParamsByResource[target]?.some((p) => p.code === "name");
   const params: Record<string, string | number> = {
     _count: REFERENCES_PER_TARGET,
     _sort: "-_lastUpdated",
   };
-  if (typed.length >= 2 && hasName && !fragment.includes("/")) params.name = typed;
-  const key = `${target}?${new URLSearchParams(params as Record<string, string>).toString()}`;
+  if (hasName && /^[\p{L} ]{2,}$/u.test(fragment)) params.name = fragment;
+  const key = `${insert}:${target}?${new URLSearchParams(params as Record<string, string>).toString()}`;
 
   let pending = referenceCache.get(key);
   if (!pending) {
@@ -124,12 +125,11 @@ function referenceSuggestions(
           if (!resource?.id) return [];
           const address = `${target}/${resource.id}`;
           const name = getResourceDisplayName(resource, "");
-          // People pick by name; the address is what gets inserted.
+          // People pick by name; the address (or bare id) is what gets inserted.
           return [
             {
               label: name || address,
-              insertText: address,
-              filterText: `${name} ${address}`,
+              insertText: insert === "id" ? resource.id : address,
               kind: "value" as const,
               detail: target,
               description: name ? address : undefined,
@@ -143,5 +143,12 @@ function referenceSuggestions(
     // Data changes; a short-lived cache only spares the server while the user keeps typing.
     setTimeout(() => referenceCache.delete(key), 30_000);
   }
-  return pending;
+  // Monaco matches what was typed against filterText: lead with whichever the user is typing.
+  return pending.then((items) =>
+    items.map((item) => {
+      const name = item.description ? item.label : "";
+      const address = item.description ?? item.label;
+      return { ...item, filterText: typingAddress ? `${address} ${name}` : `${name} ${address}` };
+    })
+  );
 }

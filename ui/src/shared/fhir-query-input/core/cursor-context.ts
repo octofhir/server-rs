@@ -55,7 +55,7 @@ export function getCursorContext(
 	if (segments.length === 1) {
 		// Trailing slash after resource type -> suggest ID
 		if (hasTrailingSlash && resourceTypes.includes(segments[0])) {
-			return makeContext("resource-id", "", beforeCursor);
+			return { ...makeContext("resource-id", "", beforeCursor), resourceType: segments[0] };
 		}
 
 		// Complete resource type -> suggest next steps
@@ -137,7 +137,10 @@ export function getCursorContext(
 			};
 		}
 
-		return makeContext("resource-id", currentSegment, beforeCursor);
+		return {
+			...makeContext("resource-id", currentSegment, beforeCursor),
+			resourceType: segments[0],
+		};
 	}
 
 	if (segments.length === 3) {
