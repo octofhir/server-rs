@@ -23,10 +23,10 @@
 //! `&>` / `&<` are NOT equivalent to `NOT(<<)` / `NOT(>>)` on wide Periods —
 //! they compare against the *opposite* bound of `q`. Do not substitute them.
 
-use crate::ir::render_date_inplace_clauses_as_or;
 use crate::ir::render_date_text_path_clauses_as_or;
 #[cfg(test)]
 use crate::ir::render_period_path_clauses_as_or;
+use crate::ir::{DateInplaceExprs, render_date_inplace_clauses_as_or};
 use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
@@ -374,14 +374,14 @@ pub fn build_indexed_date_inplace(
     }
 
     let clauses = DateClause::from_parsed_param(param, resource_type)?;
-    if let Some(sql) = render_date_inplace_clauses_as_or(
-        builder,
-        &clauses,
-        &hull_expr,
-        &mr_expr,
-        &min_expr,
-        &single_guard,
-    ) {
+    let exprs = DateInplaceExprs {
+        hull: &hull_expr,
+        multirange: &mr_expr,
+        min: &min_expr,
+        max: &max_expr,
+        single_guard: &single_guard,
+    };
+    if let Some(sql) = render_date_inplace_clauses_as_or(builder, &clauses, &exprs) {
         builder.add_condition(sql);
     }
     Ok(())

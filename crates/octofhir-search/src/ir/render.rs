@@ -1481,20 +1481,36 @@ fn timestamp_text_compare_expr(path: &str, op: SqlOp, param: usize) -> SqlExpr {
     }
 }
 
+/// SQL expressions over one date param's value locations, shared by every clause
+/// of the in-place date render.
+pub struct DateInplaceExprs<'a> {
+    /// `tstzrange(min, max, '[]')` — exactly the expression of the GiST
+    /// functional index, so the planner can use it.
+    pub hull: &'a str,
+    /// `fhir_extract_date_multirange(..)` — exact per-occurrence ranges.
+    pub multirange: &'a str,
+    /// `fhir_extract_date_min(..)`, also backing `:missing`.
+    pub min: &'a str,
+    /// `fhir_extract_date_max(..)`.
+    pub max: &'a str,
+    /// Cheap `jsonb_typeof` test, TRUE when the element holds one occurrence.
+    pub single_guard: &'a str,
+}
+
 /// In-place date predicate over a functional date-range expression on the
-/// resource JSONB (no sidecar table). `range_expr` must be exactly
-/// `tstzrange(fhir_extract_date_min(col,paths), fhir_extract_date_max(col,paths), '[]')`
-/// — the same expression the matching GiST functional index is built on, so the
-/// planner can use the index. `min_expr` is `fhir_extract_date_min(col,paths)`,
-/// used for `:missing`.
+/// resource JSONB (no sidecar table). See [`DateInplaceExprs`].
 fn date_inplace_clause_expr(
     builder: &mut SqlBuilder,
     clause: &DateClause,
-    hull_expr: &str,
-    mr_expr: &str,
-    min_expr: &str,
-    single_guard: &str,
+    exprs: &DateInplaceExprs<'_>,
 ) -> SqlExpr {
+    let DateInplaceExprs {
+        hull: hull_expr,
+        multirange: mr_expr,
+        min: min_expr,
+        max: max_expr,
+        single_guard,
+    } = *exprs;
     // Two expressions over the same paths:
     //   hull = tstzrange(min, max)  — the cheap min/max span. Backs the GiST
     //          functional index (cheap to maintain AND to scan) and serves the
@@ -1551,10 +1567,16 @@ fn date_inplace_clause_expr(
     // GiST index under LIMIT. The overlap with the query's own half-range is a
     // superset of both arms, so it is the single indexable condition and the
     // exact union is rechecked on its candidates.
+    //
+    // For a single occurrence `[s, e]` the union reduces to two scalar bounds —
+    // `ge`: `e >= q.end OR s >= q.start`; `le`: `s < q.start OR e < q.end` —
+    // so the recheck usually evaluates one extraction instead of rebuilding the
+    // hull for each arm. A missing bound is unbounded, as in the hull.
     let half_range_then_exact =
         |builder: &mut SqlBuilder,
          index_range: SqlTerm,
          beyond: SqlTerm,
+         single: String,
          q: &crate::types::date::DateRange| {
             let qsql = render_term(&date_range_term(builder, q));
             let beyond = render_term(&beyond);
@@ -1565,11 +1587,19 @@ fn date_inplace_clause_expr(
                     rhs: index_range,
                 },
                 SqlExpr::Raw(format!(
-                    "CASE WHEN {single_guard} THEN ({hull_expr} && {beyond} OR {hull_expr} <@ {qsql}) \
+                    "CASE WHEN {single_guard} THEN {single} \
                  ELSE ({mr_expr} && {beyond} OR EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})) END"
                 )),
             ])
         };
+    let lower = format!("coalesce({min_expr}, '-infinity')");
+    let upper = format!("coalesce({max_expr}, 'infinity')");
+    let timestamp = |builder: &mut SqlBuilder, at: &time::OffsetDateTime| {
+        render_term(&SqlTerm::ParamCast {
+            index: builder.add_timestamp_param(format_rfc3339(at)),
+            cast: "timestamptz",
+        })
+    };
     match &clause.predicate {
         DatePredicate::Contains { q } => contained_in(builder, q),
         DatePredicate::NotContains { q } => {
@@ -1602,7 +1632,9 @@ fn date_inplace_clause_expr(
                 }),
                 None,
             );
-            half_range_then_exact(builder, index_range, above, q)
+            let (start, end) = (timestamp(builder, &q.start), timestamp(builder, &q.end));
+            let single = format!("({upper} >= {end} OR {lower} >= {start})");
+            half_range_then_exact(builder, index_range, above, single, q)
         }
         // `le` = `lt` ∪ `eq`, the mirror of `ge`.
         DatePredicate::Le { q } => {
@@ -1622,7 +1654,9 @@ fn date_inplace_clause_expr(
                     inclusive: false,
                 }),
             );
-            half_range_then_exact(builder, index_range, below, q)
+            let (start, end) = (timestamp(builder, &q.start), timestamp(builder, &q.end));
+            let single = format!("({lower} < {start} OR {upper} < {end})");
+            half_range_then_exact(builder, index_range, below, single, q)
         }
         // `sa`/`eb`: strictly-after / strictly-before key off the extreme occurrence,
         // shared by hull and multirange — pure index op, no recheck.
@@ -1666,24 +1700,17 @@ fn date_inplace_clause_expr(
     }
 }
 
-/// Render in-place date clauses (one OR group). `mr_expr` is the exact
-/// per-occurrence multirange, served directly by the GiST functional index;
-/// `min_expr` backs `:missing`. See [`date_inplace_clause_expr`].
+/// Render in-place date clauses (one OR group). See [`date_inplace_clause_expr`].
 pub fn render_date_inplace_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[DateClause],
-    hull_expr: &str,
-    mr_expr: &str,
-    min_expr: &str,
-    single_guard: &str,
+    exprs: &DateInplaceExprs<'_>,
 ) -> Option<SqlExpr> {
-    let exprs = clauses
+    let rendered = clauses
         .iter()
-        .map(|clause| {
-            date_inplace_clause_expr(builder, clause, hull_expr, mr_expr, min_expr, single_guard)
-        })
+        .map(|clause| date_inplace_clause_expr(builder, clause, exprs))
         .collect::<Vec<_>>();
-    or_exprs(exprs)
+    or_exprs(rendered)
 }
 
 fn date_range_term(builder: &mut SqlBuilder, q: &crate::types::date::DateRange) -> SqlTerm {

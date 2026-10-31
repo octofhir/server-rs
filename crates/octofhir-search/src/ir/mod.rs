@@ -35,7 +35,7 @@ pub use registry::{
     resolve_resource_column_param, search_type_name,
 };
 pub use render::{
-    render_composite_clauses_as_or, render_date_column_clauses_as_or,
+    DateInplaceExprs, render_composite_clauses_as_or, render_date_column_clauses_as_or,
     render_date_inplace_clauses_as_or, render_date_text_path_clauses_as_or,
     render_id_clauses_as_or, render_indexed_string_clauses_as_or, render_number_clauses_as_or,
     render_period_path_clauses_as_or, render_quantity_array_clauses_as_or,
