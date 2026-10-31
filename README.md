@@ -148,10 +148,5 @@ just inferno-results     # Generate conformance-results/<timestamp>/
 
 ## License
 
-OctoFHIR is source-available under the [Functional Source License 1.1](LICENSE.md)
-(`FSL-1.1-ALv2`). Use it, modify it and run it in production for your own organisation or your
-clients; what the license does not allow is selling or hosting OctoFHIR itself, or a substitute
-for it, as a commercial product or service. Each release becomes Apache-2.0 two years after it is
-published.
-
-For commercial licensing, contact the author.
+OctoFHIR is open source under the [Apache License 2.0](LICENSE): use it, change it and run it
+anywhere, including commercially. See [NOTICE](NOTICE) for attribution.

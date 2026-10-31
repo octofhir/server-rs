@@ -20,7 +20,7 @@ members = [
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-license = "FSL-1.1-ALv2"
+license = "Apache-2.0"
 authors = ["OctoFHIR Team <funyloony@gmail.com>"]
 repository = "https://github.com/octofhir/server-rs"
 keywords = ["fhir", "healthcare", "server", "api"]

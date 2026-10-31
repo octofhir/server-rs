@@ -1,6 +1,6 @@
 {
 	"name": "octofhir-ui",
-	"license": "FSL-1.1-ALv2",
+	"license": "Apache-2.0",
 	"private": true,
 	"version": "0.1.0",
 	"type": "module",
