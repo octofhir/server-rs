@@ -371,17 +371,81 @@ function getQueryValueSuggestions(
   context: CursorContext,
   metadata: QueryInputMetadata
 ): QuerySuggestion[] {
-  const { resourceType, paramName } = context;
+  const { resourceType, paramName, modifier } = context;
   if (!paramName) return [];
 
-  const fragment = context.fragment.toLowerCase();
+  // Comma separates OR-ed values; only the one under the cursor is being completed.
+  const fragment = context.fragment.slice(context.fragment.lastIndexOf(",") + 1).toLowerCase();
+
+  if (modifier === "missing") return getStaticValueSuggestions(["true", "false"], fragment);
 
   // Special param value suggestions
   if (paramName.startsWith("_")) {
     return getSpecialParamValueSuggestions(paramName, fragment, resourceType, metadata);
   }
 
+  const param = resourceType
+    ? metadata.searchParamsByResource[resourceType]?.find((p) => p.code === paramName)
+    : undefined;
+  if (!modifier && param?.type === "date") return getDateValueSuggestions(fragment);
+  if (!modifier && (param?.type === "number" || param?.type === "quantity")) {
+    return getComparatorSuggestions(fragment, param.comparators);
+  }
   return [];
+}
+
+const COMPARATOR_LABELS: Record<string, string> = {
+  eq: "equal",
+  ne: "not equal",
+  gt: "greater than",
+  lt: "less than",
+  ge: "greater or equal",
+  le: "less or equal",
+  sa: "starts after",
+  eb: "ends before",
+  ap: "approximately",
+};
+
+/** Ready-made ranges relative to today; dates use the local calendar day. */
+function getDateValueSuggestions(fragment: string): QuerySuggestion[] {
+  const day = (offset: number) => {
+    const date = new Date();
+    date.setDate(date.getDate() + offset);
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-");
+  };
+  const presets: Array<[string, string]> = [
+    [day(0), "today"],
+    [`ge${day(-7)}`, "last 7 days"],
+    [`ge${day(-30)}`, "last 30 days"],
+    [`ge${new Date().getFullYear()}-01-01`, "this year"],
+    [`lt${day(0)}`, "before today"],
+  ];
+  return presets
+    .filter(([value]) => value.startsWith(fragment))
+    .map(([value, detail], i) => ({
+      label: value,
+      insertText: value,
+      kind: "value" as const,
+      detail,
+      sortPriority: i,
+    }));
+}
+
+function getComparatorSuggestions(fragment: string, comparators: string[]): QuerySuggestion[] {
+  if (fragment.length > 2 || /\d/.test(fragment)) return [];
+  return comparators
+    .filter((code) => code.startsWith(fragment))
+    .map((code, i) => ({
+      label: code,
+      insertText: code,
+      kind: "prefix" as const,
+      detail: COMPARATOR_LABELS[code],
+      sortPriority: i,
+    }));
 }
 
 function getSpecialParamValueSuggestions(

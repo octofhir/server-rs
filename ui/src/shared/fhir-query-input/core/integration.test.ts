@@ -301,4 +301,24 @@ describe("fhir-query-input integration", () => {
 		const result = getInsertionResult("/fhir/Patient?name=John&birth", "birthdate");
 		expect(result).toBe("/fhir/Patient?name=John&birthdate=");
 	});
+
+	it("date values offer ranges relative to today", () => {
+		const ctx = getCursorContext("/fhir/Patient?birthdate=ge", 26, metadata.resourceTypes);
+		const values = getSuggestions(ctx, metadata);
+		expect(values.length).toBeGreaterThan(0);
+		expect(values.every((s) => s.insertText.startsWith("ge"))).toBe(true);
+	});
+
+	it(":missing offers true and false", () => {
+		const raw = "/fhir/Patient?name:missing=";
+		const ctx = getCursorContext(raw, raw.length, metadata.resourceTypes);
+		expect(ctx.modifier).toBe("missing");
+		expect(getSuggestions(ctx, metadata).map((s) => s.label)).toEqual(["true", "false"]);
+	});
+
+	it("completes only the value after the last comma", () => {
+		const raw = "/fhir/Patient?birthdate=lt2020-01-01,";
+		const ctx = getCursorContext(raw, raw.length, metadata.resourceTypes);
+		expect(getSuggestions(ctx, metadata).length).toBe(5);
+	});
 });

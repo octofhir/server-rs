@@ -74,6 +74,8 @@ export type CursorContext = {
   resourceType?: string;
   resourceId?: string;
   paramName?: string;
+  /** Modifier of the parameter whose value is being typed (`missing` in `gender:missing=`). */
+  modifier?: string;
   paramType?: string;
   fragment: string;
   span: TextSpan;
@@ -95,6 +97,8 @@ export type QuerySuggestion = {
     | "api-endpoint"
     | "structural";
   detail?: string;
+  /** Shown inline on every row, right of the label (e.g. a referenced resource's name). */
+  description?: string;
   documentation?: string;
   sortPriority: number;
 };

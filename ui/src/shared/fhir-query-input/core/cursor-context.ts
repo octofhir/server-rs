@@ -217,6 +217,7 @@ function parseQueryCursorContext(
 		type: "query-value",
 		resourceType,
 		paramName,
+		modifier: colonInParam === -1 ? undefined : paramPart.slice(colonInParam + 1),
 		fragment: valuePart,
 		span: {
 			start: cursorOffset - valuePart.length,

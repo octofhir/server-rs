@@ -2,6 +2,7 @@ import type * as Monaco from "monaco-editor";
 import { getCursorContext } from "../../core/cursor-context";
 import { getSuggestions } from "../../core/suggestions";
 import type { QueryInputMetadata, QuerySuggestion } from "../../core/types";
+import { resolveValueSuggestions } from "../../services/value-sources";
 import { LANGUAGE_ID } from "./language";
 
 const SUGGESTION_KIND_MAP: Record<string, number> = {
@@ -28,7 +29,7 @@ export function createCompletionProvider(
     provideCompletionItems(
       model: Monaco.editor.ITextModel,
       position: Monaco.Position
-    ): Monaco.languages.CompletionList {
+    ): Monaco.languages.ProviderResult<Monaco.languages.CompletionList> {
       const lineContent = model.getLineContent(position.lineNumber);
       const cursorOffset = position.column - 1;
       const metadata = getMetadata();
@@ -77,9 +78,21 @@ export function createCompletionProvider(
         position.lineNumber
       );
 
-      return {
-        suggestions: suggestions.map((s, i) => toMonacoItem(s, fragmentRange ?? range, i)),
-      };
+      const itemRange = fragmentRange ?? range;
+      const items = suggestions.map((s, i) => toMonacoItem(s, itemRange, i));
+      if (context.type !== "query-value") return { suggestions: items };
+
+      // Codes and referenced resources come from the server; static ones show either way.
+      return resolveValueSuggestions(context, metadata).then(
+        ({ suggestions: live, incomplete }) => ({
+          suggestions: [
+            ...items,
+            ...live.map((s, i) => toMonacoItem(s, itemRange, items.length + i)),
+          ],
+          incomplete,
+        }),
+        () => ({ suggestions: items })
+      );
     },
   };
 }
@@ -90,7 +103,9 @@ function toMonacoItem(
   index: number
 ): Monaco.languages.CompletionItem {
   return {
-    label: suggestion.label,
+    label: suggestion.description
+      ? { label: suggestion.label, description: suggestion.description }
+      : suggestion.label,
     kind: SUGGESTION_KIND_MAP[suggestion.kind] ?? 18, // Text
     insertText: suggestion.insertText,
     filterText: suggestion.filterText,
@@ -145,13 +160,13 @@ function getFragmentRange(
     }
   }
 
-  // Query value: replace from after "="
+  // Query value: replace the value under the cursor (after "=", or after "," between OR-ed values)
   if (contextType === "query-value") {
-    const lastEquals = before.lastIndexOf("=");
-    if (lastEquals >= 0) {
+    const valueStart = Math.max(before.lastIndexOf("="), before.lastIndexOf(","));
+    if (valueStart >= 0) {
       return {
         startLineNumber: lineNumber,
-        startColumn: lastEquals + 2,
+        startColumn: valueStart + 2,
         endLineNumber: lineNumber,
         endColumn: cursorOffset + 1,
       };

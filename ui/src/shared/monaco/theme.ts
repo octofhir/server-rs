@@ -80,6 +80,11 @@ const DARK_COLORS: monaco.editor.IColors = {
   "editorSuggestWidget.border": "#26272b",
   "editorSuggestWidget.foreground": "#ededef",
   "editorSuggestWidget.selectedBackground": "#2b220d",
+  "editorSuggestWidget.selectedForeground": "#ededef",
+  "editorSuggestWidget.selectedIconForeground": "#ededef",
+  "editorSuggestWidget.highlightForeground": "#f7c95a", // --octo-accent-primary-text
+  "editorSuggestWidget.focusHighlightForeground": "#f7c95a",
+  "list.activeSelectionForeground": "#ededef",
   "editorHoverWidget.background": "#18191c",
   "editorHoverWidget.border": "#26272b",
   "input.background": "#111214",
@@ -115,6 +120,12 @@ const LIGHT_COLORS: monaco.editor.IColors = {
   "editorSuggestWidget.border": "#e4e4e7",
   "editorSuggestWidget.foreground": "#18181b",
   "editorSuggestWidget.selectedBackground": "#fdf3d7",
+  // The base light theme draws the focused row's text white; keep it readable on the pale fill.
+  "editorSuggestWidget.selectedForeground": "#18181b",
+  "editorSuggestWidget.selectedIconForeground": "#18181b",
+  "editorSuggestWidget.highlightForeground": "#855700", // --octo-accent-primary-text
+  "editorSuggestWidget.focusHighlightForeground": "#855700",
+  "list.activeSelectionForeground": "#18181b",
   "editorHoverWidget.background": "#ffffff",
   "editorHoverWidget.border": "#e4e4e7",
   "input.background": "#ffffff",
