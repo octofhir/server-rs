@@ -125,6 +125,7 @@ async fn user_password_hashes_never_leave_the_server() {
         format!("{fhir}/User?username=dana.nurse"),
         format!("{fhir}/User/_history"),
         format!("{fhir}/User/{id}/_history"),
+        format!("{fhir}/_history"),
         format!("{root}/User/{id}"),
         format!("{root}/User"),
     ] {

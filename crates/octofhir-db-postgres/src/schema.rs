@@ -468,7 +468,8 @@ impl SchemaManager {
         Self::HISTORYLESS_TABLES.contains(&table)
     }
 
-    /// Lists all resource tables (excludes history and system tables).
+    /// Lists the resource tables that keep history (excludes history, system and
+    /// [`Self::HISTORYLESS_TABLES`]), i.e. the sources of system-level history.
     #[instrument(skip(self))]
     pub async fn list_tables(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
@@ -491,7 +492,11 @@ impl SchemaManager {
         .await
         .map_err(PostgresError::from)?;
 
-        Ok(rows.into_iter().map(|(t,)| t).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(t,)| t)
+            .filter(|t| !Self::skips_history(t))
+            .collect())
     }
 }
 
