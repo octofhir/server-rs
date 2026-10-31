@@ -22,6 +22,8 @@
 
 use crate::operations::handler::OperationLevel;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures_util::{StreamExt, stream};
 use octofhir_fhir_model::provider::ModelProvider;
@@ -32,6 +34,7 @@ use uuid::Uuid;
 
 use crate::async_jobs::AsyncJobRequest;
 use crate::config::BulkImportConfig;
+use crate::egress::EgressPolicy;
 use crate::operations::handler::{OperationError, OperationHandler};
 use crate::server::AppState;
 
@@ -583,16 +586,23 @@ fn parse_source_url(value: &str) -> Result<reqwest::Url, String> {
     Ok(url)
 }
 
-fn source_client(timeout: std::time::Duration) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+/// HTTP client for import sources: only addresses `egress` allows, and redirects only within
+/// the source's origin.
+fn source_client(
+    timeout: std::time::Duration,
+    egress: Arc<EgressPolicy>,
+) -> Result<reqwest::Client, String> {
+    egress
+        .client_builder()
         .connect_timeout(timeout)
         .read_timeout(timeout)
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
             let target = attempt.url();
             if attempt.previous().len() >= 10 {
                 return attempt.error("Import redirect limit exceeded");
             }
             if parse_source_url(target.as_str()).is_err()
+                || egress.check_url(target).is_err()
                 || attempt
                     .previous()
                     .first()
@@ -614,13 +624,18 @@ async fn download_source(
     client: &reqwest::Client,
     url: &str,
     max_bytes: u64,
+    egress: &EgressPolicy,
 ) -> Result<(tokio::fs::File, String), String> {
     let url = parse_source_url(url)?;
+    egress.check_url(&url)?;
     let mut response = client.get(url).send().await.map_err(|error| {
         if error.is_timeout() {
             "Import source request timed out".into()
         } else {
-            format!("Import source request failed: {}", error.without_url())
+            format!(
+                "Import source request failed: {}",
+                crate::egress::describe_error(&error.without_url())
+            )
         }
     })?;
     if !response.status().is_success() {
@@ -719,7 +734,8 @@ pub async fn execute_bulk_import(
     let skip_validation = params["skip_validation"]
         .as_bool()
         .ok_or("Missing skip_validation in import job")?;
-    let http_client = source_client(state.config.read_timeout())?;
+    let egress = Arc::new(EgressPolicy::from_server_config(&state.config.server)?);
+    let http_client = source_client(state.config.read_timeout(), egress.clone())?;
     let mut total_created = 0usize;
     let mut error_details = Vec::new();
     for (idx, input) in inputs.iter().enumerate() {
@@ -728,7 +744,7 @@ pub async fn execute_bulk_import(
             .map_err(|error| error.to_string())?;
         tracing::info!(%job_id, resource_type = %input.resource_type, input_index = idx, "Downloading import source");
         let (file, digest) =
-            download_source(&http_client, &input.url, config.max_source_bytes).await?;
+            download_source(&http_client, &input.url, config.max_source_bytes, &egress).await?;
         let attestation = crate::async_jobs::CheckpointStep::new(format!("import-source-{idx}"), &json!({"url":input.url,"type":input.resource_type,"sha256":digest,"batch_size":batch_size,"max_batch_bytes":config.max_batch_bytes,"skip_validation":skip_validation})).map_err(|error| error.to_string())?;
         if state
             .async_job_manager
@@ -890,10 +906,19 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(300)))
             .mount(&source)
             .await;
-        let client = source_client(Duration::from_millis(100)).unwrap();
-        let (file, digest) = download_source(&client, &format!("{}/same", source.uri()), 1000)
-            .await
-            .unwrap();
+        let client = source_client(
+            Duration::from_millis(100),
+            Arc::new(EgressPolicy::permissive()),
+        )
+        .unwrap();
+        let (file, digest) = download_source(
+            &client,
+            &format!("{}/same", source.uri()),
+            1000,
+            &EgressPolicy::permissive(),
+        )
+        .await
+        .unwrap();
         assert_eq!(digest, hex::encode(Sha256::digest(body.as_bytes())));
         let mut reader = tokio::io::BufReader::with_capacity(2, file);
         assert_eq!(
@@ -906,21 +931,32 @@ mod tests {
         );
         assert!(read_source_line(&mut reader, 100).await.unwrap().is_none());
         assert!(
-            download_source(&client, &format!("{}/data", source.uri()), 1)
-                .await
-                .is_err()
+            download_source(
+                &client,
+                &format!("{}/data", source.uri()),
+                1,
+                &EgressPolicy::permissive()
+            )
+            .await
+            .is_err()
         );
         assert!(
-            download_source(&client, &format!("{}/other", source.uri()), 1000)
-                .await
-                .is_err()
+            download_source(
+                &client,
+                &format!("{}/other", source.uri()),
+                1000,
+                &EgressPolicy::permissive()
+            )
+            .await
+            .is_err()
         );
         assert!(other.received_requests().await.unwrap().is_empty());
         assert!(
             download_source(
                 &client,
                 &format!("{}/slow?secret=never-log", source.uri()),
-                1000
+                1000,
+                &EgressPolicy::permissive()
             )
             .await
             .unwrap_err()
@@ -933,5 +969,21 @@ mod tests {
             read_source_line(&mut trailing, 4).await.unwrap().unwrap(),
             b"abcd"
         );
+    }
+
+    #[tokio::test]
+    async fn import_refuses_private_sources_unless_allowed() {
+        let strict = EgressPolicy::new(false, &[]).unwrap();
+        let client = source_client(Duration::from_millis(500), Arc::new(strict.clone())).unwrap();
+        for url in [
+            "http://127.0.0.1:9/Patient.ndjson",
+            "http://169.254.169.254/latest/meta-data",
+            "http://localhost:9/Patient.ndjson",
+        ] {
+            let error = download_source(&client, url, 1000, &strict)
+                .await
+                .unwrap_err();
+            assert!(error.contains("outbound_allowlist"), "{url}: {error}");
+        }
     }
 }

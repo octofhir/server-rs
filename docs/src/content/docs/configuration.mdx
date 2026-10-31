@@ -42,7 +42,33 @@ port = 8888               # Listen port
 read_timeout_ms = 15000   # Read timeout (15s)
 write_timeout_ms = 15000  # Write timeout (15s)
 body_limit_bytes = 1048576  # Max request body (1 MiB)
+
+# Outbound requests to client-chosen URLs (subscription rest-hooks, $import sources)
+allow_private_outbound = true   # default; set false on shared deployments
+outbound_allowlist = []         # with false: private networks/hosts still reachable
 ```
+
+### Outbound requests
+
+Subscription rest-hook endpoints and `$import` source URLs are chosen by API clients, so the
+server would call whatever they name, including its own network (loopback admin ports, other
+internal services, the cloud metadata endpoint at `169.254.169.254`). With
+`allow_private_outbound = false` the server only calls public addresses, plus what you list:
+
+```toml
+[server]
+allow_private_outbound = false
+outbound_allowlist = [
+  "172.18.0.0/16",       # a Docker network
+  "10.0.4.17",           # a single address
+  "etl-service",         # a host name (it may resolve to any address)
+  "*.internal.example",  # any subdomain
+]
+```
+
+Host names are checked when they are resolved, so a name that later points at a private
+address is refused too; webhooks don't follow redirects. A subscription whose endpoint is a
+refused address goes to `error` with the reason.
 
 ---
 

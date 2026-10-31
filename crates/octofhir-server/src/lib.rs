@@ -21,6 +21,7 @@ pub mod canonical;
 pub mod compartments;
 pub mod config;
 pub mod config_manager;
+pub mod egress;
 pub mod events;
 pub mod gateway;
 pub mod handlers;

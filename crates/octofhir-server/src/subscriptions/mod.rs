@@ -92,6 +92,9 @@ pub struct SubscriptionState {
     /// Whether `[subscriptions.email]` configures a provider for email channels
     pub email_configured: bool,
 
+    /// Which addresses rest-hook endpoints may reach
+    pub egress: Arc<crate::egress::EgressPolicy>,
+
     /// Shutdown handle for delivery processor (kept alive for server lifetime)
     pub delivery_shutdown: Option<Arc<tokio::sync::watch::Sender<bool>>>,
 }
@@ -127,6 +130,10 @@ impl SubscriptionState {
             websocket_registry,
             enabled: app_state.config.subscriptions.enabled,
             email_configured: app_state.config.subscriptions.email.is_some(),
+            egress: Arc::new(
+                crate::egress::EgressPolicy::from_server_config(&app_state.config.server)
+                    .map_err(SubscriptionError::InvalidSubscription)?,
+            ),
             delivery_shutdown: None, // Set by server.rs when delivery processor starts
         })
     }
@@ -140,6 +147,7 @@ impl SubscriptionState {
             self.event_storage.clone(),
             self.enabled,
             self.email_configured,
+            self.egress.clone(),
         )
     }
 }

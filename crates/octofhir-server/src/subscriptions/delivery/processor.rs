@@ -54,7 +54,7 @@ impl DeliveryProcessor {
         Self {
             event_storage,
             subscription_manager,
-            rest_hook_channel: RestHookChannel::new(),
+            rest_hook_channel: RestHookChannel::default(),
             websocket_registry,
             email_channel: None,
             batch_size: 10,
@@ -81,6 +81,12 @@ impl DeliveryProcessor {
         self.email_channel = Some(EmailChannel::with_smtp(
             host, port, tls, username, password, from_email,
         ));
+        self
+    }
+
+    /// Which addresses rest-hook endpoints may reach.
+    pub fn with_egress(mut self, egress: std::sync::Arc<crate::egress::EgressPolicy>) -> Self {
+        self.rest_hook_channel = RestHookChannel::new(egress);
         self
     }
 

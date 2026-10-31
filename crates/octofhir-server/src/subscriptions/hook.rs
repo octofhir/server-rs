@@ -20,6 +20,7 @@ use super::types::{
     NotificationBundleBuilder, SubscriptionChannel, SubscriptionEventType, SubscriptionStatus,
     TriggerInteraction,
 };
+use crate::egress::EgressPolicy;
 
 /// Hook that captures resource events and dispatches to matching subscriptions.
 pub struct SubscriptionHook {
@@ -40,6 +41,9 @@ pub struct SubscriptionHook {
 
     /// Whether an email provider is configured, so `email` channels can be served.
     email_configured: bool,
+
+    /// Which addresses rest-hook endpoints may point at.
+    egress: Arc<EgressPolicy>,
 }
 
 impl SubscriptionHook {
@@ -51,6 +55,7 @@ impl SubscriptionHook {
         event_storage: Arc<SubscriptionEventStorage>,
         enabled: bool,
         email_configured: bool,
+        egress: Arc<EgressPolicy>,
     ) -> Self {
         Self {
             topic_registry,
@@ -59,6 +64,7 @@ impl SubscriptionHook {
             event_storage,
             enabled,
             email_configured,
+            egress,
         }
     }
 
@@ -102,17 +108,21 @@ impl SubscriptionHook {
         // The delivery processor has no message transport, and email needs a provider in
         // [subscriptions.email]; otherwise every notification on these channels would fail.
         let unsupported = match subscription.channel {
-            SubscriptionChannel::Message { .. } => Some("The message channel is not supported"),
-            SubscriptionChannel::Email { .. } if !self.email_configured => {
-                Some("Email delivery is not configured on this server")
+            SubscriptionChannel::Message { .. } => {
+                Some("The message channel is not supported".to_string())
             }
-            SubscriptionChannel::Email { .. } => None,
-            SubscriptionChannel::RestHook { .. } | SubscriptionChannel::WebSocket { .. } => None,
+            SubscriptionChannel::Email { .. } if !self.email_configured => {
+                Some("Email delivery is not configured on this server".to_string())
+            }
+            SubscriptionChannel::Email { .. } | SubscriptionChannel::WebSocket { .. } => None,
+            SubscriptionChannel::RestHook { ref endpoint, .. } => {
+                rest_hook_problem(endpoint, &self.egress)
+            }
         };
         if let Some(reason) = unsupported {
             return self
                 .subscription_manager
-                .set_error(&subscription.id, reason)
+                .set_error(&subscription.id, &reason)
                 .await;
         }
 
@@ -266,6 +276,16 @@ impl SubscriptionHook {
 
         Ok(())
     }
+}
+
+/// Why a rest-hook endpoint can't be served: not an http(s) URL, or a private address the
+/// server is not allowed to call (see [`crate::egress`]).
+fn rest_hook_problem(endpoint: &str, egress: &EgressPolicy) -> Option<String> {
+    let url = match reqwest::Url::parse(endpoint) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") => url,
+        _ => return Some(format!("Endpoint {endpoint:?} is not an http(s) URL")),
+    };
+    egress.check_url(&url).err()
 }
 
 #[async_trait]

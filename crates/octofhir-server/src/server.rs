@@ -1697,6 +1697,12 @@ async fn build_app_with_runtime(
 
     // SubscriptionHook: dispatches resource events to matching FHIR subscriptions
     // This will be fully initialized later once AppState is ready
+    // Which addresses subscription rest-hooks may call (validated with the config).
+    let egress = Arc::new(
+        crate::egress::EgressPolicy::from_server_config(&cfg.server)
+            .map_err(|e| anyhow::anyhow!(e))?,
+    );
+
     let mut subscription_state = {
         // Create event storage
         let event_storage = Arc::new(crate::subscriptions::SubscriptionEventStorage::new(
@@ -1725,6 +1731,7 @@ async fn build_app_with_runtime(
             event_storage.clone(),
             cfg.subscriptions.enabled,
             cfg.subscriptions.email.is_some(),
+            egress.clone(),
         );
         hook_registry
             .register_resource(Arc::new(subscription_hook))
@@ -1743,6 +1750,7 @@ async fn build_app_with_runtime(
             websocket_registry,
             enabled: cfg.subscriptions.enabled,
             email_configured: cfg.subscriptions.email.is_some(),
+            egress: egress.clone(),
             delivery_shutdown: None,
         }
     };
@@ -1766,6 +1774,7 @@ async fn build_app_with_runtime(
             subscription_state.subscription_manager.clone(),
             subscription_state.websocket_registry.clone(),
         );
+        processor = processor.with_egress(egress.clone());
         if let Some(email) = cfg.subscriptions.email.clone() {
             processor = match (email.smtp_host, email.sendgrid_api_key) {
                 (Some(host), _) => processor.with_smtp_email(

@@ -4387,6 +4387,7 @@ dependencies = [
  "include_dir",
  "indexmap 2.14.0",
  "insta",
+ "ipnetwork",
  "json-patch",
  "lettre",
  "memchr",

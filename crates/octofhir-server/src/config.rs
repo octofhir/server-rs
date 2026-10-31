@@ -68,6 +68,7 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
+        crate::egress::EgressPolicy::from_server_config(&self.server)?;
         if let Some(email) = &self.subscriptions.email
             && email.smtp_host.is_none()
             && email.sendgrid_api_key.is_none()
@@ -228,8 +229,21 @@ pub struct ServerConfig {
     pub body_limit_bytes: usize,
     #[serde(default)]
     pub compression: bool,
+    /// Let subscription rest-hooks and `$import` reach any loopback, private or link-local
+    /// address. On by default. Clients choose those URLs, so on a shared deployment turn it off
+    /// and list the internal services that may be called in `outbound_allowlist`.
+    #[serde(default = "default_allow_private_outbound")]
+    pub allow_private_outbound: bool,
+    /// With `allow_private_outbound = false`: private networks and hosts that rest-hooks and
+    /// `$import` may still reach, e.g. a source service on the same Docker network:
+    /// `["172.18.0.0/16", "etl-service", "*.internal"]`.
+    #[serde(default)]
+    pub outbound_allowlist: Vec<String>,
 }
 
+fn default_allow_private_outbound() -> bool {
+    true
+}
 fn default_host() -> String {
     "0.0.0.0".into()
 }
@@ -273,6 +287,8 @@ impl Default for ServerConfig {
                 default_conditional_reference_total_candidates(),
             body_limit_bytes: default_body_limit(),
             compression: false,
+            allow_private_outbound: default_allow_private_outbound(),
+            outbound_allowlist: Vec::new(),
         }
     }
 }

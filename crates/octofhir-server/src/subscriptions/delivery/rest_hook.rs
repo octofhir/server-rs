@@ -2,12 +2,14 @@
 //!
 //! Delivers subscription notifications via HTTP POST to the configured endpoint.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use reqwest::{Client, header};
 
 use super::DeliveryChannel;
+use crate::egress::EgressPolicy;
 use crate::subscriptions::SubscriptionEvent;
 use crate::subscriptions::error::{SubscriptionError, SubscriptionResult};
 use crate::subscriptions::types::{ActiveSubscription, DeliveryResult, SubscriptionChannel};
@@ -16,29 +18,37 @@ use crate::subscriptions::types::{ActiveSubscription, DeliveryResult, Subscripti
 pub struct RestHookChannel {
     /// HTTP client for making requests
     client: Client,
+    /// Which endpoint addresses may be called.
+    egress: Arc<EgressPolicy>,
 }
 
 impl RestHookChannel {
-    /// Create a new REST-hook channel.
-    pub fn new() -> Self {
-        let client = Client::builder()
+    /// Create a REST-hook channel whose requests only reach addresses `egress` allows.
+    pub fn new(egress: Arc<EgressPolicy>) -> Self {
+        let client = egress
+            .client_builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(10))
+            // A redirect to an IP literal would skip the address check; webhooks don't need them.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("Failed to create HTTP client");
 
-        Self { client }
+        Self { client, egress }
     }
 
     /// Create with a custom client.
     pub fn with_client(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            egress: Arc::default(),
+        }
     }
 }
 
 impl Default for RestHookChannel {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::default())
     }
 }
 
@@ -65,12 +75,18 @@ impl DeliveryChannel for RestHookChannel {
             ));
         };
 
+        let url = reqwest::Url::parse(endpoint)
+            .map_err(|e| SubscriptionError::DeliveryError(format!("Invalid endpoint: {e}")))?;
+        self.egress
+            .check_url(&url)
+            .map_err(SubscriptionError::DeliveryError)?;
+
         let start = Instant::now();
 
         // Build request
         let mut request = self
             .client
-            .post(endpoint)
+            .post(url)
             .header(header::CONTENT_TYPE, content_type.as_str());
 
         // Add custom headers
@@ -137,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_rest_hook_channel_name() {
-        let channel = RestHookChannel::new();
+        let channel = RestHookChannel::default();
         assert_eq!(channel.name(), "rest-hook");
     }
 }

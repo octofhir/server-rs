@@ -79,6 +79,7 @@ opentelemetry_sdk = { workspace = true }
 hostname = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }
+ipnetwork = { workspace = true }
 time = { workspace = true }
 json-patch = { workspace = true }
 octofhir-fhirpath = { workspace = true }
