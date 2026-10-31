@@ -18,7 +18,7 @@ export function ToolWorkspaceLayout({
 	return (
 		<WorkspacePageLayout
 			{...props}
-			className={className}
+			className={[classes.root, className].filter(Boolean).join(" ")}
 			bodyClassName={classes.body}
 			contentClassName={classes.content}
 		>
