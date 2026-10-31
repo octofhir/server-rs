@@ -89,7 +89,7 @@ async fn smart_grant_scenario() {
     let mut config = AppConfig::default();
     let export_dir = tempfile::Builder::new()
         .prefix("octofhir-bulk-http-")
-        .tempdir_in("/private/tmp")
+        .tempdir()
         .unwrap();
     config.bulk_export.export_path = export_dir.path().to_str().unwrap().to_owned();
     config.bulk_export.max_resources_per_file = 1;
