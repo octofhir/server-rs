@@ -538,6 +538,33 @@ async fn test_filter_parameter() {
     let _ = shutdown_tx.send(());
 }
 
+/// `_content` (published as an expression-less `string` parameter in R4)
+/// searches the whole resource text.
+#[tokio::test]
+async fn test_content_parameter() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let _patient_ids = create_test_patients(&client, &base).await;
+
+    for (content, expected) in [("Smith", 2), ("Johnson", 1), ("Nobody", 0)] {
+        let resp = client
+            .get(format!("{base}/Patient"))
+            .query(&[("_content", content), ("_total", "accurate")])
+            .header("accept", "application/fhir+json")
+            .send()
+            .await
+            .expect("search request");
+        assert!(resp.status().is_success(), "{content}: {}", resp.status());
+        let bundle: Value = resp.json().await.expect("parse bundle");
+        assert_eq!(get_bundle_total(&bundle), expected, "{content}");
+    }
+
+    let _ = shutdown_tx.send(());
+}
+
 // =============================================================================
 // Date Prefix Tests
 // =============================================================================

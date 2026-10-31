@@ -184,6 +184,16 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    // R4/R4B publish `_content` and `_text` as `string` parameters with no
+    // expression: they search the whole resource / its narrative, which no
+    // path expression describes. Treat them as the special full-text
+    // searches they are, so they stay executable.
+    let param_type = if expression.is_none() && matches!(code.as_str(), "_content" | "_text") {
+        SearchParameterType::Special
+    } else {
+        param_type
+    };
+
     let _xpath = value
         .get("xpath")
         .and_then(|v| v.as_str())
@@ -425,6 +435,23 @@ mod tests {
         assert_eq!(param.param_type, SearchParameterType::String);
         assert_eq!(param.base, vec!["Patient"]);
         assert_eq!(param.expression.as_deref(), Some("Patient.name"));
+    }
+
+    #[test]
+    fn r4_full_text_parameters_stay_executable() {
+        // As published in hl7.fhir.r4.core: type string, no expression.
+        for (code, base) in [("_content", "Resource"), ("_text", "DomainResource")] {
+            let param = parse_search_parameter(&json!({
+                "resourceType": "SearchParameter",
+                "url": format!("http://hl7.org/fhir/SearchParameter/{base}-{}", &code[1..]),
+                "code": code,
+                "base": [base],
+                "type": "string"
+            }))
+            .unwrap();
+            assert_eq!(param.param_type, SearchParameterType::Special, "{code}");
+            assert!(param.is_runnable(), "{code}");
+        }
     }
 
     #[test]
