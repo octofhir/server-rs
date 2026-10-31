@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { intervalSeries, routeStats } from "./model";
+import { histogramQuantile, intervalSeries, routeStats } from "./model";
 import { toSnapshot } from "./prometheus";
 
 function scrape(at: number, ok: number, errors: number, seconds: number, p99 = 0.004) {
@@ -56,5 +56,44 @@ describe("performance metrics", () => {
     const [stats] = routeStats([scrape(0, 10, 0, 0.1)], 0);
     expect(stats.rate).toBeNull();
     expect(stats.requests).toBe(10);
+  });
+});
+
+describe("latency histogram", () => {
+  const bucketScrape = (at: number, patient: number[], observation: number[]) =>
+    toSnapshot(
+      [
+        ...["0.005", "0.01", "0.05", "+Inf"].map(
+          (le, index) => `http_request_duration_seconds_bucket{method="GET",path="/fhir/Patient",le="${le}"} ${patient[index]}`
+        ),
+        `http_request_duration_seconds_count{method="GET",path="/fhir/Patient"} ${patient[3]}`,
+        ...["0.005", "0.01", "0.05", "+Inf"].map(
+          (le, index) =>
+            `http_request_duration_seconds_bucket{method="GET",path="/fhir/Observation",le="${le}"} ${observation[index]}`
+        ),
+        `http_request_duration_seconds_count{method="GET",path="/fhir/Observation"} ${observation[3]}`,
+      ].join("\n"),
+      at
+    );
+
+  it("interpolates inside the bucket a quantile falls in", () => {
+    expect(histogramQuantile(0.5, [0.005, 0.01, Number.POSITIVE_INFINITY], [0, 10, 10])).toBeCloseTo(0.0075);
+    expect(histogramQuantile(0.99, [0.005, Number.POSITIVE_INFINITY], [0, 4])).toBe(0.005);
+    expect(histogramQuantile(0.5, [0.005], [0])).toBeNull();
+  });
+
+  it("combines routes for the overall quantiles of an interval", () => {
+    // Interval: 10 Patient requests under 5 ms, 10 Observation requests between 10 and 50 ms.
+    const [point] = intervalSeries([
+      bucketScrape(0, [0, 0, 0, 0], [0, 0, 0, 0]),
+      bucketScrape(2000, [10, 10, 10, 10], [0, 0, 10, 10]),
+    ]);
+    expect(point.quantiles.p50).toBeCloseTo(5);
+    expect(point.quantiles.p99).toBeGreaterThan(10);
+    const [observation] = routeStats(
+      [bucketScrape(0, [0, 0, 0, 0], [0, 0, 0, 0]), bucketScrape(2000, [10, 10, 10, 10], [0, 0, 10, 10])],
+      0
+    ).filter((route) => route.path === "/fhir/Observation");
+    expect(observation.p50).toBeCloseTo(30);
   });
 });

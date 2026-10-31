@@ -11,6 +11,7 @@ const GAP_MS = POLL_INTERVAL_MS * 3;
 
 export const metricsScraped = createEvent<MetricsSnapshot>();
 
+/** Bucket counts only grow with `timed`, so equal `timed` means equal buckets. */
 function sameCounters(a: RouteCounters, b: RouteCounters): boolean {
   return (
     a.timed === b.timed &&
@@ -51,12 +52,55 @@ function total(requests: Record<StatusGroup, number>): number {
   return requests.ok + requests.client + requests.server;
 }
 
+const QUANTILES = { p50: 0.5, p95: 0.95, p99: 0.99 } as const;
+const NO_QUANTILES: Quantiles = { p50: null, p95: null, p99: null };
+
+/** Cumulative bucket counts added between two scrapes of one route. */
+function bucketIncrease(current: number[], previous: number[] | undefined): number[] {
+  return current.map((count, index) => increase(count, previous?.[index] ?? 0));
+}
+
+/**
+ * Quantile of a cumulative histogram, interpolated linearly inside the bucket it falls in
+ * (what Prometheus' histogram_quantile does). Values in the +Inf bucket report its lower bound.
+ */
+export function histogramQuantile(q: number, bounds: number[], cumulative: number[]): number | null {
+  const count = cumulative.at(-1) ?? 0;
+  if (count === 0) return null;
+  const rank = q * count;
+  const index = cumulative.findIndex((value) => value >= rank);
+  if (index < 0) return null;
+  const upper = bounds[index];
+  const lower = index === 0 ? 0 : bounds[index - 1];
+  if (!Number.isFinite(upper)) return lower;
+  const below = index === 0 ? 0 : cumulative[index - 1];
+  const inBucket = cumulative[index] - below;
+  return inBucket === 0 ? upper : lower + (upper - lower) * ((rank - below) / inBucket);
+}
+
+/** p50/p95/p99 in ms of a cumulative histogram. */
+function quantilesMs(bounds: number[], cumulative: number[]): Quantiles {
+  if (cumulative.length === 0 || cumulative.length !== bounds.length) return NO_QUANTILES;
+  const ms = (q: number) => {
+    const seconds = histogramQuantile(q, bounds, cumulative);
+    return seconds == null ? null : seconds * 1000;
+  };
+  return { p50: ms(QUANTILES.p50), p95: ms(QUANTILES.p95), p99: ms(QUANTILES.p99) };
+}
+
+function summaryMs(quantiles: Quantiles): Quantiles {
+  const ms = (seconds: number | null) => (seconds == null ? null : seconds * 1000);
+  return { p50: ms(quantiles.p50), p95: ms(quantiles.p95), p99: ms(quantiles.p99) };
+}
+
 export interface IntervalPoint {
   at: number;
   /** Requests per second by group; `null` marks a gap. */
   rate: Record<StatusGroup, number> | null;
   /** Mean latency over the interval in ms, `null` when nothing was served or for a gap. */
   meanMs: number | null;
+  /** Latency quantiles of all requests in the interval, in ms (histogram servers only). */
+  quantiles: Quantiles;
 }
 
 /** One point per scrape interval (all routes together). */
@@ -67,12 +111,14 @@ export function intervalSeries(snapshots: MetricsSnapshot[]): IntervalPoint[] {
     const current = snapshots[index];
     const elapsed = current.at - previous.at;
     if (elapsed > GAP_MS) {
-      points.push({ at: previous.at + 1, rate: null, meanMs: null });
+      points.push({ at: previous.at + 1, rate: null, meanMs: null, quantiles: NO_QUANTILES });
       continue;
     }
     const rate: Record<StatusGroup, number> = { ok: 0, client: 0, server: 0 };
     let timed = 0;
     let seconds = 0;
+    // Bucket bounds are the same for every route, so their increases add up.
+    const buckets: number[] = current.bounds.map(() => 0);
     for (const [key, route] of Object.entries(current.routes)) {
       const before = previous.routes[key];
       for (const group of STATUS_GROUPS) {
@@ -80,9 +126,17 @@ export function intervalSeries(snapshots: MetricsSnapshot[]): IntervalPoint[] {
       }
       timed += increase(route.timed, before?.timed ?? 0);
       seconds += Math.max(0, route.seconds - (before?.seconds ?? 0));
+      bucketIncrease(route.buckets, before?.buckets).forEach((count, index) => {
+        if (index < buckets.length) buckets[index] += count;
+      });
     }
     for (const group of STATUS_GROUPS) rate[group] /= elapsed / 1000;
-    points.push({ at: current.at, rate, meanMs: timed > 0 ? (seconds / timed) * 1000 : null });
+    points.push({
+      at: current.at,
+      rate,
+      meanMs: timed > 0 ? (seconds / timed) * 1000 : null,
+      quantiles: quantilesMs(current.bounds, buckets),
+    });
   }
   return points;
 }
@@ -91,18 +145,27 @@ export interface QuantilePoint extends Record<keyof Quantiles, number | null> {
   at: number;
 }
 
-/** A route's rolling quantiles at every scrape, in ms. */
+/**
+ * One route's latency quantiles per scrape interval, in ms: from the histogram increase over the
+ * interval, or the exporter's rolling summary on servers without a histogram.
+ */
 export function routeQuantileSeries(snapshots: MetricsSnapshot[], key: string): QuantilePoint[] {
-  const ms = (seconds: number | null | undefined) => (seconds == null ? null : seconds * 1000);
   const points: QuantilePoint[] = [];
-  snapshots.forEach((snapshot, index) => {
+  for (let index = 1; index < snapshots.length; index++) {
     const previous = snapshots[index - 1];
-    if (previous && snapshot.at - previous.at > GAP_MS) {
-      points.push({ at: previous.at + 1, p50: null, p95: null, p99: null });
+    const current = snapshots[index];
+    if (current.at - previous.at > GAP_MS) {
+      points.push({ at: previous.at + 1, ...NO_QUANTILES });
+      continue;
     }
-    const quantiles = snapshot.routes[key]?.quantiles;
-    points.push({ at: snapshot.at, p50: ms(quantiles?.p50), p95: ms(quantiles?.p95), p99: ms(quantiles?.p99) });
-  });
+    const route = current.routes[key];
+    const quantiles = !route
+      ? NO_QUANTILES
+      : route.buckets.length > 0
+        ? quantilesMs(current.bounds, bucketIncrease(route.buckets, previous.routes[key]?.buckets))
+        : summaryMs(route.quantiles);
+    points.push({ at: current.at, ...quantiles });
+  }
   return points;
 }
 
@@ -138,7 +201,10 @@ export function routeStats(snapshots: MetricsSnapshot[], since: number): RouteSt
     const requests = increase(total(route.requests), start ? total(start.requests) : 0);
     const timed = increase(route.timed, start?.timed ?? 0);
     const spent = Math.max(0, route.seconds - (start?.seconds ?? 0));
-    const ms = (value: number | null) => (value == null ? null : value * 1000);
+    const quantiles =
+      route.buckets.length > 0
+        ? quantilesMs(latest.bounds, bucketIncrease(route.buckets, start?.buckets))
+        : summaryMs(route.quantiles);
     return {
       key,
       method: route.method,
@@ -148,9 +214,7 @@ export function routeStats(snapshots: MetricsSnapshot[], since: number): RouteSt
       serverErrors: increase(route.requests.server, start?.requests.server ?? 0),
       clientErrors: increase(route.requests.client, start?.requests.client ?? 0),
       meanMs: timed > 0 ? (spent / timed) * 1000 : null,
-      p50: ms(route.quantiles.p50),
-      p95: ms(route.quantiles.p95),
-      p99: ms(route.quantiles.p99),
+      ...quantiles,
     };
   });
 }

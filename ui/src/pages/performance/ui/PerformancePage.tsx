@@ -108,7 +108,7 @@ const COLUMNS: DataTableColumn<RouteStats>[] = [
   ...(["p50", "p95", "p99"] as const).map(
     (key): DataTableColumn<RouteStats> => ({
       id: key,
-      header: <span title="Over the last minute">{key}</span>,
+      header: <span title="Over the selected window">{key}</span>,
       width: 84,
       align: "right",
       sortable: true,
@@ -159,6 +159,8 @@ export function PerformancePage() {
     [snapshots, range.from]
   );
   const intervals = useMemo(() => intervalSeries(inWindow), [inWindow]);
+  // Servers that export a latency histogram give exact quantiles for any set of routes.
+  const hasHistogram = (latest?.bounds.length ?? 0) > 0;
   const routes = useMemo(() => routeStats(inWindow, range.from), [inWindow, range.from]);
   const selected = routes.find((route) => route.key === selectedKey) ?? null;
   const busy = useMemo(() => routes.filter((route) => route.requests > 0), [routes]);
@@ -169,8 +171,14 @@ export function PerformancePage() {
     () =>
       selected
         ? quantileOption(routeQuantileSeries(inWindow, selected.key), range, colorScheme)
-        : meanLatencyOption(intervals, range, colorScheme),
-    [selected, inWindow, intervals, range, colorScheme]
+        : hasHistogram
+          ? quantileOption(
+              intervals.map((point) => ({ at: point.at, ...point.quantiles })),
+              range,
+              colorScheme
+            )
+          : meanLatencyOption(intervals, range, colorScheme),
+    [selected, inWindow, intervals, range, colorScheme, hasHistogram]
   );
 
   const lastInterval = intervals.at(-1);
@@ -313,7 +321,9 @@ export function PerformancePage() {
                     </button>
                   </>
                 ) : (
-                  <span className={classes.panelCaption}>mean of all routes · pick a route for p50–p99</span>
+                  <span className={classes.panelCaption}>
+                    {hasHistogram ? "all routes" : "mean of all routes"} · pick a route to narrow it
+                  </span>
                 )}
               </header>
               <Chart option={latency} height={CHART_HEIGHT} notMerge aria-label="Latency over time" />
@@ -324,7 +334,7 @@ export function PerformancePage() {
             <header className={classes.panelHeader}>
               <h2 className={classes.panelTitle}>Routes</h2>
               <span className={classes.panelCaption}>
-                {inWindow.length > 1 ? `over ${windowLabel}` : "since server start"} · quantiles over the last minute
+                {inWindow.length > 1 ? `over ${windowLabel}` : "since server start"}
               </span>
               {idleCount > 0 && (
                 <Button

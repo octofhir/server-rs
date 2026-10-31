@@ -7,7 +7,7 @@
 //! - FHIR-specific metrics (resources by type)
 
 use metrics::{counter, gauge, histogram};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -37,6 +37,13 @@ pub mod names {
     pub const FHIR_OPERATIONS_TOTAL: &str = "fhir_operations_total";
 }
 
+/// Upper bounds (seconds) of the request latency histogram: 1 ms to 10 s, dense below 100 ms
+/// where most FHIR requests land.
+const HTTP_LATENCY_BUCKETS: &[f64] = &[
+    0.001, 0.0025, 0.005, 0.0075, 0.01, 0.015, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+    10.0,
+];
+
 /// Initialize the Prometheus metrics exporter.
 ///
 /// This should be called once at server startup.
@@ -47,8 +54,22 @@ pub fn init_metrics() -> bool {
         return false;
     }
 
+    // Request latency is exported as a histogram, not the default summary: bucket counts add up
+    // across routes and over any time window, so the console and Prometheus can compute exact
+    // overall p50/p95/p99 (summary quantiles can't be combined).
+    let builder = match PrometheusBuilder::new().set_buckets_for_metric(
+        Matcher::Full(names::HTTP_REQUEST_DURATION_SECONDS.to_string()),
+        HTTP_LATENCY_BUCKETS,
+    ) {
+        Ok(builder) => builder,
+        Err(e) => {
+            tracing::error!(error = %e, "Invalid latency histogram buckets");
+            return false;
+        }
+    };
+
     // Use install_recorder() for pull-based metrics (we serve /metrics ourselves)
-    match PrometheusBuilder::new().install_recorder() {
+    match builder.install_recorder() {
         Ok(handle) => {
             if PROMETHEUS_HANDLE.set(handle).is_err() {
                 tracing::warn!("Failed to store Prometheus handle (already set)");

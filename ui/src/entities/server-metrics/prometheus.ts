@@ -14,16 +14,23 @@ export interface RouteCounters {
   method: string;
   path: string;
   requests: Record<StatusGroup, number>;
-  /** Requests timed by the latency summary. */
+  /** Requests timed by the latency histogram. */
   timed: number;
   seconds: number;
-  /** Latency quantiles over the exporter's rolling window (about a minute), in seconds. */
+  /** Cumulative latency histogram counts, aligned with {@link MetricsSnapshot.bounds}. */
+  buckets: number[];
+  /**
+   * Quantiles from a latency summary, in seconds. Older servers export a summary instead of a
+   * histogram; its quantiles cover the exporter's rolling window (about a minute).
+   */
   quantiles: Quantiles;
 }
 
 export interface MetricsSnapshot {
   at: number;
   routes: Record<string, RouteCounters>;
+  /** Upper bounds (seconds) of the latency histogram buckets, ascending, ending with Infinity. */
+  bounds: number[];
   inFlight: number;
   db: { active: number; idle: number; total: number };
 }
@@ -73,11 +80,14 @@ export function toSnapshot(text: string, at: number): MetricsSnapshot {
       requests: { ok: 0, client: 0, server: 0 },
       timed: 0,
       seconds: 0,
+      buckets: [],
       quantiles: { p50: null, p95: null, p99: null },
     };
     return routes[key];
   };
-  const snapshot: MetricsSnapshot = { at, routes, inFlight: 0, db: { active: 0, idle: 0, total: 0 } };
+  const snapshot: MetricsSnapshot = { at, routes, bounds: [], inFlight: 0, db: { active: 0, idle: 0, total: 0 } };
+  /** Per route: upper bound -> cumulative count, in exposition order. */
+  const histograms = new Map<RouteCounters, Map<number, number>>();
 
   for (const { name, labels, value } of parseSamples(text)) {
     switch (name) {
@@ -88,6 +98,15 @@ export function toSnapshot(text: string, at: number): MetricsSnapshot {
         const key = QUANTILE_KEYS[labels.quantile ?? ""];
         // The exporter reports 0 once its window has no samples; that is "no data", not 0 ms.
         if (key) route(labels).quantiles[key] = Number.isFinite(value) && value > 0 ? value : null;
+        break;
+      }
+      case "http_request_duration_seconds_bucket": {
+        const bound = labels.le === "+Inf" ? Number.POSITIVE_INFINITY : Number(labels.le);
+        if (Number.isNaN(bound)) break;
+        const counters = route(labels);
+        const histogram = histograms.get(counters) ?? new Map<number, number>();
+        histogram.set(bound, value);
+        histograms.set(counters, histogram);
         break;
       }
       case "http_request_duration_seconds_count":
@@ -109,6 +128,13 @@ export function toSnapshot(text: string, at: number): MetricsSnapshot {
         snapshot.db.total = value;
         break;
     }
+  }
+  const bounds = [...new Set([...histograms.values()].flatMap((histogram) => [...histogram.keys()]))].sort(
+    (a, b) => a - b
+  );
+  snapshot.bounds = bounds;
+  for (const [counters, histogram] of histograms) {
+    counters.buckets = bounds.map((bound) => histogram.get(bound) ?? 0);
   }
   return snapshot;
 }
