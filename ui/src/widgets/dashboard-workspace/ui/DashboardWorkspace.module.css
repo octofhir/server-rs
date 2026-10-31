@@ -103,6 +103,52 @@
 	color: var(--octo-text-muted);
 }
 
+/* First-run panel on an empty server. */
+.welcome {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	padding: 14px 16px;
+	border: 1px solid var(--octo-border-subtle);
+	border-radius: var(--octo-radius-lg);
+	background: var(--octo-surface-2);
+}
+
+.welcomeIcon {
+	flex: none;
+	color: var(--octo-accent-primary-text);
+}
+
+.welcomeText {
+	flex: 1;
+	min-width: 0;
+}
+
+.welcomeTitle {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--octo-text-primary);
+}
+
+.welcomeBody {
+	margin: 2px 0 0;
+	font-size: 13px;
+	color: var(--octo-text-secondary);
+}
+
+.code {
+	font-family: var(--octo-typography-mono);
+	font-size: 12px;
+	color: var(--octo-text-primary);
+}
+
+.welcomeActions {
+	display: flex;
+	flex: none;
+	gap: 8px;
+}
+
 .columns {
 	display: grid;
 	grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);

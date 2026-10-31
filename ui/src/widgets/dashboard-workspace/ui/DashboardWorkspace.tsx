@@ -6,11 +6,12 @@ import {
 	getResourceDisplayName,
 	ReferenceLink,
 } from "@octofhir/ui-kit";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { Boxes, FileText, Send, Terminal } from "lucide-react";
+import { BookOpen, Boxes, DatabaseZap, FileText, Send, Terminal } from "lucide-react";
 import { useMemo } from "react";
+import { useLoadDemoData } from "@/entities/demo-data";
 import { getFhirCatalogSummary } from "@/entities/fhir-catalog";
 import { getHealthStatusView } from "@/entities/system-health";
 import { fhirClient } from "@/shared/api";
@@ -131,6 +132,15 @@ export function DashboardWorkspace({ onNavigate }: DashboardWorkspaceProps) {
 		largest.items.slice(0, RECENT_SOURCE_TYPES).map((item) => item.type),
 	);
 
+	// No patients is the clearest sign of a fresh server: offer sample data instead of empty tables.
+	const patients = useQuery({
+		queryKey: ["dashboard", "count", "Patient"],
+		queryFn: () => fhirClient.search("Patient", { _summary: "count" }),
+		staleTime: 30_000,
+	});
+	const isEmptyServer = patients.data?.total === 0;
+	const loadDemoData = useLoadDemoData();
+
 	const healthView = getHealthStatusView(health?.status);
 	const catalogSummary = getFhirCatalogSummary(catalog);
 	const maxRows = largest.items[0]?.rows ?? 1;
@@ -240,6 +250,34 @@ export function DashboardWorkspace({ onNavigate }: DashboardWorkspaceProps) {
 					);
 				})}
 			</section>
+
+			{isEmptyServer && (
+				<section className={classes.welcome} aria-label="Get started">
+					<DatabaseZap size={20} className={classes.welcomeIcon} aria-hidden="true" />
+					<div className={classes.welcomeText}>
+						<h2 className={classes.welcomeTitle}>This server has no data yet</h2>
+						<p className={classes.welcomeBody}>
+							Load a small sample clinic (30 patients with encounters, vitals and conditions) to try
+							search, the consoles and the resource browser. Every resource carries the{" "}
+							<code className={classes.code}>demo-data</code> tag.
+						</p>
+					</div>
+					<div className={classes.welcomeActions}>
+						<Button variant="filled" loading={loadDemoData.isPending} onClick={() => loadDemoData.mutate()}>
+							Load demo data
+						</Button>
+						<Button
+							variant="outline"
+							onClick={() => window.open("https://octofhir.github.io/server-rs/getting-started/", "_blank")}
+						>
+							<Button.Icon side="left">
+								<BookOpen size={14} />
+							</Button.Icon>
+							Docs
+						</Button>
+					</div>
+				</section>
+			)}
 
 			<div className={classes.columns}>
 				<section className={classes.panel}>
