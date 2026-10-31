@@ -1747,20 +1747,52 @@ pub fn quantity_hull_value_jsonpath(segments: &[String]) -> String {
     s
 }
 
-/// Whole-resource code containment SQL for a composite token component, OR'd over
-/// every location (top-level and array-wrapped `component`), as INLINE literals so a
-/// partial composite index `WHERE <this>` is provably usable. Used by BOTH the
-/// composite render and the partial-index DDL so the two expressions match textually.
+/// Whole-resource code match SQL for a composite token component at every location
+/// (top-level and `component`), as an INLINE literal so a partial composite index
+/// `WHERE <this>` is provably usable. Used by BOTH the composite render and the
+/// partial-index DDL so the two expressions match textually.
 /// `code`/`system` come from the parsed token value (`system|code`, system optional).
+///
+/// One location is a `@>` containment. Several are ONE `@?` jsonpath rather than an
+/// OR of containments: the planner cannot tell that a BitmapOr over the document
+/// GIN only repeats the partial index's predicate, so it ANDs that bitmap — every
+/// row carrying the code — into the partial hull scan. A single clause equal to the
+/// predicate is recognised as redundant and skipped.
 pub fn composite_token_containment_sql(
     col: &str,
     token_paths: &[Vec<String>],
     system: Option<&str>,
     code: &str,
 ) -> String {
-    composite_token_match_sql(token_paths, system, code, |doc| {
-        format!("{col} @> '{doc}'::jsonb")
-    })
+    if token_paths.len() < 2 {
+        return composite_token_match_sql(token_paths, system, code, |doc| {
+            format!("{col} @> '{doc}'::jsonb")
+        });
+    }
+    let q = |v: &str| v.replace('\\', "\\\\").replace('"', "\\\"");
+    let arms: Vec<String> = token_paths
+        .iter()
+        .map(|p| {
+            let member: String = p
+                .iter()
+                .map(|s| {
+                    let wrap = if s == "component" { "[*]" } else { "" };
+                    format!(".\"{}\"{wrap}", q(s))
+                })
+                .collect();
+            let coding = format!("@{member}.\"coding\"[*]");
+            match system {
+                Some(s) => format!(
+                    "exists({coding} ? (@.\"system\" == \"{}\" && @.\"code\" == \"{}\"))",
+                    q(s),
+                    q(code)
+                ),
+                None => format!("{coding}.\"code\" == \"{}\"", q(code)),
+            }
+        })
+        .collect();
+    let jp = format!("$ ? ({})", arms.join(" || ")).replace('\'', "''");
+    format!("{col} @? '{jp}'")
 }
 
 /// The same match as [`composite_token_containment_sql`], spelled with the
@@ -2801,6 +2833,27 @@ mod tests {
 
     fn ap(segs: &[(&str, bool)]) -> AnnotatedPath {
         segs.iter().map(|(s, a)| (s.to_string(), *a)).collect()
+    }
+
+    #[test]
+    fn composite_code_match_single_location_is_containment() {
+        let paths = vec![vec!["code".to_string()]];
+        assert_eq!(
+            composite_token_containment_sql("resource", &paths, None, "8867-4"),
+            r#"resource @> '{"code":{"coding":[{"code":"8867-4"}]}}'::jsonb"#
+        );
+    }
+
+    #[test]
+    fn composite_code_match_several_locations_is_one_jsonpath() {
+        let paths = vec![
+            vec!["code".to_string()],
+            vec!["component".to_string(), "code".to_string()],
+        ];
+        assert_eq!(
+            composite_token_containment_sql("r.resource", &paths, None, "8480-6"),
+            r#"r.resource @? '$ ? (@."code"."coding"[*]."code" == "8480-6" || @."component"[*]."code"."coding"[*]."code" == "8480-6")'"#
+        );
     }
 
     #[test]

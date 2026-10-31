@@ -609,9 +609,16 @@ pub async fn create_composite_partial_indexes(
         let where_clause =
             composite_token_containment_sql("resource", &token_paths, None, &spec.code);
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        // The indexed expression is part of the name, so a changed expression
-        // builds a new index instead of `IF NOT EXISTS` keeping the stale one.
-        (&spec.resource_type, &spec.param, &spec.code, &arr).hash(&mut hasher);
+        // The indexed expression and predicate are part of the name, so a changed
+        // one builds a new index instead of `IF NOT EXISTS` keeping the stale one.
+        (
+            &spec.resource_type,
+            &spec.param,
+            &spec.code,
+            &arr,
+            &where_clause,
+        )
+            .hash(&mut hasher);
         let hash = hasher.finish();
         let table = spec.resource_type.to_lowercase();
         let pname: String = spec
