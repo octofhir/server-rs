@@ -332,6 +332,45 @@ impl SubscriptionEventStorage {
             .collect()
     }
 
+    /// Notification events numbered within `[since, until]`, oldest first (for `$events`).
+    pub async fn notification_events(
+        &self,
+        subscription_id: &str,
+        since: Option<i64>,
+        until: Option<i64>,
+        limit: i64,
+    ) -> SubscriptionResult<Vec<NotificationEventRow>> {
+        let rows = query(
+            r#"
+            SELECT event_number, created_at, focus_resource_type, focus_resource_id
+            FROM subscription_event
+            WHERE subscription_id = $1
+              AND event_type = 'event-notification'
+              AND ($2::BIGINT IS NULL OR event_number >= $2)
+              AND ($3::BIGINT IS NULL OR event_number <= $3)
+            ORDER BY event_number ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(subscription_id)
+        .bind(since)
+        .bind(until)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(NotificationEventRow {
+                    event_number: row.try_get("event_number")?,
+                    created_at: row.try_get("created_at")?,
+                    focus_resource_type: row.try_get("focus_resource_type")?,
+                    focus_resource_id: row.try_get("focus_resource_id")?,
+                })
+            })
+            .collect()
+    }
+
     /// Record a delivery attempt.
     pub async fn record_delivery_attempt(
         &self,
@@ -465,4 +504,13 @@ pub struct EventLogEntry {
     pub delivered_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub next_retry_at: Option<OffsetDateTime>,
+}
+
+/// One past notification, as `$events` reports it.
+#[derive(Debug, Clone)]
+pub struct NotificationEventRow {
+    pub event_number: i64,
+    pub created_at: OffsetDateTime,
+    pub focus_resource_type: Option<String>,
+    pub focus_resource_id: Option<String>,
 }

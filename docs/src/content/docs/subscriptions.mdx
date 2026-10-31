@@ -91,6 +91,36 @@ GET /fhir/Subscription/{id}/$status
 }
 ```
 
+## Event History
+
+A subscriber that missed notifications can ask which changes it missed. A plain `GET` on
+`$events` (no WebSocket upgrade) returns a `history` Bundle whose SubscriptionStatus lists past
+notifications, oldest first, at most 100 per call:
+
+```bash
+GET /fhir/Subscription/{id}/$events?eventsSinceNumber=40
+```
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "history",
+  "entry": [{
+    "resource": {
+      "resourceType": "SubscriptionStatus",
+      "type": "query-event",
+      "eventsSinceSubscriptionStart": "42",
+      "notificationEvent": [
+        { "eventNumber": "41", "timestamp": "2026-10-31T20:11:02Z", "focus": { "reference": "Patient/123" } },
+        { "eventNumber": "42", "timestamp": "2026-10-31T20:14:40Z", "focus": { "reference": "Patient/456" } }
+      ]
+    }
+  }]
+}
+```
+
+`eventsUntilNumber` bounds the range from above.
+
 ## Delivery Log and Test Notifications
 
 Two console endpoints help when notifications don't arrive:

@@ -6,7 +6,9 @@ use anyhow::Context;
 use arc_swap::ArcSwap;
 use axum::{
     Router,
-    extract::{FromRef, Path, State, WebSocketUpgrade},
+    extract::{
+        FromRef, Path, Query, State, WebSocketUpgrade, ws::rejection::WebSocketUpgradeRejection,
+    },
     middleware,
     response::IntoResponse,
     routing::{get, post},
@@ -279,18 +281,29 @@ pub struct OctofhirServer {
     background: crate::lifecycle::BackgroundRuntime,
 }
 
-/// Handler for WebSocket subscription events endpoint.
+/// Handler for `/fhir/Subscription/{id}/$events`.
 ///
-/// Upgrades HTTP connection to WebSocket for real-time subscription notifications.
-/// Endpoint: `/fhir/Subscription/{id}/$events`
+/// With a WebSocket upgrade it streams real-time notifications; without one it returns the
+/// notification history (the R5 `$events` operation).
 async fn subscription_events_ws_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    ws: WebSocketUpgrade,
+    Query(query): Query<crate::subscriptions::api::EventHistoryQuery>,
+    ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> impl IntoResponse {
     use crate::subscriptions::types::SubscriptionChannel;
 
     use axum::http::StatusCode;
+
+    // A plain GET is the R5 `$events` operation: the notification history.
+    let Ok(ws) = ws else {
+        return match crate::subscriptions::api::subscription_event_history(&state, &id, &query)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => error.into_response(),
+        };
+    };
 
     // Get the subscription
     let subscription = match state
