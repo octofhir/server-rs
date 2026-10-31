@@ -675,6 +675,8 @@ fn check_content_negotiation(req: &Request<Body>) -> Option<Response> {
         return None;
     }
 
+    // Bulk export files are NDJSON; the Bulk Data IG lets clients ask for exactly that.
+    let ndjson_path = path.starts_with("/fhir/_bulk-files/");
     let accepts_hdr = req.headers().get("accept").and_then(|v| v.to_str().ok());
     let accept_ok = accepts_hdr
         .map(|v| {
@@ -682,6 +684,9 @@ fn check_content_negotiation(req: &Request<Body>) -> Option<Response> {
             contains_ignore_ascii_case(v_lower, b"application/fhir+json")
                 || contains_ignore_ascii_case(v_lower, b"application/json")
                 || contains_ignore_ascii_case(v_lower, b"text/event-stream")
+                || (ndjson_path
+                    && (contains_ignore_ascii_case(v_lower, b"application/fhir+ndjson")
+                        || contains_ignore_ascii_case(v_lower, b"application/ndjson")))
                 || v.contains("*/*")
         })
         .unwrap_or(true);
@@ -1894,5 +1899,35 @@ mod request_timeout_tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    }
+}
+
+#[cfg(test)]
+mod content_negotiation_tests {
+    use super::check_content_negotiation;
+    use axum::{body::Body, http::Request};
+
+    fn get(path: &str, accept: &str) -> Request<Body> {
+        Request::get(path)
+            .header("accept", accept)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[test]
+    fn bulk_files_accept_ndjson() {
+        let file = "/fhir/_bulk-files/job/Patient.ndjson";
+        assert!(check_content_negotiation(&get(file, "application/fhir+ndjson")).is_none());
+        assert!(check_content_negotiation(&get(file, "application/ndjson")).is_none());
+    }
+
+    #[test]
+    fn other_fhir_paths_still_require_json() {
+        assert!(
+            check_content_negotiation(&get("/fhir/Patient", "application/fhir+ndjson")).is_some()
+        );
+        assert!(
+            check_content_negotiation(&get("/fhir/Patient", "application/fhir+json")).is_none()
+        );
     }
 }
