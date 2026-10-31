@@ -1,43 +1,56 @@
-import { lazy, Suspense } from "react";
+import { type ComponentType, type LazyExoticComponent, lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
-import { AppDetailPage, AppsPage } from "@/pages/apps";
-import { AuditTrailPage } from "@/pages/audit";
-import { BulkDataPage } from "@/pages/bulk-data";
-import {
-  AccessPoliciesPage,
-  ClientsPage,
-  IdentityProvidersPage,
-  RolesPage,
-  UserDetailPage,
-  UsersPage,
-} from "@/pages/auth";
-import { AutomationEditorPage, AutomationsPage } from "@/pages/automations";
-import { RestConsolePage } from "@/pages/console";
-import { CqlConsolePage } from "@/pages/cql-console";
 import { DashboardPage } from "@/pages/dashboard";
-import { DatabasePage } from "@/pages/database";
-import { DbConsolePage } from "@/pages/db-console";
-import { FhirPathConsolePage } from "@/pages/fhirpath-console";
-import { GraphQLConsolePage } from "@/pages/graphql-console";
-// Migrated pages
 import { LoginPage } from "@/pages/login";
-import { LogsViewerPage } from "@/pages/logs";
-import { CapabilityStatementPage } from "@/pages/metadata";
-import { NotebookEditorPage, NotebookListPage } from "@/pages/notebooks";
-import { OperationDetailPage, OperationsPage } from "@/pages/operations";
-import { PackageDetailPage, PackagesPage } from "@/pages/packages";
-import { ResourceBrowserPage } from "@/pages/resource-browser";
-import { SessionsPage } from "@/pages/sessions";
-import { SettingsPage } from "@/pages/settings";
-import { SubscriptionsPage } from "@/pages/subscriptions";
-import { TerminologyPage } from "@/pages/terminology";
-import { ValidationPage } from "@/pages/validation";
-import { ViewDefinitionPage } from "@/pages/viewdefinition";
 import { RouteGuard } from "@/shared/ui-react/RouteGuard";
 import { AppShell } from "@/widgets/app-shell";
 
-// Charts pull in ECharts, so the page loads on first visit.
-const PerformancePage = lazy(() => import("@/pages/performance").then((m) => ({ default: m.PerformancePage })));
+/**
+ * Pages load on first visit: each is its own chunk, so the console starts with the shell, login
+ * and overview only, and editors (Monaco), charts (ECharts) and GraphiQL arrive with the pages
+ * that use them. AppShell wraps the outlet in Suspense, so the shell stays put while one loads.
+ */
+function page<Name extends string>(
+  load: () => Promise<Record<Name, ComponentType>>,
+  name: Name
+): LazyExoticComponent<ComponentType> {
+  return lazy(() => load().then((module) => ({ default: module[name] })));
+}
+
+const AppsPage = page(() => import("@/pages/apps"), "AppsPage");
+const AppDetailPage = page(() => import("@/pages/apps"), "AppDetailPage");
+const AuditTrailPage = page(() => import("@/pages/audit"), "AuditTrailPage");
+const BulkDataPage = page(() => import("@/pages/bulk-data"), "BulkDataPage");
+const AccessPoliciesPage = page(() => import("@/pages/auth"), "AccessPoliciesPage");
+const ClientsPage = page(() => import("@/pages/auth"), "ClientsPage");
+const IdentityProvidersPage = page(() => import("@/pages/auth"), "IdentityProvidersPage");
+const RolesPage = page(() => import("@/pages/auth"), "RolesPage");
+const UserDetailPage = page(() => import("@/pages/auth"), "UserDetailPage");
+const UsersPage = page(() => import("@/pages/auth"), "UsersPage");
+const AutomationsPage = page(() => import("@/pages/automations"), "AutomationsPage");
+const AutomationEditorPage = page(() => import("@/pages/automations"), "AutomationEditorPage");
+const RestConsolePage = page(() => import("@/pages/console"), "RestConsolePage");
+const CqlConsolePage = page(() => import("@/pages/cql-console"), "CqlConsolePage");
+const DatabasePage = page(() => import("@/pages/database"), "DatabasePage");
+const DbConsolePage = page(() => import("@/pages/db-console"), "DbConsolePage");
+const FhirPathConsolePage = page(() => import("@/pages/fhirpath-console"), "FhirPathConsolePage");
+const GraphQLConsolePage = page(() => import("@/pages/graphql-console"), "GraphQLConsolePage");
+const LogsViewerPage = page(() => import("@/pages/logs"), "LogsViewerPage");
+const CapabilityStatementPage = page(() => import("@/pages/metadata"), "CapabilityStatementPage");
+const NotebookEditorPage = page(() => import("@/pages/notebooks"), "NotebookEditorPage");
+const NotebookListPage = page(() => import("@/pages/notebooks"), "NotebookListPage");
+const OperationsPage = page(() => import("@/pages/operations"), "OperationsPage");
+const OperationDetailPage = page(() => import("@/pages/operations"), "OperationDetailPage");
+const PackagesPage = page(() => import("@/pages/packages"), "PackagesPage");
+const PackageDetailPage = page(() => import("@/pages/packages"), "PackageDetailPage");
+const PerformancePage = page(() => import("@/pages/performance"), "PerformancePage");
+const ResourceBrowserPage = page(() => import("@/pages/resource-browser"), "ResourceBrowserPage");
+const SessionsPage = page(() => import("@/pages/sessions"), "SessionsPage");
+const SettingsPage = page(() => import("@/pages/settings"), "SettingsPage");
+const SubscriptionsPage = page(() => import("@/pages/subscriptions"), "SubscriptionsPage");
+const TerminologyPage = page(() => import("@/pages/terminology"), "TerminologyPage");
+const ValidationPage = page(() => import("@/pages/validation"), "ValidationPage");
+const ViewDefinitionPage = page(() => import("@/pages/viewdefinition"), "ViewDefinitionPage");
 
 // Dev-only design specimens; the DEV guard lets the bundler drop the chunk from production builds.
 const StyleguidePage = import.meta.env.DEV
@@ -114,14 +127,7 @@ export function AppRoutes() {
 
         {/* Other */}
         <Route path="/logs" element={<LogsViewerPage />} />
-        <Route
-          path="/performance"
-          element={
-            <Suspense fallback={null}>
-              <PerformancePage />
-            </Suspense>
-          }
-        />
+        <Route path="/performance" element={<PerformancePage />} />
         <Route path="/audit" element={<AuditTrailPage />} />
         <Route path="/metadata" element={<CapabilityStatementPage />} />
         <Route path="/viewdefinition" element={<ViewDefinitionPage />} />

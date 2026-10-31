@@ -44,7 +44,7 @@ import {
   Users,
 } from "lucide-react";
 import { useUnit } from "effector-react";
-import { type ComponentType, useCallback, useEffect, useMemo, useState } from "react";
+import { type ComponentType, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, useHealth, useResourceTypes, useSettings } from "@/shared/api/hooks";
@@ -449,7 +449,10 @@ export function AppShell() {
         <title>{typeof pageTitle === "string" ? `${pageTitle} · OctoFHIR` : "OctoFHIR"}</title>
       </Helmet>
       <ErrorBoundary>
-        <Outlet />
+        {/* Pages are lazy chunks; the shell stays while one loads. */}
+        <Suspense fallback={null}>
+          <Outlet />
+        </Suspense>
       </ErrorBoundary>
       <CommandPalette
         open={paletteOpen}
