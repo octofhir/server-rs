@@ -1,0 +1,13 @@
+.root {
+    display: block;
+    width: 100%;
+    overflow: visible;
+}
+
+.root path {
+    fill: none;
+    stroke: var(--octo-accent-primary);
+    stroke-width: 1.5px;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}

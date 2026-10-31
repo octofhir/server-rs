@@ -52,6 +52,7 @@ export * from "./Alert";
 export * from "./Spin";
 export * from "./Progress";
 export * from "./RingProgress";
+export * from "./Sparkline";
 
 // === Charts ===
 export * from "./Chart";
