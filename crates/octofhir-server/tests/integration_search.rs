@@ -430,6 +430,114 @@ async fn test_token_not_modifier() {
     let _ = shutdown_tx.send(());
 }
 
+/// `_tag`/`_security` search `meta.tag`/`meta.security`, Coding arrays declared
+/// on the `Resource` base schema rather than on the resource's own schema.
+#[tokio::test]
+async fn test_meta_tag_and_security_tokens() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let _patient_ids = create_test_patients(&client, &base).await;
+    let tagged = json!({
+        "resourceType": "Patient",
+        "meta": {
+            "tag": [
+                {"system": "https://octofhir.com/tags", "code": "demo-data"},
+                {"system": "https://octofhir.com/tags", "code": "second"}
+            ],
+            "security": [
+                {"system": "http://terminology.hl7.org/CodeSystem/v3-Confidentiality", "code": "R"}
+            ]
+        },
+        "name": [{"family": "Tagged"}]
+    });
+    let resp = client
+        .post(format!("{base}/Patient"))
+        .header("content-type", "application/fhir+json")
+        .json(&tagged)
+        .send()
+        .await
+        .expect("create tagged patient");
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+
+    for (query, expected) in [
+        ("_tag=demo-data", 1),
+        ("_tag=second", 1),
+        ("_tag=https://octofhir.com/tags%7Cdemo-data", 1),
+        ("_tag=https://other.example/tags%7Cdemo-data", 0),
+        ("_tag=absent", 0),
+        ("_security=R", 1),
+        (
+            "_security=http://terminology.hl7.org/CodeSystem/v3-Confidentiality%7CR",
+            1,
+        ),
+    ] {
+        let resp = client
+            .get(format!("{base}/Patient?{query}&_total=accurate"))
+            .header("accept", "application/fhir+json")
+            .send()
+            .await
+            .expect("search request");
+        assert!(resp.status().is_success(), "{query}: {}", resp.status());
+        let bundle: Value = resp.json().await.expect("parse bundle");
+        assert_eq!(get_bundle_total(&bundle), expected, "{query}");
+    }
+
+    let _ = shutdown_tx.send(());
+}
+
+/// `_filter` comparisons are the named search parameters; a filter the server
+/// cannot evaluate is rejected instead of silently matching nothing.
+#[tokio::test]
+async fn test_filter_parameter() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let _patient_ids = create_test_patients(&client, &base).await;
+
+    for (filter, expected) in [
+        (r#"name co "mit""#, 2),
+        (r#"family eq "Smith" and gender eq female"#, 1),
+        ("gender eq female or birthdate lt 1985-01-01", 3),
+        ("not (gender eq male)", 2),
+        ("birthdate ge 1990-01-01", 2),
+    ] {
+        let resp = client
+            .get(format!("{base}/Patient"))
+            .query(&[("_filter", filter), ("_total", "accurate")])
+            .header("accept", "application/fhir+json")
+            .send()
+            .await
+            .expect("search request");
+        assert!(resp.status().is_success(), "{filter}: {}", resp.status());
+        let bundle: Value = resp.json().await.expect("parse bundle");
+        assert_eq!(get_bundle_total(&bundle), expected, "{filter}");
+    }
+
+    for filter in [r#"agent-name co "adm""#, r#"name ew "th""#] {
+        let resp = client
+            .get(format!("{base}/Patient"))
+            .query(&[("_filter", filter)])
+            .header("accept", "application/fhir+json")
+            .send()
+            .await
+            .expect("search request");
+        assert!(
+            resp.status().is_client_error(),
+            "{filter}: {}",
+            resp.status()
+        );
+        let outcome: Value = resp.json().await.expect("parse outcome");
+        assert_eq!(outcome["resourceType"], "OperationOutcome", "{filter}");
+    }
+
+    let _ = shutdown_tx.send(());
+}
+
 // =============================================================================
 // Date Prefix Tests
 // =============================================================================

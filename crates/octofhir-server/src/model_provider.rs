@@ -21,6 +21,10 @@ use tracing::{debug, warn};
 use octofhir_db_postgres::PostgresPackageStore;
 
 /// FHIR to FHIRPath type mapping - essential for type conversion
+/// Longest `base` chain an element lookup follows (a profile on a resource on
+/// DomainResource on Resource is four).
+const MAX_BASE_DEPTH: usize = 8;
+
 const TYPE_MAPPING: &[(&str, &str)] = &[
     ("boolean", "Boolean"),
     ("integer", "Integer"),
@@ -462,13 +466,28 @@ impl ModelProvider for OctoFhirModelProvider {
             }
             Ok(resolve(self, type_name, elements, property_name))
         } else {
-            let Some(schema) = self.get_schema(type_name).await else {
+            // Schemas are differential: an element inherited from a base type
+            // (`meta`, `id`, `text` on every resource) is declared only on that
+            // base's schema, so walk the `base` chain until one declares it.
+            let Some(mut schema) = self.get_schema(type_name).await else {
                 return Ok(None);
             };
-            let Some(elements) = schema.elements.as_ref() else {
-                return Ok(None);
-            };
-            Ok(resolve(self, type_name, elements, property_name))
+            for _ in 0..MAX_BASE_DEPTH {
+                if let Some(elements) = schema.elements.as_ref()
+                    && let Some(found) = resolve(self, &schema.name, elements, property_name)
+                {
+                    return Ok(Some(found));
+                }
+                let Some(base_url) = schema.base.as_deref() else {
+                    return Ok(None);
+                };
+                let Some(base) = OctoFhirModelProvider::get_schema_by_url(self, base_url).await
+                else {
+                    return Ok(None);
+                };
+                schema = base;
+            }
+            Ok(None)
         }
     }
 
