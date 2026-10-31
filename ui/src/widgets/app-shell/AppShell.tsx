@@ -12,6 +12,7 @@ import {
 } from "@octofhir/ui-kit";
 import {
   Activity,
+  BookOpen,
   Boxes,
   Code2,
   Cpu,
@@ -103,6 +104,7 @@ const NAV: NavSection[] = [
       { id: "fhirpath", label: "FHIRPath", icon: Activity, path: "/fhirpath", goKey: "f" },
       { id: "cql", label: "CQL", icon: Sigma, path: "/cql", goKey: "q" },
       { id: "views", label: "Views", icon: Table, path: "/viewdefinition", goKey: "v" },
+      { id: "terminology", label: "Terminology", icon: BookOpen, path: "/terminology", goKey: "t" },
       { id: "notebooks", label: "Notebooks", icon: NotebookPen, path: "/notebooks", goKey: "n" },
     ],
   },

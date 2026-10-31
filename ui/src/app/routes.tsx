@@ -29,6 +29,7 @@ import { PackageDetailPage, PackagesPage } from "@/pages/packages";
 import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { SessionsPage } from "@/pages/sessions";
 import { SettingsPage } from "@/pages/settings";
+import { TerminologyPage } from "@/pages/terminology";
 import { ViewDefinitionPage } from "@/pages/viewdefinition";
 import { RouteGuard } from "@/shared/ui-react/RouteGuard";
 import { AppShell } from "@/widgets/app-shell";
@@ -121,6 +122,7 @@ export function AppRoutes() {
         <Route path="/audit" element={<AuditTrailPage />} />
         <Route path="/metadata" element={<CapabilityStatementPage />} />
         <Route path="/viewdefinition" element={<ViewDefinitionPage />} />
+        <Route path="/terminology" element={<TerminologyPage />} />
       </Route>
     </Routes>
   );
