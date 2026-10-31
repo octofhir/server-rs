@@ -454,9 +454,8 @@ pub async fn build_capability_statement(
     // Note: SMART security extensions (oauth-uris) are added at startup
     // via octofhir_auth::add_smart_security() in server.rs
 
-    // Note: loaded canonical packages are available via /api/packages endpoint.
-    // Custom extensions (urn:abyxon:loaded-package) were removed from the
-    // CapabilityStatement to avoid FHIR validation errors for unknown extensions.
+    // Note: loaded canonical packages are listed by the /api/packages endpoint, not as
+    // CapabilityStatement extensions (unknown extensions fail FHIR validation).
 
     Ok(body)
 }
