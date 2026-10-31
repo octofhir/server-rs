@@ -3,14 +3,14 @@ title: Getting Started
 description: Get OctoFHIR server running in 5 minutes
 ---
 
-import { Tabs, TabItem, Steps, Aside } from '@astrojs/starlight/components';
+import { Steps, Aside } from '@astrojs/starlight/components';
 
 This guide will get you from zero to a running FHIR server in about 5 minutes.
 
 ## Prerequisites
 
 - Docker and Docker Compose (recommended for quick start)
-- OR: Rust 1.75+ and PostgreSQL 14+
+- Rust 1.85+ (edition 2024)
 
 ## Quick Start with Docker Compose
 
@@ -33,21 +33,12 @@ This guide will get you from zero to a running FHIR server in about 5 minutes.
 
 3. **Run the server**
 
-   <Tabs>
-   <TabItem label="Pre-built Binary">
    ```bash
-   # Download latest release
-   curl -LO https://github.com/octofhir/server-rs/releases/latest/download/octofhir-server
-   chmod +x octofhir-server
-   ./octofhir-server
+   cargo run
    ```
-   </TabItem>
-   <TabItem label="From Source">
-   ```bash
-   cargo run --release
-   ```
-   </TabItem>
-   </Tabs>
+
+   The first build takes a few minutes; later runs start in seconds. Use `cargo run --release`
+   for benchmarks.
 
 4. **Verify it's running**
 
@@ -160,12 +151,17 @@ just dev
 
 ## Web Console
 
-OctoFHIR includes a built-in web console at http://localhost:8888/ui with:
+Open http://localhost:8888/ui and sign in as `admin` / `admin123`. The console has:
 
-- Resource browser
-- FHIR search playground
-- SQL console for direct database queries
-- GraphQL playground
+- a resource browser with search, bulk actions and Undo;
+- a REST console that completes resource types, parameters and values (`subject=` lists
+  patients by name);
+- SQL, GraphQL, FHIRPath and CQL consoles, notebooks and ViewDefinitions;
+- users, roles, clients, access policies, audit, logs and server settings.
+
+Press `⌘K` (`Ctrl+K`) to jump anywhere and `?` to see every keyboard shortcut.
+
+![The OctoFHIR console](/server-rs/screenshots/rest-console-dark.webp)
 
 ## Next Steps
 

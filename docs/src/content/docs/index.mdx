@@ -1,20 +1,86 @@
 ---
-title: Overview
-head: []
+title: OctoFHIR
+description: A fast FHIR server in Rust on PostgreSQL, with a keyboard-first console for REST, SQL, GraphQL, FHIRPath and CQL.
+template: splash
+hero:
+  title: The FHIR server you can drive from the keyboard
+  tagline: A fast FHIR server in Rust on PostgreSQL, with a console for REST, SQL, GraphQL, FHIRPath and CQL built in.
+  image:
+    html: '<img src="/server-rs/mark.svg" width="240" height="240" alt="" />'
+  actions:
+    - text: Get started
+      link: /server-rs/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/octofhir/server-rs
+      icon: external
+      variant: minimal
 ---
 
-Welcome to the OctoFHIR documentation.
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-OctoFHIR is a FHIR server built in Rust, with a web console for browsing data and running queries.
+<img
+  src="/server-rs/screenshots/resources-dark.webp"
+  alt="OctoFHIR console: Patient resources with the JSON of the selected one"
+  style="border: 1px solid var(--sl-color-gray-5); border-radius: 8px;"
+/>
 
-Motivation:
+:::caution[Under active development]
+OctoFHIR is not production-ready yet. APIs and storage may still change between versions.
+:::
 
-- Build a practical, minimal FHIR server for development and integration testing.
-- Grow a small ecosystem of Rust libraries (core/search/db/api) usable independently.
-- Keep things async-first, Rust-first, and easy to extend.
+## Why OctoFHIR
 
-What you get in the MVP:
+<CardGrid>
+  <Card title="One binary, one database">
+    Server, search engine and console ship as one Rust binary on PostgreSQL. Resource tables
+    are created on demand, so loading an Implementation Guide needs no migrations.
+  </Card>
+  <Card title="Spec-first">
+    FHIR R4, R4B, R5 and R6. 98.7% (1552 of 1572) on the FHIR262 conformance suite.
+  </Card>
+  <Card title="A console for developers">
+    REST, SQL, GraphQL, FHIRPath, CQL and notebooks in one place, with completion that knows
+    your data: type `subject=` and pick a patient by name.
+  </Card>
+  <Card title="Keyboard-first">
+    `⌘K` jumps anywhere (`Patient/123` opens it), `g` + a letter switches tools, `j`/`k` walk
+    lists and `?` shows every shortcut.
+  </Card>
+</CardGrid>
 
-- In-memory storage with CRUD and basic search for key resources (e.g., Patient, Observation).
-- JSON-only (`application/fhir+json` and `application/json`), CapabilityStatement at `/metadata`.
-- Config via `octofhir.toml` and env overrides; observability hooks; hot reload.
+## What's inside
+
+<CardGrid>
+  <Card title="FHIR REST API">
+    CRUD, history, conditional operations, transactions and batches; search with chains,
+    `_include`/`_revinclude`, composites and modifiers.
+  </Card>
+  <Card title="Query it your way">
+    GraphQL generated from the FHIR schemas, SQL on FHIR `ViewDefinition`s, Bulk Data
+    `$export`, and a SQL console with a Postgres language server.
+  </Card>
+  <Card title="Terminology and validation">
+    `$expand`, `$validate-code`, `$subsumes` and `$translate`; validation against the profiles in
+    the packages you load.
+  </Card>
+  <Card title="Security">
+    OAuth 2.0 and SMART on FHIR, external identity providers, access policies as scripts and an
+    audit trail.
+  </Card>
+</CardGrid>
+
+<img
+  src="/server-rs/screenshots/rest-console-dark.webp"
+  alt="REST console completing a reference by practitioner name"
+  style="border: 1px solid var(--sl-color-gray-5); border-radius: 8px;"
+/>
+
+## Start here
+
+<CardGrid>
+  <LinkCard title="Getting started" description="Run the server and the console in five minutes." href="/server-rs/getting-started/" />
+  <LinkCard title="Configuration" description="octofhir.toml, environment overrides and hot reload." href="/server-rs/configuration/" />
+  <LinkCard title="Search" description="Parameters, indexing and how queries become SQL." href="/server-rs/search-parameters/" />
+  <LinkCard title="Authentication" description="OAuth 2.0, SMART on FHIR and access policies." href="/server-rs/authentication/" />
+</CardGrid>
