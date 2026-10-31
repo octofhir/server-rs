@@ -1,0 +1,14 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "User-role",
+  "url": "http://octofhir.org/fhir/SearchParameter/User-role",
+  "name": "UserRole",
+  "status": "active",
+  "description": "Search User by assigned role",
+  "code": "role",
+  "base": [
+    "User"
+  ],
+  "type": "token",
+  "expression": "User.roles"
+}

@@ -1,0 +1,14 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "User-email",
+  "url": "http://octofhir.org/fhir/SearchParameter/User-email",
+  "name": "UserEmail",
+  "status": "active",
+  "description": "Search User by email address",
+  "code": "email",
+  "base": [
+    "User"
+  ],
+  "type": "string",
+  "expression": "User.email"
+}

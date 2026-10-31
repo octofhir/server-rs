@@ -1,0 +1,20 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "User-fhir-user",
+  "url": "http://octofhir.org/fhir/SearchParameter/User-fhir-user",
+  "name": "UserFhirUser",
+  "status": "active",
+  "description": "Search User by the FHIR resource it represents",
+  "code": "fhir-user",
+  "base": [
+    "User"
+  ],
+  "type": "reference",
+  "expression": "User.fhirUser",
+  "target": [
+    "Patient",
+    "Practitioner",
+    "RelatedPerson",
+    "Person"
+  ]
+}

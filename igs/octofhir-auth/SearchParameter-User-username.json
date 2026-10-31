@@ -1,0 +1,14 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "User-username",
+  "url": "http://octofhir.org/fhir/SearchParameter/User-username",
+  "name": "UserUsername",
+  "status": "active",
+  "description": "Search User by login name",
+  "code": "username",
+  "base": [
+    "User"
+  ],
+  "type": "string",
+  "expression": "User.username"
+}

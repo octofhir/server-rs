@@ -129,6 +129,31 @@ pub const EMBEDDED_AUTH_RESOURCES: &[(&str, &str)] = &[
         "SearchParameter-Client-clientId.json",
         include_str!("../../../igs/octofhir-auth/SearchParameter-Client-clientId.json"),
     ),
+    // User search parameters
+    (
+        "SearchParameter-User-username.json",
+        include_str!("../../../igs/octofhir-auth/SearchParameter-User-username.json"),
+    ),
+    (
+        "SearchParameter-User-email.json",
+        include_str!("../../../igs/octofhir-auth/SearchParameter-User-email.json"),
+    ),
+    (
+        "SearchParameter-User-name.json",
+        include_str!("../../../igs/octofhir-auth/SearchParameter-User-name.json"),
+    ),
+    (
+        "SearchParameter-User-role.json",
+        include_str!("../../../igs/octofhir-auth/SearchParameter-User-role.json"),
+    ),
+    (
+        "SearchParameter-User-active.json",
+        include_str!("../../../igs/octofhir-auth/SearchParameter-User-active.json"),
+    ),
+    (
+        "SearchParameter-User-fhir-user.json",
+        include_str!("../../../igs/octofhir-auth/SearchParameter-User-fhir-user.json"),
+    ),
 ];
 
 /// Embedded octofhir-app IG resources

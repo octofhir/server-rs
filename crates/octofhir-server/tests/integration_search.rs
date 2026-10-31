@@ -565,6 +565,88 @@ async fn test_content_parameter() {
     let _ = shutdown_tx.send(());
 }
 
+/// `User` (an internal resource) exposes its own search parameters instead of
+/// ignoring every criterion and returning all users.
+#[tokio::test]
+async fn test_user_search_parameters() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    for (username, email, name, roles, active) in [
+        (
+            "alice.admin",
+            "alice@example.org",
+            "Alice Admin",
+            vec!["admin"],
+            true,
+        ),
+        (
+            "bob.clerk",
+            "bob@example.org",
+            "Bob Clerk",
+            vec!["clerk"],
+            true,
+        ),
+        (
+            "carol.clerk",
+            "carol@other.test",
+            "Carol Clerk",
+            vec!["clerk", "auditor"],
+            false,
+        ),
+    ] {
+        let resp = client
+            .post(format!("{base}/User"))
+            .header("content-type", "application/fhir+json")
+            .json(&json!({
+                "resourceType": "User",
+                "username": username,
+                "password": "integration-test-password",
+                "email": email,
+                "name": name,
+                "roles": roles,
+                "active": active
+            }))
+            .send()
+            .await
+            .expect("create user");
+        assert_eq!(resp.status(), reqwest::StatusCode::CREATED, "{username}");
+    }
+
+    for (query, expected) in [
+        ("username:contains=clerk", vec!["bob.clerk", "carol.clerk"]),
+        ("username=alice", vec!["alice.admin"]),
+        (
+            "email:contains=example.org",
+            vec!["alice.admin", "bob.clerk"],
+        ),
+        ("name:contains=carol", vec!["carol.clerk"]),
+        ("role=auditor", vec!["carol.clerk"]),
+        ("role=clerk&active=true", vec!["bob.clerk"]),
+        ("active=false", vec!["carol.clerk"]),
+    ] {
+        let resp = client
+            .get(format!("{base}/User?{query}&_count=100"))
+            .header("accept", "application/fhir+json")
+            .send()
+            .await
+            .expect("search request");
+        assert!(resp.status().is_success(), "{query}: {}", resp.status());
+        let bundle: Value = resp.json().await.expect("parse bundle");
+        let mut found: Vec<&str> = get_bundle_entries(&bundle)
+            .iter()
+            .filter_map(|entry| entry["resource"]["username"].as_str())
+            .filter(|username| !username.starts_with("admin"))
+            .collect();
+        found.sort_unstable();
+        assert_eq!(found, expected, "{query}");
+    }
+
+    let _ = shutdown_tx.send(());
+}
+
 // =============================================================================
 // Date Prefix Tests
 // =============================================================================

@@ -1,0 +1,14 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "User-active",
+  "url": "http://octofhir.org/fhir/SearchParameter/User-active",
+  "name": "UserActive",
+  "status": "active",
+  "description": "Search User by whether the account is active",
+  "code": "active",
+  "base": [
+    "User"
+  ],
+  "type": "token",
+  "expression": "User.active"
+}
