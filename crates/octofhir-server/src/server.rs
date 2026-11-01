@@ -2241,6 +2241,8 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         })
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
+        // `{*path}` needs at least one character, so the trailing-slash form gets its own route.
+        .route("/ui/", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static));
 
     let mut fhir_router = Router::new()
