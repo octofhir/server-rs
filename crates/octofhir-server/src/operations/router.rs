@@ -57,9 +57,34 @@ fn operation_response(code: &str, result: serde_json::Value) -> Result<Response,
             "severity":"information","code":"informational","diagnostics":"Asynchronous request accepted"
         }]});
         Ok((StatusCode::ACCEPTED, headers, Json(outcome)).into_response())
+    } else if let Some(binary) = raw_binary_return(code, &result)? {
+        Ok(binary)
     } else {
         Ok((StatusCode::OK, Json(result)).into_response())
     }
+}
+
+/// An operation whose only output is `return: Binary` answers with the
+/// Binary's content in its media type (FHIR operations, "return" parameter;
+/// SQL on FHIR returns view rows this way).
+fn raw_binary_return(code: &str, result: &serde_json::Value) -> Result<Option<Response>, ApiError> {
+    if !matches!(code, "viewdefinition-run" | "sql-run") || result["resourceType"] != "Binary" {
+        return Ok(None);
+    }
+    use base64::Engine as _;
+    let content_type = result["contentType"]
+        .as_str()
+        .ok_or_else(|| ApiError::internal("Binary result has no contentType"))?;
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(result["data"].as_str().unwrap_or_default())
+        .map_err(|_| ApiError::internal("Binary result data is not base64"))?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_str(content_type)
+            .map_err(|_| ApiError::internal("Invalid Binary contentType"))?,
+    );
+    Ok(Some((StatusCode::OK, headers, data).into_response()))
 }
 
 /// Handler for system-level operations (e.g., `GET /$operation` or `POST /$operation`).

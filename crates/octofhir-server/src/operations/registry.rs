@@ -27,6 +27,13 @@ pub struct OperationRegistry {
     instance_ops: HashMap<String, Vec<Arc<OperationDefinition>>>,
 }
 
+/// Abstract types an OperationDefinition may name in `resource`, meaning its
+/// concrete subtypes. SQL on FHIR defines `$viewdefinition-run` on
+/// `CanonicalResource` because ViewDefinition is a logical model, not a core
+/// resource. The registry cannot tell which types are subtypes; a handler's
+/// `supports_level` narrows the operation to the types it serves.
+const ABSTRACT_BASES: [&str; 3] = ["Resource", "DomainResource", "CanonicalResource"];
+
 impl OperationRegistry {
     /// Creates a new empty operation registry.
     pub fn new() -> Self {
@@ -102,8 +109,8 @@ impl OperationRegistry {
 
     /// Gets a type-level operation by resource type and code.
     ///
-    /// Falls back to checking operations defined for "Resource" (all types)
-    /// if no type-specific operation is found.
+    /// Falls back to operations defined on an abstract base type
+    /// ([`ABSTRACT_BASES`]) if no type-specific operation is found.
     pub fn get_type_operation(
         &self,
         resource_type: &str,
@@ -118,16 +125,18 @@ impl OperationRegistry {
             return Some(op);
         }
 
-        // Fall back to generic Resource operations
-        self.type_ops
-            .get("Resource")
-            .and_then(|ops| ops.iter().find(|op| op.code == code).cloned())
+        // Fall back to operations defined on an abstract base type
+        ABSTRACT_BASES.iter().find_map(|base| {
+            self.type_ops
+                .get(*base)
+                .and_then(|ops| ops.iter().find(|op| op.code == code).cloned())
+        })
     }
 
     /// Gets an instance-level operation by resource type and code.
     ///
-    /// Falls back to checking operations defined for "Resource" (all types)
-    /// if no type-specific operation is found.
+    /// Falls back to operations defined on an abstract base type
+    /// ([`ABSTRACT_BASES`]) if no type-specific operation is found.
     pub fn get_instance_operation(
         &self,
         resource_type: &str,
@@ -142,10 +151,12 @@ impl OperationRegistry {
             return Some(op);
         }
 
-        // Fall back to generic Resource operations
-        self.instance_ops
-            .get("Resource")
-            .and_then(|ops| ops.iter().find(|op| op.code == code).cloned())
+        // Fall back to operations defined on an abstract base type
+        ABSTRACT_BASES.iter().find_map(|base| {
+            self.instance_ops
+                .get(*base)
+                .and_then(|ops| ops.iter().find(|op| op.code == code).cloned())
+        })
     }
 
     /// Returns all system-level operations.

@@ -90,7 +90,8 @@ pub use router::{
     merged_type_post_handler, system_operation_handler, type_operation_handler,
 };
 pub use sof::{
-    ViewDefinitionRunOperation, ViewDefinitionSqlOperation, execute_viewdefinition_export,
+    SqlRunOperation, ViewDefinitionRunOperation, ViewDefinitionRunSpecOperation,
+    ViewDefinitionSqlOperation, execute_viewdefinition_export,
 };
 pub use terminology::{
     ClosureOperation, ExpandOperation, LookupOperation, SubsumesOperation, TranslateOperation,
@@ -237,6 +238,19 @@ pub fn register_core_operations_all(
     handlers.insert(
         "sql".to_string(),
         Arc::new(ViewDefinitionSqlOperation::new(sql_on_fhir_config.enabled)),
+    );
+    // $viewdefinition-run as the SQL on FHIR IG defines it (system, type and
+    // instance level; the rows in the requested format).
+    handlers.insert(
+        "viewdefinition-run".to_string(),
+        Arc::new(ViewDefinitionRunSpecOperation::new(
+            sql_on_fhir_config.enabled,
+        )),
+    );
+    // $sql-run (SQL on FHIR v3): ViewDefinition, SQLQuery and SQLView subjects.
+    handlers.insert(
+        "sql-run".to_string(),
+        Arc::new(SqlRunOperation::new(sql_on_fhir_config.enabled)),
     );
 
     // Notification operations

@@ -665,6 +665,15 @@ impl FhirQueryBuilder {
         self
     }
 
+    /// Drop any limit/offset and ordering, selecting every matching row: the
+    /// selection under a set-based consumer such as a SQL-on-FHIR view, which
+    /// orders and limits its own output.
+    pub fn unpaginated(mut self) -> Self {
+        self.pagination = Pagination::default();
+        self.sort.clear();
+        self
+    }
+
     /// Add a chain join for chained search.
     pub fn chain_join(mut self, join: ChainJoin) -> Self {
         self.chain_joins.push(join);
@@ -735,8 +744,8 @@ impl FhirQueryBuilder {
             format!("{alias}.resource")
         };
         let select_clause = match self.mode {
-            QueryMode::Count => "SELECT COUNT(*) as total".to_string(),
-            QueryMode::IdsOnly => format!("SELECT {alias}.id"),
+            QueryMode::Count => "COUNT(*) as total".to_string(),
+            QueryMode::IdsOnly => format!("{alias}.id"),
             QueryMode::Resources | QueryMode::ResourcesWithTotal => {
                 format!(
                     "{resource_select}, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at"
@@ -2584,7 +2593,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(query.sql.contains("COUNT(*)"));
+        assert!(query.sql.starts_with("SELECT COUNT(*)"), "{}", query.sql);
         assert!(!query.sql.contains("LIMIT"));
         assert!(!query.sql.contains("ORDER BY"));
     }
@@ -2731,13 +2740,26 @@ mod tests {
     }
 
     #[test]
+    fn test_fhir_query_builder_unpaginated_selects_every_row_unordered() {
+        let query = FhirQueryBuilder::new("Patient", "public")
+            .sort_by(SortSpec::column("updated_at", SortOrder::Desc).unwrap())
+            .paginate(11, 20)
+            .unpaginated()
+            .build()
+            .unwrap();
+        assert!(!query.sql.contains("LIMIT"), "{}", query.sql);
+        assert!(!query.sql.contains("OFFSET"), "{}", query.sql);
+        assert!(!query.sql.contains("ORDER BY"), "{}", query.sql);
+    }
+
+    #[test]
     fn test_fhir_query_builder_ids_only_mode() {
         let query = FhirQueryBuilder::new("Patient", "public")
             .ids_only()
             .build()
             .unwrap();
 
-        assert!(query.sql.contains("SELECT r.id"));
+        assert!(query.sql.starts_with("SELECT r.id FROM"), "{}", query.sql);
         assert!(!query.sql.contains("resource"));
     }
 

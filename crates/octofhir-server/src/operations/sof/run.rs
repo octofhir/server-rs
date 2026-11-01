@@ -9,13 +9,11 @@ use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
+use super::engine;
 use crate::operations::{OperationError, OperationHandler};
 use crate::server::AppState;
 use octofhir_sof::ViewDefinition;
 use octofhir_storage::SearchParams;
-
-/// Page size used when streaming source resources out of storage.
-const FETCH_PAGE_SIZE: u32 = 500;
 
 /// The $run operation handler for ViewDefinition.
 ///
@@ -190,68 +188,7 @@ impl ViewDefinitionRunOperation {
         Ok(Some(view))
     }
 
-    /// Load authorized source pages with an explicit memory budget.
-    async fn load_source_resources(
-        &self,
-        state: &AppState,
-        context: &crate::operations::OperationContext,
-        resource_type: &str,
-    ) -> Result<Vec<Value>, OperationError> {
-        let mut resources = Vec::new();
-        let mut offset: u32 = 0;
-        let mut bytes: usize = 0;
-        let limits = state.config.search.include_limits;
-
-        loop {
-            let mut params = SearchParams::new().with_sort("_id", false);
-            params.count = Some(FETCH_PAGE_SIZE);
-            params.offset = Some(offset);
-
-            let page = context.search(state, resource_type, &params).await?;
-
-            let fetched = page.entries.len();
-            if page.has_more && fetched == 0 {
-                return Err(OperationError::Internal(
-                    "View source pagination made no progress".into(),
-                ));
-            }
-            for entry in &page.entries {
-                bytes = bytes.saturating_add(
-                    serde_json::to_vec(&entry.resource)
-                        .map_err(|error| OperationError::Internal(error.to_string()))?
-                        .len(),
-                );
-            }
-            if bytes > limits.max_bytes
-                || resources.len().saturating_add(fetched) > limits.max_resources
-            {
-                return Err(OperationError::InvalidParameters(
-                    "View source exceeds the configured resource or byte budget".into(),
-                ));
-            }
-            resources.extend(page.entries.into_iter().map(|entry| entry.resource));
-
-            if !page.has_more {
-                break;
-            }
-            offset = offset
-                .checked_add(u32::try_from(fetched).map_err(|_| {
-                    OperationError::InvalidParameters("View source pagination overflow".into())
-                })?)
-                .ok_or_else(|| {
-                    OperationError::InvalidParameters("View source pagination overflow".into())
-                })?;
-        }
-
-        Ok(resources)
-    }
-
-    /// Execute the ViewDefinition and return results.
-    ///
-    /// When `inline` resources are supplied they are used as the data source
-    /// (database-free run); otherwise resources of the view's type are loaded
-    /// from storage. Evaluation uses the conformant in-memory engine from
-    /// `octofhir-sof`.
+    /// Execute the ViewDefinition and return the `$run` result.
     async fn execute_view(
         &self,
         state: &AppState,
@@ -260,95 +197,43 @@ impl ViewDefinitionRunOperation {
         inline: Option<Vec<Value>>,
         limit: Option<usize>,
     ) -> Result<Value, OperationError> {
-        let resources = match inline {
-            None => {
-                self.load_source_resources(state, context, &view_def.resource)
-                    .await?
-            }
-            Some(resources) => resources,
-        };
+        let (columns, rows) = engine::execute(
+            state,
+            context,
+            view_def,
+            inline,
+            &SearchParams::new(),
+            limit,
+        )
+        .await?;
+        Self::rows_response(state, &columns, rows)
+    }
+
+    /// The `$run` result: column metadata, the row count and the rows as a
+    /// JSON Binary, within the configured output budget.
+    fn rows_response(
+        state: &AppState,
+        columns: &[octofhir_sof::ColumnInfo],
+        rows: Vec<Value>,
+    ) -> Result<Value, OperationError> {
         let limits = state.config.search.include_limits;
-        let source_bytes = resources
-            .iter()
-            .try_fold(0_usize, |bytes, resource| {
-                serde_json::to_vec(resource).map(|json| bytes.saturating_add(json.len()))
-            })
-            .map_err(|error| OperationError::Internal(error.to_string()))?;
-        if resources.len() > limits.max_resources || source_bytes > limits.max_bytes {
-            return Err(OperationError::InvalidParameters(
-                "View source exceeds the configured resource or byte budget".into(),
-            ));
-        }
-        let compiled = octofhir_sof::CompiledView::compile(view_def)
-            .await
-            .map_err(|error| {
-                OperationError::InvalidParameters(format!("Invalid ViewDefinition: {error}"))
-            })?;
-        let mut rows = Vec::new();
-        let mut output_bytes: usize = 0;
-        for resource in &resources {
-            if limit.is_some_and(|limit| rows.len() >= limit) {
-                break;
-            }
-            let data = compiled.execute_resource(resource).await.map_err(|error| {
-                OperationError::InvalidParameters(format!(
-                    "Failed to execute ViewDefinition: {error}"
-                ))
-            })?;
-            let result = octofhir_sof::ViewResult {
-                row_count: data.len(),
-                data,
-                columns: compiled.columns().to_vec(),
-            };
-            for row in result.to_json_array() {
-                if limit.is_some_and(|limit| rows.len() >= limit) {
-                    break;
-                }
-                output_bytes = output_bytes.saturating_add(
-                    serde_json::to_vec(&row)
-                        .map_err(|error| OperationError::Internal(error.to_string()))?
-                        .len(),
-                );
-                if rows.len() >= limits.max_resources || output_bytes > limits.max_bytes {
-                    return Err(OperationError::InvalidParameters(
-                        "View output exceeds the configured resource or byte budget".into(),
-                    ));
-                }
-                rows.push(row);
-            }
-            tokio::task::yield_now().await;
-        }
         let data = serde_json::to_vec(&rows)
             .map_err(|error| OperationError::Internal(error.to_string()))?;
-        if rows.len() > state.config.search.include_limits.max_resources
-            || data.len() > state.config.search.include_limits.max_bytes
-        {
+        if rows.len() > limits.max_resources || data.len() > limits.max_bytes {
             return Err(OperationError::InvalidParameters(
                 "View output exceeds the configured resource or byte budget".into(),
             ));
         }
-
-        // Build response with metadata
-        let columns: Vec<Value> = compiled
-            .columns()
-            .iter()
-            .map(|c| {
-                json!({
-                    "name": c.name,
-                    "type": c.col_type.to_string()
-                })
-            })
-            .collect();
 
         Ok(json!({
             "resourceType": "Parameters",
             "parameter": [
                 {
                     "name": "columns",
-                    "part": columns.iter().map(|c| {
+                    "part": columns.iter().map(|column| {
                         json!({
-                            "name": c["name"].as_str().unwrap_or(""),
-                            "valueString": c["type"].as_str().unwrap_or("string")
+                            "name": column.name,
+                            "valueString": column.col_type.to_string()
                         })
                     }).collect::<Vec<_>>()
                 },

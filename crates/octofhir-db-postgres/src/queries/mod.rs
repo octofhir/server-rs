@@ -5,6 +5,7 @@
 pub mod crud;
 pub mod history;
 pub mod search;
+pub mod sql_job;
 
 // Re-export CRUD operations
 pub use crud::{
@@ -18,8 +19,9 @@ pub use history::{get_history, get_history_raw, get_system_history, get_system_h
 
 // Re-export search operations
 pub use search::{
-    RawSearchOptions, SearchUnknownParamHandling, execute_search, execute_search_raw,
-    execute_search_raw_with_config, execute_search_raw_with_options,
-    execute_search_raw_with_terminology, execute_search_raw_with_terminology_options,
-    execute_search_with_tx,
+    RawSearchOptions, SearchUnknownParamHandling, SourcePage, build_search_source_query,
+    execute_search, execute_search_raw, execute_search_raw_with_config,
+    execute_search_raw_with_options, execute_search_raw_with_terminology,
+    execute_search_raw_with_terminology_options, execute_search_with_tx, fetch_rows_over_source,
+    fetch_rows_over_source_page,
 };

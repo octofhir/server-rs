@@ -1078,34 +1078,8 @@ async fn build_app_with_runtime(
                 affects_state: false,
             });
             tracing::info!("Registered $validate at system level");
-            // Register $run for ViewDefinition (SQL on FHIR)
-            registry.register(crate::operations::OperationDefinition {
-                code: "run".to_string(),
-                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run"
-                    .to_string(),
-                kind: crate::operations::OperationKind::Operation,
-                system: false,
-                type_level: true,
-                instance: true,
-                resource: vec!["ViewDefinition".to_string()],
-                parameters: vec![],
-                affects_state: false,
-            });
-            tracing::info!("Registered $run for ViewDefinition");
-            // Register $sql for ViewDefinition (SQL generation)
-            registry.register(crate::operations::OperationDefinition {
-                code: "sql".to_string(),
-                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql"
-                    .to_string(),
-                kind: crate::operations::OperationKind::Operation,
-                system: false,
-                type_level: true,
-                instance: true,
-                resource: vec!["ViewDefinition".to_string()],
-                parameters: vec![],
-                affects_state: false,
-            });
-            tracing::info!("Registered $sql for ViewDefinition");
+            // SQL on FHIR operations, independent of the IG package download
+            crate::operations::sof::register_operation_definitions(&mut registry);
             // Register $status for Subscription (R5 subscription status)
             registry.register(crate::operations::OperationDefinition {
                 code: "status".to_string(),
@@ -1199,32 +1173,8 @@ async fn build_app_with_runtime(
                 parameters: vec![],
                 affects_state: false,
             });
-            // Register $run for ViewDefinition (SQL on FHIR)
-            registry.register(crate::operations::OperationDefinition {
-                code: "run".to_string(),
-                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run"
-                    .to_string(),
-                kind: crate::operations::OperationKind::Operation,
-                system: false,
-                type_level: true,
-                instance: true,
-                resource: vec!["ViewDefinition".to_string()],
-                parameters: vec![],
-                affects_state: false,
-            });
-            // Register $sql for ViewDefinition (SQL generation)
-            registry.register(crate::operations::OperationDefinition {
-                code: "sql".to_string(),
-                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql"
-                    .to_string(),
-                kind: crate::operations::OperationKind::Operation,
-                system: false,
-                type_level: true,
-                instance: true,
-                resource: vec!["ViewDefinition".to_string()],
-                parameters: vec![],
-                affects_state: false,
-            });
+            // SQL on FHIR operations, independent of the IG package download
+            crate::operations::sof::register_operation_definitions(&mut registry);
             // Register $status for Subscription (R5 subscription status)
             registry.register(crate::operations::OperationDefinition {
                 code: "status".to_string(),

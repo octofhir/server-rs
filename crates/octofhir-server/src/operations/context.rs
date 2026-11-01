@@ -206,12 +206,7 @@ impl OperationContext {
             Some(&cfg.registry),
             state.query_cache.as_deref(),
             state.terminology_provider.as_ref(),
-            octofhir_db_postgres::queries::RawSearchOptions {
-                include_limits: state.config.search.include_limits,
-                unknown_param_handling: Some(octofhir_search::UnknownParamHandling::Strict),
-                max_valueset_expansion: Some(state.config.search.max_valueset_expansion),
-                ..Default::default()
-            },
+            Self::raw_search_options(state),
         )
         .await
         .map_err(crate::handlers::map_storage_error)?;
@@ -520,6 +515,71 @@ impl OperationContext {
         }
     }
 
+    /// Admit the caller to search `resource_type` and fold their trusted
+    /// visibility (patient membership, filtered SMART grants) into `params`.
+    /// Rows that a resource policy must judge one by one come back as a
+    /// snapshot plan instead of a direct query.
+    async fn plan_search(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<SearchPlan, OperationError> {
+        let mut params = params.clone();
+        let Some(context) =
+            self.policy_context(state, FhirOperation::Search, resource_type, None, &params)?
+        else {
+            return Ok(SearchPlan::Direct(params));
+        };
+        let policies = state
+            .policy_evaluator
+            .prepare(resource_type)
+            .await
+            .map_err(|error| OperationError::Internal(error.to_string()))?;
+        match policies.evaluate_admission(&context) {
+            AccessDecision::Allow => {}
+            AccessDecision::Deny(reason) => {
+                return Err(ApiError::forbidden(reason.message).into());
+            }
+            AccessDecision::Abstain => {
+                return Err(
+                    ApiError::forbidden("No policy allows operation resource access").into(),
+                );
+            }
+        }
+        if let Some(grant) = crate::authorization::query_visibility(
+            &context,
+            &state.compartment_registry,
+            &state.base_url,
+        )? {
+            params.constraint = Some(match params.constraint.take() {
+                Some(existing) => SearchConstraint::And(vec![existing, grant]),
+                None => grant,
+            });
+        }
+        let visibility =
+            crate::authorization::AuthorizedSearch::for_prepared_context(context.clone());
+        visibility.apply(state, &mut params).await?;
+        if policies.requires_snapshots(&context) || params.included_visibility.is_some() {
+            let prepared = visibility
+                .prepare_snapshots(state, &[resource_type], &params)
+                .await?;
+            if prepared.required() {
+                return Ok(SearchPlan::Snapshots(params, prepared));
+            }
+        }
+        Ok(SearchPlan::Direct(params))
+    }
+
+    fn raw_search_options(state: &AppState) -> octofhir_db_postgres::queries::RawSearchOptions {
+        octofhir_db_postgres::queries::RawSearchOptions {
+            include_limits: state.config.search.include_limits,
+            unknown_param_handling: Some(octofhir_search::UnknownParamHandling::Strict),
+            max_valueset_expansion: Some(state.config.search.max_valueset_expansion),
+            ..Default::default()
+        }
+    }
+
     /// Enumerated resources, pages and totals share the caller's trusted search
     /// predicates, including patient membership and filtered SMART grants.
     pub async fn search(
@@ -528,64 +588,18 @@ impl OperationContext {
         resource_type: &str,
         params: &SearchParams,
     ) -> Result<SearchResult, OperationError> {
-        let mut params = params.clone();
-        if let Some(context) =
-            self.policy_context(state, FhirOperation::Search, resource_type, None, &params)?
-        {
-            let policies = state
-                .policy_evaluator
-                .prepare(resource_type)
-                .await
-                .map_err(|error| OperationError::Internal(error.to_string()))?;
-            match policies.evaluate_admission(&context) {
-                AccessDecision::Allow => {}
-                AccessDecision::Deny(reason) => {
-                    return Err(ApiError::forbidden(reason.message).into());
-                }
-                AccessDecision::Abstain => {
-                    return Err(
-                        ApiError::forbidden("No policy allows operation resource access").into(),
-                    );
-                }
-            }
-            if let Some(grant) = crate::authorization::query_visibility(
-                &context,
-                &state.compartment_registry,
-                &state.base_url,
-            )? {
-                params.constraint = Some(match params.constraint.take() {
-                    Some(existing) => SearchConstraint::And(vec![existing, grant]),
-                    None => grant,
-                });
-            }
-            let visibility =
-                crate::authorization::AuthorizedSearch::for_prepared_context(context.clone());
-            visibility.apply(state, &mut params).await?;
-            if policies.requires_snapshots(&context) || params.included_visibility.is_some() {
-                let prepared = visibility
-                    .prepare_snapshots(state, &[resource_type], &params)
-                    .await?;
-                if !prepared.required() {
-                    return self.query(state, resource_type, &params).await;
-                }
+        match self.plan_search(state, resource_type, params).await? {
+            SearchPlan::Direct(params) => self.query(state, resource_type, &params).await,
+            SearchPlan::Snapshots(params, prepared) => {
                 let result = prepared
                     .execute(
                         state,
                         &[resource_type],
                         &params,
-                        octofhir_db_postgres::queries::RawSearchOptions {
-                            include_limits: state.config.search.include_limits,
-                            unknown_param_handling: Some(
-                                octofhir_search::UnknownParamHandling::Strict,
-                            ),
-                            max_valueset_expansion: Some(
-                                state.config.search.max_valueset_expansion,
-                            ),
-                            ..Default::default()
-                        },
+                        Self::raw_search_options(state),
                     )
                     .await?;
-                return Ok(SearchResult {
+                Ok(SearchResult {
                     entries: result
                         .entries
                         .into_iter()
@@ -593,11 +607,56 @@ impl OperationContext {
                         .collect::<Result<_, _>>()?,
                     total: result.total,
                     has_more: result.has_more,
-                });
+                })
             }
         }
-        self.query(state, resource_type, &params).await
     }
+
+    /// The rows of `resource_type` this caller may read, as one SQL relation
+    /// for a set-based consumer such as a SQL-on-FHIR view: the same admission,
+    /// grants and patient membership as [`OperationContext::search`] with
+    /// `params`, unordered and unpaginated. When a resource policy must judge
+    /// each row, no such relation exists and the consumer has to go through
+    /// `search` instead.
+    pub async fn authorized_source(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<AuthorizedSource, OperationError> {
+        let params = match self.plan_search(state, resource_type, params).await? {
+            SearchPlan::Direct(params) => params,
+            SearchPlan::Snapshots(..) => return Ok(AuthorizedSource::PerResourcePolicy),
+        };
+        let cfg = state.search_config.config();
+        let query = octofhir_db_postgres::queries::build_search_source_query(
+            resource_type,
+            &params,
+            Some(&cfg.registry),
+            state.terminology_provider.as_ref(),
+            Self::raw_search_options(state),
+        )
+        .await
+        .map_err(crate::handlers::map_storage_error)?;
+        Ok(AuthorizedSource::Sql(query))
+    }
+}
+
+/// How [`OperationContext::search`] answers once the caller is admitted.
+enum SearchPlan {
+    /// One query whose predicates carry every grant.
+    Direct(SearchParams),
+    /// A resource policy judges each candidate snapshot.
+    Snapshots(SearchParams, crate::authorization::PreparedSnapshotSearch),
+}
+
+/// The caller's readable rows of one resource type, for set-based reads.
+pub enum AuthorizedSource {
+    /// Every readable row, and only those: `resource`, `id`, `txid`,
+    /// `created_at`, `updated_at`.
+    Sql(octofhir_search::BuiltQuery),
+    /// A resource policy decides row by row; read through `search`.
+    PerResourcePolicy,
 }
 
 fn stored_resource(raw: RawStoredResource) -> Result<StoredResource, OperationError> {

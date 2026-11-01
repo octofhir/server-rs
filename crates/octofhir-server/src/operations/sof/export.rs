@@ -10,6 +10,7 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use super::engine;
 use crate::async_jobs::AsyncJobRequest;
 use crate::config::BulkExportConfig;
 use crate::operations::bulk::NdjsonWriter;
@@ -233,6 +234,66 @@ impl OperationHandler for ViewDefinitionExportOperation {
     }
 }
 
+/// Export `view` as SQL, one page of source rows at a time in id order,
+/// authorizing the job again before each page. Returns the rows written, or
+/// `None`, having written nothing, when the source needs the in-memory engine
+/// from the start.
+async fn export_view_sql(
+    state: &AppState,
+    job_id: Uuid,
+    view: &ViewDefinition,
+    view_sql: &engine::ViewSql,
+    snapshot: &SearchParams,
+    batch: usize,
+    writer: &mut NdjsonWriter,
+) -> Result<Option<usize>, String> {
+    let view_name = view.name.as_deref().unwrap_or("view");
+    let mut after: Option<String> = None;
+    let mut written = 0_usize;
+    loop {
+        // Delegation is resumed per page, so revoked access stops the export.
+        let context = crate::operations::OperationContext::for_job(state, job_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let source = match engine::authorized_source(state, &context, &view.resource, snapshot)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            Ok(source) => source,
+            Err(reason) if after.is_none() => {
+                tracing::debug!(job_id = %job_id, reason, "ViewDefinition export runs in memory");
+                return Ok(None);
+            }
+            Err(reason) => {
+                return Err(format!(
+                    "View source authorization changed during the export: {reason}"
+                ));
+            }
+        };
+        let (rows, last) = view_sql
+            .fetch_page(state, &source, after.as_deref(), batch)
+            .await
+            .map_err(|error| error.to_string())?;
+        let Some(last) = last else {
+            return Ok(Some(written));
+        };
+        writer
+            .write_resources(view_name, &rows)
+            .await
+            .map_err(|error| format!("Failed to write view rows: {error}"))?;
+        written = written
+            .checked_add(rows.len())
+            .ok_or("View row count overflow")?;
+        state
+            .async_job_manager
+            .update_progress(job_id, 0.5)
+            .await
+            .map_err(|error| error.to_string())?;
+        after = Some(last);
+        tokio::task::yield_now().await;
+    }
+}
+
 /// Execute a ViewDefinition export job.
 ///
 /// This function is called by the async job executor to perform the actual export.
@@ -288,72 +349,100 @@ pub async fn execute_viewdefinition_export(
         .map_err(|error| format!("Failed to create NDJSON writer: {error}"))?;
     let page_size =
         u32::try_from(batch_size.min(1000)).map_err(|_| "Export batch size is too large")?;
-    let mut offset = 0_u32;
     let mut written = 0_usize;
-    loop {
-        // Reconstruct delegation for each page so current users and client
-        // activation participate in every native source query.
-        let context = crate::operations::OperationContext::for_job(&state, job_id)
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut search = SearchParams::new()
-            .with_count(page_size)
-            .with_sort("_id", false);
-        search.offset = Some(offset);
-        search.parameters.insert(
-            "_lastUpdated".into(),
-            vec![format!("le{}", started_at.to_rfc3339())],
-        );
-        let page = context
-            .search(&state, &view_def.resource, &search)
-            .await
-            .map_err(|error| error.to_string())?;
-        let fetched = page.entries.len();
-        if page.has_more && fetched == 0 {
-            return Err("View source pagination made no progress".into());
+    // The export's snapshot: resources as of the job's start.
+    let mut snapshot = SearchParams::new();
+    snapshot.parameters.insert(
+        "_lastUpdated".into(),
+        vec![format!("le{}", started_at.to_rfc3339())],
+    );
+    let sql_rows = match engine::ViewSql::prepare(&view_def).map_err(|e| e.to_string())? {
+        Ok(view_sql) => {
+            export_view_sql(
+                &state,
+                job_id,
+                &view_def,
+                &view_sql,
+                &snapshot,
+                usize::try_from(page_size).map_err(|_| "Export batch size is too large")?,
+                &mut writer,
+            )
+            .await?
         }
-        for entry in page.entries {
-            let data = compiled
-                .execute_resource(&entry.resource)
+        Err(reason) => {
+            tracing::debug!(job_id = %job_id, reason, "ViewDefinition export runs in memory");
+            None
+        }
+    };
+    let ran_as_sql = sql_rows.is_some();
+    written += sql_rows.unwrap_or(0);
+    let mut offset = 0_u32;
+    if !ran_as_sql {
+        loop {
+            // Reconstruct delegation for each page so current users and client
+            // activation participate in every native source query.
+            let context = crate::operations::OperationContext::for_job(&state, job_id)
                 .await
-                .map_err(|error| format!("Failed to execute ViewDefinition: {error}"))?;
-            let result = octofhir_sof::ViewResult {
-                row_count: data.len(),
-                data,
-                columns: compiled.columns().to_vec(),
-            };
-            let rows = result.to_json_array();
-            let limits = state.config.search.include_limits;
-            if rows.len() > limits.max_resources
-                || serde_json::to_vec(&rows)
-                    .map_err(|error| error.to_string())?
-                    .len()
-                    > limits.max_bytes
-            {
-                return Err(
-                    "View projection exceeds the configured resource or byte budget".into(),
-                );
+                .map_err(|error| error.to_string())?;
+            let mut search = SearchParams::new()
+                .with_count(page_size)
+                .with_sort("_id", false);
+            search.offset = Some(offset);
+            search.parameters.insert(
+                "_lastUpdated".into(),
+                vec![format!("le{}", started_at.to_rfc3339())],
+            );
+            let page = context
+                .search(&state, &view_def.resource, &search)
+                .await
+                .map_err(|error| error.to_string())?;
+            let fetched = page.entries.len();
+            if page.has_more && fetched == 0 {
+                return Err("View source pagination made no progress".into());
             }
-            writer
-                .write_resources(view_name, &rows)
+            for entry in page.entries {
+                let data = compiled
+                    .execute_resource(&entry.resource)
+                    .await
+                    .map_err(|error| format!("Failed to execute ViewDefinition: {error}"))?;
+                let result = octofhir_sof::ViewResult {
+                    row_count: data.len(),
+                    data,
+                    columns: compiled.columns().to_vec(),
+                };
+                let rows = result.to_json_array();
+                let limits = state.config.search.include_limits;
+                if rows.len() > limits.max_resources
+                    || serde_json::to_vec(&rows)
+                        .map_err(|error| error.to_string())?
+                        .len()
+                        > limits.max_bytes
+                {
+                    return Err(
+                        "View projection exceeds the configured resource or byte budget".into(),
+                    );
+                }
+                writer
+                    .write_resources(view_name, &rows)
+                    .await
+                    .map_err(|error| format!("Failed to write view rows: {error}"))?;
+                written = written
+                    .checked_add(rows.len())
+                    .ok_or("View row count overflow")?;
+                tokio::task::yield_now().await;
+            }
+            state
+                .async_job_manager
+                .update_progress(job_id, 0.5)
                 .await
-                .map_err(|error| format!("Failed to write view rows: {error}"))?;
-            written = written
-                .checked_add(rows.len())
-                .ok_or("View row count overflow")?;
-            tokio::task::yield_now().await;
+                .map_err(|error| error.to_string())?;
+            if !page.has_more {
+                break;
+            }
+            offset = offset
+                .checked_add(u32::try_from(fetched).map_err(|_| "View source pagination overflow")?)
+                .ok_or("View source pagination overflow")?;
         }
-        state
-            .async_job_manager
-            .update_progress(job_id, 0.5)
-            .await
-            .map_err(|error| error.to_string())?;
-        if !page.has_more {
-            break;
-        }
-        offset = offset
-            .checked_add(u32::try_from(fetched).map_err(|_| "View source pagination overflow")?)
-            .ok_or("View source pagination overflow")?;
     }
 
     // Finish writing and get file information
