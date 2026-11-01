@@ -87,7 +87,11 @@ export const Chart = forwardRef<EChartsType | null, ChartProps>(function Chart(
       // useDirtyRect is intentionally off: it leaves trails / flicker on pie
       // charts and label lines (known ECharts artifact).
       created = echarts.init(dom, activeTheme, { renderer });
-      if (group) created.group = group;
+      if (group) {
+        // Charts of one group share the tooltip/crosshair and zoom; connecting is idempotent.
+        created.group = group;
+        echarts.connect(group);
+      }
       instanceRef.current = created;
       onInitRef.current?.(created);
       setInstance(created);
