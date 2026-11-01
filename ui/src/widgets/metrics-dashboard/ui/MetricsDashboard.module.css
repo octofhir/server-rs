@@ -1,0 +1,371 @@
+/* 24-column grid, 30px rows and 8px gaps like Grafana's — DashboardGrid's ROW_PX / GAP_PX. */
+.grid {
+	display: grid;
+	grid-template-columns: repeat(24, minmax(0, 1fr));
+	grid-auto-rows: 30px;
+	gap: 8px;
+}
+
+.grid[data-dragging] {
+	cursor: grabbing;
+	user-select: none;
+}
+
+.cell {
+	grid-column: var(--col);
+	grid-row: var(--row);
+	min-width: 0;
+	min-height: 0;
+}
+
+.grid[data-editing] .cell {
+	transition: transform 120ms ease;
+}
+
+.cell[data-active] .panel {
+	border-color: var(--octo-accent-primary);
+}
+
+@media (max-width: 760px) {
+	.grid {
+		grid-template-columns: minmax(0, 1fr);
+		grid-auto-rows: auto;
+	}
+
+	.cell {
+		grid-column: 1;
+		grid-row: auto;
+		height: calc(var(--h) * 38px - 8px);
+	}
+}
+
+.panel {
+	position: relative;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-width: 0;
+	overflow: hidden;
+	padding: 8px 12px 10px;
+	border: 1px solid var(--octo-border-subtle);
+	border-radius: var(--octo-radius-lg);
+	background: var(--octo-surface-1);
+}
+
+.panelHeader {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 22px;
+	min-width: 0;
+	margin-bottom: 4px;
+}
+
+.panelTitle {
+	overflow: hidden;
+	margin: 0;
+	font-family: var(--octo-typography-heading);
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-overflow: ellipsis;
+	text-transform: uppercase;
+	white-space: nowrap;
+	color: var(--octo-text-muted);
+}
+
+.grid[data-editing] .panelTitle {
+	cursor: grab;
+}
+
+.grip {
+	display: inline-flex;
+	margin-left: -4px;
+	color: var(--octo-text-muted);
+	cursor: grab;
+}
+
+.icon,
+.errorIcon {
+	display: inline-flex;
+	color: var(--octo-text-muted);
+}
+
+.errorIcon {
+	color: var(--octo-accent-fire);
+}
+
+.fetching {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--octo-text-muted);
+	opacity: 0.6;
+	animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+	50% {
+		opacity: 0.15;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.fetching {
+		animation: none;
+	}
+}
+
+.panelMenu {
+	margin-left: auto;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+
+.panel:hover .panelMenu,
+.panel:focus-within .panelMenu,
+.grid[data-editing] .panelMenu {
+	opacity: 1;
+}
+
+.panelBody {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.panelError {
+	margin: auto 0;
+	font-size: 12px;
+	color: var(--octo-text-secondary);
+}
+
+.loading {
+	flex: 1;
+	border-radius: var(--octo-radius-md);
+	background: var(--octo-surface-2);
+	opacity: 0.6;
+}
+
+.placeholder {
+	flex: 1;
+	border: 1px dashed var(--octo-border-strong);
+	border-radius: var(--octo-radius-md);
+	background: transparent;
+	font: inherit;
+	font-size: 12px;
+	color: var(--octo-text-muted);
+	cursor: pointer;
+}
+
+.placeholder:disabled {
+	cursor: default;
+}
+
+.placeholder:not(:disabled):hover {
+	background: var(--octo-surface-hover);
+	color: var(--octo-text-primary);
+}
+
+.stat {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.statValue {
+	position: relative;
+	z-index: 1;
+	font-family: var(--octo-typography-heading);
+	font-size: 26px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.02em;
+	line-height: 1.1;
+	white-space: nowrap;
+	color: var(--octo-text-primary);
+}
+
+.statUnit {
+	margin-left: 4px;
+	font-size: 14px;
+	font-weight: 500;
+	letter-spacing: 0;
+	color: var(--octo-text-muted);
+}
+
+.stat[data-tone="warning"] .statValue {
+	color: var(--octo-brand-warm);
+}
+
+.stat[data-tone="error"] .statValue {
+	color: var(--octo-accent-fire);
+}
+
+.stat[data-tone="success"] .statValue {
+	color: var(--octo-brand-success);
+}
+
+.stat[data-tone="info"] .statValue {
+	color: var(--octo-brand-info);
+}
+
+.statTrend {
+	position: absolute;
+	right: -12px;
+	bottom: -10px;
+	left: -12px;
+	height: 55%;
+}
+
+.mono {
+	font-family: var(--octo-typography-mono);
+	font-size: 12px;
+}
+
+.num {
+	font-family: var(--octo-typography-mono);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.muted {
+	color: var(--octo-text-muted);
+}
+
+.resize {
+	position: absolute;
+	right: 2px;
+	bottom: 2px;
+	width: 12px;
+	height: 12px;
+	border-right: 2px solid var(--octo-border-strong);
+	border-bottom: 2px solid var(--octo-border-strong);
+	border-bottom-right-radius: 3px;
+	cursor: nwse-resize;
+}
+
+.resize:hover {
+	border-color: var(--octo-accent-primary);
+}
+
+.chart {
+	flex: 1;
+	min-height: 0;
+}
+
+.table {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.noData {
+	margin: auto;
+	font-size: 12px;
+	color: var(--octo-text-muted);
+}
+
+.legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 4px;
+	max-height: 48px;
+	margin: 4px 0 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+
+.legendItem {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 260px;
+	height: 20px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: var(--octo-radius-sm);
+	background: transparent;
+	font: inherit;
+	font-size: 11.5px;
+	color: var(--octo-text-secondary);
+	cursor: pointer;
+}
+
+.legendItem:hover {
+	background: var(--octo-surface-hover);
+}
+
+.legendItem[data-off] {
+	opacity: 0.4;
+}
+
+.swatch {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+}
+
+.legendName {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.legendValue {
+	font-family: var(--octo-typography-mono);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	color: var(--octo-text-primary);
+}
+
+/* Section rows: a full-width header with a rule, collapsible. */
+.row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 100%;
+	min-width: 0;
+}
+
+.rowToggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 6px 2px 2px;
+	border: 0;
+	border-radius: var(--octo-radius-sm);
+	background: transparent;
+	font: inherit;
+	color: var(--octo-text-secondary);
+	cursor: pointer;
+}
+
+.rowToggle:hover {
+	background: var(--octo-surface-hover);
+	color: var(--octo-text-primary);
+}
+
+.rowTitle {
+	font-family: var(--octo-typography-mono);
+	font-size: 12.5px;
+	font-weight: 600;
+	color: var(--octo-text-primary);
+}
+
+.rowRule {
+	flex: 1;
+	height: 1px;
+	background: var(--octo-border-subtle);
+}
+
+.rowActions {
+	display: inline-flex;
+}

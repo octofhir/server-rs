@@ -48,6 +48,7 @@ import { type ComponentType, Suspense, useCallback, useEffect, useMemo, useState
 import { Helmet } from "react-helmet-async";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, useHealth, useResourceTypes, useSettings } from "@/shared/api/hooks";
+import type { ServerFeatures } from "@/shared/api/types";
 import {
   $paletteContributions,
   $paletteOpen,
@@ -77,6 +78,8 @@ interface NavEntry {
   aliases?: string[];
   /** Second key of a `g <key>` go-to shortcut. */
   goKey?: string;
+  /** Shown only when the server enables this feature. */
+  feature?: keyof ServerFeatures;
 }
 
 interface NavSection {
@@ -133,7 +136,7 @@ const NAV: NavSection[] = [
       { id: "subscriptions", label: "Subscriptions", icon: BellRing, path: "/subscriptions" },
       { id: "audit", label: "Audit", icon: Receipt, path: "/audit", goKey: "a" },
       { id: "logs", label: "Logs", icon: FileText, path: "/logs", goKey: "l" },
-      { id: "performance", label: "Performance", icon: Gauge, path: "/performance", goKey: "m" },
+      { id: "performance", label: "Performance", icon: Gauge, path: "/performance", goKey: "m", feature: "metrics" },
       { id: "database", label: "Database", icon: Database, path: "/database" },
       { id: "settings", label: "Settings", icon: Settings, path: "/settings", goKey: "," },
     ],
@@ -262,7 +265,15 @@ export function AppShell() {
   const { colorScheme, toggleColorScheme } = useColorScheme();
   const { data: health } = useHealth();
   const { data: resourceTypes } = useResourceTypes();
-  useSettings();
+  const { data: settings } = useSettings();
+  const nav = useMemo(
+    () =>
+      NAV.map((section) => ({
+        ...section,
+        items: section.items.filter((entry) => !entry.feature || settings?.features[entry.feature] === true),
+      })).filter((section) => section.items.length > 0),
+    [settings]
+  );
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -291,7 +302,7 @@ export function AppShell() {
 
   const groups = useMemo<SidebarNavGroup[]>(
     () =>
-      NAV.map((section) => ({
+      nav.map((section) => ({
         id: section.id,
         label: section.label,
         items: section.items.map((entry) => ({
@@ -302,11 +313,11 @@ export function AppShell() {
           onClick: () => navigate(entry.path),
         })),
       })),
-    [path, navigate]
+    [nav, path, navigate]
   );
 
   const paletteItems = useMemo<CommandPaletteItem[]>(() => {
-    const pages = NAV.flatMap((section) =>
+    const pages = nav.flatMap((section) =>
       section.items.map((entry) => ({
         id: `go-${entry.id}`,
         label: entry.label,
@@ -340,7 +351,7 @@ export function AppShell() {
     // Commands from the current page come first: they are the most specific.
     const pageItems = Object.values(contributions).flat();
     return [...pageItems, ...pages, ...actions, ...types];
-  }, [navigate, resourceTypes, colorScheme, toggleColorScheme, logout, contributions]);
+  }, [nav, navigate, resourceTypes, colorScheme, toggleColorScheme, logout, contributions]);
 
   const recentItems = useMemo<CommandPaletteItem[]>(
     () =>
@@ -378,7 +389,7 @@ export function AppShell() {
   // Linear-style navigation: `g` then a letter jumps to a page; `?` lists the shortcuts.
   useEffect(() => {
     const goTargets = new Map(
-      NAV.flatMap((section) => section.items).flatMap((entry) =>
+      nav.flatMap((section) => section.items).flatMap((entry) =>
         entry.goKey ? [[entry.goKey, entry.path] as const] : []
       )
     );
@@ -409,7 +420,7 @@ export function AppShell() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigate]);
+  }, [nav, navigate]);
 
   const sidebar = (
     <Sidebar

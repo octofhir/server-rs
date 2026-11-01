@@ -129,6 +129,7 @@ export function AppRoutes() {
         {/* Other */}
         <Route path="/logs" element={<LogsViewerPage />} />
         <Route path="/performance" element={<PerformancePage />} />
+        <Route path="/performance/:id" element={<PerformancePage />} />
         <Route path="/audit" element={<AuditTrailPage />} />
         <Route path="/metadata" element={<CapabilityStatementPage />} />
         <Route path="/viewdefinition" element={<ViewDefinitionPage />} />

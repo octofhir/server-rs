@@ -59,10 +59,6 @@ export default defineConfig({
         target: "http://localhost:8888",
         changeOrigin: true,
       },
-      "/metrics": {
-        target: "http://localhost:8888",
-        changeOrigin: true,
-      },
       "/$graphql": {
         target: "http://localhost:8888",
         changeOrigin: true,

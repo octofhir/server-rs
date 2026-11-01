@@ -137,7 +137,8 @@ function isServerSettings(value: unknown): value is ServerSettings {
     typeof value.features.bulkExport === "boolean" &&
     typeof value.features.dbConsole === "boolean" &&
     typeof value.features.auth === "boolean" &&
-    typeof value.features.cql === "boolean"
+    typeof value.features.cql === "boolean" &&
+    (value.features.metrics === undefined || typeof value.features.metrics === "boolean")
   );
 }
 
@@ -700,15 +701,6 @@ class ServerApiClient {
         details: error instanceof Error ? error.message : "Unknown error",
       };
     }
-  }
-
-  /** Prometheus text exposition from `/metrics`. */
-  async getMetricsText(): Promise<string> {
-    const response = await this.request("/metrics");
-    if (typeof response.data !== "string") {
-      throw new Error("Metrics endpoint returned no text");
-    }
-    return response.data;
   }
 
   async getBuildInfo(): Promise<BuildInfo> {

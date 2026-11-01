@@ -18,6 +18,8 @@ export interface ServerFeatures {
   dbConsole: boolean;
   auth: boolean;
   cql: boolean;
+  /** Metrics dashboards: `metrics.prometheus` is configured. */
+  metrics?: boolean;
 }
 
 export interface ServerSettings {
