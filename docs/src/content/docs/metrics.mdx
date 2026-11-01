@@ -205,9 +205,19 @@ Tokio runtime and the process. It is read-only; **Duplicate & edit** makes your 
 In edit mode panels move by their header and resize from their corner on a 24-column grid,
 like Grafana's. **Add panel** opens the panel editor:
 
-- queries are PromQL, written in an editor that completes metric names (with their help text),
-  label names, label values, functions and durations, and underlines syntax errors as the server's
-  parser reports them; ⌘Enter runs the preview;
+- each query is written in the **Builder** or as **Code**. The builder picks a metric (with its
+  help text), label filters with suggested values, a function (`rate`, `increase`, a histogram
+  quantile, `*_over_time`), an aggregation with `by` labels and an optional top-k, and shows the
+  PromQL it writes. Anything beyond that — ratios, `label_replace`, offsets — goes in the code
+  editor, which completes metric names, label names and values, functions and durations, and
+  underlines syntax errors as the server's parser reports them. PromQL is what is saved; a query
+  written as code opens in the builder only if the builder can read it back;
+- the preview follows your edits; ⌘Enter or **Run** refreshes it at once;
+- **Explain** (the tree icon) shows the query as a tree and runs every step on its own — `rate(…)`,
+  then `sum by (…)`, then the division — with the number of series each returns and a few
+  samples. When a panel is empty, it shows which step lost the series: a filter that matches
+  nothing, a `by` that drops the label a division joins on. The same view is under **Query** in
+  any panel's menu;
 - `$__rate_interval` (at least four scrapes), `$__interval` (the step), `$__range` (the time
   range) and dashboard variables such as `$instance` are substituted before the query runs, the
   same names Grafana uses;
@@ -246,6 +256,14 @@ Grafana is optional. Every dashboard, built-in or yours, exports to it from the 
   sent with the request only: it is not stored on the server or written to its logs, and the
   console forgets it when the tab closes. Requests to Grafana go through the server's
   [outbound policy](/server-rs/configuration/#outbound-requests).
+
+**Import dashboard…** (in the **⋯** menu, or ⌘K) goes the other way: drop in a Grafana
+dashboard JSON — an export or the API's `{"dashboard": …}` — or a dashboard downloaded from this
+console. PromQL panels (time series, graph, stat, singlestat, table; gauges become stats),
+collapsed and expanded rows, units, decimals, min/max, thresholds, fixed series colours, per-query
+units, `label_values(…)` variables and the shared-crosshair setting carry over. Panels of other
+types or datasources (text, logs, Loki, SQL) and other variable types are listed as not imported
+before you create the dashboard.
 
 The built-in dashboards are also in the repository under `deploy/observability/grafana/`. To try
 the push locally: `docker compose --profile grafana up -d` starts Grafana on
