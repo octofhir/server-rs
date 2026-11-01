@@ -1,5 +1,10 @@
 # Improvement Roadmap
 
+> **Superseded for priorities by [`../feature-plan.md`](../feature-plan.md)** (2026-11-02). Kept for
+> the production-readiness epics. Decisions since this was written: no FHIR XML; single instance
+> first (no multi-tenancy, read replicas or sharding for now); no `$reindex` (search reads JSONB
+> through functional indexes); `$convert` comes from the fml-rs engine.
+
 **Team**: 3-5 developers, 3 parallel workstreams (Track A, B, C).
 
 **Effort scale**: S (1-2 weeks), M (2-4 weeks), L (4-8 weeks), XL (8-16+ weeks).
@@ -36,11 +41,11 @@ Goal: Close critical gaps that block enterprise evaluation.
 
 | Epic | Stories | Track | Effort | Acceptance Criteria |
 |------|---------|-------|--------|---------------------|
-| **Multi-tenancy** | 1. Design tenant isolation model (schema-level vs row-level)<br>2. Add `tenant_id` to resource tables<br>3. Implement tenant-aware routing middleware<br>4. Add tenant management admin API<br>5. Update search to scope by tenant<br>6. Add integration tests | A | XL | Tenants cannot access each other's data; admin can manage tenants via API |
+| ~~**Multi-tenancy**~~ (out of scope: single instance first) | 1. Design tenant isolation model (schema-level vs row-level)<br>2. Add `tenant_id` to resource tables<br>3. Implement tenant-aware routing middleware<br>4. Add tenant management admin API<br>5. Update search to scope by tenant<br>6. Add integration tests | A | XL | Tenants cannot access each other's data; admin can manage tenants via API |
 | **Bulk Import ($import)** | 1. NDJSON file parsing and streaming<br>2. Async job integration for progress tracking<br>3. Error reporting per resource<br>4. Resumable imports (track position in file)<br>5. Add k6 load test for import | B | L | Import 100K resources via NDJSON; progress visible via async status endpoint |
-| **$convert Operation** | 1. Implement R4→R5 resource structure mapping<br>2. Implement R5→R4 resource structure mapping<br>3. Handle extension conversions<br>4. Add tests for common resource types | C | M | Convert Patient, Observation, Encounter between R4 and R5 |
-| **Reindexing Strategy** | 1. Add `$reindex` operation endpoint<br>2. Background job for GIN index rebuild<br>3. Zero-downtime (CONCURRENTLY option)<br>4. Progress reporting via async jobs | B | L | Reindex 100K resources without downtime; progress visible via admin API |
-| **XML Support** | 1. Add XML serialization for FHIR resources<br>2. Content negotiation (`Accept: application/fhir+xml`)<br>3. Read-only initially (XML responses for JSON-stored data)<br>4. Add XML input parsing (Phase 2) | C | M | `Accept: application/fhir+xml` returns valid FHIR XML |
+| **$convert Operation** | Through the fml-rs engine and the HL7 cross-version maps, see feature plan 2.2 | C | M | Convert R4 ↔ R5 with a report of values that did not carry over |
+| ~~**Reindexing Strategy**~~ (not needed: functional indexes, no reindex) | 1. Add `$reindex` operation endpoint<br>2. Background job for GIN index rebuild<br>3. Zero-downtime (CONCURRENTLY option)<br>4. Progress reporting via async jobs | B | L | Reindex 100K resources without downtime; progress visible via admin API |
+| ~~**XML Support**~~ (decided: JSON only) | 1. Add XML serialization for FHIR resources<br>2. Content negotiation (`Accept: application/fhir+xml`)<br>3. Read-only initially (XML responses for JSON-stored data)<br>4. Add XML input parsing (Phase 2) | C | M | `Accept: application/fhir+xml` returns valid FHIR XML |
 
 ### P1 Dependencies
 ```
@@ -58,7 +63,7 @@ Goal: Build competitive moat and unlock new markets.
 |------|---------|-------|--------|---------------------|
 | **ONC g10 Certification** | 1. Run Inferno g10 test suite<br>2. Fix all g10 failures (SMART 2.0, US Core IG, Bulk Data)<br>3. Implement required US Core profiles<br>4. Prepare certification documentation<br>5. Submit for ONC certification | A | XL | Pass Inferno g10 test suite; certification submitted |
 | **Plugin/Extension SDK** | 1. Define plugin API (custom operations, interceptors, storage backends)<br>2. Implement plugin loading (dynamic libraries or WASM)<br>3. Create plugin template/starter<br>4. Document plugin development guide<br>5. Build 2-3 example plugins | A | XL | Third-party developers can create and load custom plugins |
-| **Read Replicas / Sharding** | 1. Add read replica connection pool<br>2. Implement query routing (writes → primary, reads → replica)<br>3. Add configuration for replica endpoints<br>4. Test replication lag handling | B | XL | Read queries routed to replicas; write queries to primary; tested with pg replication |
+| ~~**Read Replicas / Sharding**~~ (out of scope for now) | 1. Add read replica connection pool<br>2. Implement query routing (writes → primary, reads → replica)<br>3. Add configuration for replica endpoints<br>4. Test replication lag handling | B | XL | Read queries routed to replicas; write queries to primary; tested with pg replication |
 | **Advanced Terminology** | 1. Pre-indexed SNOMED CT import<br>2. Pre-indexed LOINC import<br>3. Optimized $expand for large code systems (100K+ concepts)<br>4. Hierarchical subsumption queries | B | L | $expand on SNOMED value set completes in <1s for 1000 concepts |
 | **Subscription Delivery Retry/DLQ** | 1. Configurable retry policies (exponential backoff, max retries)<br>2. Dead letter queue for permanently failed deliveries<br>3. Admin UI for DLQ inspection and replay<br>4. Metrics for delivery success/failure rates | C | M | Failed subscriptions retry with backoff; DLQ viewable in admin UI |
 | **Multi-version Endpoints** | 1. Route `/fhir/r4/*` and `/fhir/r5/*` to different FHIR versions<br>2. Version-specific CapabilityStatement per endpoint<br>3. Version-specific search parameters<br>4. Shared storage with version-aware serialization | C | L | Clients can query R4 and R5 endpoints simultaneously |
