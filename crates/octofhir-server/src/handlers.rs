@@ -292,8 +292,28 @@ pub async fn readyz(State(state): State<crate::server::AppState>) -> impl IntoRe
 
 /// Prometheus metrics endpoint.
 ///
-/// Returns metrics in Prometheus text format for scraping.
-pub async fn metrics(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+/// Returns metrics in Prometheus text format for scraping. With `metrics.endpoint_token` set,
+/// only requests carrying that bearer token are answered.
+pub async fn metrics(State(state): State<crate::server::AppState>, headers: HeaderMap) -> Response {
+    if let Some(token) = state.config.metrics.endpoint_token.as_deref() {
+        let presented = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .unwrap_or("");
+        if !constant_time_eq(presented.as_bytes(), token.as_bytes()) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                "metrics require the configured bearer token",
+            )
+                .into_response();
+        }
+    }
+
+    crate::metrics::collect_process_metrics();
+    crate::metrics::collect_runtime_metrics();
+
     // Update database pool metrics before rendering
     let pool_options = state.db_pool.options();
     let pool_size = state.db_pool.size();
@@ -318,6 +338,11 @@ pub async fn metrics(State(state): State<crate::server::AppState>) -> impl IntoR
             .into_response(),
         None => (StatusCode::SERVICE_UNAVAILABLE, "Metrics not initialized").into_response(),
     }
+}
+
+/// Compares secrets without returning early on the first differing byte.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Query parameters for capabilities endpoint
@@ -3964,6 +3989,8 @@ pub struct ServerFeatures {
     pub auth: bool,
     /// CQL (Clinical Quality Language)
     pub cql: bool,
+    /// Metrics dashboards (`metrics.prometheus` configured)
+    pub metrics: bool,
 }
 
 /// GET /api/settings - Server settings and feature flags for UI
@@ -3979,6 +4006,7 @@ pub async fn api_settings(State(state): State<crate::server::AppState>) -> impl 
             db_console: config.db_console.enabled,
             auth: true,
             cql: config.cql.enabled,
+            metrics: state.prometheus.is_some(),
         },
     };
 

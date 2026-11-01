@@ -6,8 +6,11 @@
 //! - Cache metrics (hit/miss rates, entries)
 //! - FHIR-specific metrics (resources by type)
 
-use metrics::{counter, gauge, histogram};
+use metrics::{
+    Unit, counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram,
+};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use metrics_process::Collector;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -17,24 +20,40 @@ static PROMETHEUS_HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 /// Metric names as constants for consistency.
 pub mod names {
     // HTTP metrics
-    pub const HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
-    pub const HTTP_REQUEST_DURATION_SECONDS: &str = "http_request_duration_seconds";
-    pub const HTTP_ACTIVE_CONNECTIONS: &str = "http_active_connections";
+    pub const HTTP_REQUESTS_TOTAL: &str = "octofhir_http_requests_total";
+    pub const HTTP_REQUEST_DURATION_SECONDS: &str = "octofhir_http_request_duration_seconds";
+    pub const HTTP_ACTIVE_CONNECTIONS: &str = "octofhir_http_active_connections";
 
     // Database pool metrics
-    pub const DB_POOL_CONNECTIONS_TOTAL: &str = "db_pool_connections_total";
-    pub const DB_POOL_CONNECTIONS_IDLE: &str = "db_pool_connections_idle";
-    pub const DB_POOL_CONNECTIONS_ACTIVE: &str = "db_pool_connections_active";
-    pub const DB_POOL_ACQUIRE_DURATION_SECONDS: &str = "db_pool_acquire_duration_seconds";
+    pub const DB_POOL_CONNECTIONS_MAX: &str = "octofhir_db_pool_connections_max";
+    pub const DB_POOL_CONNECTIONS_IDLE: &str = "octofhir_db_pool_connections_idle";
+    pub const DB_POOL_CONNECTIONS_ACTIVE: &str = "octofhir_db_pool_connections_active";
+    pub const DB_POOL_ACQUIRE_DURATION_SECONDS: &str = "octofhir_db_pool_acquire_duration_seconds";
 
     // Cache metrics
-    pub const CACHE_HITS_TOTAL: &str = "cache_hits_total";
-    pub const CACHE_MISSES_TOTAL: &str = "cache_misses_total";
-    pub const CACHE_ENTRIES: &str = "cache_entries";
+    pub const CACHE_HITS_TOTAL: &str = "octofhir_cache_hits_total";
+    pub const CACHE_MISSES_TOTAL: &str = "octofhir_cache_misses_total";
+    pub const CACHE_ENTRIES: &str = "octofhir_cache_entries";
 
     // FHIR metrics
-    pub const FHIR_RESOURCES_TOTAL: &str = "fhir_resources_total";
-    pub const FHIR_OPERATIONS_TOTAL: &str = "fhir_operations_total";
+    pub const FHIR_RESOURCES: &str = "octofhir_fhir_resources";
+    pub const FHIR_OPERATIONS_TOTAL: &str = "octofhir_fhir_operations_total";
+
+    // FHIR REST interactions (read, search, create, …) by resource type
+    pub const FHIR_INTERACTIONS_TOTAL: &str = "octofhir_fhir_interactions_total";
+    pub const FHIR_INTERACTION_DURATION_SECONDS: &str =
+        "octofhir_fhir_interaction_duration_seconds";
+
+    // Tokio runtime (stable metrics API)
+    pub const TOKIO_WORKERS: &str = "octofhir_tokio_workers";
+    pub const TOKIO_ALIVE_TASKS: &str = "octofhir_tokio_alive_tasks";
+    pub const TOKIO_GLOBAL_QUEUE_DEPTH: &str = "octofhir_tokio_global_queue_depth";
+    pub const TOKIO_WORKER_BUSY_SECONDS_TOTAL: &str = "octofhir_tokio_worker_busy_seconds_total";
+    pub const TOKIO_WORKER_PARKS_TOTAL: &str = "octofhir_tokio_worker_parks_total";
+
+    // Process metrics (CPU, memory, threads, fds come from `metrics-process` with this prefix)
+    pub const BUILD_INFO: &str = "octofhir_build_info";
+    pub const PROCESS_PREFIX: &str = "octofhir_";
 }
 
 /// Upper bounds (seconds) of the request latency histogram: 1 ms to 10 s, dense below 100 ms
@@ -57,10 +76,17 @@ pub fn init_metrics() -> bool {
     // Request latency is exported as a histogram, not the default summary: bucket counts add up
     // across routes and over any time window, so the console and Prometheus can compute exact
     // overall p50/p95/p99 (summary quantiles can't be combined).
-    let builder = match PrometheusBuilder::new().set_buckets_for_metric(
-        Matcher::Full(names::HTTP_REQUEST_DURATION_SECONDS.to_string()),
-        HTTP_LATENCY_BUCKETS,
-    ) {
+    let builder = match PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full(names::HTTP_REQUEST_DURATION_SECONDS.to_string()),
+            HTTP_LATENCY_BUCKETS,
+        )
+        .and_then(|builder| {
+            builder.set_buckets_for_metric(
+                Matcher::Full(names::FHIR_INTERACTION_DURATION_SECONDS.to_string()),
+                HTTP_LATENCY_BUCKETS,
+            )
+        }) {
         Ok(builder) => builder,
         Err(e) => {
             tracing::error!(error = %e, "Invalid latency histogram buckets");
@@ -76,6 +102,8 @@ pub fn init_metrics() -> bool {
                 return false;
             }
 
+            describe_metrics();
+            record_process_info();
             tracing::info!("Prometheus metrics initialized");
             true
         }
@@ -83,6 +111,122 @@ pub fn init_metrics() -> bool {
             tracing::error!(error = %e, "Failed to install Prometheus recorder");
             false
         }
+    }
+}
+
+/// `# HELP` and unit for every metric: Prometheus keeps them as metadata, and the console's
+/// PromQL editor shows them in completions and hovers.
+fn describe_metrics() {
+    describe_counter!(
+        names::HTTP_REQUESTS_TOTAL,
+        "HTTP requests served, by method, normalized path and status class"
+    );
+    describe_histogram!(
+        names::HTTP_REQUEST_DURATION_SECONDS,
+        Unit::Seconds,
+        "HTTP request latency, by method and normalized path"
+    );
+    describe_gauge!(
+        names::HTTP_ACTIVE_CONNECTIONS,
+        "HTTP requests currently being served"
+    );
+    describe_gauge!(
+        names::DB_POOL_CONNECTIONS_MAX,
+        "Maximum size of the PostgreSQL connection pool"
+    );
+    describe_gauge!(
+        names::DB_POOL_CONNECTIONS_IDLE,
+        "Idle connections in the PostgreSQL pool"
+    );
+    describe_gauge!(
+        names::DB_POOL_CONNECTIONS_ACTIVE,
+        "Connections in use in the PostgreSQL pool"
+    );
+    describe_histogram!(
+        names::DB_POOL_ACQUIRE_DURATION_SECONDS,
+        Unit::Seconds,
+        "Time spent waiting for a PostgreSQL connection"
+    );
+    describe_counter!(names::CACHE_HITS_TOTAL, "Cache hits, by tier");
+    describe_counter!(names::CACHE_MISSES_TOTAL, "Cache misses");
+    describe_gauge!(names::CACHE_ENTRIES, "Entries held in the cache, by tier");
+    describe_gauge!(
+        names::FHIR_RESOURCES,
+        "Stored FHIR resources, by resource type"
+    );
+    describe_counter!(
+        names::FHIR_OPERATIONS_TOTAL,
+        "FHIR operations invoked, by operation and resource type"
+    );
+    describe_gauge!(
+        names::BUILD_INFO,
+        "Always 1; the version label names the running build"
+    );
+    describe_counter!(
+        names::FHIR_INTERACTIONS_TOTAL,
+        "FHIR REST interactions, by interaction, resource type and status class"
+    );
+    describe_histogram!(
+        names::FHIR_INTERACTION_DURATION_SECONDS,
+        Unit::Seconds,
+        "FHIR REST interaction latency, by interaction and resource type"
+    );
+    describe_gauge!(names::TOKIO_WORKERS, "Worker threads of the Tokio runtime");
+    describe_gauge!(
+        names::TOKIO_ALIVE_TASKS,
+        "Tasks alive in the Tokio runtime (spawned and not yet finished)"
+    );
+    describe_gauge!(
+        names::TOKIO_GLOBAL_QUEUE_DEPTH,
+        "Tasks waiting in the runtime's global queue for a free worker"
+    );
+    describe_gauge!(
+        names::TOKIO_WORKER_BUSY_SECONDS_TOTAL,
+        Unit::Seconds,
+        "Time each worker spent running tasks; rate() of it is the worker's utilization"
+    );
+    describe_gauge!(
+        names::TOKIO_WORKER_PARKS_TOTAL,
+        "Times each worker parked for lack of work"
+    );
+    process_collector().describe();
+}
+
+/// Collector of CPU, memory, thread and file-descriptor metrics for this process.
+fn process_collector() -> &'static Collector {
+    static COLLECTOR: OnceLock<Collector> = OnceLock::new();
+    COLLECTOR.get_or_init(|| Collector::new(names::PROCESS_PREFIX))
+}
+
+/// Publishes the build version, so dashboards show which version each instance runs.
+fn record_process_info() {
+    gauge!(names::BUILD_INFO, "version" => env!("CARGO_PKG_VERSION")).set(1.0);
+}
+
+/// Samples the process metrics; called on every scrape so they are current.
+pub fn collect_process_metrics() {
+    process_collector().collect();
+}
+
+/// Samples the Tokio runtime the scrape runs on: workers, live tasks, the global queue, and per
+/// worker the cumulative busy time and park count. Only the stable metrics API is used, so no
+/// `tokio_unstable` build flag is needed. Busy time is a float gauge (like CPU seconds) so
+/// `rate()` gives exact utilization.
+pub fn collect_runtime_metrics() {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let metrics = handle.metrics();
+    let workers = metrics.num_workers();
+    gauge!(names::TOKIO_WORKERS).set(workers as f64);
+    gauge!(names::TOKIO_ALIVE_TASKS).set(metrics.num_alive_tasks() as f64);
+    gauge!(names::TOKIO_GLOBAL_QUEUE_DEPTH).set(metrics.global_queue_depth() as f64);
+    for worker in 0..workers {
+        let label = worker.to_string();
+        gauge!(names::TOKIO_WORKER_BUSY_SECONDS_TOTAL, "worker" => label.clone())
+            .set(metrics.worker_total_busy_duration(worker).as_secs_f64());
+        gauge!(names::TOKIO_WORKER_PARKS_TOTAL, "worker" => label)
+            .set(metrics.worker_park_count(worker) as f64);
     }
 }
 
@@ -121,10 +265,64 @@ pub fn record_http_request(method: &str, path: &str, status: u16, duration: Dura
 
     histogram!(
         names::HTTP_REQUEST_DURATION_SECONDS,
-        "method" => method_owned,
+        "method" => method_owned.clone(),
         "path" => normalized_path
     )
     .record(duration.as_secs_f64());
+
+    if let Some((interaction, resource_type)) = fhir_interaction(&method_owned, path) {
+        counter!(
+            names::FHIR_INTERACTIONS_TOTAL,
+            "interaction" => interaction,
+            "resource_type" => resource_type.clone(),
+            "status_class" => status_class
+        )
+        .increment(1);
+        histogram!(
+            names::FHIR_INTERACTION_DURATION_SECONDS,
+            "interaction" => interaction,
+            "resource_type" => resource_type
+        )
+        .record(duration.as_secs_f64());
+    }
+}
+
+/// The FHIR REST interaction a request performs and the resource type it targets ("system" for
+/// whole-server interactions), from its method and path under `/fhir`. `None` outside the FHIR
+/// API. Interaction names follow the FHIR spec's (`search-type`, `history-instance`, …).
+pub fn fhir_interaction(method: &str, path: &str) -> Option<(&'static str, String)> {
+    let rest = path.strip_prefix("/fhir")?;
+    if !(rest.is_empty() || rest.starts_with('/')) {
+        return None;
+    }
+    let segments: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+    let system = || "system".to_string();
+    let interaction = match (method, segments.as_slice()) {
+        ("POST", []) => ("batch", system()),
+        ("GET", ["metadata"]) => ("capabilities", system()),
+        ("GET", ["_history"]) => ("history-system", system()),
+        (_, [op]) if op.starts_with('$') => ("operation", system()),
+        ("GET", []) | ("POST", ["_search"]) => ("search-system", system()),
+        (_, [rt, ..]) if !is_resource_type_segment(rt) => return None,
+        ("GET", [rt]) | ("POST", [rt, "_search"]) => ("search-type", rt.to_string()),
+        ("POST", [rt]) => ("create", rt.to_string()),
+        ("PUT", [rt]) => ("conditional-update", rt.to_string()),
+        ("PATCH", [rt]) => ("conditional-patch", rt.to_string()),
+        ("DELETE", [rt]) => ("conditional-delete", rt.to_string()),
+        ("GET", [rt, "_history"]) => ("history-type", rt.to_string()),
+        (_, [rt, op]) if op.starts_with('$') => ("operation", rt.to_string()),
+        ("GET", [rt, _]) => ("read", rt.to_string()),
+        ("PUT", [rt, _]) => ("update", rt.to_string()),
+        ("PATCH", [rt, _]) => ("patch", rt.to_string()),
+        ("DELETE", [rt, _]) => ("delete", rt.to_string()),
+        ("GET", [rt, _, "_history"]) => ("history-instance", rt.to_string()),
+        ("GET", [rt, _, "_history", _]) => ("vread", rt.to_string()),
+        (_, [rt, _, op]) if op.starts_with('$') => ("operation", rt.to_string()),
+        // Compartment search: /Patient/123/Observation
+        ("GET", [rt, _, _]) => ("search-compartment", rt.to_string()),
+        _ => return None,
+    };
+    Some(interaction)
 }
 
 /// Increment active HTTP connections.
@@ -143,7 +341,7 @@ pub fn decrement_active_connections() {
 
 /// Record database pool statistics.
 pub fn record_db_pool_stats(total: u32, idle: u32, active: u32) {
-    gauge!(names::DB_POOL_CONNECTIONS_TOTAL).set(total as f64);
+    gauge!(names::DB_POOL_CONNECTIONS_MAX).set(total as f64);
     gauge!(names::DB_POOL_CONNECTIONS_IDLE).set(idle as f64);
     gauge!(names::DB_POOL_CONNECTIONS_ACTIVE).set(active as f64);
 }
@@ -178,8 +376,7 @@ pub fn set_cache_entries(tier: &str, count: usize) {
 
 /// Record FHIR resource count by type.
 pub fn set_fhir_resource_count(resource_type: &str, count: u64) {
-    gauge!(names::FHIR_RESOURCES_TOTAL, "resource_type" => resource_type.to_string())
-        .set(count as f64);
+    gauge!(names::FHIR_RESOURCES, "resource_type" => resource_type.to_string()).set(count as f64);
 }
 
 /// Record a FHIR operation invocation.
@@ -297,6 +494,57 @@ mod tests {
         );
         assert_eq!(normalize_path("/metadata"), "/metadata");
         assert_eq!(normalize_path("/fhir/Patient"), "/fhir/Patient");
+    }
+
+    #[test]
+    fn classifies_fhir_interactions() {
+        let case = |method, path| fhir_interaction(method, path).map(|(i, rt)| format!("{i} {rt}"));
+        assert_eq!(case("GET", "/fhir/Patient/1"), Some("read Patient".into()));
+        assert_eq!(
+            case("GET", "/fhir/Patient"),
+            Some("search-type Patient".into())
+        );
+        assert_eq!(
+            case("POST", "/fhir/Patient/_search"),
+            Some("search-type Patient".into())
+        );
+        assert_eq!(case("POST", "/fhir/Patient"), Some("create Patient".into()));
+        assert_eq!(
+            case("PUT", "/fhir/Patient/1"),
+            Some("update Patient".into())
+        );
+        assert_eq!(
+            case("DELETE", "/fhir/Patient/1"),
+            Some("delete Patient".into())
+        );
+        assert_eq!(
+            case("GET", "/fhir/Patient/1/_history/2"),
+            Some("vread Patient".into())
+        );
+        assert_eq!(
+            case("GET", "/fhir/Patient/1/_history"),
+            Some("history-instance Patient".into())
+        );
+        assert_eq!(
+            case("GET", "/fhir/Patient/1/Observation"),
+            Some("search-compartment Patient".into())
+        );
+        assert_eq!(
+            case("POST", "/fhir/Patient/$validate"),
+            Some("operation Patient".into())
+        );
+        assert_eq!(case("POST", "/fhir"), Some("batch system".into()));
+        assert_eq!(
+            case("GET", "/fhir/metadata"),
+            Some("capabilities system".into())
+        );
+        assert_eq!(
+            case("POST", "/fhir/$import"),
+            Some("operation system".into())
+        );
+        assert_eq!(case("GET", "/fhir/_async-status"), None);
+        assert_eq!(case("GET", "/fhirx/Patient"), None);
+        assert_eq!(case("GET", "/api/metrics"), None);
     }
 
     #[test]

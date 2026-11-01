@@ -94,9 +94,55 @@ services:
     networks:
       - octofhir-network
 
+  # Prometheus for the console's Performance dashboards (non-default port for local dev).
+  # Scrapes the server on the host every 5 s; see deploy/observability/prometheus.yml.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: octofhir-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "9095:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - octofhir_prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - octofhir-network
+
+  # Optional Grafana for trying the console's "Export to Grafana" (docker compose --profile grafana up -d).
+  # http://localhost:3030, admin / admin; Prometheus is provisioned as its datasource.
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: octofhir-grafana
+    profiles: ["grafana"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: system
+    ports:
+      - "3030:3000"
+    volumes:
+      - ./deploy/observability/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - octofhir_grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - octofhir-network
+
 volumes:
   octofhir_postgres_data:
   octofhir_redis_data:
+  octofhir_prometheus_data:
+  octofhir_grafana_data:
 
 networks:
   octofhir-network:

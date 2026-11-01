@@ -1,0 +1,124 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "Dashboard",
+  "url": "http://octofhir.io/StructureDefinition/Dashboard",
+  "version": "0.1.0",
+  "name": "Dashboard",
+  "title": "Metrics Dashboard",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "Dashboard",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A metrics dashboard of the OctoFHIR console: panels of PromQL queries on a 24-column grid, read from the Prometheus configured in metrics.prometheus. The panel and variable payload is held as JSON (the shape the server exports to Grafana); this definition models only the header fields.",
+  "differential": {
+    "element": [
+      {
+        "id": "Dashboard",
+        "path": "Dashboard",
+        "short": "Metrics dashboard",
+        "definition": "Top-level OctoFHIR Dashboard resource."
+      },
+      {
+        "id": "Dashboard.title",
+        "path": "Dashboard.title",
+        "short": "Dashboard title",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "Dashboard.description",
+        "path": "Dashboard.description",
+        "short": "What the dashboard shows",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "Dashboard.owner",
+        "path": "Dashboard.owner",
+        "short": "Owner user id",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "Dashboard.time",
+        "path": "Dashboard.time",
+        "short": "Default time range (Grafana notation, e.g. now-1h)",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "BackboneElement"
+          }
+        ]
+      },
+      {
+        "id": "Dashboard.time.from",
+        "path": "Dashboard.time.from",
+        "short": "Range start, e.g. now-1h",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "Dashboard.time.to",
+        "path": "Dashboard.time.to",
+        "short": "Range end, e.g. now",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "Dashboard.variables",
+        "path": "Dashboard.variables",
+        "short": "Label-value variables ($name in queries)",
+        "definition": "Open JSON: name, label, labelName, metric, multi, includeAll.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "BackboneElement"
+          }
+        ]
+      },
+      {
+        "id": "Dashboard.panels",
+        "path": "Dashboard.panels",
+        "short": "Panels on the grid",
+        "definition": "Open JSON: id, title, type (timeseries | stat | table), gridPos, targets (refId, expr, legend), unit, drawStyle, stack, colors, thresholds.",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "BackboneElement"
+          }
+        ]
+      }
+    ]
+  }
+}

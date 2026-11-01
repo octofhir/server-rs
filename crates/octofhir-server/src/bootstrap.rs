@@ -262,7 +262,7 @@ pub const EMBEDDED_SUBSCRIPTION_RESOURCES: &[(&str, &str)] = &[(
     include_str!("../../../igs/octofhir-subscription/StructureDefinition-SubscriptionTopic.json"),
 )];
 
-/// Embedded octofhir-ui IG resources (generic admin-UI resources, e.g. UserPreference)
+/// Embedded octofhir-ui IG resources (generic admin-UI resources: UserPreference, Dashboard)
 pub const EMBEDDED_UI_RESOURCES: &[(&str, &str)] = &[
     (
         "StructureDefinition-UserPreference.json",
@@ -279,6 +279,18 @@ pub const EMBEDDED_UI_RESOURCES: &[(&str, &str)] = &[
     (
         "SearchParameter-UserPreference-key.json",
         include_str!("../../../igs/octofhir-ui/SearchParameter-UserPreference-key.json"),
+    ),
+    (
+        "StructureDefinition-Dashboard.json",
+        include_str!("../../../igs/octofhir-ui/StructureDefinition-Dashboard.json"),
+    ),
+    (
+        "SearchParameter-Dashboard-title.json",
+        include_str!("../../../igs/octofhir-ui/SearchParameter-Dashboard-title.json"),
+    ),
+    (
+        "SearchParameter-Dashboard-owner.json",
+        include_str!("../../../igs/octofhir-ui/SearchParameter-Dashboard-owner.json"),
     ),
 ];
 

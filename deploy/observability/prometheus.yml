@@ -1,0 +1,14 @@
+# Local Prometheus for development: scrapes the server running on the host (`cargo run`).
+# The console's Performance dashboards read from it (`[metrics.prometheus]` in octofhir.toml).
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: octofhir
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8888"]
+    # With `[metrics] endpoint_token` set on the server:
+    # authorization:
+    #   credentials: <token>

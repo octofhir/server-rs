@@ -5,6 +5,9 @@ Generic admin-UI resources, reusable across the whole web console (not feature-s
 ## Resources
 
 - **UserPreference** - Per-user preference keyed by `(user, namespace, key)`, value JSON-encoded.
+- **Dashboard** - Metrics dashboard of the Performance page: PromQL panels on a 24-column grid
+  (Grafana-compatible). Only header fields are modelled; panels and variables are open JSON, so
+  writes send `X-Skip-Validation: true`. Provision one with `PUT /fhir/Dashboard/{id}`.
 
 ## Routes
 

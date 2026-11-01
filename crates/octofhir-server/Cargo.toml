@@ -145,6 +145,8 @@ tokio-util = { version = "0.7.18", features = ["compat", "rt"] }
 # Prometheus metrics
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
+metrics-process = { version = "2.4", features = ["use-gauge-on-cpu-seconds-total"] }  # CPU, memory, threads, fds
+promql-parser = "0.11"  # parse dashboard queries to scope them to the configured selector
 futures = "0.3.32"
 
 # High-performance allocator (optional, enabled by default)

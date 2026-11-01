@@ -40,6 +40,7 @@ pub mod oauth;
 pub mod observability;
 pub mod operation_registry;
 pub mod operations;
+pub mod prometheus;
 pub mod patch;
 pub mod reconcile;
 pub mod reference_resolver;

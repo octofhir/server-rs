@@ -53,6 +53,19 @@ max_depth = 100
 [logging]
 level = "info"  # trace, debug, info, warn, error, off
 
+[metrics]
+# Require `Authorization: Bearer <token>` on /metrics (set the same token in the scrape job).
+# endpoint_token = ""
+
+# Prometheus the console's Performance dashboards read from. Without this section the
+# dashboards are hidden. `docker compose up -d` starts one on port 9095 scraping this server.
+[metrics.prometheus]
+url = "http://localhost:9095"
+# Added to every dashboard query, so only this deployment's series are read.
+selector = '{job="octofhir"}'
+# The job's scrape interval: the finest step, and rate windows cover four scrapes.
+scrape_interval_secs = 5
+
 [otel]
 enabled = false
 # endpoint = "http://localhost:4317"

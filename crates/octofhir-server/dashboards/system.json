@@ -1,0 +1,686 @@
+{
+  "id": "system",
+  "title": "System",
+  "description": "Throughput, latency, errors, FHIR interactions, runtime and resources of this deployment's instances.",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "variables": [
+    {
+      "name": "instance",
+      "label": "instance",
+      "labelName": "instance",
+      "metric": "up",
+      "multi": true,
+      "includeAll": true
+    }
+  ],
+  "panels": [
+    {
+      "id": "row-overview",
+      "title": "Overview",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": "throughput",
+      "title": "Throughput",
+      "type": "stat",
+      "description": "Requests per second, all routes and instances",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "unit": "reqps",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(octofhir_http_requests_total{instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ]
+    },
+    {
+      "id": "p95",
+      "title": "p95 latency",
+      "type": "stat",
+      "description": "95th percentile of request latency, all routes",
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "unit": "s",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(octofhir_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "thresholds": [
+        {
+          "value": 0.25,
+          "color": "warning"
+        },
+        {
+          "value": 1,
+          "color": "error"
+        }
+      ]
+    },
+    {
+      "id": "errors",
+      "title": "Server errors",
+      "type": "stat",
+      "description": "Share of requests answered with 5xx",
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "unit": "percentunit",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(octofhir_http_requests_total{status_class=\"5xx\",instance=~\"$instance\"}[$__rate_interval])) or vector(0)) / sum(rate(octofhir_http_requests_total{instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "thresholds": [
+        {
+          "value": 0.01,
+          "color": "warning"
+        },
+        {
+          "value": 0.05,
+          "color": "error"
+        }
+      ]
+    },
+    {
+      "id": "inflight",
+      "title": "In flight",
+      "type": "stat",
+      "description": "Requests being served right now",
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "unit": "short",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(octofhir_http_active_connections{instance=~\"$instance\"})"
+        }
+      ],
+      "decimals": 0
+    },
+    {
+      "id": "up",
+      "title": "Instances up",
+      "type": "stat",
+      "description": "Instances Prometheus scraped successfully",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "unit": "short",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(up{instance=~\"$instance\"})"
+        }
+      ],
+      "decimals": 0
+    },
+    {
+      "id": "uptime",
+      "title": "Uptime",
+      "type": "stat",
+      "description": "Since the most recent (re)start of any instance",
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "unit": "s",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(time() - octofhir_process_start_time_seconds{instance=~\"$instance\"})"
+        }
+      ]
+    },
+    {
+      "id": "row-http",
+      "title": "HTTP",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": "throughput-status",
+      "title": "Throughput by status",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "unit": "reqps",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status_class) (rate(octofhir_http_requests_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legend": "{{status_class}}"
+        }
+      ],
+      "drawStyle": "bars",
+      "stack": true,
+      "colors": {
+        "2xx": "neutral",
+        "3xx": "info",
+        "4xx": "warning",
+        "5xx": "error"
+      }
+    },
+    {
+      "id": "latency",
+      "title": "Latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "unit": "s",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(octofhir_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "legend": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(octofhir_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "legend": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(octofhir_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "legend": "p99"
+        }
+      ],
+      "description": "Request latency percentiles, all routes",
+      "colors": {
+        "p50": "neutral",
+        "p95": "accent",
+        "p99": "warning"
+      }
+    },
+    {
+      "id": "throughput-instance",
+      "title": "Throughput by instance",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "unit": "reqps",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (rate(octofhir_http_requests_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legend": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "id": "p95-instance",
+      "title": "p95 latency by instance",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "unit": "s",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (instance, le) (rate(octofhir_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "legend": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "id": "row-fhir",
+      "title": "FHIR",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": "fhir-interactions",
+      "title": "Interactions",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 12,
+        "h": 8
+      },
+      "unit": "reqps",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (interaction) (rate(octofhir_fhir_interactions_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legend": "{{interaction}}"
+        }
+      ],
+      "description": "FHIR REST interactions per second (read, search, create, \u2026)",
+      "drawStyle": "bars",
+      "stack": true
+    },
+    {
+      "id": "fhir-p95",
+      "title": "p95 latency by interaction",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 23,
+        "w": 12,
+        "h": 8
+      },
+      "unit": "s",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (interaction, le) (rate(octofhir_fhir_interaction_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "legend": "{{interaction}}"
+        }
+      ]
+    },
+    {
+      "id": "fhir-table",
+      "title": "Resource types",
+      "type": "table",
+      "description": "Each resource type and interaction over the selected time range",
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (resource_type, interaction) (rate(octofhir_fhir_interactions_total{instance=~\"$instance\"}[$__range]))",
+          "legend": "Req/s",
+          "unit": "reqps"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (resource_type, interaction) (increase(octofhir_fhir_interactions_total{instance=~\"$instance\"}[$__range]))",
+          "legend": "Count",
+          "unit": "short"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.5, sum by (resource_type, interaction, le) (rate(octofhir_fhir_interaction_duration_seconds_bucket{instance=~\"$instance\"}[$__range])))",
+          "legend": "p50",
+          "unit": "s"
+        },
+        {
+          "refId": "D",
+          "expr": "histogram_quantile(0.95, sum by (resource_type, interaction, le) (rate(octofhir_fhir_interaction_duration_seconds_bucket{instance=~\"$instance\"}[$__range])))",
+          "legend": "p95",
+          "unit": "s"
+        },
+        {
+          "refId": "E",
+          "expr": "sum by (resource_type, interaction) (rate(octofhir_fhir_interactions_total{status_class=~\"4xx|5xx\",instance=~\"$instance\"}[$__range])) / sum by (resource_type, interaction) (rate(octofhir_fhir_interactions_total{instance=~\"$instance\"}[$__range]))",
+          "legend": "Errors",
+          "unit": "percentunit"
+        }
+      ]
+    },
+    {
+      "id": "row-routes",
+      "title": "Routes",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": "routes",
+      "title": "Routes",
+      "type": "table",
+      "description": "Each HTTP route over the selected time range",
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 24,
+        "h": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method, path) (rate(octofhir_http_requests_total{instance=~\"$instance\"}[$__range]))",
+          "legend": "Req/s",
+          "unit": "reqps"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (method, path) (increase(octofhir_http_requests_total{instance=~\"$instance\"}[$__range]))",
+          "legend": "Requests",
+          "unit": "short"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.5, sum by (method, path, le) (rate(octofhir_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__range])))",
+          "legend": "p50",
+          "unit": "s"
+        },
+        {
+          "refId": "D",
+          "expr": "histogram_quantile(0.95, sum by (method, path, le) (rate(octofhir_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__range])))",
+          "legend": "p95",
+          "unit": "s"
+        },
+        {
+          "refId": "E",
+          "expr": "histogram_quantile(0.99, sum by (method, path, le) (rate(octofhir_http_request_duration_seconds_bucket{instance=~\"$instance\"}[$__range])))",
+          "legend": "p99",
+          "unit": "s"
+        },
+        {
+          "refId": "F",
+          "expr": "sum by (method, path) (rate(octofhir_http_requests_total{status_class=\"5xx\",instance=~\"$instance\"}[$__range])) / sum by (method, path) (rate(octofhir_http_requests_total{instance=~\"$instance\"}[$__range]))",
+          "legend": "5xx",
+          "unit": "percentunit"
+        }
+      ]
+    },
+    {
+      "id": "row-db",
+      "title": "Database & cache",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 54,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": "dbpool",
+      "title": "DB connections",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 55,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "short",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (octofhir_db_pool_connections_active{instance=~\"$instance\"})",
+          "legend": "{{instance}} in use"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(octofhir_db_pool_connections_max{instance=~\"$instance\"})",
+          "legend": "pool size"
+        }
+      ],
+      "description": "PostgreSQL connections in use; the pool size is the ceiling",
+      "min": 0,
+      "colors": {
+        "pool size": "neutral"
+      }
+    },
+    {
+      "id": "cache-ratio",
+      "title": "Cache hit ratio",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 55,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "percentunit",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tier) (rate(octofhir_cache_hits_total{instance=~\"$instance\"}[$__rate_interval])) / scalar(sum(rate(octofhir_cache_hits_total{instance=~\"$instance\"}[$__rate_interval])) + sum(rate(octofhir_cache_misses_total{instance=~\"$instance\"}[$__rate_interval])))",
+          "legend": "{{tier}}"
+        }
+      ],
+      "description": "Resource cache hits out of lookups, by tier (L1 local, L2 Redis)",
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "cache-ops",
+      "title": "Cache lookups",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 55,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "ops",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(octofhir_cache_hits_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legend": "hits"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(octofhir_cache_misses_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legend": "misses"
+        }
+      ],
+      "drawStyle": "bars",
+      "stack": true,
+      "colors": {
+        "hits": "success",
+        "misses": "warning"
+      }
+    },
+    {
+      "id": "row-runtime",
+      "title": "Tokio runtime",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 63,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": "runtime-busy",
+      "title": "Worker utilization",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "percentunit",
+      "min": 0,
+      "max": 1,
+      "description": "Share of time the runtime's workers spend running tasks. Near 100% means requests queue for a worker.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (rate(octofhir_tokio_worker_busy_seconds_total{instance=~\"$instance\"}[$__rate_interval])) / sum by (instance) (octofhir_tokio_workers{instance=~\"$instance\"})",
+          "legend": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "id": "runtime-tasks",
+      "title": "Alive tasks",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 64,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "short",
+      "min": 0,
+      "description": "Spawned tasks not yet finished; steady growth points to leaked or stuck tasks.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (octofhir_tokio_alive_tasks{instance=~\"$instance\"})",
+          "legend": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "id": "runtime-queue",
+      "title": "Global queue and parks",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 64,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "short",
+      "min": 0,
+      "description": "Tasks waiting for a free worker, and how often workers park for lack of work.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (octofhir_tokio_global_queue_depth{instance=~\"$instance\"})",
+          "legend": "{{instance}} queued"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (instance) (rate(octofhir_tokio_worker_parks_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legend": "{{instance}} parks/s"
+        }
+      ]
+    },
+    {
+      "id": "row-process",
+      "title": "Process",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": "cpu",
+      "title": "CPU",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 73,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "short",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (rate(octofhir_process_cpu_seconds_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legend": "{{instance}}"
+        }
+      ],
+      "description": "CPU cores used per instance",
+      "min": 0
+    },
+    {
+      "id": "memory",
+      "title": "Memory",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 73,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "bytes",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (octofhir_process_resident_memory_bytes{instance=~\"$instance\"})",
+          "legend": "{{instance}}"
+        }
+      ],
+      "description": "Resident memory per instance",
+      "min": 0
+    },
+    {
+      "id": "threads",
+      "title": "Threads and open files",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 73,
+        "w": 8,
+        "h": 8
+      },
+      "unit": "short",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (octofhir_process_threads{instance=~\"$instance\"})",
+          "legend": "{{instance}} threads"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (instance) (octofhir_process_open_fds{instance=~\"$instance\"})",
+          "legend": "{{instance}} open files"
+        }
+      ],
+      "min": 0
+    }
+  ]
+}

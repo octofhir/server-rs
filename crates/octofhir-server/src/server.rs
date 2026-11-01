@@ -185,6 +185,8 @@ pub struct AppStateInner {
     /// Shared anonymous AuthContext used in anonymous-access mode. Built once
     /// at startup so the auth middleware just `Arc::clone`s it.
     pub anonymous_auth_context: Arc<octofhir_auth::middleware::AuthContext>,
+    /// Prometheus the console's dashboards read from (`metrics.prometheus`); `None` hides them.
+    pub prometheus: Option<crate::prometheus::PrometheusClient>,
     // pub automation_state: Option<crate::automations::AutomationState>,
 }
 
@@ -1864,6 +1866,20 @@ async fn build_app_with_runtime(
         octofhir_db_postgres::PostgresNotificationStorage::new(db_pool.as_ref().clone()),
     );
 
+    let prometheus = cfg
+        .metrics
+        .prometheus
+        .as_ref()
+        .map(crate::prometheus::PrometheusClient::new)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("metrics.prometheus: {e}"))?;
+    if let Some(client) = &prometheus {
+        tracing::info!(
+            selector = client.selector(),
+            "Metrics dashboards read from Prometheus"
+        );
+    }
+
     // Create AppState wrapped in Arc for cheap cloning across all middleware/handlers
     // This is a single Arc::clone per request instead of cloning 25+ individual fields
     let state = AppState(Arc::new(AppStateInner {
@@ -1912,6 +1928,7 @@ async fn build_app_with_runtime(
         subscription_state,
         terminology_provider,
         anonymous_auth_context: Arc::new(octofhir_auth::middleware::AuthContext::system_anonymous()),
+        prometheus,
         // automation_state,
     }));
 
@@ -2071,6 +2088,55 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         .route("/api/health", get(handlers::api_health))
         .route("/api/build-info", get(handlers::api_build_info))
         .route("/api/settings", get(handlers::api_settings))
+        // Metrics dashboards (Prometheus-backed; 404 when metrics.prometheus is not configured)
+        .route(
+            "/api/metrics/status",
+            get(crate::prometheus::handlers::status),
+        )
+        .route(
+            "/api/metrics/query_range",
+            post(crate::prometheus::handlers::query_range),
+        )
+        .route(
+            "/api/metrics/query",
+            post(crate::prometheus::handlers::query),
+        )
+        .route(
+            "/api/metrics/metrics",
+            get(crate::prometheus::handlers::metrics),
+        )
+        .route(
+            "/api/metrics/labels",
+            get(crate::prometheus::handlers::labels),
+        )
+        .route(
+            "/api/metrics/label/{name}/values",
+            get(crate::prometheus::handlers::label_values),
+        )
+        .route(
+            "/api/metrics/parse",
+            post(crate::prometheus::handlers::parse),
+        )
+        .route(
+            "/api/dashboards/builtin",
+            get(crate::prometheus::handlers::builtin_dashboards),
+        )
+        .route(
+            "/api/dashboards/grafana/export",
+            post(crate::prometheus::handlers::export_grafana),
+        )
+        .route(
+            "/api/grafana/datasources",
+            post(crate::prometheus::handlers::grafana_datasources),
+        )
+        .route(
+            "/api/grafana/folders",
+            post(crate::prometheus::handlers::grafana_folders),
+        )
+        .route(
+            "/api/grafana/push",
+            post(crate::prometheus::handlers::grafana_push),
+        )
         .route("/api/resource-types", get(handlers::api_resource_types))
         .route(
             "/api/resource-types-categorized",

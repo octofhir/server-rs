@@ -62,6 +62,10 @@ pub struct AppConfig {
     /// FHIR Subscriptions (topic-based notifications)
     #[serde(default)]
     pub subscriptions: SubscriptionsConfig,
+
+    /// `/metrics` endpoint and the Prometheus server the console's dashboards read from
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 // Default derived via field defaults
@@ -120,6 +124,9 @@ impl AppConfig {
         let valid_levels = ["trace", "debug", "info", "warn", "error", "off"];
         if !valid_levels.contains(&lvl.as_str()) {
             return Err(format!("logging.level must be one of {valid_levels:?}"));
+        }
+        if let Some(prometheus) = &self.metrics.prometheus {
+            prometheus.validate()?;
         }
         // OTEL validation
         if self.otel.enabled && self.otel.endpoint.as_deref().unwrap_or("").is_empty() {
@@ -1239,6 +1246,138 @@ impl std::fmt::Debug for SubscriptionEmailConfig {
             .field("sendgrid_api_key", &redact(&self.sendgrid_api_key))
             .finish()
     }
+}
+
+/// The `/metrics` endpoint and the console's metrics dashboards.
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct MetricsConfig {
+    /// When set, `/metrics` answers only requests carrying `Authorization: Bearer <token>`
+    /// (configure the same token as the scrape job's `authorization.credentials`).
+    #[serde(default)]
+    pub endpoint_token: Option<String>,
+    /// Prometheus-compatible server (Prometheus, VictoriaMetrics, Mimir, Thanos) that scrapes
+    /// this server. The console's Performance dashboards exist only when it is configured.
+    #[serde(default)]
+    pub prometheus: Option<PrometheusConfig>,
+}
+
+/// Credentials stay out of logs that print the configuration.
+impl std::fmt::Debug for MetricsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MetricsConfig")
+            .field(
+                "endpoint_token",
+                &self.endpoint_token.as_ref().map(|_| "***"),
+            )
+            .field("prometheus", &self.prometheus)
+            .finish()
+    }
+}
+
+/// Where the console reads metrics from, and the limits on the queries it sends.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PrometheusConfig {
+    /// Base URL of the Prometheus HTTP API, e.g. `http://prometheus:9090`.
+    pub url: String,
+    /// Series selector added to every query, so dashboards only see this deployment's series,
+    /// e.g. `{job="octofhir"}`. Must be a selector with label matchers only.
+    #[serde(default = "default_prometheus_selector")]
+    pub selector: String,
+    /// The scrape interval of the job above. Steps never go below it and rate windows cover at
+    /// least four scrapes.
+    #[serde(default = "default_scrape_interval_secs")]
+    pub scrape_interval_secs: u64,
+    #[serde(default = "default_prometheus_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Longest time range a dashboard may query.
+    #[serde(default = "default_prometheus_max_range_days")]
+    pub max_range_days: u64,
+    /// Most points per series; longer ranges get a coarser step.
+    #[serde(default = "default_prometheus_max_points")]
+    pub max_points: u64,
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+    #[serde(default)]
+    pub basic_username: Option<String>,
+    #[serde(default)]
+    pub basic_password: Option<String>,
+    /// Extra request headers, e.g. `X-Scope-OrgID` for Mimir or Cortex.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+}
+
+impl PrometheusConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        let url = reqwest::Url::parse(&self.url)
+            .map_err(|e| format!("metrics.prometheus.url is not a URL: {e}"))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err("metrics.prometheus.url must be http or https".into());
+        }
+        crate::prometheus::promql::parse_selector(&self.selector)
+            .map_err(|e| format!("metrics.prometheus.selector: {e}"))?;
+        if self.scrape_interval_secs == 0
+            || self.timeout_secs == 0
+            || self.max_range_days == 0
+            || self.max_points < 10
+        {
+            return Err("metrics.prometheus limits must be positive and max_points >= 10".into());
+        }
+        if self.basic_username.is_some() && self.bearer_token.is_some() {
+            return Err("metrics.prometheus: set bearer_token or basic_username, not both".into());
+        }
+        Ok(())
+    }
+
+    pub fn scrape_interval(&self) -> Duration {
+        Duration::from_secs(self.scrape_interval_secs)
+    }
+
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout_secs)
+    }
+
+    pub fn max_range(&self) -> Duration {
+        Duration::from_secs(self.max_range_days * 24 * 60 * 60)
+    }
+}
+
+/// Credentials stay out of logs that print the configuration.
+impl std::fmt::Debug for PrometheusConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redact = |value: &Option<String>| value.as_ref().map(|_| "***");
+        f.debug_struct("PrometheusConfig")
+            .field("url", &self.url)
+            .field("selector", &self.selector)
+            .field("scrape_interval_secs", &self.scrape_interval_secs)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("max_range_days", &self.max_range_days)
+            .field("max_points", &self.max_points)
+            .field("bearer_token", &redact(&self.bearer_token))
+            .field("basic_username", &self.basic_username)
+            .field("basic_password", &redact(&self.basic_password))
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+fn default_prometheus_selector() -> String {
+    r#"{job="octofhir"}"#.to_string()
+}
+
+fn default_scrape_interval_secs() -> u64 {
+    15
+}
+
+fn default_prometheus_timeout_secs() -> u64 {
+    10
+}
+
+fn default_prometheus_max_range_days() -> u64 {
+    30
+}
+
+fn default_prometheus_max_points() -> u64 {
+    2000
 }
 
 /// Bulk import configuration ($import operation)
