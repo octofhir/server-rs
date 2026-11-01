@@ -1,0 +1,127 @@
+---
+title: Metrics & dashboards
+description: Prometheus metrics, the console's Performance dashboards with a PromQL editor, and export to Grafana
+---
+
+OctoFHIR exports Prometheus metrics on `/metrics`. The console's **Performance** page reads them
+back from **Prometheus**, not from the server it is talking to: behind a load balancer each
+request may reach another instance, so only Prometheus, which scrapes every instance, has the
+whole picture. The page appears once `[metrics.prometheus]` is configured.
+
+## Setup
+
+1. Let Prometheus scrape every instance's `/metrics` under one job:
+
+   ```yaml
+   scrape_configs:
+     - job_name: octofhir
+       scrape_interval: 15s
+       static_configs:
+         - targets: ["octofhir-1:8888", "octofhir-2:8888"]
+       # with [metrics] endpoint_token set on the server:
+       # authorization:
+       #   credentials: <token>
+   ```
+
+2. Point the server at Prometheus:
+
+   ```toml
+   [metrics.prometheus]
+   url = "http://prometheus:9090"
+   selector = '{job="octofhir"}'
+   scrape_interval_secs = 15
+   ```
+
+Any Prometheus-compatible API works: Prometheus, VictoriaMetrics, Mimir, Thanos. See
+[Configuration](/server-rs/configuration/#metrics-and-dashboards) for credentials, headers
+and limits.
+
+For development, `docker compose up -d` starts Prometheus on port 9095, scraping the server you
+run with `cargo run` every 5 seconds; `octofhir.toml` already points at it.
+
+## What is exported
+
+All names start with `octofhir_`.
+
+| Metric | Type | Labels | |
+|---|---|---|---|
+| `http_requests_total` | counter | `method`, `path`, `status_class` | Requests by route (ids normalized to `{id}`) |
+| `http_request_duration_seconds` | histogram | `method`, `path` | Request latency, 1 ms – 10 s buckets |
+| `http_active_connections` | gauge | | Requests being served |
+| `fhir_interactions_total` | counter | `interaction`, `resource_type`, `status_class` | FHIR REST interactions: `read`, `vread`, `search-type`, `create`, `update`, `patch`, `delete`, `history-*`, `operation`, `batch`, … |
+| `fhir_interaction_duration_seconds` | histogram | `interaction`, `resource_type` | Their latency |
+| `db_pool_connections_active` / `_idle` / `_max` | gauge | | PostgreSQL pool |
+| `cache_hits_total`, `cache_misses_total` | counter | `tier` | Resource cache (L1 local, L2 Redis) |
+| `tokio_workers`, `tokio_alive_tasks`, `tokio_global_queue_depth` | gauge | | Async runtime |
+| `tokio_worker_busy_seconds_total`, `tokio_worker_parks_total` | gauge | `worker` | Per worker; `rate()` of busy time is utilization |
+| `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_threads`, `process_open_fds`, … | gauge | | The process |
+| `build_info` | gauge | `version` | Always 1 |
+
+Every metric carries `# HELP`, which the console shows in completions and hovers.
+
+## Dashboards
+
+The built-in **System** dashboard is grouped in collapsible sections: overview stats, HTTP
+throughput and latency, FHIR interactions by resource type, routes, database and cache, the
+Tokio runtime and the process. It is read-only; **Duplicate & edit** makes your own copy.
+
+- **Variables.** `instance` narrows every panel to some instances; the selection is kept in the
+  URL (`?var-instance=…`) so a link reproduces the view.
+- **Time.** Pick 15 minutes to 7 days, or drag across any chart to zoom into that span; the zoom
+  stays in the URL and history, **Zoom out** doubles it, **×** returns to live.
+- **Refresh.** Follows the scrape interval by default; 15 s to 5 min or off.
+- **Panels.** Hover a chart for values across all charts at once; click a legend entry to show
+  only that series, ⌘-click to toggle it. **View** opens a panel full-size, **Query** shows its
+  PromQL.
+
+### Editing
+
+In edit mode panels move by their header and resize from their corner on a 24-column grid,
+like Grafana's. **Add panel** opens the panel editor:
+
+- queries are PromQL, written in an editor that completes metric names (with their help text),
+  label names, label values, functions and durations, and underlines syntax errors as the server's
+  parser reports them; ⌘Enter runs the preview;
+- `$__rate_interval` (at least four scrapes), `$__interval` (the step), `$__range` (the time
+  range) and dashboard variables such as `$instance` are substituted before the query runs, the
+  same names Grafana uses;
+- panel types are **time series** (lines or stacked bars), **stat** (value with trend and
+  warning/error thresholds) and **table** (one row per label set, one column per query).
+
+**Add section** inserts a collapsible row.
+
+Saved dashboards are `Dashboard` resources, so they have history and access policies, and can be
+provisioned by script:
+
+```bash
+curl -X PUT "$BASE/fhir/Dashboard/team-overview" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/fhir+json" \
+  -H "X-Skip-Validation: true" -d @team-overview.dashboard.json
+```
+
+**Download dashboard JSON** in the export menu gives you that file.
+
+### How queries are scoped
+
+The server parses every query and adds the configured `selector` to each series selector in it,
+so a dashboard only ever reads this deployment's series even when Prometheus is shared. A query
+that names another job gets both matchers and comes back empty. Ranges are capped at
+`max_range_days`, steps never go below the scrape interval and are coarsened to stay under
+`max_points` per series, and queries time out after `timeout_secs`.
+
+## Grafana
+
+Grafana is optional. Every dashboard, built-in or yours, exports to it from the export menu:
+
+- **Download JSON** — a Grafana dashboard with its queries already scoped to the selector. In
+  Grafana use *Dashboards → New → Import*; it asks which Prometheus datasource to use.
+- **Push** — enter your Grafana URL and a service-account token (Editor role), pick the
+  datasource and folder, and the dashboard is created, or updated if pushed before. The token is
+  sent with the request only: it is not stored on the server or written to its logs, and the
+  console forgets it when the tab closes. Requests to Grafana go through the server's
+  [outbound policy](/server-rs/configuration/#outbound-requests).
+
+The built-in dashboards are also in the repository under `deploy/observability/grafana/`. To try
+the push locally: `docker compose --profile grafana up -d` starts Grafana on
+[localhost:3030](http://localhost:3030) (`admin` / `admin`) with the compose Prometheus as its
+datasource.

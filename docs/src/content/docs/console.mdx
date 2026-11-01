@@ -33,12 +33,10 @@ palette everywhere, `g` followed by a letter jumps to a page, and `?` lists ever
 | Page | What it does |
 |------|--------------|
 | **Subscriptions** | Every subscription with its status and channel, a live delivery log (status, HTTP code, time, retries, errors), **Send test** and on/off. See [Subscriptions](/server-rs/subscriptions/). |
-| **Performance** (`g m`) | Live throughput by response class, p50/p95/p99 latency for all routes or one, and the database pool, read from `/metrics`, with a per-route table over 1, 5 or 15 minutes. |
+| **Performance** (`g m`) | Dashboards over this deployment's metrics in Prometheus, across every instance: the built-in **System** (HTTP, FHIR interactions by resource type, routes, database, cache, Tokio runtime, process) and your own, edited on a grid with a PromQL editor that completes metrics and labels. Drag across a chart to zoom; export any dashboard to Grafana. Shown when `[metrics.prometheus]` is configured. See [Metrics & dashboards](/server-rs/metrics/). |
 | **Database** | Table sizes, dead rows and maintenance (vacuum, analyze, reindex). For FHIR tables, **Index advice** suggests indexes from the table's shape, from observed SQL (with `pg_stat_statements`) or from pasted request URLs; **Open in SQL** puts the `CREATE INDEX` into the SQL console without running it. |
 | **Audit**, **Logs** | The audit trail and the live server log. |
 | **Users**, **Roles**, **Policies**, **Clients**, **Sessions**, **Identity providers** | Access management. |
-
-![Performance: live throughput and latency percentiles](/server-rs/screenshots/performance-dark.webp)
 
 ![Subscriptions with the delivery log of a rest-hook](/server-rs/screenshots/subscriptions-dark.webp)
 

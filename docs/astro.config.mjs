@@ -68,6 +68,7 @@ export default defineConfig({
             { label: 'Terminology', link: 'terminology/' },
             { label: 'Subscriptions', link: 'subscriptions/' },
             { label: 'Notifications', link: 'notifications/' },
+            { label: 'Metrics & Dashboards', link: 'metrics/' },
           ]
         },
         {

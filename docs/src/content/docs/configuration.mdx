@@ -376,6 +376,28 @@ endpoint = "http://localhost:4318"
 sample_ratio = 0.1        # 10% sampling
 ```
 
+### Metrics and dashboards
+
+`/metrics` serves Prometheus metrics. The console's Performance dashboards read them back from
+Prometheus and appear only when `[metrics.prometheus]` is set. See
+[Metrics & dashboards](/server-rs/metrics/).
+
+```toml
+[metrics]
+# Optional: answer /metrics only with `Authorization: Bearer <token>`
+# endpoint_token = "…"
+
+[metrics.prometheus]
+url = "http://prometheus:9090"   # Prometheus-compatible HTTP API
+selector = '{job="octofhir"}'    # added to every dashboard query
+scrape_interval_secs = 15        # the job's scrape interval: finest step, rate windows ≥ 4×
+timeout_secs = 10                # per query
+max_range_days = 30              # longest range a dashboard may query
+max_points = 2000                # per series; longer ranges get a coarser step
+# bearer_token = "…"             # or basic_username / basic_password
+# headers = { "X-Scope-OrgID" = "tenant-1" }   # e.g. Mimir, Cortex
+```
+
 ---
 
 ## Bootstrap
