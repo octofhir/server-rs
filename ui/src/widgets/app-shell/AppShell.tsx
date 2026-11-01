@@ -262,7 +262,7 @@ export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { logout, user } = useAuth();
-  const { colorScheme, toggleColorScheme } = useColorScheme();
+  const { colorScheme, preference, setColorScheme, toggleColorScheme } = useColorScheme();
   const { data: health } = useHealth();
   const { data: resourceTypes } = useResourceTypes();
   const { data: settings } = useSettings();
@@ -346,12 +346,24 @@ export function AppShell() {
         keywords: ["theme", "dark", "light"],
         onSelect: toggleColorScheme,
       },
+      ...(preference !== "auto"
+        ? [
+            {
+              id: "follow-system-theme",
+              label: "Follow system theme",
+              group: "Actions",
+              icon: Monitor,
+              keywords: ["theme", "dark", "light", "auto", "system"],
+              onSelect: () => setColorScheme("auto"),
+            },
+          ]
+        : []),
       { id: "sign-out", label: "Sign out", group: "Actions", icon: LogOut, onSelect: logout },
     ];
     // Commands from the current page come first: they are the most specific.
     const pageItems = Object.values(contributions).flat();
     return [...pageItems, ...pages, ...actions, ...types];
-  }, [nav, navigate, resourceTypes, colorScheme, toggleColorScheme, logout, contributions]);
+  }, [nav, navigate, resourceTypes, colorScheme, preference, setColorScheme, toggleColorScheme, logout, contributions]);
 
   const recentItems = useMemo<CommandPaletteItem[]>(
     () =>

@@ -18,7 +18,7 @@ import { generateCSSVariables } from "#/shared/theme/utils";
 
 export interface UIProviderProps {
     children: ReactNode;
-    /** Initial color-scheme preference if none has been persisted yet. */
+    /** Initial color-scheme preference if none has been persisted yet; follows the system by default. */
     defaultColorScheme?: ColorSchemePreference;
     /**
      * Theme override merged over the built-in OctoFHIR design tokens.
@@ -28,7 +28,7 @@ export interface UIProviderProps {
     theme?: OctoThemeInput;
 }
 
-export function UIProvider({ children, defaultColorScheme = "light", theme }: UIProviderProps) {
+export function UIProvider({ children, defaultColorScheme = "auto", theme }: UIProviderProps) {
     return (
         <ColorSchemeProvider defaultColorScheme={defaultColorScheme}>
             <UIProviderInner theme={theme}>{children}</UIProviderInner>

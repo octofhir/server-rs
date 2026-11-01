@@ -56,7 +56,7 @@ export interface ColorSchemeProviderProps {
 
 export function ColorSchemeProvider({
     children,
-    defaultColorScheme = "light",
+    defaultColorScheme = "auto",
     colorScheme: controlledScheme,
     onColorSchemeChange,
     persist = true,
@@ -93,9 +93,12 @@ export function ColorSchemeProvider({
         [isControlled, onColorSchemeChange, persist],
     );
 
+    // Toggling to the scheme the system already uses goes back to following the system, so one
+    // explicit toggle and a toggle back leave the console tracking the OS again.
     const toggleColorScheme = useCallback(() => {
-        setColorScheme(colorScheme === "dark" ? "light" : "dark");
-    }, [colorScheme, setColorScheme]);
+        const next: ColorScheme = colorScheme === "dark" ? "light" : "dark";
+        setColorScheme(next === systemScheme ? "auto" : next);
+    }, [colorScheme, systemScheme, setColorScheme]);
 
     const value = useMemo<ColorSchemeContextValue>(
         () => ({ colorScheme, preference, setColorScheme, toggleColorScheme }),
