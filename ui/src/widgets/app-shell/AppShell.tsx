@@ -140,6 +140,18 @@ const NAV: NavSection[] = [
   },
 ];
 
+/** Every sidebar page with its section, for places that suggest where to go (the 404 page). */
+export const NAV_PAGES = NAV.flatMap((section) =>
+  section.items.map((entry) => ({
+    label: entry.label,
+    section: section.label,
+    path: entry.path,
+    aliases: entry.aliases ?? [],
+  }))
+);
+
+export type NavPage = (typeof NAV_PAGES)[number];
+
 function isActive(entry: NavEntry, path: string): boolean {
   return [entry.path, ...(entry.aliases ?? [])].some(
     (prefix) => path === prefix || path.startsWith(`${prefix}/`)
@@ -169,7 +181,12 @@ function locationSegments(path: string, navigate: (to: string) => void): Locatio
     ];
   }
   const active = findActive(path);
-  if (!active) return [{ id: "overview", label: "overview" }];
+  // An address with no page behind it (the 404 page) still reads back as typed.
+  if (!active) {
+    return decoded.length
+      ? decoded.map((part, index) => ({ id: `path-${index}`, label: part }))
+      : [{ id: "overview", label: "overview" }];
+  }
   const rest = path.slice(active.entry.path.length).split("/").filter(Boolean).map(decodeURIComponent);
   return [
     { id: "section", label: active.section.label.toLowerCase() },

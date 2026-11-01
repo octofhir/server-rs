@@ -1,0 +1,139 @@
+.root {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 100%;
+	padding: 48px 16px;
+}
+
+.card {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 12px;
+	width: 100%;
+	max-width: 440px;
+}
+
+.code {
+	font-family: var(--octo-typography-mono);
+	font-size: 44px;
+	font-weight: 600;
+	line-height: 1;
+	letter-spacing: -0.02em;
+	color: var(--octo-text-muted);
+}
+
+.slash {
+	color: var(--octo-accent-primary);
+	margin-right: 2px;
+}
+
+.title {
+	margin: 4px 0 0;
+	font-size: var(--octo-typography-size-md);
+	font-weight: 600;
+	color: var(--octo-text-primary);
+}
+
+.path {
+	align-self: flex-start;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	padding: 2px 6px;
+	border: 1px solid var(--octo-border-subtle);
+	border-radius: var(--octo-radius-sm);
+	background: var(--octo-surface-2);
+	font-family: var(--octo-typography-mono);
+	font-size: var(--octo-typography-size-xs);
+	color: var(--octo-text-secondary);
+}
+
+.suggestions {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-top: 8px;
+}
+
+.label {
+	margin-bottom: 4px;
+	font-family: var(--octo-typography-heading);
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--octo-text-muted);
+}
+
+.row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	height: 28px;
+	/* Pulled out by its padding so row text lines up with the heading above. */
+	margin: 0 -8px;
+	padding: 0 8px;
+	border: 1px solid transparent;
+	border-radius: var(--octo-radius-md);
+	background: transparent;
+	color: var(--octo-text-primary);
+	font: inherit;
+	font-size: var(--octo-typography-size-sm);
+	text-align: left;
+	cursor: pointer;
+}
+
+.row:hover {
+	background: var(--octo-surface-hover);
+}
+
+.row:focus-visible {
+	outline: 2px solid var(--octo-accent-primary);
+	outline-offset: -1px;
+}
+
+.suggestions + .actions,
+.row + .actions {
+	margin-top: 8px;
+}
+
+.rowLabel {
+	flex: none;
+	font-weight: 500;
+}
+
+.rowSection {
+	flex: none;
+	color: var(--octo-text-muted);
+	font-size: var(--octo-typography-size-xs);
+}
+
+.rowPath {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: right;
+	font-family: var(--octo-typography-mono);
+	font-size: var(--octo-typography-size-xs);
+	color: var(--octo-text-secondary);
+}
+
+.rowArrow {
+	flex: none;
+	color: var(--octo-text-muted);
+}
+
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.kbd {
+	margin-left: 6px;
+}

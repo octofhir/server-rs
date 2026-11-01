@@ -41,6 +41,7 @@ const NotebookEditorPage = page(() => import("@/pages/notebooks"), "NotebookEdit
 const NotebookListPage = page(() => import("@/pages/notebooks"), "NotebookListPage");
 const OperationsPage = page(() => import("@/pages/operations"), "OperationsPage");
 const OperationDetailPage = page(() => import("@/pages/operations"), "OperationDetailPage");
+const NotFoundPage = page(() => import("@/pages/not-found"), "NotFoundPage");
 const PackagesPage = page(() => import("@/pages/packages"), "PackagesPage");
 const PackageDetailPage = page(() => import("@/pages/packages"), "PackageDetailPage");
 const PerformancePage = page(() => import("@/pages/performance"), "PerformancePage");
@@ -133,6 +134,9 @@ export function AppRoutes() {
         <Route path="/viewdefinition" element={<ViewDefinitionPage />} />
         <Route path="/terminology" element={<TerminologyPage />} />
         <Route path="/validation" element={<ValidationPage />} />
+
+        {/* Any other address: suggests the page or resource it most likely meant */}
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
   );
