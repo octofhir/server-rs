@@ -31,6 +31,15 @@ export function useMetricCatalog(enabled = true) {
   });
 }
 
+export function useMetricLabels(metric?: string, enabled = true) {
+  return useQuery({
+    queryKey: metricsKeys.labels(metric),
+    queryFn: () => metricsApi.labels(metric),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
 export function useLabelValues(label: string, metric?: string, enabled = true) {
   return useQuery({
     queryKey: metricsKeys.values(label, metric),

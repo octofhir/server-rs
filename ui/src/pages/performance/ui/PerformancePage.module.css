@@ -366,3 +366,64 @@
 	line-height: 1.5;
 	color: var(--octo-text-secondary);
 }
+
+.inspectExplain {
+	border: 1px solid var(--octo-border-subtle);
+	border-radius: var(--octo-radius-md);
+}
+
+.importBody {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.importBody textarea {
+	font-family: var(--octo-typography-mono);
+	font-size: 12px;
+}
+
+.fileButton {
+	position: relative;
+	display: inline-flex;
+	align-self: flex-start;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 10px;
+	border: 1px solid var(--octo-border-subtle);
+	border-radius: var(--octo-radius-md);
+	background: var(--octo-surface-1);
+	font-size: 13px;
+	color: var(--octo-text-primary);
+	cursor: pointer;
+}
+
+.fileButton:hover {
+	border-color: var(--octo-border-strong);
+}
+
+.fileButton:focus-within {
+	outline: 2px solid var(--octo-accent-primary);
+	outline-offset: 1px;
+}
+
+.fileButton input {
+	position: absolute;
+	inset: 0;
+	opacity: 0;
+	cursor: pointer;
+}
+
+.importPreview {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.warnings {
+	margin: 4px 0 0;
+	padding-left: 18px;
+	font-size: 12.5px;
+	line-height: 1.5;
+}

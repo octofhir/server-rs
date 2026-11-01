@@ -8,20 +8,25 @@ import {
   Switch,
   TextInput,
 } from "@octofhir/ui-kit";
-import { Plus, Trash2 } from "lucide-react";
+import { Code, ListTree, Plus, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
+  type BuilderQuery,
+  fromPromql,
   nextRefId,
   type Panel,
   type PanelTarget,
   type PanelType,
+  toPromql,
   UNITS,
   type Variables,
 } from "@/entities/metrics";
 // Imported directly: the metrics entity's index stays free of Monaco for light pages.
 import { PromqlEditor } from "@/entities/metrics/promql/PromqlEditor";
 import classes from "./PanelEditor.module.css";
+import { ExplainTree } from "./ExplainTree";
 import { PanelView } from "./PanelView";
+import { QueryBuilder } from "./QueryBuilder";
 
 export interface PanelEditorProps {
   panel: Panel | null;
@@ -39,7 +44,151 @@ const TYPES: { value: PanelType; label: string }[] = [
   { value: "table", label: "Table" },
 ];
 
+const PREVIEW_DELAY_MS = 700;
+
 const UNIT_OPTIONS = UNITS.map((unit) => ({ value: unit.value, label: unit.label }));
+
+/**
+ * One query: legend (or column title and unit for tables), the PromQL editor or the visual
+ * builder, and an explain tree on demand. The builder starts open for an empty query; a query the
+ * builder cannot read stays in code.
+ */
+function QueryEditor({
+  target,
+  tableColumn,
+  removable,
+  onChange,
+  onRemove,
+  onRun,
+  range,
+  end,
+  variables,
+  variableNames,
+}: {
+  target: PanelTarget;
+  tableColumn: boolean;
+  removable: boolean;
+  onChange: (change: Partial<PanelTarget>) => void;
+  onRemove: () => void;
+  onRun: () => void;
+  range: number;
+  end: number;
+  variables: Variables;
+  variableNames: string[];
+}) {
+  const [mode, setMode] = useState<"builder" | "code">(() => (target.expr.trim() === "" ? "builder" : "code"));
+  const [builder, setBuilder] = useState<BuilderQuery | null>(() => fromPromql(target.expr));
+  const [explaining, setExplaining] = useState(false);
+  const [explained, setExplained] = useState(target.expr);
+  const readable = builder != null;
+
+  const switchMode = (next: string) => {
+    if (next === "builder") {
+      const parsed = fromPromql(target.expr);
+      if (!parsed) return;
+      setBuilder(parsed);
+    }
+    setMode(next as "builder" | "code");
+  };
+
+  return (
+    <div className={classes.query}>
+      <div className={classes.queryHead}>
+        <span className={classes.refId}>{target.refId}</span>
+        <TextInput
+          size="sm"
+          value={target.legend ?? ""}
+          onChange={(legend) => onChange({ legend: legend || undefined })}
+          placeholder={tableColumn ? "Column title" : "Legend, e.g. {{status_class}}"}
+          w={tableColumn ? 170 : 240}
+        />
+        {tableColumn ? (
+          <Select
+            size="sm"
+            data={[{ value: "", label: "Panel unit" }, ...UNIT_OPTIONS]}
+            value={target.unit ?? ""}
+            onChange={(unit) => onChange({ unit: unit || undefined })}
+            w={140}
+          />
+        ) : null}
+        <span className={classes.queryTools}>
+          <SegmentedRadioGroup
+            size="sm"
+            aria-label={`Query ${target.refId} editor`}
+            value={mode}
+            onChange={switchMode}
+            options={[
+              { value: "builder", label: "Builder", disabled: mode === "code" && fromPromql(target.expr) == null },
+              { value: "code", label: "Code" },
+            ]}
+          />
+          <ActionIcon
+            variant={explaining ? "outline" : "subtle"}
+            size="sm"
+            aria-label={`Explain query ${target.refId}`}
+            title="Explain: evaluate every step of the query"
+            aria-pressed={explaining}
+            onClick={() => {
+              setExplained(target.expr);
+              setExplaining((v) => !v);
+            }}
+          >
+            <ListTree size={14} />
+          </ActionIcon>
+          {removable ? (
+            <ActionIcon variant="subtle" size="sm" aria-label={`Remove query ${target.refId}`} onClick={onRemove}>
+              <Trash2 size={14} />
+            </ActionIcon>
+          ) : null}
+        </span>
+      </div>
+      {mode === "builder" && readable ? (
+        <QueryBuilder
+          query={builder}
+          variables={variableNames}
+          onChange={(next) => {
+            setBuilder(next);
+            onChange({ expr: toPromql(next) });
+          }}
+        />
+      ) : (
+        <div className={classes.code}>
+          <PromqlEditor
+            value={target.expr}
+            onChange={(expr) => {
+              onChange({ expr });
+              setBuilder(fromPromql(expr));
+            }}
+            onRun={() => {
+              onRun();
+              setExplained(target.expr);
+            }}
+            variables={variableNames}
+            placeholder="sum(rate(octofhir_http_requests_total[$__rate_interval]))"
+            aria-label={`Query ${target.refId}`}
+          />
+        </div>
+      )}
+      {mode === "builder" ? (
+        <span className={classes.modeHint}>
+          <Wand2 size={12} aria-hidden="true" /> The builder writes PromQL; switch to <Code size={12} aria-hidden="true" />{" "}
+          Code for anything beyond it.
+        </span>
+      ) : null}
+      {explaining ? (
+        <div className={classes.explain}>
+          <div className={classes.explainHead}>
+            <span>Explain</span>
+            <button type="button" className={classes.linkButton} onClick={() => setExplained(target.expr)}>
+              Re-run
+            </button>
+          </div>
+          <ExplainTree query={explained} end={end} range={range} variables={variables} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * Panel editor: PromQL queries with completion and live preview, panel type, unit and the few
@@ -47,13 +196,19 @@ const UNIT_OPTIONS = UNITS.map((unit) => ({ value: unit.value, label: unit.label
  */
 export function PanelEditor({ panel, onClose, onApply, range, end, variables, variableNames }: PanelEditorProps) {
   const [draft, setDraft] = useState<Panel | null>(panel);
-  // The preview runs queries as last applied with ⌘Enter or "Run", not on every keystroke.
   const [preview, setPreview] = useState<Panel | null>(panel);
 
   useEffect(() => {
     setDraft(panel);
     setPreview(panel);
   }, [panel]);
+
+  // The preview follows edits once they pause, so a builder change or a typed query shows up
+  // without pressing Run (which applies immediately).
+  useEffect(() => {
+    const timer = window.setTimeout(() => setPreview(draft), PREVIEW_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft]);
 
   if (!draft) return null;
 
@@ -210,47 +365,19 @@ export function PanelEditor({ panel, onClose, onApply, range, end, variables, va
           <span className={classes.hint}>⌘Enter runs · $__rate_interval, $__range{variableNames.map((n) => `, $${n}`).join("")}</span>
         </div>
         {draft.targets.map((target) => (
-          <div key={target.refId} className={classes.query}>
-            <div className={classes.queryHead}>
-              <span className={classes.refId}>{target.refId}</span>
-              <TextInput
-                size="sm"
-                value={target.legend ?? ""}
-                onChange={(legend) => patchTarget(target.refId, { legend: legend || undefined })}
-                placeholder={draft.type === "table" ? "Column title" : "Legend, e.g. {{status_class}}"}
-                w={draft.type === "table" ? 180 : 260}
-              />
-              {draft.type === "table" ? (
-                <Select
-                  size="sm"
-                  data={[{ value: "", label: "Panel unit" }, ...UNIT_OPTIONS]}
-                  value={target.unit ?? ""}
-                  onChange={(unit) => patchTarget(target.refId, { unit: unit || undefined })}
-                  w={150}
-                />
-              ) : null}
-              {draft.targets.length > 1 ? (
-                <ActionIcon
-                  variant="subtle"
-                  size="sm"
-                  aria-label={`Remove query ${target.refId}`}
-                  onClick={() => patch({ targets: draft.targets.filter((t) => t.refId !== target.refId) })}
-                >
-                  <Trash2 size={14} />
-                </ActionIcon>
-              ) : null}
-            </div>
-            <div className={classes.code}>
-              <PromqlEditor
-                value={target.expr}
-                onChange={(expr) => patchTarget(target.refId, { expr })}
-                onRun={run}
-                variables={variableNames}
-                placeholder="sum(rate(octofhir_http_requests_total[$__rate_interval]))"
-                aria-label={`Query ${target.refId}`}
-              />
-            </div>
-          </div>
+          <QueryEditor
+            key={target.refId}
+            target={target}
+            tableColumn={draft.type === "table"}
+            removable={draft.targets.length > 1}
+            onChange={(change) => patchTarget(target.refId, change)}
+            onRemove={() => patch({ targets: draft.targets.filter((t) => t.refId !== target.refId) })}
+            onRun={run}
+            range={range}
+            end={end}
+            variables={variables}
+            variableNames={variableNames}
+          />
         ))}
         <div className={classes.row}>
           <Button

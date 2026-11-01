@@ -53,6 +53,26 @@ export interface ParseResult {
 
 export type Variables = Record<string, string>;
 
+/** One node of an explained query, evaluated on its own. */
+export interface ExplainNode {
+  expr: string;
+  kind: "aggregation" | "binary" | "function" | "selector" | "range-selector" | "subquery" | "unary" | "number" | "string" | "extension";
+  label: string;
+  children: ExplainNode[];
+  result?: {
+    resultType: string | null;
+    series: number;
+    samples: unknown[];
+    error: string | null;
+  };
+}
+
+export interface ImportedDashboard {
+  dashboard: Dashboard;
+  warnings: string[];
+  source: "grafana" | "octofhir";
+}
+
 export interface GrafanaTarget {
   url: string;
   token: string;
@@ -194,6 +214,11 @@ export const metricsApi = {
     ),
 
   parse: (query: string) => call<ParseResult>("POST", "/api/metrics/parse", { query }),
+
+  explain: (request: { query: string; time?: number; range?: number; variables?: Variables }) =>
+    call<ExplainNode>("POST", "/api/metrics/explain", request),
+
+  importDashboard: (json: unknown) => call<ImportedDashboard>("POST", "/api/dashboards/import", json),
 
   builtinDashboards: () => call<Dashboard[]>("GET", "/api/dashboards/builtin"),
 

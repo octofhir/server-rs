@@ -13,8 +13,10 @@ import {
 import {
   Copy,
   FileJson,
+  FileUp,
   Gauge,
   LayoutDashboard,
+  ListTree,
   ListPlus,
   Pencil,
   Plus,
@@ -49,7 +51,9 @@ import { useSettings } from "@/shared/api/hooks/useSystemQueries";
 import { usePaletteContribution } from "@/shared/command-palette";
 import { DashboardGrid, PanelEditor, PanelView } from "@/widgets/metrics-dashboard";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import { ExplainTree } from "@/widgets/metrics-dashboard/ui/ExplainTree";
 import { GrafanaExport } from "./GrafanaExport";
+import { ImportDashboard } from "./ImportDashboard";
 import classes from "./PerformancePage.module.css";
 import { VariablePicker } from "./VariablePicker";
 
@@ -118,7 +122,20 @@ function downloadJson(name: string, data: unknown): void {
   URL.revokeObjectURL(href);
 }
 
-function InspectQuery({ panel, onClose }: { panel: Panel; onClose: () => void }) {
+function InspectQuery({
+  panel,
+  onClose,
+  end,
+  range,
+  variables,
+}: {
+  panel: Panel;
+  onClose: () => void;
+  end: number;
+  range: number;
+  variables: Record<string, string>;
+}) {
+  const [explaining, setExplaining] = useState<string | null>(null);
   return (
     <Modal open onClose={onClose} title={`${panel.title} — queries`} size="lg">
       <div className={classes.inspect}>
@@ -127,9 +144,24 @@ function InspectQuery({ panel, onClose }: { panel: Panel; onClose: () => void })
             <header className={classes.inspectHead}>
               <span className={classes.refId}>{target.refId}</span>
               {target.legend ? <span className={classes.inspectLegend}>{target.legend}</span> : null}
+              <Button
+                variant={explaining === target.refId ? "outline" : "subtle"}
+                size="sm"
+                onClick={() => setExplaining((current) => (current === target.refId ? null : target.refId))}
+              >
+                <Button.Icon side="left">
+                  <ListTree size={14} />
+                </Button.Icon>
+                Explain
+              </Button>
               <ClipboardButton text={target.expr} size="sm" variant="subtle" />
             </header>
             <pre className={classes.code}>{target.expr}</pre>
+            {explaining === target.refId ? (
+              <div className={classes.inspectExplain}>
+                <ExplainTree query={target.expr} end={end} range={range} variables={variables} />
+              </div>
+            ) : null}
           </section>
         ))}
         <p className={classes.inspectNote}>
@@ -170,6 +202,7 @@ export function PerformancePage() {
   const [inspecting, setInspecting] = useState<Panel | null>(null);
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [importing, setImporting] = useState(false);
   // A dashboard just created or duplicated opens in edit mode once its route is current.
   const editAfterOpen = useRef<Dashboard | null>(null);
   const shown = editing ?? current?.dashboard ?? null;
@@ -337,6 +370,13 @@ export function PerformancePage() {
               })),
               { id: "performance-refresh", label: "Refresh dashboard now", group: "Performance", icon: RefreshCw, onSelect: refresh },
               { id: "performance-new", label: "New dashboard", group: "Performance", icon: Plus, onSelect: create },
+              {
+                id: "performance-import",
+                label: "Import dashboard from Grafana JSON",
+                group: "Performance",
+                icon: FileUp,
+                onSelect: () => setImporting(true),
+              },
               ...(shown
                 ? [
                     {
@@ -385,6 +425,7 @@ export function PerformancePage() {
 
   const moreMenu = [
     { text: current?.builtin ? "Duplicate & edit" : "Duplicate", iconStart: <Copy size={14} />, action: duplicate },
+    { text: "Import dashboard…", iconStart: <FileUp size={14} />, action: () => setImporting(true) },
     ...(deletable
       ? [[{ text: "Delete dashboard…", iconStart: <Trash2 size={14} />, theme: "danger" as const, action: () => setDeleting(true) }]]
       : []),
@@ -634,7 +675,24 @@ export function PerformancePage() {
           </div>
         </Drawer>
       ) : null}
-      {inspecting ? <InspectQuery panel={inspecting} onClose={() => setInspecting(null)} /> : null}
+      {inspecting ? (
+        <InspectQuery
+          panel={inspecting}
+          onClose={() => setInspecting(null)}
+          end={end}
+          range={range}
+          variables={variables}
+        />
+      ) : null}
+      {importing ? (
+        <ImportDashboard
+          onClose={() => setImporting(false)}
+          onCreated={(dashboard) => {
+            setImporting(false);
+            if (dashboard.id) open(dashboard.id);
+          }}
+        />
+      ) : null}
       {exporting && shown ? <GrafanaExport dashboard={shown} onClose={() => setExporting(false)} /> : null}
       {deleting && current?.dashboard.id ? (
         <Modal
