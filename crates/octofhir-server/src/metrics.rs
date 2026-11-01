@@ -11,6 +11,7 @@ use metrics::{
 };
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use metrics_process::Collector;
+use octofhir_storage::metered::STORAGE_OPERATION_DURATION_SECONDS;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -28,7 +29,6 @@ pub mod names {
     pub const DB_POOL_CONNECTIONS_MAX: &str = "octofhir_db_pool_connections_max";
     pub const DB_POOL_CONNECTIONS_IDLE: &str = "octofhir_db_pool_connections_idle";
     pub const DB_POOL_CONNECTIONS_ACTIVE: &str = "octofhir_db_pool_connections_active";
-    pub const DB_POOL_ACQUIRE_DURATION_SECONDS: &str = "octofhir_db_pool_acquire_duration_seconds";
 
     // Cache metrics
     pub const CACHE_HITS_TOTAL: &str = "octofhir_cache_hits_total";
@@ -37,7 +37,6 @@ pub mod names {
 
     // FHIR metrics
     pub const FHIR_RESOURCES: &str = "octofhir_fhir_resources";
-    pub const FHIR_OPERATIONS_TOTAL: &str = "octofhir_fhir_operations_total";
 
     // FHIR REST interactions (read, search, create, …) by resource type
     pub const FHIR_INTERACTIONS_TOTAL: &str = "octofhir_fhir_interactions_total";
@@ -63,6 +62,12 @@ const HTTP_LATENCY_BUCKETS: &[f64] = &[
     10.0,
 ];
 
+/// Upper bounds (seconds) of the storage-call histogram: database calls are mostly sub-millisecond
+/// to tens of milliseconds, so it starts at 250 µs.
+const STORAGE_LATENCY_BUCKETS: &[f64] = &[
+    0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+];
+
 /// Initialize the Prometheus metrics exporter.
 ///
 /// This should be called once at server startup.
@@ -85,6 +90,12 @@ pub fn init_metrics() -> bool {
             builder.set_buckets_for_metric(
                 Matcher::Full(names::FHIR_INTERACTION_DURATION_SECONDS.to_string()),
                 HTTP_LATENCY_BUCKETS,
+            )
+        })
+        .and_then(|builder| {
+            builder.set_buckets_for_metric(
+                Matcher::Full(STORAGE_OPERATION_DURATION_SECONDS.to_string()),
+                STORAGE_LATENCY_BUCKETS,
             )
         }) {
         Ok(builder) => builder,
@@ -142,21 +153,12 @@ fn describe_metrics() {
         names::DB_POOL_CONNECTIONS_ACTIVE,
         "Connections in use in the PostgreSQL pool"
     );
-    describe_histogram!(
-        names::DB_POOL_ACQUIRE_DURATION_SECONDS,
-        Unit::Seconds,
-        "Time spent waiting for a PostgreSQL connection"
-    );
     describe_counter!(names::CACHE_HITS_TOTAL, "Cache hits, by tier");
     describe_counter!(names::CACHE_MISSES_TOTAL, "Cache misses");
     describe_gauge!(names::CACHE_ENTRIES, "Entries held in the cache, by tier");
     describe_gauge!(
         names::FHIR_RESOURCES,
         "Stored FHIR resources, by resource type"
-    );
-    describe_counter!(
-        names::FHIR_OPERATIONS_TOTAL,
-        "FHIR operations invoked, by operation and resource type"
     );
     describe_gauge!(
         names::BUILD_INFO,
@@ -189,6 +191,12 @@ fn describe_metrics() {
         names::TOKIO_WORKER_PARKS_TOTAL,
         "Times each worker parked for lack of work"
     );
+    describe_histogram!(
+        STORAGE_OPERATION_DURATION_SECONDS,
+        Unit::Seconds,
+        "Storage (database) call latency, by operation, resource type and outcome; tx_* calls run inside a transaction"
+    );
+    crate::db_metrics::describe();
     process_collector().describe();
 }
 
@@ -346,11 +354,6 @@ pub fn record_db_pool_stats(total: u32, idle: u32, active: u32) {
     gauge!(names::DB_POOL_CONNECTIONS_ACTIVE).set(active as f64);
 }
 
-/// Record database connection acquire duration.
-pub fn record_db_acquire_duration(duration: Duration) {
-    histogram!(names::DB_POOL_ACQUIRE_DURATION_SECONDS).record(duration.as_secs_f64());
-}
-
 // =============================================================================
 // Cache Metrics
 // =============================================================================
@@ -377,17 +380,6 @@ pub fn set_cache_entries(tier: &str, count: usize) {
 /// Record FHIR resource count by type.
 pub fn set_fhir_resource_count(resource_type: &str, count: u64) {
     gauge!(names::FHIR_RESOURCES, "resource_type" => resource_type.to_string()).set(count as f64);
-}
-
-/// Record a FHIR operation invocation.
-pub fn record_fhir_operation(operation: &str, resource_type: Option<&str>) {
-    let rt = resource_type.unwrap_or("system");
-    counter!(
-        names::FHIR_OPERATIONS_TOTAL,
-        "operation" => operation.to_string(),
-        "resource_type" => rt.to_string()
-    )
-    .increment(1);
 }
 
 // =============================================================================

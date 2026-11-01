@@ -4706,6 +4706,7 @@ name = "octofhir-storage"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "metrics",
  "octofhir-core",
  "serde",
  "serde_json",

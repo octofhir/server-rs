@@ -24,6 +24,7 @@ use serde_json::Value;
 use tracing::trace;
 
 use crate::error::StorageError;
+use crate::metered::{resource_type_of, timed};
 use crate::traits::{FhirStorage, Transaction};
 use crate::types::{
     HistoryParams, HistoryResult, IncludeLimits, ProposedResource, RawHistoryResult,
@@ -100,14 +101,24 @@ impl<S: FhirStorage> EventedStorage<S> {
 #[async_trait]
 impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let result = self.inner.create(resource).await?;
+        let result = timed(
+            "create",
+            resource_type_of(resource),
+            self.inner.create(resource),
+        )
+        .await?;
         self.broadcaster
             .send_resource(snapshot_event(ResourceEventType::Created, &result, None));
         Ok(result)
     }
 
     async fn create_raw(&self, resource: &Value) -> Result<RawStoredResource, StorageError> {
-        let result = self.inner.create_raw(resource).await?;
+        let result = timed(
+            "create_raw",
+            resource_type_of(resource),
+            self.inner.create_raw(resource),
+        )
+        .await?;
         if self.broadcaster.subscriber_count() > 0 {
             self.broadcaster.send_resource(raw_snapshot_event(
                 ResourceEventType::Created,
@@ -124,11 +135,16 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
         // Read operations don't emit events
-        self.inner.read(resource_type, id).await
+        timed("read", resource_type, self.inner.read(resource_type, id)).await
     }
 
     async fn exists(&self, resource_type: &str, id: &str) -> Result<bool, StorageError> {
-        self.inner.exists(resource_type, id).await
+        timed(
+            "exists",
+            resource_type,
+            self.inner.exists(resource_type, id),
+        )
+        .await
     }
 
     async fn exists_many(
@@ -136,21 +152,36 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         resource_type: &str,
         ids: &[String],
     ) -> Result<std::collections::HashSet<String>, StorageError> {
-        self.inner.exists_many(resource_type, ids).await
+        timed(
+            "exists_many",
+            resource_type,
+            self.inner.exists_many(resource_type, ids),
+        )
+        .await
     }
 
     async fn exists_many_grouped(
         &self,
         groups: &[(String, Vec<String>)],
     ) -> Result<std::collections::HashSet<String>, StorageError> {
-        self.inner.exists_many_grouped(groups).await
+        timed(
+            "exists_many_grouped",
+            "*",
+            self.inner.exists_many_grouped(groups),
+        )
+        .await
     }
 
     async fn profiles_many_grouped(
         &self,
         groups: &[(String, Vec<String>)],
     ) -> Result<std::collections::HashMap<String, Vec<String>>, StorageError> {
-        self.inner.profiles_many_grouped(groups).await
+        timed(
+            "profiles_many_grouped",
+            "*",
+            self.inner.profiles_many_grouped(groups),
+        )
+        .await
     }
 
     async fn read_many(
@@ -158,7 +189,12 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         resource_type: &str,
         ids: &[String],
     ) -> Result<Vec<StoredResource>, StorageError> {
-        self.inner.read_many(resource_type, ids).await
+        timed(
+            "read_many",
+            resource_type,
+            self.inner.read_many(resource_type, ids),
+        )
+        .await
     }
 
     async fn read_raw(
@@ -166,7 +202,12 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<crate::RawStoredResource>, StorageError> {
-        self.inner.read_raw(resource_type, id).await
+        timed(
+            "read_raw",
+            resource_type,
+            self.inner.read_raw(resource_type, id),
+        )
+        .await
     }
 
     // Single-statement pool writes: a transaction here would pin a connection
@@ -178,7 +219,12 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        let updated = self.inner.update_with_snapshot(resource, if_match).await?;
+        let updated = timed(
+            "update_with_snapshot",
+            resource_type_of(resource),
+            self.inner.update_with_snapshot(resource, if_match),
+        )
+        .await?;
         self.broadcaster.send_resource(snapshot_event(
             ResourceEventType::Updated,
             &updated.stored,
@@ -227,7 +273,12 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
-        self.inner.current_snapshot(resource_type, id).await
+        timed(
+            "current_snapshot",
+            resource_type,
+            self.inner.current_snapshot(resource_type, id),
+        )
+        .await
     }
 
     async fn version_snapshot(
@@ -248,7 +299,12 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         version: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
         // Read operations don't emit events
-        self.inner.vread(resource_type, id, version).await
+        timed(
+            "vread",
+            resource_type,
+            self.inner.vread(resource_type, id, version),
+        )
+        .await
     }
 
     async fn history(
@@ -258,11 +314,16 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         params: &HistoryParams,
     ) -> Result<HistoryResult, StorageError> {
         // Read operations don't emit events
-        self.inner.history(resource_type, id, params).await
+        timed(
+            "history",
+            resource_type,
+            self.inner.history(resource_type, id, params),
+        )
+        .await
     }
 
     async fn system_history(&self, params: &HistoryParams) -> Result<HistoryResult, StorageError> {
-        self.inner.system_history(params).await
+        timed("system_history", "*", self.inner.system_history(params)).await
     }
 
     async fn history_raw(
@@ -271,14 +332,24 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         id: Option<&str>,
         params: &HistoryParams,
     ) -> Result<RawHistoryResult, StorageError> {
-        self.inner.history_raw(resource_type, id, params).await
+        timed(
+            "history_raw",
+            resource_type,
+            self.inner.history_raw(resource_type, id, params),
+        )
+        .await
     }
 
     async fn system_history_raw(
         &self,
         params: &HistoryParams,
     ) -> Result<RawHistoryResult, StorageError> {
-        self.inner.system_history_raw(params).await
+        timed(
+            "system_history_raw",
+            "*",
+            self.inner.system_history_raw(params),
+        )
+        .await
     }
 
     async fn search(
@@ -287,13 +358,18 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         params: &SearchParams,
     ) -> Result<SearchResult, StorageError> {
         // Read operations don't emit events
-        self.inner.search(resource_type, params).await
+        timed(
+            "search",
+            resource_type,
+            self.inner.search(resource_type, params),
+        )
+        .await
     }
 
     async fn begin_transaction(&self) -> Result<Box<dyn Transaction>, StorageError> {
         // Transactions are delegated to inner storage
         // Events will be emitted by EventedTransaction wrapper
-        let inner_tx = self.inner.begin_transaction().await?;
+        let inner_tx = timed("begin_transaction", "*", self.inner.begin_transaction()).await?;
         Ok(Box::new(EventedTransaction::new(
             inner_tx,
             self.broadcaster.clone(),
@@ -357,7 +433,12 @@ impl Transaction for EventedTransaction {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<crate::RawHistoryEntry>, StorageError> {
-        self.inner.current_snapshot(resource_type, id).await
+        timed(
+            "tx_current_snapshot",
+            resource_type,
+            self.inner.current_snapshot(resource_type, id),
+        )
+        .await
     }
 
     async fn version_snapshot(
@@ -377,7 +458,12 @@ impl Transaction for EventedTransaction {
         id: &str,
         version: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
-        self.inner.vread(resource_type, id, version).await
+        timed(
+            "tx_vread",
+            resource_type,
+            self.inner.vread(resource_type, id, version),
+        )
+        .await
     }
 
     async fn save_async_job_checkpoint(
@@ -401,7 +487,7 @@ impl Transaction for EventedTransaction {
         } = *self;
 
         // First commit the transaction
-        inner.commit().await?;
+        timed("tx_commit", "*", inner.commit()).await?;
 
         // Then emit all pending events (only on successful commit)
         let event_count = pending_events.len();
@@ -415,21 +501,36 @@ impl Transaction for EventedTransaction {
 
     async fn rollback(self: Box<Self>) -> Result<(), StorageError> {
         // On rollback, don't emit any events
-        self.inner.rollback().await
+        timed("tx_rollback", "*", self.inner.rollback()).await
     }
 
     async fn lock_conditional_writes(&mut self) -> Result<(), StorageError> {
-        self.inner.lock_conditional_writes().await
+        timed(
+            "tx_lock_conditional_writes",
+            "*",
+            self.inner.lock_conditional_writes(),
+        )
+        .await
     }
 
     async fn create(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let result = self.inner.create(resource).await?;
+        let result = timed(
+            "tx_create",
+            resource_type_of(resource),
+            self.inner.create(resource),
+        )
+        .await?;
         self.queue_event(snapshot_event(ResourceEventType::Created, &result, None));
         Ok(result)
     }
 
     async fn create_raw(&mut self, resource: &Value) -> Result<RawStoredResource, StorageError> {
-        let result = self.inner.create_raw(resource).await?;
+        let result = timed(
+            "tx_create_raw",
+            resource_type_of(resource),
+            self.inner.create_raw(resource),
+        )
+        .await?;
         self.queue_event(raw_snapshot_event(
             ResourceEventType::Created,
             &result,
@@ -451,7 +552,12 @@ impl Transaction for EventedTransaction {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<crate::UpdatedResource, StorageError> {
-        let result = self.inner.update_with_snapshot(resource, if_match).await?;
+        let result = timed(
+            "tx_update_with_snapshot",
+            resource_type_of(resource),
+            self.inner.update_with_snapshot(resource, if_match),
+        )
+        .await?;
         self.queue_event(snapshot_event(
             ResourceEventType::Updated,
             &result.stored,
@@ -486,14 +592,19 @@ impl Transaction for EventedTransaction {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
-        self.inner.read(resource_type, id).await
+        timed("tx_read", resource_type, self.inner.read(resource_type, id)).await
     }
 
     async fn exists_many_grouped(
         &mut self,
         groups: &[(String, Vec<String>)],
     ) -> Result<std::collections::HashSet<String>, StorageError> {
-        self.inner.exists_many_grouped(groups).await
+        timed(
+            "tx_exists_many_grouped",
+            "*",
+            self.inner.exists_many_grouped(groups),
+        )
+        .await
     }
 
     async fn read_for_update(
@@ -501,7 +612,12 @@ impl Transaction for EventedTransaction {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
-        self.inner.read_for_update(resource_type, id).await
+        timed(
+            "tx_read_for_update",
+            resource_type,
+            self.inner.read_for_update(resource_type, id),
+        )
+        .await
     }
 
     async fn read_many_for_update(
@@ -509,35 +625,60 @@ impl Transaction for EventedTransaction {
         resource_type: &str,
         ids: &[String],
     ) -> Result<Vec<StoredResource>, StorageError> {
-        self.inner.read_many_for_update(resource_type, ids).await
+        timed(
+            "tx_read_many_for_update",
+            resource_type,
+            self.inner.read_many_for_update(resource_type, ids),
+        )
+        .await
     }
 
     async fn lock_references(
         &mut self,
         groups: &[(String, Vec<String>)],
     ) -> Result<std::collections::HashSet<String>, StorageError> {
-        self.inner.lock_references(groups).await
+        timed(
+            "tx_lock_references",
+            "*",
+            self.inner.lock_references(groups),
+        )
+        .await
     }
 
     async fn lock_reference_snapshot(
         &mut self,
         reference: &octofhir_core::FhirReference,
     ) -> Result<Option<Value>, StorageError> {
-        self.inner.lock_reference_snapshot(reference).await
+        timed(
+            "tx_lock_reference_snapshot",
+            "*",
+            self.inner.lock_reference_snapshot(reference),
+        )
+        .await
     }
 
     async fn lock_reference_versions(
         &mut self,
         references: &[octofhir_core::FhirReference],
     ) -> Result<std::collections::HashSet<String>, StorageError> {
-        self.inner.lock_reference_versions(references).await
+        timed(
+            "tx_lock_reference_versions",
+            "*",
+            self.inner.lock_reference_versions(references),
+        )
+        .await
     }
 
     async fn lock_reference_snapshots(
         &mut self,
         references: &[octofhir_core::FhirReference],
     ) -> Result<std::collections::HashMap<String, Value>, StorageError> {
-        self.inner.lock_reference_snapshots(references).await
+        timed(
+            "tx_lock_reference_snapshots",
+            "*",
+            self.inner.lock_reference_snapshots(references),
+        )
+        .await
     }
 
     async fn search(
@@ -545,7 +686,12 @@ impl Transaction for EventedTransaction {
         resource_type: &str,
         params: &SearchParams,
     ) -> Result<SearchResult, StorageError> {
-        self.inner.search(resource_type, params).await
+        timed(
+            "tx_search",
+            resource_type,
+            self.inner.search(resource_type, params),
+        )
+        .await
     }
 
     async fn search_system_raw(
@@ -583,14 +729,24 @@ impl Transaction for EventedTransaction {
         &self,
         predicates: &[(String, SearchParams)],
     ) -> Result<Vec<Vec<StoredResource>>, StorageError> {
-        self.inner.search_conditional_batch(predicates).await
+        timed(
+            "tx_search_conditional_batch",
+            "*",
+            self.inner.search_conditional_batch(predicates),
+        )
+        .await
     }
 
     async fn reserve_write_metadata(
         &mut self,
         planned: Option<&crate::TransactionWriteMetadata>,
     ) -> Result<crate::TransactionWriteMetadata, StorageError> {
-        self.inner.reserve_write_metadata(planned).await
+        timed(
+            "tx_reserve_write_metadata",
+            "*",
+            self.inner.reserve_write_metadata(planned),
+        )
+        .await
     }
 
     async fn search_proposed_conditional_batch(
@@ -619,7 +775,12 @@ impl Transaction for EventedTransaction {
         resource_type: &str,
         resources: Vec<Value>,
     ) -> Result<Vec<StoredResource>, StorageError> {
-        let stored = self.inner.create_batch(resource_type, resources).await?;
+        let stored = timed(
+            "tx_create_batch",
+            resource_type,
+            self.inner.create_batch(resource_type, resources),
+        )
+        .await?;
         for snapshot in &stored {
             self.queue_event(snapshot_event(ResourceEventType::Created, snapshot, None));
         }
@@ -631,7 +792,12 @@ impl Transaction for EventedTransaction {
         resource_type: &str,
         resources: &[Value],
     ) -> Result<crate::traits::BatchUpdateOutcome, StorageError> {
-        let outcome = self.inner.update_batch(resource_type, resources).await?;
+        let outcome = timed(
+            "tx_update_batch",
+            resource_type,
+            self.inner.update_batch(resource_type, resources),
+        )
+        .await?;
         let previous: std::collections::HashMap<_, _> = outcome
             .previous
             .iter()

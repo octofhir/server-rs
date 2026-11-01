@@ -859,6 +859,7 @@ mod tests {
     #[test]
     fn export_scopes_queries_and_keeps_grafana_variables() {
         let out = system();
+        let mut per_instance = 0;
         for panel in out["panels"].as_array().unwrap() {
             if panel["type"] == "row" {
                 continue;
@@ -866,10 +867,14 @@ mod tests {
             for target in panel["targets"].as_array().unwrap() {
                 let expr = target["expr"].as_str().unwrap();
                 assert!(expr.contains(r#"job="octofhir""#), "{expr}");
-                assert!(expr.contains("$instance"), "{expr}");
                 assert!(!expr.contains("__octofhir_var"), "{expr}");
+                // PostgreSQL metrics describe the shared database, not an instance.
+                if expr.contains("$instance") {
+                    per_instance += 1;
+                }
             }
         }
+        assert!(per_instance > 20, "only {per_instance} queries keep $instance");
         let variable = &out["templating"]["list"][0];
         assert_eq!(
             variable["definition"],

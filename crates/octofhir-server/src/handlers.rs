@@ -18,6 +18,7 @@ use octofhir_api::ApiError;
 use octofhir_core::ResourceType;
 use octofhir_fhir_model::ModelProvider;
 use octofhir_storage::StorageError;
+use octofhir_storage::metered::timed;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -313,6 +314,7 @@ pub async fn metrics(State(state): State<crate::server::AppState>, headers: Head
 
     crate::metrics::collect_process_metrics();
     crate::metrics::collect_runtime_metrics();
+    crate::db_metrics::collect(&state.db_pool, &state.resource_type_set.load()).await;
 
     // Update database pool metrics before rendering
     let pool_options = state.db_pool.options();
@@ -3116,14 +3118,18 @@ async fn execute_authorized_type_search(
                 .await;
         }
     }
-    octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
-        &state.read_db_pool,
+    timed(
+        "search",
         resource_type,
-        params,
-        Some(&state.search_config.config().registry),
-        state.query_cache.as_deref(),
-        state.terminology_provider.as_ref(),
-        options,
+        octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
+            &state.read_db_pool,
+            resource_type,
+            params,
+            Some(&state.search_config.config().registry),
+            state.query_cache.as_deref(),
+            state.terminology_provider.as_ref(),
+            options,
+        ),
     )
     .await
     .map_err(map_storage_error)
@@ -3143,13 +3149,17 @@ async fn execute_authorized_aggregate_search(
             return policies.execute(state, types, params, options).await;
         }
     }
-    octofhir_db_postgres::queries::search::execute_system_search_raw(
-        &state.read_db_pool,
-        types,
-        params,
-        &state.search_config.config().registry,
-        state.terminology_provider.as_ref(),
-        options,
+    timed(
+        "search_system",
+        "*",
+        octofhir_db_postgres::queries::search::execute_system_search_raw(
+            &state.read_db_pool,
+            types,
+            params,
+            &state.search_config.config().registry,
+            state.terminology_provider.as_ref(),
+            options,
+        ),
     )
     .await
     .map_err(map_storage_error)
@@ -4729,21 +4739,25 @@ async fn execute_bundle_search(
             .await?;
         return bundle_search_response(state, prepared, result);
     }
-    let result = octofhir_db_postgres::queries::search::execute_system_search_raw(
-        &state.read_db_pool,
-        &types,
-        &prepared.params,
-        &cfg.registry,
-        None,
-        octofhir_db_postgres::queries::RawSearchOptions {
-            include_limits: state.config.search.include_limits,
-            unknown_param_handling: Some(if prepared.strict {
-                octofhir_search::UnknownParamHandling::Strict
-            } else {
-                octofhir_search::UnknownParamHandling::Lenient
-            }),
-            ..Default::default()
-        },
+    let result = timed(
+        "search_system",
+        "*",
+        octofhir_db_postgres::queries::search::execute_system_search_raw(
+            &state.read_db_pool,
+            &types,
+            &prepared.params,
+            &cfg.registry,
+            None,
+            octofhir_db_postgres::queries::RawSearchOptions {
+                include_limits: state.config.search.include_limits,
+                unknown_param_handling: Some(if prepared.strict {
+                    octofhir_search::UnknownParamHandling::Strict
+                } else {
+                    octofhir_search::UnknownParamHandling::Lenient
+                }),
+                ..Default::default()
+            },
+        ),
     )
     .await
     .map_err(map_storage_error)?;

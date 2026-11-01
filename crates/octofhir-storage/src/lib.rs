@@ -54,6 +54,7 @@
 
 mod error;
 pub mod evented;
+pub mod metered;
 mod traits;
 mod types;
 
