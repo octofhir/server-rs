@@ -7,8 +7,11 @@ use super::*;
 use serde_json::json;
 use std::collections::HashMap;
 
-/// Simple mock storage for tests (minimal implementation)
-struct TestStorage;
+/// Simple mock storage for tests: no resources but the given Libraries.
+#[derive(Default)]
+struct TestStorage {
+    libraries: Vec<serde_json::Value>,
+}
 
 #[async_trait::async_trait]
 impl octofhir_storage::FhirStorage for TestStorage {
@@ -54,12 +57,33 @@ impl octofhir_storage::FhirStorage for TestStorage {
 
     async fn search(
         &self,
-        _resource_type: &str,
-        _params: &octofhir_storage::SearchParams,
+        resource_type: &str,
+        params: &octofhir_storage::SearchParams,
     ) -> Result<octofhir_storage::SearchResult, octofhir_storage::StorageError> {
+        let name = params
+            .parameters
+            .get("name")
+            .and_then(|values| values.first())
+            .cloned();
+        let entries = if resource_type == "Library" {
+            self.libraries
+                .iter()
+                .filter(|library| name.as_deref().is_none_or(|name| library["name"] == name))
+                .map(|library| octofhir_storage::StoredResource {
+                    id: library["id"].as_str().unwrap_or("lib").into(),
+                    version_id: "1".into(),
+                    resource_type: "Library".into(),
+                    resource: library.clone(),
+                    last_updated: time::OffsetDateTime::now_utc(),
+                    created_at: time::OffsetDateTime::now_utc(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Ok(octofhir_storage::SearchResult {
-            entries: vec![],
-            total: Some(0),
+            total: Some(entries.len() as u32),
+            entries,
             has_more: false,
         })
     }
@@ -134,7 +158,15 @@ async fn create_test_service_with_search(
     search: Option<Arc<dyn crate::data_provider::ResourceSearch>>,
     limit: usize,
 ) -> CqlService {
-    let storage: octofhir_storage::DynStorage = Arc::new(TestStorage);
+    create_test_service_with(search, limit, Vec::new()).await
+}
+
+async fn create_test_service_with(
+    search: Option<Arc<dyn crate::data_provider::ResourceSearch>>,
+    limit: usize,
+    libraries: Vec<serde_json::Value>,
+) -> CqlService {
+    let storage: octofhir_storage::DynStorage = Arc::new(TestStorage { libraries });
 
     // Create minimal FhirPathEngine for tests
     let model_provider = Arc::new(octofhir_fhir_model::EmptyModelProvider);
@@ -491,4 +523,96 @@ async fn async_retrieve_obeys_evaluation_deadline() {
     .await
     .expect("evaluation blocked the runtime");
     assert!(matches!(result, Err(CqlError::Timeout(_))));
+}
+
+fn stored_library(name: &str, version: &str, source: &str) -> serde_json::Value {
+    use base64::Engine;
+    json!({
+        "resourceType": "Library",
+        "id": name,
+        "name": name,
+        "version": version,
+        "status": "active",
+        "content": [{
+            "contentType": "text/cql",
+            "data": base64::engine::general_purpose::STANDARD.encode(source)
+        }]
+    })
+}
+
+#[tokio::test]
+async fn included_libraries_load_from_stored_library_resources() {
+    let common = stored_library(
+        "Common",
+        "1.0",
+        "library Common version '1.0'
+         define Answer: 21
+         define function Double(x Integer): x * 2",
+    );
+    let service = create_test_service_with(None, 100, vec![common]).await;
+    let results = service
+        .evaluate_library_source(
+            "library Main version '1'
+             include Common version '1.0' called C
+             define Result: C.Double(C.Answer)",
+            None,
+            None,
+            HashMap::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(results["Result"], json!(42));
+
+    let missing = service
+        .evaluate_library_source(
+            "library Main version '1'
+             include Absent called A
+             define Result: 1",
+            None,
+            None,
+            HashMap::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(missing.to_string().contains("Absent"), "{missing}");
+}
+
+#[tokio::test]
+async fn retrieved_resources_are_typed_as_fhirhelpers_would() {
+    let observation = Ok(octofhir_storage::SearchResult {
+        entries: vec![octofhir_storage::StoredResource {
+            id: "o".into(),
+            version_id: "1".into(),
+            resource_type: "Observation".into(),
+            resource: json!({"resourceType": "Observation", "id": "o", "status": "final",
+                "valueQuantity": {"value": 5, "unit": "mg",
+                    "system": "http://unitsofmeasure.org", "code": "mg"}}),
+            last_updated: time::OffsetDateTime::now_utc(),
+            created_at: time::OffsetDateTime::now_utc(),
+        }],
+        total: None,
+        has_more: false,
+    });
+    let service = create_test_service_with_search(Some(scripted(vec![observation])), 10).await;
+    // A Quantity, compared through UCUM: 5 mg > 0.004 g
+    let result = service
+        .evaluate_expression(
+            "First([Observation] O return O.value) > 0.004 'g'",
+            None,
+            None,
+            HashMap::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result, json!(true));
+}
+
+#[test]
+fn syntax_errors_carry_their_line_and_column() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let service = runtime.block_on(create_test_service());
+    let issues = service.validate_source("library X version '1'\ndefine A: 1 +\ndefine B: 2");
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].line, Some(2), "{issues:?}");
+    assert!(issues[0].column.is_some(), "{issues:?}");
 }

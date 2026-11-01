@@ -192,7 +192,7 @@ impl LibraryCache {
     }
 
     /// Extract CQL source code from Library resource
-    fn extract_cql_content(library_resource: &Value) -> CqlResult<String> {
+    pub(crate) fn extract_cql_content(library_resource: &Value) -> CqlResult<String> {
         // FHIR Library.content[].data contains base64-encoded CQL source
         let content_array = library_resource
             .get("content")

@@ -52,10 +52,10 @@ impl CanonicalUnit {
 
     fn resolve(code: &str) -> Option<Self> {
         let canonical = octofhir_ucum::get_canonical_units(code).ok()?;
-        // The library computes magnitudes exactly but reports them as f64; the
-        // shortest decimal of that f64 is the exact magnitude (0.001, 453.59237).
-        let factor = Number::from_f64(canonical.factor)?;
-        let offset = Number::from_f64(canonical.offset)?;
+        // Exact magnitudes (28 significant digits, any exponent), as the
+        // library computes them: 0.001, 453.59237, 10^-28 alike.
+        let factor = canonical.factor;
+        let offset = canonical.offset;
         if factor.is_zero() || factor.is_negative() {
             return None;
         }

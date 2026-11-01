@@ -254,6 +254,10 @@ fn contains_resolve(node: &octofhir_fhirpath::ast::ExpressionNode) -> bool {
         E::Union(node) => contains_resolve(&node.left) || contains_resolve(&node.right),
         E::TypeCheck(node) => contains_resolve(&node.expression),
         E::Path(node) => contains_resolve(&node.base),
+        E::InstanceSelector(node) => node
+            .elements
+            .iter()
+            .any(|(_, value)| contains_resolve(value)),
         E::Literal(_) | E::Identifier(_) | E::Variable(_) | E::TypeInfo(_) => false,
     }
 }

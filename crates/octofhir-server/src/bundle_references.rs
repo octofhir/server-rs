@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use octofhir_api::ApiError;
 use octofhir_fhir_model::{ModelProvider, TypeInfo};
-use quick_xml::{Reader, Writer, events::Event};
+use quick_xml::{Reader, Writer, XmlVersion, events::Event};
 use serde_json::Value;
 
 #[derive(Default)]
@@ -312,8 +312,8 @@ fn remap_narrative(
                 let mut output = tag.to_owned();
                 let tag_name = tag.local_name();
                 let attribute_name = match tag_name.as_ref() {
-                    b"a" => Some(b"href".as_slice()),
-                    b"img" => Some(b"src".as_slice()),
+                    "a" => Some("href"),
+                    "img" => Some("src"),
                     _ => None,
                 };
                 if let Some(attribute_name) = attribute_name {
@@ -323,15 +323,14 @@ fn remap_narrative(
                             ApiError::bad_request(format!("Invalid narrative attribute: {e}"))
                         })?;
                         if attribute.key.as_ref() == attribute_name {
+                            // The narrative is XHTML: XML 1.0 attribute-value rules
                             let value = attribute
-                                .decode_and_unescape_value(reader.decoder())
+                                .normalized_value(XmlVersion::Implicit1_0)
                                 .map_err(|e| {
                                     ApiError::bad_request(format!("Invalid narrative URI: {e}"))
                                 })?;
                             if let Some(target) = remap_uri(&value, aliases, versions)? {
-                                let key = std::str::from_utf8(attribute.key.as_ref())
-                                    .expect("ASCII narrative attribute");
-                                output.push_attribute((key, target.as_str()));
+                                output.push_attribute((attribute_name, target.as_str()));
                                 changed = true;
                                 continue;
                             }

@@ -31,17 +31,16 @@
 use std::fmt;
 use std::sync::Arc;
 
+use aws_lc_rs::encoding::{AsDer, Pkcs8V1Der, PublicKeyX509Der};
+use aws_lc_rs::rsa::{
+    KeyPair as RsaKeyPair, KeySize, PublicKey as RsaPublicKey, PublicKeyComponents,
+};
+use aws_lc_rs::signature::{ECDSA_P384_SHA384_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation, decode, encode,
 };
-use p384::SecretKey as EcSecretKey;
-use p384::ecdsa::SigningKey as EcSigningKey;
-use p384::pkcs8::EncodePrivateKey as EcEncodePrivateKey;
-use rand::rngs::OsRng;
-use rsa::pkcs8::{DecodePublicKey, EncodePublicKey, LineEnding};
-use rsa::traits::PublicKeyParts;
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use pem::{EncodeConfig, LineEnding, Pem};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -560,6 +559,22 @@ enum PublicKeyData {
     Ec { x: Vec<u8>, y: Vec<u8> },
 }
 
+/// `der` as PEM with the given label, LF line endings.
+fn to_pem(label: &str, der: &[u8]) -> String {
+    pem::encode_config(
+        &Pem::new(label, der.to_vec()),
+        EncodeConfig::new().set_line_ending(LineEnding::LF),
+    )
+}
+
+/// The x and y coordinates of an uncompressed P-384 point (`04 || x || y`).
+fn p384_coordinates(point: &[u8]) -> Option<(&[u8], &[u8])> {
+    match point {
+        [0x04, rest @ ..] if rest.len() == 96 => Some(rest.split_at(48)),
+        _ => None,
+    }
+}
+
 impl SigningKeyPair {
     /// Generates a new RSA key pair.
     ///
@@ -576,27 +591,20 @@ impl SigningKeyPair {
             )));
         }
 
-        let bits = 2048;
-        let private_key = RsaPrivateKey::new(&mut OsRng, bits)
-            .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
+        let generation_failed = |_| JwtError::key_generation_error("RSA key generation failed");
+        let key_pair = RsaKeyPair::generate(KeySize::Rsa2048).map_err(generation_failed)?;
+        let private_der: Pkcs8V1Der<'static> = key_pair.as_der().map_err(generation_failed)?;
+        let public_key = key_pair.public_key();
+        let public_der: PublicKeyX509Der<'static> =
+            public_key.as_der().map_err(generation_failed)?;
+        let PublicKeyComponents { n, e } = PublicKeyComponents::<Vec<u8>>::from(public_key);
 
-        let public_key = private_key.to_public_key();
-        let n = public_key.n().to_bytes_be();
-        let e = public_key.e().to_bytes_be();
-
-        let private_pem = private_key
-            .to_pkcs8_pem(LineEnding::LF)
-            .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
-
-        let encoding_key = EncodingKey::from_rsa_pem(private_pem.as_bytes())
-            .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
-
-        let public_pem = public_key
-            .to_public_key_pem(LineEnding::LF)
-            .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
-
-        let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes())
-            .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
+        let encoding_key =
+            EncodingKey::from_rsa_pem(to_pem("PRIVATE KEY", private_der.as_ref()).as_bytes())
+                .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
+        let decoding_key =
+            DecodingKey::from_rsa_pem(to_pem("PUBLIC KEY", public_der.as_ref()).as_bytes())
+                .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
 
         Ok(Self {
             kid: uuid::Uuid::new_v4().to_string(),
@@ -613,30 +621,21 @@ impl SigningKeyPair {
     /// # Errors
     /// Returns an error if key generation fails.
     pub fn generate_ec() -> Result<Self, JwtError> {
-        let secret_key = EcSecretKey::random(&mut OsRng);
-        let signing_key = EcSigningKey::from(&secret_key);
-        let public_key = signing_key.verifying_key();
+        let generation_failed = |_| JwtError::key_generation_error("EC key generation failed");
+        let key_pair =
+            EcdsaKeyPair::generate(&ECDSA_P384_SHA384_FIXED_SIGNING).map_err(generation_failed)?;
+        let private_der = key_pair.to_pkcs8v1().map_err(generation_failed)?;
+        let (x, y) = p384_coordinates(key_pair.public_key().as_ref())
+            .ok_or_else(|| JwtError::key_generation_error("Unexpected P-384 public key"))?;
 
-        // Get public key point
-        let point = public_key.to_encoded_point(false);
-        let x = point
-            .x()
-            .ok_or_else(|| JwtError::key_generation_error("Missing x coordinate"))?;
-        let y = point
-            .y()
-            .ok_or_else(|| JwtError::key_generation_error("Missing y coordinate"))?;
-
-        // Export to PKCS8 PEM (required by jsonwebtoken)
-        let private_pem = secret_key
-            .to_pkcs8_pem(LineEnding::LF)
-            .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
-
-        let encoding_key = EncodingKey::from_ec_pem(private_pem.as_bytes())
-            .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
+        // jsonwebtoken reads the private key as PKCS#8 PEM
+        let encoding_key =
+            EncodingKey::from_ec_pem(to_pem("PRIVATE KEY", private_der.as_ref()).as_bytes())
+                .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
 
         // For EC decoding key, we need to create from components
-        let x_b64 = URL_SAFE_NO_PAD.encode(x.as_slice());
-        let y_b64 = URL_SAFE_NO_PAD.encode(y.as_slice());
+        let x_b64 = URL_SAFE_NO_PAD.encode(x);
+        let y_b64 = URL_SAFE_NO_PAD.encode(y);
         let decoding_key = DecodingKey::from_ec_components(&x_b64, &y_b64)
             .map_err(|e| JwtError::key_generation_error(e.to_string()))?;
 
@@ -676,37 +675,31 @@ impl SigningKeyPair {
                 .map_err(|e| JwtError::invalid_key(e.to_string()))?;
 
             // Parse public key to extract n and e
-            let public_key = RsaPublicKey::from_public_key_pem(public_pem)
-                .map_err(|e| JwtError::invalid_key(e.to_string()))?;
-            let n = public_key.n().to_bytes_be();
-            let e = public_key.e().to_bytes_be();
+            let public_der = pem::parse(public_pem)
+                .map_err(|e| JwtError::invalid_key(format!("Public key PEM: {e}")))?;
+            let public_key = RsaPublicKey::from_der(public_der.contents())
+                .map_err(|e| JwtError::invalid_key(format!("RSA public key: {e}")))?;
+            let PublicKeyComponents { n, e } = PublicKeyComponents::<Vec<u8>>::from(&public_key);
 
             (encoding_key, decoding_key, PublicKeyData::Rsa { n, e })
         } else {
             let encoding_key = EncodingKey::from_ec_pem(private_pem.as_bytes())
                 .map_err(|e| JwtError::invalid_key(e.to_string()))?;
 
-            // Parse EC private key to get public key
-            // Try PKCS#8 format first (-----BEGIN PRIVATE KEY-----), then SEC1 (-----BEGIN EC PRIVATE KEY-----)
-            let secret_key = if private_pem.contains("BEGIN PRIVATE KEY") {
-                use p384::pkcs8::DecodePrivateKey;
-                EcSecretKey::from_pkcs8_pem(private_pem)
-                    .map_err(|e| JwtError::invalid_key(format!("PKCS8 parse error: {}", e)))?
-            } else {
-                EcSecretKey::from_sec1_pem(private_pem)
-                    .map_err(|e| JwtError::invalid_key(format!("SEC1 parse error: {}", e)))?
-            };
-            let signing_key = EcSigningKey::from(&secret_key);
-            let point = signing_key.verifying_key().to_encoded_point(false);
-            let x = point
-                .x()
-                .ok_or_else(|| JwtError::invalid_key("Missing x coordinate"))?;
-            let y = point
-                .y()
-                .ok_or_else(|| JwtError::invalid_key("Missing y coordinate"))?;
+            // The public point of the private key: PKCS#8 (BEGIN PRIVATE KEY) or
+            // SEC1 (BEGIN EC PRIVATE KEY)
+            let private_der = pem::parse(private_pem)
+                .map_err(|e| JwtError::invalid_key(format!("Private key PEM: {e}")))?;
+            let key_pair = EcdsaKeyPair::from_private_key_der(
+                &ECDSA_P384_SHA384_FIXED_SIGNING,
+                private_der.contents(),
+            )
+            .map_err(|e| JwtError::invalid_key(format!("P-384 private key: {e}")))?;
+            let (x, y) = p384_coordinates(key_pair.public_key().as_ref())
+                .ok_or_else(|| JwtError::invalid_key("Unexpected P-384 public key"))?;
 
-            let x_b64 = URL_SAFE_NO_PAD.encode(x.as_slice());
-            let y_b64 = URL_SAFE_NO_PAD.encode(y.as_slice());
+            let x_b64 = URL_SAFE_NO_PAD.encode(x);
+            let y_b64 = URL_SAFE_NO_PAD.encode(y);
             let decoding_key = DecodingKey::from_ec_components(&x_b64, &y_b64)
                 .map_err(|e| JwtError::invalid_key(e.to_string()))?;
 

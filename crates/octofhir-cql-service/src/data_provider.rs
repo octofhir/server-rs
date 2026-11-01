@@ -5,6 +5,7 @@ use bigdecimal::BigDecimal;
 use indexmap::IndexMap;
 use num_traits::ToPrimitive;
 use octofhir_cql_eval::DataProvider;
+use octofhir_cql_model::fhir::json::fhir_to_cql;
 use octofhir_cql_types::{CqlList, CqlTuple, CqlType, CqlValue};
 use octofhir_fhirpath::{
     Collection, EvaluationContext as FhirPathContext, FhirPathEngine, FhirPathValue,
@@ -284,6 +285,7 @@ impl DataProvider for FhirServerDataProvider {
         let codes_json = codes.and_then(cql_value_to_json);
         let date_range_json = date_range.and_then(cql_value_to_json);
 
+        let data_type = fhir_resource_type(data_type);
         let rt = tokio::runtime::Handle::current();
         let resources = rt.block_on(async {
             self.retrieve(
@@ -303,10 +305,8 @@ impl DataProvider for FhirServerDataProvider {
             })
         });
 
-        resources
-            .into_iter()
-            .filter_map(|json| json_to_cql_value(&json))
-            .collect()
+        // Typed as FHIRHelpers would: codes, quantities, periods, dates.
+        resources.iter().map(fhir_to_cql).collect()
     }
 
     fn get_property(&self, resource: &CqlValue, path: &str) -> Option<CqlValue> {
@@ -332,6 +332,15 @@ impl DataProvider for FhirServerDataProvider {
         // Convert FHIRPath result to CqlValue
         fhirpath_to_cql_value(&result.value)
     }
+}
+
+/// The FHIR resource type of a retrieve's data type: ELM names it qualified by
+/// the model (`{http://hl7.org/fhir}Observation`, or `FHIR.Observation`).
+fn fhir_resource_type(data_type: &str) -> &str {
+    data_type
+        .strip_prefix("{http://hl7.org/fhir}")
+        .or_else(|| data_type.strip_prefix("FHIR."))
+        .unwrap_or(data_type)
 }
 
 pub(crate) fn cql_value_to_json(value: &CqlValue) -> Option<Value> {
@@ -475,5 +484,20 @@ fn fhirpath_value_to_json(value: &FhirPathValue) -> Option<Value> {
         FhirPathValue::Resource(json, _, _) => Some(json.to_json()),
         FhirPathValue::Empty => Some(Value::Null),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod resource_type_tests {
+    use super::fhir_resource_type;
+
+    #[test]
+    fn retrieve_data_types_drop_the_model_qualifier() {
+        assert_eq!(
+            fhir_resource_type("{http://hl7.org/fhir}Observation"),
+            "Observation"
+        );
+        assert_eq!(fhir_resource_type("FHIR.Condition"), "Condition");
+        assert_eq!(fhir_resource_type("Patient"), "Patient");
     }
 }

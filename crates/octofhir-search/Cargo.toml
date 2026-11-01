@@ -25,7 +25,7 @@ octofhir-fhir-model = { workspace = true }
 octofhir-fhirpath = { workspace = true }
 
 # UCUM canonical units for unit-aware quantity search
-octofhir-ucum = "0.8"
+octofhir-ucum = "0.9.2"
 
 # Workspace dependencies
 dashmap = { workspace = true }

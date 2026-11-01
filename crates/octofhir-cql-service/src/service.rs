@@ -6,12 +6,22 @@ use crate::error::{CqlError, CqlResult};
 use crate::library_cache::LibraryCache;
 use crate::terminology_provider::CqlTerminologyProvider;
 use indexmap::IndexMap;
-use octofhir_cql::parse;
-use octofhir_cql_eval::CqlEngine;
+use octofhir_cql::{CompiledLibrary as CqlLibrary, parse};
+use octofhir_cql_model::fhir::json::fhir_to_cql;
+use octofhir_storage::SearchParams;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Included libraries one evaluation may load, transitively.
+const MAX_INCLUDED_LIBRARIES: usize = 64;
+
+/// Name of the library the evaluator implements itself.
+const FHIR_HELPERS: &str = "FHIRHelpers";
+
+/// Source of an included library, by name and requested version.
+type IncludedSources = HashMap<(String, Option<String>), String>;
 
 /// A single validation finding from [`CqlService::validate_source`].
 #[derive(Debug, Clone, serde::Serialize)]
@@ -24,7 +34,6 @@ pub struct ValidationIssue {
 
 #[derive(Clone)]
 pub struct CqlService {
-    engine: Arc<CqlEngine>,
     data_provider: Arc<FhirServerDataProvider>,
     terminology_provider: Arc<CqlTerminologyProvider>,
     library_cache: Arc<LibraryCache>,
@@ -41,7 +50,6 @@ impl CqlService {
         config: CqlConfig,
     ) -> Self {
         Self {
-            engine: Arc::new(CqlEngine::new()),
             data_provider,
             terminology_provider,
             library_cache,
@@ -127,7 +135,7 @@ define Result:
         let timeout = Duration::from_millis(self.config.evaluation_timeout_ms);
         let deadline = std::time::Instant::now() + timeout;
         let data_provider = Arc::new(self.data_provider.for_evaluation(deadline));
-        let engine = self.engine.clone();
+        let includes = self.included_sources(cql_source).await?;
         let terminology_provider = self.terminology_provider.clone();
         let cql_source = cql_source.to_owned();
         let context_type = context_type.map(str::to_owned);
@@ -137,16 +145,14 @@ define Result:
             // blocking thread so callbacks can await SQL/FHIRPath safely even
             // when the caller runs on Tokio's single-thread runtime.
             let _entered = runtime.enter();
-            // Parse CQL source to AST
-            let ast_library =
-                parse(&cql_source).map_err(|e| CqlError::ParseError(format!("{}", e)))?;
-
-            // Convert AST to ELM
-            let elm_library = {
-                use octofhir_cql::elm::AstToElmConverter;
-                let mut converter = AstToElmConverter::new();
-                converter.convert_library(&ast_library)
+            // Parse and translate the library with the libraries it includes.
+            let load = |name: &str, version: Option<&str>| {
+                includes
+                    .get(&(name.to_owned(), version.map(str::to_owned)))
+                    .cloned()
             };
+            let library = CqlLibrary::compile_with(&cql_source, &load)
+                .map_err(|e| CqlError::ParseError(e.to_string()))?;
 
             // Build evaluation context using builder pattern
             let mut ctx_builder = octofhir_cql_eval::EvaluationContextBuilder::new()
@@ -156,8 +162,9 @@ define Result:
             // Set context
             if let Some(ct) = context_type
                 && let Some(cv) = context_value
-                && let Some(cql_val) = super::data_provider::json_to_cql_value(&cv)
             {
+                // A FHIR resource (the Patient): typed as FHIRHelpers would.
+                let cql_val = fhir_to_cql(&cv);
                 ctx_builder = ctx_builder.context(ct, cql_val);
             }
 
@@ -169,9 +176,10 @@ define Result:
             }
 
             let mut ctx = ctx_builder.build();
+            library.register(&mut ctx);
 
-            // Evaluate the ELM library — returns every define's value
-            let result = engine.evaluate_library(&elm_library, &mut ctx);
+            // Evaluate the library — returns every define's value
+            let result = library.evaluate(&mut ctx);
             if let Some(error) = data_provider.take_error() {
                 return Err(error);
             }
@@ -191,6 +199,65 @@ define Result:
             .await
             .map_err(|_| CqlError::Timeout("CQL evaluation timed out".into()))?
             .map_err(|error| CqlError::Other(format!("CQL evaluation task failed: {error}")))?
+    }
+
+    /// The sources of the libraries `source` includes, transitively, from the
+    /// stored `Library` resources (by `name`, and `version` when the include
+    /// names one). `FHIRHelpers` is built into the evaluator and never loaded.
+    async fn included_sources(&self, source: &str) -> CqlResult<IncludedSources> {
+        let mut sources = IncludedSources::new();
+        let mut pending = vec![source.to_owned()];
+        while let Some(text) = pending.pop() {
+            // A parse error is reported when the library compiles.
+            let Ok(ast) = parse(&text) else { continue };
+            for include in &ast.includes {
+                let name = include.inner.library.name.name.clone();
+                let version = include.inner.version.as_ref().map(|v| v.version.clone());
+                let key = (name.clone(), version.clone());
+                if name == FHIR_HELPERS || sources.contains_key(&key) {
+                    continue;
+                }
+                if sources.len() >= MAX_INCLUDED_LIBRARIES {
+                    return Err(CqlError::InvalidParameter(format!(
+                        "A library may include at most {MAX_INCLUDED_LIBRARIES} libraries"
+                    )));
+                }
+                let library = self.stored_library(&name, version.as_deref()).await?;
+                let included = LibraryCache::extract_cql_content(&library)?;
+                pending.push(included.clone());
+                sources.insert(key, included);
+            }
+        }
+        Ok(sources)
+    }
+
+    /// The stored `Library` named `name` (and `version`), the latest one when
+    /// several versions match.
+    async fn stored_library(&self, name: &str, version: Option<&str>) -> CqlResult<Value> {
+        let mut params = SearchParams::new().with_param("name", name).with_count(50);
+        if let Some(version) = version {
+            params = params.with_param("version", version);
+        }
+        let found = self.storage.search("Library", &params).await?;
+        found
+            .entries
+            .into_iter()
+            .map(|entry| entry.resource)
+            .filter(|library| library["name"] == name)
+            .max_by(|a, b| {
+                a["version"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .cmp(b["version"].as_str().unwrap_or_default())
+            })
+            .ok_or_else(|| {
+                CqlError::LibraryNotFound(format!(
+                    "Included library {name}{} is not stored on this server",
+                    version
+                        .map(|v| format!(" version '{v}'"))
+                        .unwrap_or_default()
+                ))
+            })
     }
 
     /// Evaluate an inline CQL library (full source with one or more `define`
@@ -266,20 +333,22 @@ define Result:
     /// provider. Fast enough to run on every keystroke (debounced) to surface
     /// syntax errors early. Returns an empty list when the source is valid.
     ///
-    /// Note: cql-rs spans are currently placeholders, so `line`/`column` are not
-    /// yet populated — only the message is reliable.
+    /// Every syntax error is reported with its 1-based line and column.
     pub fn validate_source(&self, cql_source: &str) -> Vec<ValidationIssue> {
         if cql_source.trim().is_empty() {
             return Vec::new();
         }
         match parse(cql_source) {
             Ok(_) => Vec::new(),
-            Err(e) => vec![ValidationIssue {
-                severity: "error".to_string(),
-                message: format!("{}", e),
-                line: None,
-                column: None,
-            }],
+            Err(error) => {
+                let location = error.location();
+                vec![ValidationIssue {
+                    severity: "error".to_string(),
+                    message: error.to_string(),
+                    line: location.map(|location| location.line),
+                    column: location.map(|location| location.column),
+                }]
+            }
         }
     }
 

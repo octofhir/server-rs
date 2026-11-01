@@ -50,6 +50,7 @@ async-lsp = { workspace = true }
 
 # PostgreSQL Language Server
 banshee_parser = { workspace = true }
+banshee_lexer = { workspace = true }
 banshee_syntax = { workspace = true }
 banshee_hir = { workspace = true }
 banshee_completion = { workspace = true }
@@ -89,7 +90,7 @@ octofhir-fhirschema = { workspace = true }
 # UI embedding
 include_dir = "0.7"
 mime_guess = "2.0"
-quick-xml = "0.38"
+quick-xml = "0.42"
 
 # HTTP date parsing/formatting
 httpdate = "1.0"
@@ -162,7 +163,8 @@ flate2 = "1.1"
 tempfile = { workspace = true }
 
 [dev-dependencies]
-rsa = { version = "0.9", features = ["pem"] }
+aws-lc-rs = "1"
+pem = "3"
 tokio-test = { workspace = true }
 wiremock = { workspace = true }
 reqwest = { workspace = true }

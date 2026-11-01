@@ -3,12 +3,14 @@
 
 use std::sync::Arc;
 
+use aws_lc_rs::encoding::{AsDer, Pkcs8V1Der, PublicKeyX509Der};
+use aws_lc_rs::rsa::{KeyPair as RsaKeyPair, KeySize};
+use aws_lc_rs::signature::KeyPair;
 use octofhir_auth::token::{AccessTokenClaims, JwtService, SigningAlgorithm, SigningKeyPair};
 use octofhir_config::ConfigurationManager;
 use octofhir_server::config::BackendClientConfig;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use reqwest::{Client, StatusCode};
-use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use serde_json::{Value, json};
 use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
@@ -119,15 +121,11 @@ async fn smart_grant_scenario() {
     });
     // Disposable signing material exercises real JWT launch context without
     // adding a test-only bypass to server authentication.
-    let private_key = rsa::RsaPrivateKey::new(&mut rand::rngs::OsRng, 2048).unwrap();
-    let private_pem = private_key
-        .to_pkcs8_pem(LineEnding::LF)
-        .unwrap()
-        .to_string();
-    let public_pem = private_key
-        .to_public_key()
-        .to_public_key_pem(LineEnding::LF)
-        .unwrap();
+    let key_pair = RsaKeyPair::generate(KeySize::Rsa2048).unwrap();
+    let private_der: Pkcs8V1Der<'static> = key_pair.as_der().unwrap();
+    let public_der: PublicKeyX509Der<'static> = key_pair.public_key().as_der().unwrap();
+    let private_pem = pem::encode(&pem::Pem::new("PRIVATE KEY", private_der.as_ref().to_vec()));
+    let public_pem = pem::encode(&pem::Pem::new("PUBLIC KEY", public_der.as_ref().to_vec()));
     config.auth.signing.algorithm = "RS256".into();
     config.auth.signing.kid = Some("isolated-test-key".into());
     config.auth.signing.private_key_pem = Some(private_pem.clone());
