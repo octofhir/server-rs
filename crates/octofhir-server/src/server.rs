@@ -2122,6 +2122,14 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             get(crate::prometheus::handlers::builtin_dashboards),
         )
         .route(
+            "/api/metrics/explain",
+            post(crate::prometheus::handlers::explain_query),
+        )
+        .route(
+            "/api/dashboards/import",
+            post(crate::prometheus::handlers::import_dashboard),
+        )
+        .route(
             "/api/dashboards/grafana/export",
             post(crate::prometheus::handlers::export_grafana),
         )

@@ -11,7 +11,10 @@ use serde_json::{Value, json};
 use super::client::{MetricInfo, ParseError, PrometheusClient, Target};
 use super::dashboards::{self, Dashboard};
 use super::error::MetricsError;
-use super::grafana::{self, GrafanaClient, GrafanaDatasource, GrafanaFolder, PushedDashboard};
+use super::explain::{self, ExplainNode};
+use super::grafana::{
+    self, GrafanaClient, GrafanaDatasource, GrafanaFolder, Imported, PushedDashboard,
+};
 use super::promql::Variables;
 use crate::server::AppState;
 
@@ -123,6 +126,28 @@ pub async fn query(
     Ok(Json(json!({ "data": data })))
 }
 
+/// `POST /api/metrics/explain`: the query's syntax tree with every sub-expression evaluated as
+/// an instant query (series count and a few samples), to see where a query gains or loses data.
+pub async fn explain_query(
+    State(state): State<AppState>,
+    _admin: AdminAuth,
+    Json(request): Json<InstantRequest>,
+) -> Result<Json<ExplainNode>, MetricsError> {
+    let client = client(&state)?;
+    let scrape = client.scrape_interval().as_secs();
+    let range = request
+        .range
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .map(|r| r.ceil() as u64)
+        .unwrap_or(scrape * 4);
+    let variables = Variables::new(client.rate_window(scrape as f64), scrape, range)
+        .with_user(&request.variables);
+    let query = variables.expand(&request.query).query;
+    let mut tree = explain::tree(&query)?;
+    explain::evaluate(client, &mut tree, request.time).await;
+    Ok(Json(tree))
+}
+
 /// `GET /api/metrics/metrics`: metric names this deployment exports, with type and help.
 pub async fn metrics(
     State(state): State<AppState>,
@@ -217,6 +242,17 @@ pub async fn export_grafana(
         client.selector(),
         None,
     )?))
+}
+
+/// `POST /api/dashboards/import`: a Grafana dashboard JSON (or this console's own) as a
+/// dashboard to save, with what could not be carried over. Nothing is stored here.
+pub async fn import_dashboard(
+    State(state): State<AppState>,
+    _admin: AdminAuth,
+    Json(json): Json<Value>,
+) -> Result<Json<Imported>, MetricsError> {
+    client(&state)?;
+    Ok(Json(grafana::import(&json)?))
 }
 
 /// Where to reach Grafana. Deliberately not `Debug`: the token must not reach logs.

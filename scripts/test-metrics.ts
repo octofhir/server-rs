@@ -84,6 +84,22 @@ check("built-in System dashboard", builtin.data?.[0]?.id === "system", builtin.d
 const grafana = await call("POST", "/api/dashboards/grafana/export", builtin.data?.[0]);
 check("grafana export", grafana.status === 200 && grafana.data?.__inputs?.[0]?.name === "DS_PROMETHEUS", grafana.data);
 
+const explained = await call("POST", "/api/metrics/explain", {
+  query: "sum by (status_class) (rate(octofhir_http_requests_total[$__rate_interval]))",
+});
+check(
+  "explain evaluates each step",
+  explained.data?.kind === "aggregation" && explained.data?.children?.[0]?.label === "rate" && explained.data?.result?.series > 0,
+  explained.data
+);
+
+const reimported = await call("POST", "/api/dashboards/import", grafana.data);
+check(
+  "grafana JSON imports back",
+  reimported.data?.source === "grafana" && reimported.data?.dashboard?.panels?.length === builtin.data?.[0]?.panels?.length,
+  reimported.data?.warnings ?? reimported
+);
+
 const created = await call(
   "POST",
   "/fhir/Dashboard",

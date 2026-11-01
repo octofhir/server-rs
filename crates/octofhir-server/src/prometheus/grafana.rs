@@ -10,7 +10,12 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::dashboards::{CursorSync, Dashboard, DrawStyle, Panel, PanelType, SeriesColor};
+use std::collections::BTreeMap;
+
+use super::dashboards::{
+    CursorSync, Dashboard, DrawStyle, GRID_COLUMNS, GridPos, Panel, PanelType, SeriesColor, Target,
+    Threshold, TimeRange, Variable,
+};
 use super::error::MetricsError;
 use super::promql;
 use crate::egress::EgressPolicy;
@@ -290,6 +295,359 @@ fn grafana_color(color: SeriesColor) -> &'static str {
     }
 }
 
+/// What an import produced, with everything it could not carry over.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Imported {
+    pub dashboard: Dashboard,
+    pub warnings: Vec<String>,
+    /// `grafana` or `octofhir`.
+    pub source: &'static str,
+}
+
+/// Reads a dashboard file: Grafana dashboard JSON (an export, with or without the API's
+/// `{"dashboard": …}` envelope) or this console's own dashboard JSON.
+pub fn import(json: &Value) -> Result<Imported, MetricsError> {
+    let json = json
+        .get("dashboard")
+        .filter(|d| d.is_object())
+        .unwrap_or(json);
+    let is_grafana = json.get("schemaVersion").is_some()
+        || json.get("__inputs").is_some()
+        || json.get("templating").is_some();
+    if !is_grafana {
+        let mut dashboard: Dashboard = serde_json::from_value(json.clone())
+            .map_err(|e| MetricsError::bad_request(format!("not a dashboard: {e}")))?;
+        dashboard.id = None;
+        dashboard.validate().map_err(MetricsError::BadRequest)?;
+        return Ok(Imported {
+            dashboard,
+            warnings: Vec::new(),
+            source: "octofhir",
+        });
+    }
+
+    let mut warnings = Vec::new();
+    let mut panels = Vec::new();
+    for raw in json["panels"].as_array().into_iter().flatten() {
+        // A collapsed row keeps its panels inside it.
+        let nested = raw["panels"].as_array().filter(|p| !p.is_empty());
+        if let Some(panel) = import_panel(raw, &mut warnings) {
+            panels.push(panel);
+        }
+        for inner in nested.into_iter().flatten() {
+            if let Some(panel) = import_panel(inner, &mut warnings) {
+                panels.push(panel);
+            }
+        }
+    }
+    let variables = json["templating"]["list"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| import_variable(v, &mut warnings))
+        .collect();
+    let cursor_sync = match json["graphTooltip"].as_u64() {
+        Some(0) => CursorSync::Off,
+        Some(2) => CursorSync::Tooltip,
+        _ => CursorSync::Crosshair,
+    };
+    let time = TimeRange {
+        from: json["time"]["from"]
+            .as_str()
+            .unwrap_or("now-1h")
+            .to_string(),
+        to: json["time"]["to"].as_str().unwrap_or("now").to_string(),
+    };
+    let dashboard = Dashboard {
+        id: None,
+        title: json["title"]
+            .as_str()
+            .unwrap_or("Imported dashboard")
+            .to_string(),
+        description: json["description"]
+            .as_str()
+            .map(str::to_string)
+            .filter(|d| !d.is_empty()),
+        time,
+        variables,
+        cursor_sync,
+        panels,
+    };
+    dashboard.validate().map_err(MetricsError::BadRequest)?;
+    Ok(Imported {
+        dashboard,
+        warnings,
+        source: "grafana",
+    })
+}
+
+fn import_panel(raw: &Value, warnings: &mut Vec<String>) -> Option<Panel> {
+    let title = raw["title"].as_str().unwrap_or("").to_string();
+    let label = if title.is_empty() {
+        "untitled panel".to_string()
+    } else {
+        format!("{title:?}")
+    };
+    let grafana_type = raw["type"].as_str().unwrap_or("");
+    let kind = match grafana_type {
+        "row" => PanelType::Row,
+        "timeseries" | "graph" => PanelType::Timeseries,
+        "stat" | "singlestat" => PanelType::Stat,
+        "gauge" | "bargauge" => {
+            warnings.push(format!("{label}: {grafana_type} imported as a stat panel"));
+            PanelType::Stat
+        }
+        "table" | "table-old" => PanelType::Table,
+        other => {
+            warnings.push(format!(
+                "{label}: panel type {other:?} is not supported, skipped"
+            ));
+            return None;
+        }
+    };
+    let pos = &raw["gridPos"];
+    let num = |v: &Value, default: u32| v.as_u64().map(|n| n as u32).unwrap_or(default);
+    let mut grid_pos = GridPos {
+        x: num(&pos["x"], 0).min(GRID_COLUMNS - 1),
+        y: num(&pos["y"], 0),
+        w: num(&pos["w"], 12).clamp(1, GRID_COLUMNS),
+        h: num(&pos["h"], 8).max(1),
+    };
+    grid_pos.w = grid_pos.w.min(GRID_COLUMNS - grid_pos.x);
+    let id = raw["id"]
+        .as_u64()
+        .map(|id| format!("panel-{id}"))
+        .unwrap_or_else(|| format!("panel-{}-{}", grid_pos.x, grid_pos.y));
+
+    if kind == PanelType::Row {
+        return Some(Panel {
+            id,
+            title: if title.is_empty() {
+                "Section".into()
+            } else {
+                title
+            },
+            kind,
+            description: None,
+            grid_pos: GridPos {
+                x: 0,
+                y: grid_pos.y,
+                w: GRID_COLUMNS,
+                h: 1,
+            },
+            targets: Vec::new(),
+            unit: None,
+            decimals: None,
+            min: None,
+            max: None,
+            draw_style: DrawStyle::Line,
+            stack: false,
+            colors: BTreeMap::new(),
+            thresholds: Vec::new(),
+        });
+    }
+
+    let mut targets = Vec::new();
+    for target in raw["targets"].as_array().into_iter().flatten() {
+        let datasource_type = target["datasource"]["type"]
+            .as_str()
+            .or_else(|| raw["datasource"]["type"].as_str());
+        if datasource_type.is_some_and(|t| t != "prometheus") {
+            warnings.push(format!(
+                "{label}: a {} query is not PromQL, skipped",
+                datasource_type.unwrap_or("non-Prometheus")
+            ));
+            continue;
+        }
+        let Some(expr) = target["expr"].as_str().filter(|e| !e.trim().is_empty()) else {
+            continue;
+        };
+        if target["hide"].as_bool() == Some(true) {
+            continue;
+        }
+        let legend = target["legendFormat"]
+            .as_str()
+            .filter(|l| !l.is_empty() && *l != "__auto")
+            .map(str::to_string);
+        targets.push(Target {
+            ref_id: target["refId"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| ((b'A' + targets.len() as u8) as char).to_string()),
+            expr: expr.to_string(),
+            legend,
+            unit: None,
+        });
+    }
+    targets.truncate(super::dashboards::MAX_TARGETS);
+    if targets.is_empty() {
+        warnings.push(format!("{label}: no PromQL queries, skipped"));
+        return None;
+    }
+
+    let defaults = &raw["fieldConfig"]["defaults"];
+    let custom = &defaults["custom"];
+    let draw_style = if custom["drawStyle"] == "bars" || raw["bars"] == true {
+        DrawStyle::Bars
+    } else {
+        DrawStyle::Line
+    };
+    let stack = custom["stacking"]["mode"]
+        .as_str()
+        .is_some_and(|m| m != "none")
+        || raw["stack"] == true;
+    let thresholds = defaults["thresholds"]["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|step| {
+            Some(Threshold {
+                value: step["value"].as_f64()?,
+                color: semantic_color(step["color"].as_str()?)?,
+            })
+        })
+        .collect();
+    let mut colors = BTreeMap::new();
+    let mut target_units: BTreeMap<String, String> = BTreeMap::new();
+    for rule in raw["fieldConfig"]["overrides"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let name = rule["matcher"]["options"].as_str().unwrap_or_default();
+        for property in rule["properties"].as_array().into_iter().flatten() {
+            match property["id"].as_str() {
+                Some("color") => {
+                    if let Some(color) = property["value"]["fixedColor"]
+                        .as_str()
+                        .and_then(semantic_color)
+                    {
+                        colors.insert(name.to_string(), color);
+                    }
+                }
+                Some("unit") => {
+                    if let Some(unit) = property["value"].as_str() {
+                        target_units.insert(name.to_string(), unit.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for target in &mut targets {
+        let key = target
+            .legend
+            .clone()
+            .unwrap_or_else(|| target.ref_id.clone());
+        target.unit = target_units
+            .get(&key)
+            .or_else(|| target_units.get(&target.ref_id))
+            .cloned();
+    }
+
+    Some(Panel {
+        id,
+        title: if title.is_empty() {
+            "Panel".into()
+        } else {
+            title
+        },
+        kind,
+        description: raw["description"]
+            .as_str()
+            .map(str::to_string)
+            .filter(|d| !d.is_empty()),
+        grid_pos,
+        targets,
+        unit: defaults["unit"].as_str().map(str::to_string),
+        decimals: defaults["decimals"].as_u64().map(|d| d.min(10) as u8),
+        min: defaults["min"].as_f64(),
+        max: defaults["max"].as_f64(),
+        draw_style,
+        stack,
+        colors,
+        thresholds,
+    })
+}
+
+/// `label_values(metric{…}, label)` or `label_values(label)` query variables; others are skipped.
+fn import_variable(raw: &Value, warnings: &mut Vec<String>) -> Option<Variable> {
+    let name = raw["name"].as_str()?.to_string();
+    let kind = raw["type"].as_str().unwrap_or("");
+    if kind != "query" {
+        if kind != "datasource" {
+            warnings.push(format!(
+                "variable ${name}: {kind:?} variables are not supported, skipped"
+            ));
+        }
+        return None;
+    }
+    let definition = raw["definition"]
+        .as_str()
+        .or_else(|| raw["query"]["query"].as_str())
+        .or_else(|| raw["query"].as_str())
+        .unwrap_or("");
+    let Some((metric, label_name)) = parse_label_values(definition) else {
+        warnings.push(format!(
+            "variable ${name}: only label_values(…) queries are supported, skipped"
+        ));
+        return None;
+    };
+    Some(Variable {
+        label: raw["label"]
+            .as_str()
+            .map(str::to_string)
+            .filter(|l| !l.is_empty()),
+        name,
+        label_name,
+        metric,
+        multi: raw["multi"].as_bool().unwrap_or(false),
+        include_all: raw["includeAll"].as_bool().unwrap_or(false),
+    })
+}
+
+/// `label_values(up{job="x"}, instance)` → (Some("up"), "instance"); `label_values(instance)` →
+/// (None, "instance"). Selector matchers are dropped: the server's selector scopes values anyway.
+fn parse_label_values(definition: &str) -> Option<(Option<String>, String)> {
+    let inner = definition
+        .trim()
+        .strip_prefix("label_values(")?
+        .strip_suffix(')')?;
+    let (series, label) = match inner.rfind(',') {
+        Some(comma) => (Some(inner[..comma].trim()), inner[comma + 1..].trim()),
+        None => (None, inner.trim()),
+    };
+    if !super::client::is_label_name(label) {
+        return None;
+    }
+    let metric = series
+        .map(|s| s.split('{').next().unwrap_or("").trim())
+        .filter(|m| !m.is_empty() && super::client::is_metric_name(m))
+        .map(str::to_string);
+    Some((metric, label.to_string()))
+}
+
+/// Grafana colour names (and the hex Grafana palettes use) to the console's semantic colours.
+fn semantic_color(color: &str) -> Option<SeriesColor> {
+    let c = color.to_ascii_lowercase();
+    Some(if c.contains("red") || c == "#f2495c" || c == "#e02f44" {
+        SeriesColor::Error
+    } else if c.contains("orange") || c.contains("yellow") || c == "#ff9830" || c == "#fade2a" {
+        SeriesColor::Warning
+    } else if c.contains("green") || c == "#73bf69" {
+        SeriesColor::Success
+    } else if c.contains("blue") || c == "#5794f2" {
+        SeriesColor::Info
+    } else if c == "text" || c.contains("gray") || c.contains("grey") {
+        SeriesColor::Neutral
+    } else if c.contains("purple") || c.contains("violet") {
+        SeriesColor::Accent
+    } else {
+        return None;
+    })
+}
+
 /// A Grafana the user named, reached through the server's egress policy.
 pub struct GrafanaClient {
     http: reqwest::Client,
@@ -543,6 +901,89 @@ mod tests {
                 path.display()
             );
         }
+    }
+
+    #[test]
+    fn export_then_import_round_trips() {
+        let original = builtin().remove(0);
+        let exported = system();
+        let imported = import(&exported).unwrap();
+        assert_eq!(imported.source, "grafana");
+        assert!(imported.warnings.is_empty(), "{:?}", imported.warnings);
+        let dashboard = imported.dashboard;
+        assert_eq!(dashboard.title, original.title);
+        assert_eq!(dashboard.panels.len(), original.panels.len());
+        assert_eq!(dashboard.variables[0].label_name, "instance");
+        assert_eq!(dashboard.variables[0].metric.as_deref(), Some("up"));
+        let errors = dashboard
+            .panels
+            .iter()
+            .find(|p| p.title == "Server errors")
+            .unwrap();
+        assert_eq!(errors.thresholds.len(), 2);
+        assert_eq!(errors.unit.as_deref(), Some("percentunit"));
+        let status = dashboard
+            .panels
+            .iter()
+            .find(|p| p.title == "Throughput by status")
+            .unwrap();
+        assert_eq!(status.draw_style, DrawStyle::Bars);
+        assert!(status.stack);
+        assert_eq!(status.colors.get("5xx"), Some(&SeriesColor::Error));
+        let routes = dashboard
+            .panels
+            .iter()
+            .find(|p| p.title == "Routes" && p.kind == PanelType::Table)
+            .unwrap();
+        assert_eq!(routes.targets[5].unit.as_deref(), Some("percentunit"));
+    }
+
+    #[test]
+    fn import_reports_what_it_skips() {
+        let json = json!({
+            "schemaVersion": 39,
+            "title": "Mixed",
+            "graphTooltip": 2,
+            "templating": { "list": [
+                { "name": "ds", "type": "datasource" },
+                { "name": "env", "type": "custom" },
+                { "name": "job", "type": "query", "definition": "label_values(job)" }
+            ]},
+            "panels": [
+                { "id": 1, "type": "text", "title": "Notes", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 2 } },
+                { "id": 2, "type": "row", "title": "Old", "collapsed": true, "gridPos": { "x": 0, "y": 2, "w": 24, "h": 1 },
+                  "panels": [
+                    { "id": 3, "type": "graph", "title": "Legacy", "bars": true, "gridPos": { "x": 0, "y": 3, "w": 12, "h": 8 },
+                      "targets": [{ "refId": "A", "expr": "rate(x[5m])", "legendFormat": "__auto" }] }
+                  ] },
+                { "id": 4, "type": "timeseries", "title": "Logs", "gridPos": { "x": 0, "y": 11, "w": 12, "h": 8 },
+                  "targets": [{ "refId": "A", "expr": "{app=\"x\"}", "datasource": { "type": "loki" } }] }
+            ]
+        });
+        let imported = import(&json).unwrap();
+        let titles: Vec<_> = imported
+            .dashboard
+            .panels
+            .iter()
+            .map(|p| p.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Old", "Legacy"]);
+        assert_eq!(imported.dashboard.panels[1].draw_style, DrawStyle::Bars);
+        assert_eq!(imported.dashboard.cursor_sync, CursorSync::Tooltip);
+        assert_eq!(imported.dashboard.variables.len(), 1);
+        assert_eq!(imported.dashboard.variables[0].metric, None);
+        assert_eq!(imported.warnings.len(), 4, "{:?}", imported.warnings);
+    }
+
+    #[test]
+    fn imports_native_dashboards_and_the_api_envelope() {
+        let native = serde_json::to_value(builtin().remove(0)).unwrap();
+        let imported = import(&native).unwrap();
+        assert_eq!(imported.source, "octofhir");
+        assert_eq!(imported.dashboard.id, None);
+        let wrapped = json!({ "dashboard": system(), "meta": {} });
+        assert_eq!(import(&wrapped).unwrap().source, "grafana");
+        assert!(import(&json!({ "nope": 1 })).is_err());
     }
 
     #[test]

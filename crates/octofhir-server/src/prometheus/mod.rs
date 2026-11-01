@@ -5,6 +5,7 @@
 pub mod client;
 pub mod dashboards;
 pub mod error;
+pub mod explain;
 pub mod grafana;
 pub mod handlers;
 pub mod promql;
