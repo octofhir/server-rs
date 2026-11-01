@@ -176,7 +176,15 @@ All names start with `octofhir_`.
 | `http_active_connections` | gauge | | Requests being served |
 | `fhir_interactions_total` | counter | `interaction`, `resource_type`, `status_class` | FHIR REST interactions: `read`, `vread`, `search-type`, `create`, `update`, `patch`, `delete`, `history-*`, `operation`, `batch`, … |
 | `fhir_interaction_duration_seconds` | histogram | `interaction`, `resource_type` | Their latency |
-| `db_pool_connections_active` / `_idle` / `_max` | gauge | | PostgreSQL pool |
+| `storage_operation_duration_seconds` | histogram | `operation`, `resource_type`, `outcome` | Every database call: reads, writes, searches; `tx_*` calls run inside a transaction |
+| `db_pool_connections_active` / `_idle` / `_max` | gauge | | PostgreSQL pool of this instance |
+| `pg_connections` | gauge | `state` | Client connections to the database: active, idle, idle in transaction… |
+| `pg_connections_waiting_on_locks`, `pg_longest_transaction_seconds` | gauge | | Lock waits; age of the oldest open transaction |
+| `pg_transactions_total`, `pg_deadlocks_total` | counter | `outcome` | Commits and rollbacks; deadlocks |
+| `pg_blocks_total` | counter | `source` | Blocks read from the buffer cache or disk (cache hit ratio) |
+| `pg_rows_total`, `pg_temp_bytes_total` | counter | `operation` | Rows fetched/inserted/updated/deleted; temp-file bytes |
+| `pg_database_size_bytes`, `pg_table_size_bytes`, `pg_table_rows`, `pg_table_dead_rows` | gauge | `table` | Database and table sizes, rows, rows awaiting vacuum (non-empty tables only) |
+| `fhir_resources` | gauge | `resource_type` | Stored resources per type (estimate from table statistics) |
 | `cache_hits_total`, `cache_misses_total` | counter | `tier` | Resource cache (L1 local, L2 Redis) |
 | `tokio_workers`, `tokio_alive_tasks`, `tokio_global_queue_depth` | gauge | | Async runtime |
 | `tokio_worker_busy_seconds_total`, `tokio_worker_parks_total` | gauge | `worker` | Per worker; `rate()` of busy time is utilization |
@@ -185,11 +193,16 @@ All names start with `octofhir_`.
 
 Every metric carries `# HELP`, which the console shows in completions and hovers.
 
+The `pg_*` metrics are read from PostgreSQL's statistics views when Prometheus scrapes — at most
+every 10 seconds, abandoned after 2 seconds. They describe the shared database, so every instance
+reports the same values: aggregate them with `max`, not `sum`.
+
 ## Dashboards
 
 The built-in **System** dashboard is grouped in collapsible sections: overview stats, HTTP
-throughput and latency, FHIR interactions by resource type, routes, database and cache, the
-Tokio runtime and the process. It is read-only; **Duplicate & edit** makes your own copy.
+throughput and latency, FHIR interactions by resource type, routes, the database (size, busy
+connections, cache hit ratio, storage latency by operation, lock waits, the longest transaction,
+transactions, tables, the slowest storage calls), the Tokio runtime and the process. It is read-only; **Duplicate & edit** makes your own copy.
 
 - **Variables.** `instance` narrows every panel to some instances; the selection is kept in the
   URL (`?var-instance=…`) so a link reproduces the view.
