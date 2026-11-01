@@ -8,36 +8,162 @@ back from **Prometheus**, not from the server it is talking to: behind a load ba
 request may reach another instance, so only Prometheus, which scrapes every instance, has the
 whole picture. The page appears once `[metrics.prometheus]` is configured.
 
-## Setup
+## Quick start (local)
 
-1. Let Prometheus scrape every instance's `/metrics` under one job:
+`docker compose up -d` starts Prometheus on [localhost:9095](http://localhost:9095), scraping the
+server you run with `cargo run` (`host.docker.internal:8888`) every 5 seconds. The example config
+(`octofhir.example.toml`) already points the console at it:
 
-   ```yaml
-   scrape_configs:
-     - job_name: octofhir
-       scrape_interval: 15s
-       static_configs:
-         - targets: ["octofhir-1:8888", "octofhir-2:8888"]
-       # with [metrics] endpoint_token set on the server:
-       # authorization:
-       #   credentials: <token>
-   ```
+```toml
+[metrics.prometheus]
+url = "http://localhost:9095"
+selector = '{job="octofhir"}'
+scrape_interval_secs = 5
+```
 
-2. Point the server at Prometheus:
+Open **Performance** (`g m`) in the console. The header shows `1/1 up`: Prometheus scrapes the one
+instance. To try exporting dashboards to Grafana as well, run
+`docker compose --profile grafana up -d` (see [Grafana](#grafana)).
 
-   ```toml
-   [metrics.prometheus]
-   url = "http://prometheus:9090"
-   selector = '{job="octofhir"}'
-   scrape_interval_secs = 15
-   ```
+## Setting up Prometheus
 
-Any Prometheus-compatible API works: Prometheus, VictoriaMetrics, Mimir, Thanos. See
-[Configuration](/server-rs/configuration/#metrics-and-dashboards) for credentials, headers
-and limits.
+Two things are needed: Prometheus scrapes `/metrics` of **every** instance, and the server knows
+where that Prometheus is and which of its series are this deployment's.
 
-For development, `docker compose up -d` starts Prometheus on port 9095, scraping the server you
-run with `cargo run` every 5 seconds; `octofhir.toml` already points at it.
+### 1. Scrape every instance
+
+Scrape the instances directly, not through the load balancer — through it, each scrape would
+reach a random instance. Put them all under one job.
+
+**Static targets** (VMs, docker compose):
+
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: octofhir
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fhir-1.internal:8888", "fhir-2.internal:8888"]
+        labels:
+          env: prod
+```
+
+**Kubernetes with the Prometheus Operator** — a `ServiceMonitor` on the server's Service. The
+operator names the job after the Service, so the selector below matches on it:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: octofhir
+  namespace: fhir
+spec:
+  selector:
+    matchLabels:
+      app: octofhir
+  endpoints:
+    - port: http          # the Service port name for 8888
+      path: /metrics
+      interval: 15s
+```
+
+**Kubernetes without the operator** — discover the pods and keep the pod name as `instance`, so
+dashboards show `octofhir-7d9f…` rather than an IP:
+
+```yaml
+scrape_configs:
+  - job_name: octofhir
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: { names: [fhir] }
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        regex: octofhir
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: "8888"
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: instance
+```
+
+**Protecting `/metrics`.** By default `/metrics` is public (it shows route names and load, no
+data). To require a token, set it on the server and give the scrape job the same token:
+
+```toml
+[metrics]
+endpoint_token = "a-long-random-string"   # or OCTOFHIR__METRICS__ENDPOINT_TOKEN
+```
+
+```yaml
+  - job_name: octofhir
+    authorization:
+      credentials: a-long-random-string   # or credentials_file: /etc/prometheus/octofhir-token
+```
+
+Check it works: in Prometheus run `up{job="octofhir"}` — one series per instance, value `1`.
+
+### 2. Point the server at Prometheus
+
+```toml
+[metrics.prometheus]
+url = "http://prometheus:9090"
+selector = '{job="octofhir"}'
+scrape_interval_secs = 15
+```
+
+- **`url`** — the Prometheus HTTP API, reachable from every instance (the console queries through
+  whichever instance answers it). A sub-path is fine: `https://mimir.example.com/prometheus`.
+- **`selector`** — label matchers that pick out this deployment's series. It is added to every
+  dashboard query, so it must match the labels your scrape setup attaches: `{job="octofhir"}` for
+  the static config above, `{job="octofhir", namespace="fhir"}` with the operator, or
+  `{job="octofhir", env="prod"}` when staging and production share one Prometheus.
+- **`scrape_interval_secs`** — the job's scrape interval. Charts never use a finer step, and
+  `$__rate_interval` covers at least four scrapes so `rate()` always has enough samples. If it is
+  lower than the real interval, rates come back empty.
+
+Restart the server. **Performance** appears in the sidebar; until then the page shows what to add.
+
+### Credentials and other backends
+
+```toml
+[metrics.prometheus]
+url = "https://mimir.example.com/prometheus"
+selector = '{job="octofhir", env="prod"}'
+scrape_interval_secs = 30
+bearer_token = "…"                              # or basic_username + basic_password
+headers = { "X-Scope-OrgID" = "fhir-prod" }     # tenant header for Mimir / Cortex
+timeout_secs = 10                               # per query
+max_range_days = 30                             # longest range a dashboard may ask for
+max_points = 2000                               # per series; longer ranges get coarser steps
+```
+
+Every Prometheus-compatible query API works: Prometheus, VictoriaMetrics (`url =
+"http://victoriametrics:8428"`), Mimir, Cortex, Thanos Query. The server only reads from it; give
+it a read-only credential. Settings can also come from the environment, e.g.
+`OCTOFHIR__METRICS__PROMETHEUS__URL` and `OCTOFHIR__METRICS__PROMETHEUS__BEARER_TOKEN`.
+
+### Retention
+
+Dashboards can look back `max_range_days` (30 by default), but only as far as Prometheus keeps
+data (`--storage.tsdb.retention.time`, 15 days by default). One instance exports from a few
+hundred to a few thousand series — latency histograms per route and per FHIR interaction dominate
+— which at a 15 s interval is in the order of tens of MB per day.
+
+### Troubleshooting
+
+The page reports problems above the dashboard:
+
+| Message | Cause |
+|---|---|
+| *Prometheus is unreachable* | `url` is wrong or blocked from the server, or the credentials are rejected. The message has the details. |
+| *Prometheus does not scrape this server* | Prometheus answers, but `up` has no series matching `selector`. Check the scrape job and that the selector uses the labels it attaches. |
+| A panel's warning icon | That query failed; hover the icon for Prometheus' error. |
+| Charts with gaps | Instances restarted or scrapes failed for a while — gaps are real missing data. |
+| Rates empty on short ranges | `scrape_interval_secs` is lower than the job's real interval. |
 
 ## What is exported
 
