@@ -9,27 +9,34 @@
 //! - System: `POST /$expand` with inline ValueSet or URL
 //! - Type: `GET/POST /ValueSet/$expand` with url parameter
 //! - Instance: `GET/POST /ValueSet/{id}/$expand`
-
-use crate::operations::handler::OperationLevel;
+//!
+//! The membership is computed by the strict expander of `octofhir_sof`
+//! (the one SQL on FHIR terminology relations use): the ValueSet's own
+//! expansion when it carries a complete one, else its `compose` over the
+//! server's and the installed packages' code systems and value sets. A part
+//! of the definition it cannot evaluate is reported (422), never left out
+//! of the expansion. A published ValueSet (installed package, or not found
+//! here) beyond it is expanded by the configured terminology server, by
+//! canonical; a ValueSet supplied in the request or stored on the server is
+//! never sent anywhere. `activeOnly`, `filter`, `offset` / `count` and
+//! `includeDesignations` then shape the result.
 
 use async_trait::async_trait;
-use chrono::Utc;
-use regex::RegexBuilder;
-use serde::{Deserialize, Serialize};
+use octofhir_sof::expansion::{Expander, ExpansionError, Lookup};
+use octofhir_sof::plan::ContextArtifacts;
+use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashSet;
 
 use crate::canonical::get_manager;
-use crate::operations::{OperationError, OperationHandler};
+use crate::operations::handler::OperationLevel;
+use crate::operations::sof::{
+    Remote, ServerTerminology, expansion_stamp, packaged, remote_value_set, stored,
+};
+use crate::operations::{OperationContext, OperationError, OperationHandler};
 use crate::server::AppState;
 
-// ===== Hardening Constants =====
-/// Maximum number of codes to return in a single expansion
+/// Maximum number of codes to return in a single page
 const MAX_EXPANSION_COUNT: usize = 10_000;
-/// Maximum recursion depth for concept hierarchy traversal
-const MAX_RECURSION_DEPTH: usize = 100;
-/// Maximum length of user-provided regex patterns
-const MAX_REGEX_LENGTH: usize = 1000;
 /// Maximum offset value for pagination
 const MAX_OFFSET: usize = 1_000_000;
 
@@ -61,71 +68,13 @@ pub struct ExpandParams {
     #[serde(default)]
     pub include_definition: bool,
 
-    /// Active codes only
-    #[serde(default = "default_active_only")]
+    /// Leave inactive codes out
+    #[serde(default)]
     pub active_only: bool,
 
     /// Exclude nested codes
     #[serde(default)]
     pub exclude_nested: bool,
-}
-
-fn default_active_only() -> bool {
-    true
-}
-
-/// A code in the expansion.
-#[derive(Debug, Clone, Serialize)]
-pub struct ExpansionCode {
-    pub system: String,
-    pub code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub designation: Vec<Value>,
-}
-
-/// Context for tracking expansion state (cycle detection)
-#[derive(Debug, Default)]
-struct ExpansionContext {
-    /// URLs of ValueSets that have been visited (for cycle detection)
-    visited_valuesets: HashSet<String>,
-}
-
-impl ExpansionContext {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    /// Check and record a ValueSet URL, returns error if cycle detected
-    fn visit_valueset(&mut self, url: &str) -> Result<(), OperationError> {
-        if self.visited_valuesets.contains(url) {
-            return Err(OperationError::InvalidParameters(format!(
-                "Circular ValueSet reference detected: {}",
-                url
-            )));
-        }
-        self.visited_valuesets.insert(url.to_string());
-        Ok(())
-    }
-}
-
-/// Safely compile a regex with size limits to prevent DoS attacks.
-fn safe_regex_compile(pattern: &str) -> Result<regex::Regex, OperationError> {
-    if pattern.len() > MAX_REGEX_LENGTH {
-        return Err(OperationError::InvalidParameters(format!(
-            "Regex pattern exceeds maximum length of {} characters",
-            MAX_REGEX_LENGTH
-        )));
-    }
-
-    RegexBuilder::new(pattern)
-        .size_limit(10 * (1 << 20)) // 10MB compiled size limit
-        .dfa_size_limit(10 * (1 << 20))
-        .build()
-        .map_err(|e| OperationError::InvalidParameters(format!("Invalid regex pattern: {}", e)))
 }
 
 /// The $expand operation handler.
@@ -198,7 +147,7 @@ impl ExpandOperation {
                             expand_params.active_only = param
                                 .get("valueBoolean")
                                 .and_then(|v| v.as_bool())
-                                .unwrap_or(true);
+                                .unwrap_or(false);
                         }
                         "excludeNested" => {
                             expand_params.exclude_nested = param
@@ -223,38 +172,46 @@ impl ExpandOperation {
         }
     }
 
-    /// Resolve a ValueSet by URL from the canonical manager.
-    async fn resolve_value_set_by_url(url: &str) -> Result<Value, OperationError> {
-        let manager = get_manager()
-            .ok_or_else(|| OperationError::Internal("Canonical manager not available".into()))?;
-
-        // Search for the ValueSet by URL using canonical_pattern with escaped regex
-        let escaped_url = regex::escape(url);
-        let search_result = manager
-            .search()
-            .await
-            .resource_type("ValueSet")
-            .canonical_pattern(&format!("^{}$", escaped_url))
-            .limit(10)
-            .execute()
-            .await
-            .map_err(|e| {
-                OperationError::Internal(format!("Failed to search for ValueSet: {}", e))
-            })?;
-
-        // Filter to exact URL match (canonical_pattern might match partial)
-        search_result
-            .resources
-            .into_iter()
-            .find(|r| r.resource.content.get("url").and_then(|v| v.as_str()) == Some(url))
-            .map(|r| r.resource.content)
-            .ok_or_else(|| {
-                OperationError::NotFound(format!("ValueSet with url '{}' not found", url))
-            })
+    /// The ValueSet `url` (`version`) names: stored on the server (as the
+    /// caller may read it), else from an installed package, else expanded by
+    /// the terminology server. The flag says whether it is published (may be
+    /// expanded remotely).
+    async fn resolve_value_set_by_url(
+        state: &AppState,
+        context: &OperationContext,
+        url: &str,
+        version: Option<&str>,
+    ) -> Result<(Value, bool), OperationError> {
+        let named = match version {
+            Some(version) => format!("{url}|{version}"),
+            None => url.to_owned(),
+        };
+        match stored(state, context, "ValueSet", url, version).await? {
+            Lookup::Found(resolved) => return Ok((resolved.resource, false)),
+            Lookup::Ambiguous(reason) => return Err(OperationError::NotFound(reason)),
+            Lookup::Missing => {}
+        }
+        match packaged("ValueSet", url, version).await? {
+            Lookup::Found(resolved) => return Ok((resolved.resource, true)),
+            Lookup::Ambiguous(reason) => return Err(OperationError::NotFound(reason)),
+            Lookup::Missing => {}
+        }
+        let server = state.config.terminology.server_url.trim_end_matches('/');
+        if !server.is_empty()
+            && let Ok(Remote::Expanded(value_set)) = remote_value_set(server, url, version).await
+        {
+            return Ok((value_set, false));
+        }
+        Err(OperationError::NotFound(format!(
+            "ValueSet with url '{named}' not found"
+        )))
     }
 
     /// Load a ValueSet by ID from storage.
-    async fn load_value_set_by_id(state: &AppState, id: &str) -> Result<Value, OperationError> {
+    async fn load_value_set_by_id(
+        state: &AppState,
+        id: &str,
+    ) -> Result<(Value, bool), OperationError> {
         let result = state
             .storage
             .read("ValueSet", id)
@@ -262,7 +219,7 @@ impl ExpandOperation {
             .map_err(|e| OperationError::Internal(format!("Failed to read ValueSet: {}", e)))?;
 
         match result {
-            Some(stored) => Ok(stored.resource),
+            Some(stored) => Ok((stored.resource, false)),
             None => {
                 // Try canonical manager as fallback - search by text containing the ID
                 let manager = get_manager();
@@ -284,7 +241,7 @@ impl ExpandOperation {
                         .resources
                         .into_iter()
                         .find(|r| r.resource.content.get("id").and_then(|v| v.as_str()) == Some(id))
-                        .map(|r| r.resource.content)
+                        .map(|r| (r.resource.content, true))
                         .ok_or_else(|| {
                             OperationError::NotFound(format!("ValueSet '{}' not found", id))
                         })
@@ -298,613 +255,142 @@ impl ExpandOperation {
         }
     }
 
-    /// Expand a ValueSet to its enumerated codes.
+    /// Expand `value_set` and shape the result by `params`. `published`:
+    /// the ValueSet comes from an installed package, so the terminology
+    /// server may expand what the local expander cannot.
     async fn expand_value_set(
-        &self,
+        state: &AppState,
+        context: &OperationContext,
         value_set: &Value,
+        published: bool,
         params: &ExpandParams,
     ) -> Result<Value, OperationError> {
-        // Initialize expansion context for cycle detection
-        let mut ctx = ExpansionContext::new();
-
-        // Track the current ValueSet URL if present
-        if let Some(url) = value_set.get("url").and_then(|v| v.as_str()) {
-            ctx.visit_valueset(url)?;
-        }
-
-        self.expand_value_set_with_context(value_set, params, &mut ctx)
-            .await
-    }
-
-    /// Internal expansion with context for cycle detection.
-    async fn expand_value_set_with_context(
-        &self,
-        value_set: &Value,
-        params: &ExpandParams,
-        ctx: &mut ExpansionContext,
-    ) -> Result<Value, OperationError> {
-        let mut codes: Vec<ExpansionCode> = Vec::new();
-        let mut excluded_codes: HashSet<(String, String)> = HashSet::new();
-
-        // Process compose.exclude first to build exclusion set
-        if let Some(compose) = value_set.get("compose") {
-            if let Some(excludes) = compose.get("exclude").and_then(|v| v.as_array()) {
-                for exclude in excludes {
-                    self.process_include_exclude(exclude, &mut excluded_codes, true)
-                        .await;
-                }
-            }
-
-            // Process compose.include
-            if let Some(includes) = compose.get("include").and_then(|v| v.as_array()) {
-                for include in includes {
-                    self.process_include_with_context(
-                        include,
-                        &excluded_codes,
-                        &mut codes,
-                        params,
-                        ctx,
-                    )
-                    .await?;
-                }
-            }
-        }
-
-        // Apply text filter
-        if let Some(ref filter) = params.filter {
-            let filter_lower = filter.to_lowercase();
-            codes.retain(|code| {
-                code.display
-                    .as_ref()
-                    .map(|d| d.to_lowercase().contains(&filter_lower))
-                    .unwrap_or(false)
-                    || code.code.to_lowercase().contains(&filter_lower)
-            });
-        }
-
-        // Calculate total before pagination
-        let total = codes.len();
-
-        // Apply pagination
-        let offset = params.offset;
-        let count = params.count.unwrap_or(codes.len());
-        let paginated_codes: Vec<_> = codes.into_iter().skip(offset).take(count).collect();
-
-        // Build expansion
-        let expansion = self.build_expansion(value_set, &paginated_codes, total, offset, params);
-
-        // Build response ValueSet
-        let mut response = value_set.clone();
-        response["expansion"] = expansion;
-
-        // Remove compose from response if present (expansion replaces it conceptually)
-        // Note: FHIR spec says we can keep compose, but many servers remove it for clarity
-
-        Ok(response)
-    }
-
-    /// Process a compose.include element to gather codes (with cycle detection).
-    async fn process_include_with_context(
-        &self,
-        include: &Value,
-        excluded: &HashSet<(String, String)>,
-        codes: &mut Vec<ExpansionCode>,
-        params: &ExpandParams,
-        ctx: &mut ExpansionContext,
-    ) -> Result<(), OperationError> {
-        let system = include.get("system").and_then(|v| v.as_str()).unwrap_or("");
-        let version = include.get("version").and_then(|v| v.as_str());
-
-        // If concept list is provided, use those directly
-        if let Some(concepts) = include.get("concept").and_then(|v| v.as_array()) {
-            for concept in concepts {
-                let code = concept.get("code").and_then(|v| v.as_str()).unwrap_or("");
-                let display = concept.get("display").and_then(|v| v.as_str());
-
-                // Check exclusion
-                if excluded.contains(&(system.to_string(), code.to_string())) {
-                    continue;
-                }
-
-                let mut designations = Vec::new();
-                if params.include_designations
-                    && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array())
-                {
-                    designations = desigs.clone();
-                }
-
-                codes.push(ExpansionCode {
-                    system: system.to_string(),
-                    code: code.to_string(),
-                    display: display.map(String::from),
-                    version: version.map(String::from),
-                    designation: designations,
-                });
-            }
-        } else if let Some(filters) = include.get("filter").and_then(|v| v.as_array()) {
-            // Filter-based inclusion - need to query CodeSystem
-            self.process_filter_inclusion(system, version, filters, excluded, codes, params)
-                .await?;
-        } else if !system.is_empty() {
-            // Include all codes from the system
-            self.include_all_from_system(system, version, excluded, codes, params)
-                .await?;
-        }
-
-        // Process valueSet references (import from other ValueSets) with cycle detection
-        if let Some(value_sets) = include.get("valueSet").and_then(|v| v.as_array()) {
-            for vs_url in value_sets {
-                if let Some(url) = vs_url.as_str() {
-                    // Check for circular reference
-                    ctx.visit_valueset(url)?;
-
-                    match Self::resolve_value_set_by_url(url).await {
-                        Ok(imported_vs) => {
-                            // Recursively expand the imported ValueSet with cycle detection
-                            let sub_params = ExpandParams {
-                                include_designations: params.include_designations,
-                                include_definition: params.include_definition,
-                                active_only: params.active_only,
-                                ..Default::default()
-                            };
-                            let expanded_result = Box::pin(self.expand_value_set_with_context(
-                                &imported_vs,
-                                &sub_params,
-                                ctx,
-                            ))
-                            .await;
-                            if let Ok(expanded) = expanded_result
-                                && let Some(expansion) = expanded.get("expansion")
-                                && let Some(contains) =
-                                    expansion.get("contains").and_then(|v| v.as_array())
-                            {
-                                for contained in contains {
-                                    let sys = contained
-                                        .get("system")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
-                                    let code = contained
-                                        .get("code")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
-
-                                    if excluded.contains(&(sys.to_string(), code.to_string())) {
-                                        continue;
-                                    }
-
-                                    codes.push(ExpansionCode {
-                                        system: sys.to_string(),
-                                        code: code.to_string(),
-                                        display: contained
-                                            .get("display")
-                                            .and_then(|v| v.as_str())
-                                            .map(String::from),
-                                        version: contained
-                                            .get("version")
-                                            .and_then(|v| v.as_str())
-                                            .map(String::from),
-                                        designation: Vec::new(),
-                                    });
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(url = %url, error = %e, "Failed to import ValueSet");
+        let inline = ContextArtifacts::default();
+        let source = ServerTerminology {
+            state,
+            context,
+            inline: &inline,
+        };
+        let expanded = Expander::new(&source)
+            .with_designations(params.include_designations)
+            .expand(value_set, &expansion_stamp())
+            .await;
+        let expansion = match expanded {
+            Ok(expansion) => expansion,
+            Err(ExpansionError::Undeterminable(reason)) => {
+                let server = state.config.terminology.server_url.trim_end_matches('/');
+                let url = value_set["url"].as_str();
+                match (published && !server.is_empty(), url) {
+                    (true, Some(url)) => {
+                        match remote_value_set(server, url, value_set["version"].as_str()).await {
+                            Ok(Remote::Expanded(remote)) => remote["expansion"].clone(),
+                            _ => return Err(cannot_expand(value_set, &reason)),
                         }
                     }
+                    _ => return Err(cannot_expand(value_set, &reason)),
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    /// Process filter-based code inclusion from a CodeSystem.
-    async fn process_filter_inclusion(
-        &self,
-        system: &str,
-        version: Option<&str>,
-        filters: &[Value],
-        excluded: &HashSet<(String, String)>,
-        codes: &mut Vec<ExpansionCode>,
-        params: &ExpandParams,
-    ) -> Result<(), OperationError> {
-        // Load the CodeSystem
-        let code_system = self.load_code_system(system, version).await?;
-
-        // Get all concepts from the CodeSystem
-        let concepts = code_system
-            .get("concept")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        // Apply filters
-        for concept in &concepts {
-            if self.concept_matches_filters(concept, filters) {
-                let code = concept.get("code").and_then(|v| v.as_str()).unwrap_or("");
-
-                if excluded.contains(&(system.to_string(), code.to_string())) {
-                    continue;
-                }
-
-                let mut designations = Vec::new();
-                if params.include_designations
-                    && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array())
-                {
-                    designations = desigs.clone();
-                }
-
-                codes.push(ExpansionCode {
-                    system: system.to_string(),
-                    code: code.to_string(),
-                    display: concept
-                        .get("display")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    version: version.map(String::from),
-                    designation: designations,
+            Err(ExpansionError::Source(error)) => {
+                return Err(match error.downcast::<OperationError>() {
+                    Ok(error) => *error,
+                    Err(error) => OperationError::Internal(error.to_string()),
                 });
-
-                // Include nested concepts if not excluded
-                if !params.exclude_nested {
-                    self.collect_nested_concepts(
-                        concept, system, version, excluded, codes, params,
-                        1, // Start at depth 1 since we're already one level deep
-                    );
-                }
             }
-        }
-
-        Ok(())
+        };
+        Ok(shape(value_set, &expansion, params))
     }
+}
 
-    /// Include all codes from a CodeSystem.
-    async fn include_all_from_system(
-        &self,
-        system: &str,
-        version: Option<&str>,
-        excluded: &HashSet<(String, String)>,
-        codes: &mut Vec<ExpansionCode>,
-        params: &ExpandParams,
-    ) -> Result<(), OperationError> {
-        let code_system = self.load_code_system(system, version).await?;
+/// A 422 naming what keeps `value_set` from being expanded.
+fn cannot_expand(value_set: &Value, reason: &str) -> OperationError {
+    let named = value_set["url"].as_str().unwrap_or("(inline)");
+    OperationError::Api(octofhir_api::ApiError::unprocessable_entity(
+        format!("ValueSet {named} cannot be expanded: {reason}"),
+        None,
+    ))
+}
 
-        let concepts = code_system
-            .get("concept")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        for concept in &concepts {
-            self.collect_concept_and_children(concept, system, version, excluded, codes, params, 0);
+/// The response: `value_set` with the page of `expansion` the parameters
+/// ask for (flattened; inactive codes dropped under `activeOnly`; text
+/// `filter` on code and display).
+fn shape(value_set: &Value, expansion: &Value, params: &ExpandParams) -> Value {
+    let mut entries: Vec<Value> = Vec::new();
+    let mut pending: Vec<&Value> = vec![&expansion["contains"]];
+    while let Some(list) = pending.pop() {
+        for entry in list.as_array().into_iter().flatten().rev() {
+            pending.push(&entry["contains"]);
         }
-
-        Ok(())
-    }
-
-    /// Recursively collect a concept and its children with depth limiting.
-    fn collect_concept_and_children(
-        &self,
-        concept: &Value,
-        system: &str,
-        version: Option<&str>,
-        excluded: &HashSet<(String, String)>,
-        codes: &mut Vec<ExpansionCode>,
-        params: &ExpandParams,
-        depth: usize,
-    ) {
-        // Guard against excessive recursion depth
-        if depth > MAX_RECURSION_DEPTH {
-            tracing::warn!(
-                depth = depth,
-                system = %system,
-                "Maximum recursion depth exceeded in concept hierarchy traversal"
-            );
-            return;
-        }
-
-        let code = concept.get("code").and_then(|v| v.as_str()).unwrap_or("");
-
-        if !excluded.contains(&(system.to_string(), code.to_string())) {
-            let mut designations = Vec::new();
-            if params.include_designations
-                && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array())
-            {
-                designations = desigs.clone();
-            }
-
-            codes.push(ExpansionCode {
-                system: system.to_string(),
-                code: code.to_string(),
-                display: concept
-                    .get("display")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                version: version.map(String::from),
-                designation: designations,
-            });
-        }
-
-        // Process children if not excluding nested
-        if !params.exclude_nested
-            && let Some(children) = concept.get("concept").and_then(|v| v.as_array())
-        {
-            for child in children {
-                self.collect_concept_and_children(
-                    child,
-                    system,
-                    version,
-                    excluded,
-                    codes,
-                    params,
-                    depth + 1,
-                );
-            }
-        }
-    }
-
-    /// Collect nested concepts from a parent concept with depth limiting.
-    fn collect_nested_concepts(
-        &self,
-        concept: &Value,
-        system: &str,
-        version: Option<&str>,
-        excluded: &HashSet<(String, String)>,
-        codes: &mut Vec<ExpansionCode>,
-        params: &ExpandParams,
-        depth: usize,
-    ) {
-        if let Some(children) = concept.get("concept").and_then(|v| v.as_array()) {
-            for child in children {
-                self.collect_concept_and_children(
-                    child, system, version, excluded, codes, params, depth,
-                );
-            }
-        }
-    }
-
-    /// Check if a concept matches the given filters.
-    fn concept_matches_filters(&self, concept: &Value, filters: &[Value]) -> bool {
-        for filter in filters {
-            let property = filter
-                .get("property")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let op = filter.get("op").and_then(|v| v.as_str()).unwrap_or("");
-            let value = filter.get("value").and_then(|v| v.as_str()).unwrap_or("");
-
-            let matches = match (property, op) {
-                ("code", "=") => concept.get("code").and_then(|v| v.as_str()) == Some(value),
-                ("code", "in") => {
-                    let codes: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
-                    concept
-                        .get("code")
-                        .and_then(|v| v.as_str())
-                        .map(|c| codes.contains(&c))
-                        .unwrap_or(false)
-                }
-                ("display", "=") => concept.get("display").and_then(|v| v.as_str()) == Some(value),
-                ("concept", "is-a") => {
-                    // Check if concept is or descends from the specified code
-                    self.is_or_descends_from(concept, value)
-                }
-                ("concept", "descendent-of") => {
-                    // Check if concept descends from (but is not) the specified code
-                    self.descends_from(concept, value)
-                }
-                _ => {
-                    // Check custom properties
-                    if let Some(props) = concept.get("property").and_then(|v| v.as_array()) {
-                        props.iter().any(|p| {
-                            p.get("code").and_then(|v| v.as_str()) == Some(property)
-                                && match op {
-                                    "=" => p.get("value").and_then(|v| v.as_str()) == Some(value),
-                                    "regex" => {
-                                        if let Some(prop_val) =
-                                            p.get("value").and_then(|v| v.as_str())
-                                        {
-                                            // Use safe regex compilation with size limits
-                                            safe_regex_compile(value)
-                                                .map(|re| re.is_match(prop_val))
-                                                .unwrap_or(false)
-                                        } else {
-                                            false
-                                        }
-                                    }
-                                    _ => false,
-                                }
-                        })
-                    } else {
-                        true // If no properties, consider it a match (lenient)
-                    }
-                }
-            };
-
-            if !matches {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Check if a concept is or descends from a given code.
-    fn is_or_descends_from(&self, concept: &Value, ancestor_code: &str) -> bool {
-        let code = concept.get("code").and_then(|v| v.as_str()).unwrap_or("");
-        if code == ancestor_code {
-            return true;
-        }
-
-        // Check parent property if available
-        if let Some(props) = concept.get("property").and_then(|v| v.as_array()) {
-            for prop in props {
-                if prop.get("code").and_then(|v| v.as_str()) == Some("parent")
-                    && prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code)
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if a concept descends from (but is not) a given code.
-    fn descends_from(&self, concept: &Value, ancestor_code: &str) -> bool {
-        let code = concept.get("code").and_then(|v| v.as_str()).unwrap_or("");
-        if code == ancestor_code {
-            return false;
-        }
-
-        // Check parent property
-        if let Some(props) = concept.get("property").and_then(|v| v.as_array()) {
-            for prop in props {
-                if prop.get("code").and_then(|v| v.as_str()) == Some("parent")
-                    && prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code)
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Load a CodeSystem by URL.
-    async fn load_code_system(
-        &self,
-        system_url: &str,
-        version: Option<&str>,
-    ) -> Result<Value, OperationError> {
-        let manager = get_manager()
-            .ok_or_else(|| OperationError::Internal("Canonical manager not available".into()))?;
-
-        // Search for CodeSystem by URL using canonical_pattern
-        let escaped_url = regex::escape(system_url);
-        let search_result = manager
-            .search()
-            .await
-            .resource_type("CodeSystem")
-            .canonical_pattern(&format!("^{}$", escaped_url))
-            .limit(10)
-            .execute()
-            .await
-            .map_err(|e| {
-                OperationError::Internal(format!("Failed to search for CodeSystem: {}", e))
-            })?;
-
-        // Filter to find exact URL match, and optionally version match
-        search_result
-            .resources
+        // Children were pushed after; keep document order for this level.
+        let level: Vec<Value> = list
+            .as_array()
             .into_iter()
-            .find(|r| {
-                let content = &r.resource.content;
-                let url_match = content.get("url").and_then(|v| v.as_str()) == Some(system_url);
-                let version_match = match version {
-                    Some(ver) => content.get("version").and_then(|v| v.as_str()) == Some(ver),
-                    None => true,
-                };
-                url_match && version_match
-            })
-            .map(|r| r.resource.content)
-            .ok_or_else(|| {
-                OperationError::NotFound(format!("CodeSystem '{}' not found", system_url))
-            })
-    }
-
-    /// Process include/exclude to build exclusion set.
-    async fn process_include_exclude(
-        &self,
-        element: &Value,
-        excluded: &mut HashSet<(String, String)>,
-        _is_exclude: bool,
-    ) {
-        let system = element.get("system").and_then(|v| v.as_str()).unwrap_or("");
-
-        if let Some(concepts) = element.get("concept").and_then(|v| v.as_array()) {
-            for concept in concepts {
-                if let Some(code) = concept.get("code").and_then(|v| v.as_str()) {
-                    excluded.insert((system.to_string(), code.to_string()));
+            .flatten()
+            .map(|entry| {
+                let mut flat = entry.clone();
+                if let Some(object) = flat.as_object_mut() {
+                    object.remove("contains");
+                    if !params.include_designations {
+                        object.remove("designation");
+                    }
                 }
-            }
-        }
-    }
-
-    /// Build the expansion element for the response.
-    fn build_expansion(
-        &self,
-        _value_set: &Value,
-        codes: &[ExpansionCode],
-        total: usize,
-        offset: usize,
-        params: &ExpandParams,
-    ) -> Value {
-        let contains: Vec<Value> = codes
-            .iter()
-            .map(|c| {
-                let mut entry = json!({
-                    "system": c.system,
-                    "code": c.code,
-                });
-
-                if let Some(ref display) = c.display {
-                    entry["display"] = json!(display);
-                }
-
-                if let Some(ref version) = c.version {
-                    entry["version"] = json!(version);
-                }
-
-                if params.include_designations && !c.designation.is_empty() {
-                    entry["designation"] = json!(c.designation);
-                }
-
-                entry
+                flat
             })
             .collect();
-
-        let mut expansion = json!({
-            "identifier": format!("urn:uuid:{}", uuid::Uuid::new_v4()),
-            "timestamp": Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-            "total": total,
-            "offset": offset,
-            "contains": contains,
-        });
-
-        // Add parameters used
-        let mut exp_params = Vec::new();
-        if let Some(ref filter) = params.filter {
-            exp_params.push(json!({
-                "name": "filter",
-                "valueString": filter
-            }));
-        }
-        if params.offset > 0 {
-            exp_params.push(json!({
-                "name": "offset",
-                "valueInteger": params.offset
-            }));
-        }
-        if let Some(count) = params.count {
-            exp_params.push(json!({
-                "name": "count",
-                "valueInteger": count
-            }));
-        }
-        if params.include_designations {
-            exp_params.push(json!({
-                "name": "includeDesignations",
-                "valueBoolean": true
-            }));
-        }
-
-        if !exp_params.is_empty() {
-            expansion["parameter"] = json!(exp_params);
-        }
-
-        expansion
+        entries.extend(level);
     }
+    if params.active_only {
+        entries.retain(|entry| entry["inactive"] != true);
+    }
+    if let Some(filter) = &params.filter {
+        let filter = filter.to_lowercase();
+        entries.retain(|entry| {
+            ["code", "display"].iter().any(|field| {
+                entry[*field]
+                    .as_str()
+                    .is_some_and(|text| text.to_lowercase().contains(&filter))
+            })
+        });
+    }
+    let total = entries.len();
+    let offset = params.offset.min(MAX_OFFSET);
+    let count = params
+        .count
+        .unwrap_or(MAX_EXPANSION_COUNT)
+        .min(MAX_EXPANSION_COUNT);
+    let page: Vec<Value> = entries.into_iter().skip(offset).take(count).collect();
+
+    let mut parameters: Vec<Value> = expansion["parameter"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(filter) = &params.filter {
+        parameters.push(json!({"name": "filter", "valueString": filter}));
+    }
+    if params.offset > 0 {
+        parameters.push(json!({"name": "offset", "valueInteger": params.offset}));
+    }
+    if let Some(count) = params.count {
+        parameters.push(json!({"name": "count", "valueInteger": count}));
+    }
+    if params.include_designations {
+        parameters.push(json!({"name": "includeDesignations", "valueBoolean": true}));
+    }
+    if params.active_only {
+        parameters.push(json!({"name": "activeOnly", "valueBoolean": true}));
+    }
+    let mut shaped = json!({
+        "identifier": expansion["identifier"],
+        "timestamp": expansion["timestamp"],
+        "total": total,
+        "offset": offset,
+        "contains": page,
+    });
+    if !parameters.is_empty() {
+        shaped["parameter"] = Value::Array(parameters);
+    }
+    let mut response = value_set.clone();
+    response["expansion"] = shaped;
+    response
 }
 
 impl Default for ExpandOperation {
@@ -926,31 +412,38 @@ impl OperationHandler for ExpandOperation {
     /// Handle system-level $expand (POST /$expand).
     async fn handle_system(
         &self,
-        _state: &AppState,
-        _context: &crate::operations::OperationContext,
+        state: &AppState,
+        context: &OperationContext,
         params: &Value,
     ) -> Result<Value, OperationError> {
         let (expand_params, inline_value_set) = Self::extract_params(params)?;
-
-        // Get the ValueSet to expand
-        let value_set = if let Some(vs) = inline_value_set {
-            vs
-        } else if let Some(ref url) = expand_params.url {
-            Self::resolve_value_set_by_url(url).await?
-        } else {
-            return Err(OperationError::InvalidParameters(
-                "Either 'url' or 'valueSet' parameter is required".into(),
-            ));
+        let (value_set, published) = match inline_value_set {
+            Some(value_set) => (value_set, false),
+            None => match expand_params.url.as_deref() {
+                Some(url) => {
+                    Self::resolve_value_set_by_url(
+                        state,
+                        context,
+                        url,
+                        expand_params.value_set_version.as_deref(),
+                    )
+                    .await?
+                }
+                None => {
+                    return Err(OperationError::InvalidParameters(
+                        "Either 'url' or 'valueSet' parameter is required".into(),
+                    ));
+                }
+            },
         };
-
-        self.expand_value_set(&value_set, &expand_params).await
+        Self::expand_value_set(state, context, &value_set, published, &expand_params).await
     }
 
     /// Handle type-level $expand (GET/POST /ValueSet/$expand).
     async fn handle_type(
         &self,
-        _state: &AppState,
-        _context: &crate::operations::OperationContext,
+        state: &AppState,
+        context: &OperationContext,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
@@ -960,27 +453,14 @@ impl OperationHandler for ExpandOperation {
                 resource_type
             )));
         }
-
-        let (expand_params, inline_value_set) = Self::extract_params(params)?;
-
-        let value_set = if let Some(vs) = inline_value_set {
-            vs
-        } else if let Some(ref url) = expand_params.url {
-            Self::resolve_value_set_by_url(url).await?
-        } else {
-            return Err(OperationError::InvalidParameters(
-                "Either 'url' or 'valueSet' parameter is required".into(),
-            ));
-        };
-
-        self.expand_value_set(&value_set, &expand_params).await
+        self.handle_system(state, context, params).await
     }
 
     /// Handle instance-level $expand (GET/POST /ValueSet/{id}/$expand).
     async fn handle_instance(
         &self,
         state: &AppState,
-        _context: &crate::operations::OperationContext,
+        context: &OperationContext,
         resource_type: &str,
         id: &str,
         params: &Value,
@@ -991,19 +471,51 @@ impl OperationHandler for ExpandOperation {
                 resource_type
             )));
         }
-
         let (expand_params, _) = Self::extract_params(params)?;
-
-        // Load the ValueSet by ID
-        let value_set = Self::load_value_set_by_id(state, id).await?;
-
-        self.expand_value_set(&value_set, &expand_params).await
+        let (value_set, published) = Self::load_value_set_by_id(state, id).await?;
+        Self::expand_value_set(state, context, &value_set, published, &expand_params).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expansions_are_flattened_filtered_and_paged() {
+        let value_set = json!({"resourceType": "ValueSet", "url": "http://x/vs"});
+        let expansion = json!({"identifier": "urn:uuid:1", "timestamp": "2026-11-02T00:00:00Z",
+        "parameter": [{"name": "version", "valueUri": "http://x/cs|1"}],
+        "contains": [
+            {"system": "http://x/cs", "code": "a", "display": "Alpha", "contains": [
+                {"system": "http://x/cs", "code": "b", "display": "Beta", "inactive": true}]},
+            {"system": "http://x/cs", "code": "c", "display": "Gamma",
+             "designation": [{"value": "g"}]}
+        ]});
+        let all = shape(&value_set, &expansion, &ExpandParams::default());
+        let codes: Vec<&str> = all["expansion"]["contains"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["code"].as_str().unwrap())
+            .collect();
+        assert_eq!(codes, ["a", "c", "b"]);
+        assert_eq!(all["expansion"]["total"], 3);
+        assert!(all["expansion"]["contains"][1].get("designation").is_none());
+
+        let params = ExpandParams {
+            active_only: true,
+            filter: Some("A".into()),
+            count: Some(1),
+            offset: 1,
+            ..Default::default()
+        };
+        let page = shape(&value_set, &expansion, &params);
+        assert_eq!(page["expansion"]["total"], 2);
+        assert_eq!(page["expansion"]["offset"], 1);
+        assert_eq!(page["expansion"]["contains"][0]["code"], "c");
+        assert_eq!(page["expansion"]["parameter"][0]["name"], "version");
+    }
 
     #[test]
     fn test_extract_params_from_query() {
@@ -1044,32 +556,5 @@ mod tests {
         assert_eq!(expand_params.filter, Some("xyz".to_string()));
         assert_eq!(expand_params.offset, 5);
         assert!(inline_vs.is_none());
-    }
-
-    #[test]
-    fn test_build_expansion() {
-        let op = ExpandOperation::new();
-        let codes = vec![
-            ExpansionCode {
-                system: "http://example.org".to_string(),
-                code: "A".to_string(),
-                display: Some("Code A".to_string()),
-                version: None,
-                designation: Vec::new(),
-            },
-            ExpansionCode {
-                system: "http://example.org".to_string(),
-                code: "B".to_string(),
-                display: Some("Code B".to_string()),
-                version: None,
-                designation: Vec::new(),
-            },
-        ];
-
-        let expansion = op.build_expansion(&json!({}), &codes, 2, 0, &ExpandParams::default());
-
-        assert_eq!(expansion["total"], 2);
-        assert_eq!(expansion["offset"], 0);
-        assert!(expansion["contains"].as_array().unwrap().len() == 2);
     }
 }

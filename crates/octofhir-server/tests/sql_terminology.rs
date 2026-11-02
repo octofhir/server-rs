@@ -60,6 +60,10 @@ async fn start_terminology_server() -> (String, Requests, ServerHandle) {
                      "display": "Diabetes mellitus"}
                 ]
             }),
+            "http://example.org/ValueSet/remote-only" => json!({
+                "identifier": "urn:uuid:remote-only", "total": 1,
+                "contains": [{"system": "http://hl7.org/fhir/sid/icd-10", "code": "I21"}]
+            }),
             "http://hl7.org/fhir/ValueSet/condition-code" => json!({
                 "identifier": "urn:uuid:paged", "total": 100000, "offset": 0,
                 "contains": [{"system": "http://snomed.info/sct", "code": "22298006"}]
@@ -483,7 +487,7 @@ async fn terminology_dependencies_are_relations() {
     );
     assert!(answer.body.contains("of 40"), "{}", answer.body);
 
-    // A value set nobody can resolve: 404.
+    // A value set nobody can resolve, the terminology server included: 404.
     let answer = run(
         &client,
         &sql_run,
@@ -577,7 +581,41 @@ async fn terminology_dependencies_are_relations() {
         answer.body
     );
     assert!(answer.body.contains("snomed"), "{}", answer.body);
-    assert!(requests.lock().unwrap().is_empty());
+    assert!(
+        !requests
+            .lock()
+            .unwrap()
+            .iter()
+            .flatten()
+            .any(|(_, value)| value.contains("local-sct"))
+    );
+
+    // Found nowhere here: the terminology server expands it by canonical.
+    let remote_only = sql_query(
+        "SELECT conditions.patient_id FROM conditions JOIN codes \
+           ON codes.system = conditions.system AND codes.code = conditions.code",
+        &[
+            ("conditions", CONDITIONS),
+            ("codes", "http://example.org/ValueSet/remote-only"),
+        ],
+    );
+    let answer = run(
+        &client,
+        &sql_run,
+        vec![subject(remote_only), context(&conditions), json_format()],
+    )
+    .await;
+    assert_eq!(answer.rows(), [json!({"patient_id": "p2"})]);
+    let provenance = answer.provenance.expect("provenance header");
+    assert_eq!(
+        provenance[0]["source"],
+        format!("terminology server {terminology_server}")
+    );
+    assert_eq!(provenance[0]["expandedBy"], provenance[0]["source"]);
+    assert_eq!(
+        provenance[0]["expansion"]["identifier"],
+        "urn:uuid:remote-only"
+    );
 
     // From the R4 core package: a value set expanded here and a concept map
     // (R4 `equivalence`), joined to the patients.
@@ -660,11 +698,15 @@ async fn terminology_dependencies_are_relations() {
     );
     {
         let requests = requests.lock().unwrap();
-        let query = &requests[0];
-        assert!(query.contains(&(
-            "url".into(),
-            "http://hl7.org/fhir/ValueSet/clinical-findings".into()
-        )));
+        let query = requests
+            .iter()
+            .find(|query| {
+                query.contains(&(
+                    "url".into(),
+                    "http://hl7.org/fhir/ValueSet/clinical-findings".into(),
+                ))
+            })
+            .expect("clinical-findings was asked for");
         assert!(query.contains(&("valueSetVersion".into(), "4.0.1".into())));
     }
     let partial = sql_query(
@@ -679,6 +721,36 @@ async fn terminology_dependencies_are_relations() {
         answer.body
     );
     assert!(answer.body.contains("1 of 100000"), "{}", answer.body);
+
+    // $expand computes membership with the same strict expander.
+    let expand = |query: Vec<(&'static str, &'static str)>| {
+        let client = client.clone();
+        let url = format!("{fhir}/ValueSet/$expand");
+        async move {
+            let response = client.get(url).query(&query).send().await.unwrap();
+            let status = response.status();
+            (status, response.json::<Value>().await.unwrap())
+        }
+    };
+    let (status, body) = expand(vec![(
+        "url",
+        "http://hl7.org/fhir/ValueSet/administrative-gender",
+    )])
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["expansion"]["total"], 4);
+    let (status, body) = expand(vec![
+        ("url", "http://example.org/ValueSet/cardio"),
+        ("valueSetVersion", "1"),
+        ("filter", "infarct"),
+    ])
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["expansion"]["total"], 1);
+    assert_eq!(body["expansion"]["contains"][0]["code"], "22298006");
+    // A stored value set over SNOMED CT: reported, not half-expanded.
+    let (status, body) = expand(vec![("url", "http://example.org/ValueSet/local-sct")]).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
 
     // A record-returning function read through a column definition list
     // runs in the sandbox.
