@@ -68,7 +68,7 @@ TerminologyProvider), never as the way terminology reaches SQL.
   allowlist is mandatory.
 - Tests: `tests/sql_run.rs` (own binary: two servers in one test process
   collide on global state).
-- Gaps: parquet; Accept-header format negotiation; `$sql-export`.
+- Gaps: parquet; Accept-header format negotiation.
 
 ## Current state (2026-11-02, phase 4 done)
 
@@ -120,8 +120,50 @@ TerminologyProvider), never as the way terminology reaches SQL.
   `$expand` operation is still the lenient expander (drops imports it cannot
   resolve, treats a property filter on a concept without properties as a
   match) — move it onto the strict one; canonical-manager `resolve(url|ver)`
-  returns an exact-url match without checking the version (we filter search
-  results instead) — fix there.
+  returns an exact-url match without checking the version — fixed in
+  canonical-manager 0.2.8 (pinned version or nothing; no prefix siblings).
+
+## Current state (2026-11-02, phase 5 done; sof 0.3.0)
+
+- **Spec-defined, host-independent logic lives in sof 0.3.0**: `library`
+  (SQLQuery / SQLView by dialect, parameter binding), `plan` (dependency graph,
+  one resolution per canonical, `context` rules, CTE order; host artifacts via
+  `ArtifactSource`), `relations` + `expansion` (terminology relations, strict
+  expander; host lookups via `TerminologySource`), `output::RowEncoder`. The
+  server keeps lookups (`term_source.rs`: as-caller DB, packages, tx server,
+  provenance header), materialization (`sql_plan.rs`), the guard and the
+  PostgreSQL job.
+- **`$sql-export`** (`operations/sof/sql_export.rs`): system level, POST with
+  `Prefer: respond-async` only; `subject` 1..* (each by canonical / reference /
+  resource, own `name`, own `parameters`), `context`, `clientTrackingId`,
+  `_format` ndjson (default) / csv (+`header`) / json (`fhir` 400, parquet 400
+  not-supported), `patient` / `group` / `_since`; `_limit`, `resource` 400,
+  `source` not-supported. Everything that can fail does so at kick-off: subjects
+  (problems of several reported together, 404 > 422 > 400), output-name
+  collisions, filters, the whole graph incl. terminology content, and every query
+  prepared against empty stand-ins of its dependencies (a missing column is a
+  422 at kick-off). The resolved graph is stored with the job.
+  Job: every dependency materialized once, all subjects in one `REPEATABLE READ`
+  transaction (one snapshot), rows streamed to files, parts past
+  `bulk_export.max_resources_per_file` (`name.partN.ext`). Delivery per the SoF
+  async pattern: status 202 (Retry-After, X-Progress) → 303 to
+  `…/_async-status/{id}/result` (also on failure) → 200 manifest `Parameters`
+  (`exportId`, `clientTrackingId`, `status`, `_format`, times, `output`
+  name + location per subject) or the failure; DELETE → 202, then 404; files
+  under `/_bulk-files/{id}/…` for the job's owner; terminology provenance in
+  `X-Sof-Terminology` on the result. `OperationContext` now knows
+  `Prefer: respond-async` and GET.
+- **`$sql-run`** follows the same `context` rules (unmatched / duplicate url →
+  400; any `context` with a ViewDefinition subject → 400) and resolves an
+  unknown ValueSet canonical through the terminology server.
+- **`$expand`** runs on the strict expander (no silently dropped imports or
+  filters; 422 naming what cannot be expanded; published value sets beyond it
+  go to the terminology server; `activeOnly` default false, applied).
+- OperationDefinition URL of `$sql-run` corrected to `…/SQLRun`.
+- Tests: `tests/sql_export.rs` (own binary).
+- Gaps: parquet (sof feature exists; export writer to do), `$viewdefinition-export`
+  still the v2 bulk-style manifest, sof does not build for wasm32 (tokio `full`
+  pulls mio) — make the async runtime optional.
 
 ## Authorization of the SQL path (the hard part)
 
@@ -160,8 +202,8 @@ same kind (spec: applied before projection / before the SQL).
 4. **Terminology relations** (done 2026-11-02) — ValueSet dependency →
    membership into a per-job temp table, ConceptMap → rows per spec rules
    incl. rejections; one resolution per job; provenance; 404/422 per spec.
-5. **`$sql-export`** — async jobs + manifest, multiple subjects, per-subject
-   output names; reuse bulk writer.
+5. **`$sql-export`** (done 2026-11-02) — async jobs + manifest, multiple
+   subjects, per-subject output names, one snapshot per job.
 6. **v3 canonicals** — accept both `org.sql-on-fhir.ig` and
    `hl7.fhir.uv.sql-on-fhir` artifacts; R6 additional-resource ViewDefinition.
 7. **Console** — ViewDefinition page runs through `$sql-run`; SQLQuery editor
@@ -175,6 +217,6 @@ design.
 
 Done (2026-11-02): fhirpath-rs 0.5.1 → sof 0.2.0 (features, CompileOptions,
 source hook) → sof 0.2.1 (patched dependencies) → server-rs on the published
-crates, no `[patch.crates-io]`. Phase 4 needed no crate release (sof
-`CompileOptions` and banshee 0.2.5 already carried what it uses). Next sof
-release follows the next lowering work.
+crates, no `[patch.crates-io]`. Phase 4 needed no crate release.
+canonical-manager 0.2.8 (pinned versions), sof 0.3.0 (library, plan,
+relations, expansion, RowEncoder) with phase 5.
