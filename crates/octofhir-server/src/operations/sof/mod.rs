@@ -25,24 +25,28 @@
 //! ```
 
 mod engine;
-mod expansion;
 mod export;
 mod output;
 mod run;
 mod scope;
 mod sql;
 mod sql_guard;
-mod sql_library;
+mod sql_export;
+mod sql_plan;
 mod sql_run;
 mod term_source;
-mod terminology;
 mod viewdefinition_run;
 
 pub use export::{ViewDefinitionExportOperation, execute_viewdefinition_export};
 pub use run::ViewDefinitionRunOperation;
 pub use sql::ViewDefinitionSqlOperation;
+pub use sql_export::{SqlExportOperation, execute_sql_export};
+pub(crate) use sql_export::{JOB_TYPE as SQL_EXPORT_JOB, locations as sql_export_locations, media_type as sql_export_media_type};
 pub use sql_run::SqlRunOperation;
-pub(crate) use term_source::{PROVENANCE_HEADER, PROVENANCE_KEY};
+pub(crate) use term_source::{
+    PROVENANCE_HEADER, PROVENANCE_KEY, Remote, ServerTerminology, expansion_stamp, packaged,
+    remote_value_set, stored,
+};
 pub use viewdefinition_run::ViewDefinitionRunSpecOperation;
 
 /// Register the SQL on FHIR operations this server implements, so they are
@@ -84,7 +88,18 @@ pub fn register_operation_definitions(registry: &mut crate::operations::Operatio
         resource: vec![],
         ..on_view_definition(
             "sql-run",
-            "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/SqlRun",
+            "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/SQLRun",
+        )
+    });
+    registry.register(OperationDefinition {
+        system: true,
+        type_level: false,
+        instance: false,
+        resource: vec![],
+        affects_state: true,
+        ..on_view_definition(
+            "sql-export",
+            "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/SQLExport",
         )
     });
 }

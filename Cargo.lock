@@ -3843,9 +3843,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-canonical-manager"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e646408c3e299b53b93c51d037a822e3e6d2ffaf736df5001ca5f8ebc1f3a613"
+checksum = "15ff47b4b66321a26f5394384e1abebe3813be4cdb3199630aef38d5907f1588"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4441,16 +4441,18 @@ dependencies = [
 
 [[package]]
 name = "octofhir-sof"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48c6655c05134477032bdba91a06bfe955661f464e8db6e781c2acf8cc4c9396"
+checksum = "2c4f75e391a09bc31c1b56ae43a0a02e1c5901ed1e702b224e7b2c3c1a5fbc76"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "csv",
  "futures-util",
  "octofhir-fhir-model",
  "octofhir-fhirpath",
  "pin-project-lite",
+ "regex",
  "serde",
  "serde_json",
  "thiserror",

@@ -1962,6 +1962,10 @@ async fn build_app_with_runtime(
                         // Execute the bulk export
                         crate::operations::execute_bulk_export(state, job_id, body).await
                     }
+                    crate::operations::sof::SQL_EXPORT_JOB => {
+                        let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+                        crate::operations::execute_sql_export(state, job_id, body).await
+                    }
                     "viewdefinition_export" => {
                         // Extract job parameters from body
                         let body = body.ok_or_else(|| "Missing job parameters".to_string())?;

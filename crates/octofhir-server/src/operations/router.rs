@@ -54,7 +54,7 @@ fn operation_response(code: &str, mut result: serde_json::Value) -> Result<Respo
 /// Render asynchronous operation kickoff with the polling location required by
 /// FHIR; the internal job envelope is not a clinical response resource.
 fn operation_body(code: &str, result: serde_json::Value) -> Result<Response, ApiError> {
-    if matches!(code, "export" | "import") && result["status"] == "accepted" {
+    if matches!(code, "export" | "import" | "sql-export") && result["status"] == "accepted" {
         let location = result["status_url"]
             .as_str()
             .ok_or_else(|| ApiError::internal("Async operation has no status location"))?;
@@ -72,10 +72,15 @@ fn operation_body(code: &str, result: serde_json::Value) -> Result<Response, Api
             axum::http::header::CACHE_CONTROL,
             axum::http::HeaderValue::from_static("no-store"),
         );
-        let outcome = serde_json::json!({"resourceType":"OperationOutcome","issue":[{
-            "severity":"information","code":"informational","diagnostics":"Asynchronous request accepted"
-        }]});
-        Ok((StatusCode::ACCEPTED, headers, Json(outcome)).into_response())
+        // An operation may describe the accepted job itself ($sql-export's
+        // Parameters); otherwise an informational outcome.
+        let body = match result.get("body") {
+            Some(body) if body.is_object() => body.clone(),
+            _ => serde_json::json!({"resourceType":"OperationOutcome","issue":[{
+                "severity":"information","code":"informational","diagnostics":"Asynchronous request accepted"
+            }]}),
+        };
+        Ok((StatusCode::ACCEPTED, headers, Json(body)).into_response())
     } else if let Some(binary) = raw_binary_return(code, &result)? {
         Ok(binary)
     } else {

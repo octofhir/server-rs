@@ -24,6 +24,10 @@ pub struct OperationContext {
     request_id: String,
     if_match: Option<String>,
     request_url: String,
+    /// The request carried `Prefer: respond-async`.
+    respond_async: bool,
+    /// The request was a GET.
+    is_get: bool,
 }
 
 impl FromRequestParts<AppState> for OperationContext {
@@ -65,6 +69,14 @@ impl FromRequestParts<AppState> for OperationContext {
                 .map(|value| value.to_str().map(String::from))
                 .transpose()
                 .map_err(|_| ApiError::bad_request("Invalid If-Match header"))?,
+            respond_async: parts
+                .headers
+                .get_all("prefer")
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .flat_map(|value| value.split(','))
+                .any(|part| part.trim().eq_ignore_ascii_case("respond-async")),
+            is_get: parts.method == axum::http::Method::GET,
         })
     }
 }
@@ -84,7 +96,20 @@ impl OperationContext {
             request_id: job_id.to_string(),
             if_match: None,
             request_url: job.request_url,
+            respond_async: false,
+            is_get: false,
         })
+    }
+
+    /// Whether the request asked for the asynchronous pattern
+    /// (`Prefer: respond-async`).
+    pub(crate) fn respond_async(&self) -> bool {
+        self.respond_async
+    }
+
+    /// Whether the request was a GET.
+    pub(crate) fn is_get(&self) -> bool {
+        self.is_get
     }
 
     pub(crate) fn request_url(&self) -> &str {

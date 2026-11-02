@@ -1,36 +1,38 @@
-//! Where `$sql-run` finds its dependencies and terminology, and how a
-//! terminology dependency becomes a relation with its provenance.
+//! Where the server finds a SQL on FHIR job's artifacts and terminology.
 //!
-//! A canonical resolves, in order, to an artifact supplied in `context`, a
-//! resource stored on this server (read as the caller), or a resource of an
-//! installed package. Without a `|version`, two stored resources are an
-//! ambiguity the request is rejected for (404); among installed packages the
-//! version the server's package resolution selects is used, and recorded.
+//! [`ServerArtifacts`] is the server's [`ArtifactSource`] for the job graph
+//! (`octofhir_sof::plan`): a canonical not supplied in `context` resolves to
+//! a resource stored on this server (read as the caller), else one of an
+//! installed package, else, for a ValueSet, the configured terminology
+//! server's expansion by canonical. Without a `|version`, two stored
+//! resources are an ambiguity the request is rejected for (404); among
+//! installed packages the version the server's package resolution selects is
+//! used, and recorded.
 //!
 //! A ValueSet's membership is its own expansion when it carries one, else
-//! computed by [`Expander`] from its definition. Only a ValueSet published in
-//! an installed package whose definition is beyond the local expander (a
-//! SNOMED CT or LOINC filter, say) is expanded by the configured terminology
-//! server, by canonical: the server's own and the caller's artifacts never
-//! leave it.
+//! computed by the strict [`Expander`] over [`ServerTerminology`] (`context`,
+//! the server's resources, packages). Only a ValueSet published in an
+//! installed package whose definition is beyond the local expander (a SNOMED
+//! CT or LOINC filter, say) goes to the terminology server, by canonical; the
+//! server's own and the caller's artifacts never leave it.
 //!
-//! The job records, per terminology dependency, what produced its content:
-//! the artifact's canonical and source, and for a value set the expansion's
-//! identifier, timestamp and parameters (code system versions, imported
-//! value sets). The record is logged and returned in the
-//! [`PROVENANCE_HEADER`] response header.
+//! The job records, per terminology dependency, what produced its content
+//! (`octofhir_sof::relations::value_set_record`); the record is logged and
+//! returned in the [`PROVENANCE_HEADER`] response header.
 
 use std::time::Duration;
 
 use async_trait::async_trait;
-use octofhir_api::ApiError;
+use chrono::Utc;
+use octofhir_sof::expansion::{
+    Expander, ExpansionError, ExpansionStamp, Lookup, Resolved, TerminologySource, split_canonical,
+};
+use octofhir_sof::plan::{
+    ArtifactSource, ContextArtifacts, PlanError, TerminologyContent, matches_canonical,
+};
+use octofhir_sof::relations::{MAX_RELATION_ROWS, value_set_record, value_set_rows};
 use serde_json::{Value, json};
 
-use super::expansion::{Expander, Lookup, Resolved, TerminologySource};
-use super::terminology::{
-    CONCEPT_MAP_COLUMNS, MAX_RELATION_ROWS, VALUE_SET_COLUMNS, columns, concept_map_rows,
-    value_set_rows,
-};
 use crate::operations::{OperationContext, OperationError};
 use crate::server::AppState;
 
@@ -51,19 +53,15 @@ const REMOTE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Origin prefix of an artifact found in an installed package.
 const PACKAGE_ORIGIN: &str = "package ";
 
-/// A dependency's relation: its columns, rows and provenance record.
-pub(crate) struct TerminologyRelation {
-    pub columns: Vec<(String, &'static str)>,
-    pub rows: Vec<Value>,
-    pub provenance: Value,
-}
+/// Origin prefix of a ValueSet the terminology server expanded.
+const REMOTE_ORIGIN: &str = "terminology server ";
 
-/// The server's terminology lookups for one job.
+/// The server's value set and code system lookups for one job.
 pub(crate) struct ServerTerminology<'a> {
     pub state: &'a AppState,
     pub context: &'a OperationContext,
     /// `context` artifacts, preferred over the server's.
-    pub inline: &'a [Value],
+    pub inline: &'a ContextArtifacts,
 }
 
 #[async_trait]
@@ -73,24 +71,170 @@ impl TerminologySource for ServerTerminology<'_> {
         resource_type: &str,
         url: &str,
         version: Option<&str>,
-    ) -> Result<Lookup, OperationError> {
-        if let Some(found) = self.inline.iter().find(|artifact| {
-            artifact["resourceType"] == resource_type && matches_canonical(artifact, url, version)
-        }) {
+    ) -> Result<Lookup, ExpansionError> {
+        if let Some(found) = self.inline.find(Some(resource_type), url, version) {
             return Ok(Lookup::Found(Resolved {
-                resource: found.clone(),
+                resource: found,
                 origin: "context".into(),
             }));
         }
-        match stored(self.state, self.context, resource_type, url, version).await? {
-            Lookup::Missing => packaged(resource_type, url, version).await,
-            found => Ok(found),
-        }
+        let lookup = match stored(self.state, self.context, resource_type, url, version).await {
+            Ok(Lookup::Missing) => packaged(resource_type, url, version).await,
+            other => other,
+        };
+        lookup.map_err(|error| ExpansionError::Source(Box::new(error)))
     }
 }
 
-pub(crate) fn matches_canonical(artifact: &Value, url: &str, version: Option<&str>) -> bool {
-    artifact["url"] == url && version.is_none_or(|version| artifact["version"] == version)
+/// The server's [`ArtifactSource`] for one job.
+pub(crate) struct ServerArtifacts<'a> {
+    pub state: &'a AppState,
+    pub context: &'a OperationContext,
+}
+
+#[async_trait]
+impl ArtifactSource for ServerArtifacts<'_> {
+    async fn artifact(&self, canonical: &str) -> Result<Resolved, PlanError> {
+        let (url, version) = split_canonical(canonical);
+        let not_found =
+            |reason: String| PlanError::NotFound(format!("Dependency {canonical}: {reason}"));
+        for resource_type in ["Library", "ViewDefinition", "ValueSet", "ConceptMap"] {
+            match stored(self.state, self.context, resource_type, url, version)
+                .await
+                .map_err(host)?
+            {
+                Lookup::Found(resolved) => return Ok(resolved),
+                Lookup::Ambiguous(reason) => return Err(not_found(reason)),
+                Lookup::Missing => {}
+            }
+        }
+        for resource_type in ["ValueSet", "ConceptMap"] {
+            match packaged(resource_type, url, version).await.map_err(host)? {
+                Lookup::Found(resolved) => return Ok(resolved),
+                Lookup::Ambiguous(reason) => return Err(not_found(reason)),
+                Lookup::Missing => {}
+            }
+        }
+        // Not here: a value set the terminology server knows by canonical.
+        let server = terminology_server(self.state);
+        if server.is_empty() {
+            return Err(not_found("not found".into()));
+        }
+        match remote_value_set(server, url, version).await {
+            Ok(Remote::Expanded(value_set)) => Ok(Resolved {
+                resource: value_set,
+                origin: remote_origin(server),
+            }),
+            Ok(Remote::Unknown) => Err(not_found(format!(
+                "not found here nor on the terminology server {server}"
+            ))),
+            Err(error) => Err(not_found(format!(
+                "not found here, and the terminology server {server} could not be asked: {error}"
+            ))),
+        }
+    }
+
+    async fn value_set(
+        &self,
+        label: &str,
+        value_set: &Resolved,
+        context: &ContextArtifacts,
+    ) -> Result<TerminologyContent, PlanError> {
+        let resource = &value_set.resource;
+        let named = canonical_of(resource);
+        let source = ServerTerminology {
+            state: self.state,
+            context: self.context,
+            inline: context,
+        };
+        let expanded_by = if value_set.origin.starts_with(REMOTE_ORIGIN) {
+            value_set.origin.clone()
+        } else if resource.get("expansion").is_some() {
+            "the artifact's expansion".to_owned()
+        } else {
+            "this server".to_owned()
+        };
+        let (expansion, expanded_by) = match Expander::new(&source)
+            .expand(resource, &expansion_stamp())
+            .await
+        {
+            Ok(expansion) => (expansion, expanded_by),
+            Err(ExpansionError::Undeterminable(local)) if may_expand_remotely(value_set) => {
+                let server = terminology_server(self.state);
+                let answer = remote_value_set(
+                    server,
+                    resource["url"].as_str().unwrap_or_default(),
+                    resource["version"].as_str(),
+                )
+                .await;
+                match answer {
+                    Ok(Remote::Expanded(remote)) => {
+                        (remote["expansion"].clone(), remote_origin(server))
+                    }
+                    Ok(Remote::Unknown) => {
+                        return Err(PlanError::Unprocessable(format!(
+                            "ValueSet {named} ({label}): membership cannot be determined: {local}; the terminology server {server} does not know it"
+                        )));
+                    }
+                    Err(remote) => {
+                        return Err(PlanError::Unprocessable(format!(
+                            "ValueSet {named} ({label}): membership cannot be determined: {local}; the terminology server {server} could not expand it either: {remote}"
+                        )));
+                    }
+                }
+            }
+            Err(ExpansionError::Undeterminable(reason)) => {
+                return Err(PlanError::Unprocessable(format!(
+                    "ValueSet {named} ({label}): membership cannot be determined: {reason}"
+                )));
+            }
+            Err(ExpansionError::Source(error)) => return Err(PlanError::Host(error)),
+        };
+        let rows = value_set_rows(&expansion).map_err(|reason| {
+            PlanError::Unprocessable(format!("ValueSet {named} ({label}): {reason}"))
+        })?;
+        let provenance = value_set_record(
+            label,
+            resource,
+            &value_set.origin,
+            &expanded_by,
+            &expansion,
+            rows.len(),
+        );
+        Ok(TerminologyContent { rows, provenance })
+    }
+}
+
+/// The identity of an expansion this server computes.
+pub(crate) fn expansion_stamp() -> ExpansionStamp {
+    ExpansionStamp {
+        identifier: format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+        timestamp: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    }
+}
+
+/// The configured terminology server, without a trailing slash.
+fn terminology_server(state: &AppState) -> &str {
+    state.config.terminology.server_url.trim_end_matches('/')
+}
+
+/// A server error carried through the job graph as it is.
+fn host(error: OperationError) -> PlanError {
+    PlanError::Host(Box::new(error))
+}
+
+/// A job graph error as the operations answer it: 400, 404, 422, or the
+/// server's own error passed through.
+pub(crate) fn plan_error(error: PlanError) -> OperationError {
+    match error {
+        PlanError::Invalid(message) => OperationError::InvalidParameters(message),
+        PlanError::NotFound(message) => OperationError::NotFound(message),
+        PlanError::Unprocessable(message) => super::sql_plan::unprocessable(message),
+        PlanError::Host(error) => match error.downcast::<OperationError>() {
+            Ok(error) => *error,
+            Err(error) => OperationError::Internal(error.to_string()),
+        },
+    }
 }
 
 /// The server's `resource_type` with `url` (and `version`), as the caller
@@ -230,123 +374,37 @@ pub(crate) async fn packaged(
     })
 }
 
-/// The relation of a ValueSet dependency `label`.
-pub(crate) async fn value_set_relation(
-    source: &ServerTerminology<'_>,
-    label: &str,
-    value_set: &Resolved,
-) -> Result<TerminologyRelation, OperationError> {
-    let resource = &value_set.resource;
-    let named = canonical_of(resource);
-    let expanded_by = if resource.get("expansion").is_some() {
-        "the artifact's expansion"
-    } else {
-        "this server"
-    };
-    let expansion = Expander::new(source).expand(resource).await;
-    let (expansion, expanded_by) = match expansion {
-        Ok(expansion) => (expansion, expanded_by.to_owned()),
-        Err(local) if may_expand_remotely(value_set, &local) => {
-            let server = source
-                .state
-                .config
-                .terminology
-                .server_url
-                .trim_end_matches('/');
-            match remote_expansion(server, resource).await {
-                Ok(expansion) => (expansion, format!("terminology server {server}")),
-                Err(remote) => {
-                    return Err(unprocessable(format!(
-                        "ValueSet {named} ({label}): {}; the terminology server {server} could not expand it either: {remote}",
-                        message(&local)
-                    )));
-                }
-            }
-        }
-        Err(error) => {
-            return Err(unprocessable(format!(
-                "ValueSet {named} ({label}): {}",
-                message(&error)
-            )));
-        }
-    };
-    let rows = value_set_rows(&expansion)
-        .map_err(|reason| unprocessable(format!("ValueSet {named} ({label}): {reason}")))?;
-    let mut record = json!({
-        "label": label,
-        "resourceType": "ValueSet",
-        "url": resource["url"],
-        "source": value_set.origin,
-        "expandedBy": expanded_by,
-        "members": rows.len(),
-    });
-    if let Some(version) = resource["version"].as_str() {
-        record["version"] = json!(version);
-    }
-    let mut provenance_expansion = serde_json::Map::new();
-    for field in ["identifier", "timestamp", "parameter"] {
-        if let Some(value) = expansion.get(field) {
-            provenance_expansion.insert(field.to_owned(), value.clone());
-        }
-    }
-    record["expansion"] = Value::Object(provenance_expansion);
-    Ok(TerminologyRelation {
-        columns: columns(&VALUE_SET_COLUMNS),
-        rows,
-        provenance: record,
-    })
-}
-
-/// The relation of a ConceptMap dependency `label`.
-pub(crate) fn concept_map_relation(
-    label: &str,
-    concept_map: &Resolved,
-) -> Result<TerminologyRelation, OperationError> {
-    let resource = &concept_map.resource;
-    let rows = concept_map_rows(resource).map_err(|reason| {
-        unprocessable(format!(
-            "ConceptMap {} ({label}): {reason}",
-            canonical_of(resource)
-        ))
-    })?;
-    let mut record = json!({
-        "label": label,
-        "resourceType": "ConceptMap",
-        "url": resource["url"],
-        "source": concept_map.origin,
-        "mappings": rows.len(),
-    });
-    if let Some(version) = resource["version"].as_str() {
-        record["version"] = json!(version);
-    }
-    Ok(TerminologyRelation {
-        columns: columns(&CONCEPT_MAP_COLUMNS),
-        rows,
-        provenance: record,
-    })
-}
-
 /// A published ValueSet (from a package, without an expansion) the local
 /// expander could not determine may be expanded by the terminology server.
-fn may_expand_remotely(value_set: &Resolved, local: &OperationError) -> bool {
+fn may_expand_remotely(value_set: &Resolved) -> bool {
     value_set.origin.starts_with(PACKAGE_ORIGIN)
         && value_set.resource.get("expansion").is_none()
         && value_set.resource["url"].is_string()
-        && matches!(local, OperationError::Api(_))
 }
 
-/// The expansion of a published ValueSet from the terminology server at
+/// What the terminology server answered for a ValueSet canonical.
+pub(crate) enum Remote {
+    /// The ValueSet, carrying its expansion.
+    Expanded(Value),
+    /// The server does not know the canonical (404 or 410).
+    Unknown,
+}
+
+/// The ValueSet `url` (`version`) expanded by the terminology server at
 /// `server`, by canonical.
-async fn remote_expansion(server: &str, value_set: &Value) -> Result<Value, String> {
+pub(crate) async fn remote_value_set(
+    server: &str,
+    url: &str,
+    version: Option<&str>,
+) -> Result<Remote, String> {
     if server.is_empty() {
         return Err("no terminology server is configured".into());
     }
-    let url = value_set["url"].as_str().unwrap_or_default();
     let mut query: Vec<(&str, String)> = vec![
         ("url", url.to_owned()),
         ("count", MAX_RELATION_ROWS.to_string()),
     ];
-    if let Some(version) = value_set["version"].as_str() {
+    if let Some(version) = version {
         query.push(("valueSetVersion", version.to_owned()));
     }
     let client = reqwest::Client::builder()
@@ -361,19 +419,32 @@ async fn remote_expansion(server: &str, value_set: &Value) -> Result<Value, Stri
         .await
         .map_err(|error| error.to_string())?;
     let status = response.status();
+    if matches!(status.as_u16(), 404 | 410) {
+        return Ok(Remote::Unknown);
+    }
     if !status.is_success() {
         return Err(format!("it answered {status}"));
     }
-    let body: Value = response
+    let mut body: Value = response
         .json()
         .await
         .map_err(|error| format!("its answer is not JSON: {error}"))?;
-    if body["resourceType"] != "ValueSet" {
-        return Err("its answer is not a ValueSet".into());
+    if body["resourceType"] != "ValueSet" || body.get("expansion").is_none() {
+        return Err("its answer is not an expanded ValueSet".into());
     }
-    body.get("expansion")
-        .cloned()
-        .ok_or_else(|| "its answer has no expansion".into())
+    // The answer names the artifact the caller asked for.
+    body["url"] = Value::String(url.to_owned());
+    if let Some(version) = version
+        && !body["version"].is_string()
+    {
+        body["version"] = Value::String(version.to_owned());
+    }
+    Ok(Remote::Expanded(body))
+}
+
+/// The origin of an artifact the terminology server at `server` supplied.
+pub(crate) fn remote_origin(server: &str) -> String {
+    format!("{REMOTE_ORIGIN}{server}")
 }
 
 /// The provenance header value for `records`: ASCII JSON, at most
@@ -437,19 +508,6 @@ fn canonical_of(resource: &Value) -> String {
         (Some(url), None) => url.to_owned(),
         _ => "(inline, without url)".to_owned(),
     }
-}
-
-/// The text of an error, without the status wording.
-fn message(error: &OperationError) -> String {
-    match error {
-        OperationError::Api(ApiError::UnprocessableEntity { message, .. }) => message.clone(),
-        OperationError::Api(api) => api.to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn unprocessable(message: String) -> OperationError {
-    OperationError::Api(ApiError::unprocessable_entity(message, None))
 }
 
 #[cfg(test)]

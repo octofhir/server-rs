@@ -90,8 +90,9 @@ pub use router::{
     merged_type_post_handler, system_operation_handler, type_operation_handler,
 };
 pub use sof::{
-    SqlRunOperation, ViewDefinitionRunOperation, ViewDefinitionRunSpecOperation,
-    ViewDefinitionSqlOperation, execute_viewdefinition_export,
+    SqlExportOperation, SqlRunOperation, ViewDefinitionRunOperation,
+    ViewDefinitionRunSpecOperation, ViewDefinitionSqlOperation, execute_sql_export,
+    execute_viewdefinition_export,
 };
 pub use terminology::{
     ClosureOperation, ExpandOperation, LookupOperation, SubsumesOperation, TranslateOperation,
@@ -219,6 +220,14 @@ pub fn register_core_operations_all(
     // - /Group/{id}/$export (group level)
     // - /ViewDefinition/$export (SQL on FHIR type level)
     // - /ViewDefinition/{id}/$export (SQL on FHIR instance level)
+    // $sql-export (SQL on FHIR v3): subjects of any kind as one async job.
+    handlers.insert(
+        "sql-export".to_string(),
+        Arc::new(SqlExportOperation::new(
+            sql_on_fhir_config.enabled,
+            bulk_export_config.clone(),
+        )),
+    );
     if bulk_export_config.enabled || sql_on_fhir_config.enabled {
         handlers.insert(
             "export".to_string(),

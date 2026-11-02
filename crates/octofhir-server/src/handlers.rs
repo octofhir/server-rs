@@ -8185,6 +8185,10 @@ pub async fn async_job_status(
 
     job.authorize_owner(context.auth(), state.config.auth.policy.anonymous_access)?;
 
+    if job.request_type == crate::operations::sof::SQL_EXPORT_JOB {
+        return sql_export_status(&state, &job);
+    }
+
     if matches!(
         job.request_type.as_str(),
         "bulk_export" | "viewdefinition_export"
@@ -8258,6 +8262,94 @@ pub async fn async_job_status(
     Ok((status_code, headers, Json(response)).into_response())
 }
 
+/// The status URL of a `$sql-export` job (SQL on FHIR, "Asynchronous
+/// Delivery"): 202 while it runs; 303 to the result URL once it has
+/// finished, successfully or not, with an empty body; 404 once cancelled.
+fn sql_export_status(
+    state: &crate::server::AppState,
+    job: &crate::async_jobs::AsyncJob,
+) -> Result<Response, ApiError> {
+    use crate::async_jobs::AsyncJobStatus;
+    let status_url = format!("{}/_async-status/{}", state.fhir_base_url(), job.id);
+    match job.status {
+        AsyncJobStatus::Queued | AsyncJobStatus::InProgress => {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::RETRY_AFTER, header::HeaderValue::from_static("10"));
+            headers.insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-store"),
+            );
+            let progress = (job.progress * 100.0).round() as u32;
+            if let Ok(value) = header::HeaderValue::from_str(&format!("{progress}%")) {
+                headers.insert("X-Progress", value);
+            }
+            let body = json!({"resourceType": "Parameters", "parameter": [
+                {"name": "exportId", "valueString": job.id.to_string()},
+                {"name": "status", "valueCode": "in-progress"}
+            ]});
+            Ok((StatusCode::ACCEPTED, headers, Json(body)).into_response())
+        }
+        AsyncJobStatus::Completed | AsyncJobStatus::Failed => {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::LOCATION,
+                header::HeaderValue::from_str(&format!("{status_url}/result"))
+                    .map_err(|_| ApiError::internal("Invalid export result location"))?,
+            );
+            Ok((StatusCode::SEE_OTHER, headers).into_response())
+        }
+        AsyncJobStatus::Cancelled => Err(ApiError::not_found("The export was cancelled")),
+    }
+}
+
+/// The result URL of a `$sql-export` job: the manifest, or the failure.
+fn sql_export_result(job: crate::async_jobs::AsyncJob) -> Result<Response, ApiError> {
+    use crate::async_jobs::AsyncJobStatus;
+    match job.status {
+        AsyncJobStatus::Completed => {
+            let result = job
+                .result
+                .ok_or_else(|| ApiError::internal("The export has no manifest"))?;
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/fhir+json"),
+            );
+            headers.insert(
+                header::EXPIRES,
+                header::HeaderValue::from_str(
+                    &job.expires_at
+                        .format("%a, %d %b %Y %H:%M:%S GMT")
+                        .to_string(),
+                )
+                .map_err(|_| ApiError::internal("Invalid export expiration"))?,
+            );
+            if let Some(record) = result["terminology"].as_str()
+                && let Ok(value) = header::HeaderValue::from_str(record)
+            {
+                headers.insert(crate::operations::sof::PROVENANCE_HEADER, value);
+            }
+            Ok((StatusCode::OK, headers, Json(result["manifest"].clone())).into_response())
+        }
+        AsyncJobStatus::Failed => Err(ApiError::internal(
+            job.error_message
+                .unwrap_or_else(|| "The export failed".to_owned()),
+        )),
+        AsyncJobStatus::Cancelled => Err(ApiError::not_found("The export was cancelled")),
+        AsyncJobStatus::Queued | AsyncJobStatus::InProgress => {
+            let body = json!({"resourceType": "OperationOutcome", "issue": [{
+                "severity": "information", "code": "processing",
+                "diagnostics": "The export is still running; poll its status URL"
+            }]});
+            Ok((
+                StatusCode::from_u16(425).unwrap_or(StatusCode::ACCEPTED),
+                Json(body),
+            )
+                .into_response())
+        }
+    }
+}
+
 /// Jobs listed by `GET /_async-status`, newest first.
 const ASYNC_JOB_LIST_LIMIT: i64 = 200;
 
@@ -8311,7 +8403,7 @@ pub async fn async_job_result(
     Path(job_id): Path<uuid::Uuid>,
     State(state): State<crate::server::AppState>,
     context: crate::operations::OperationContext,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let job = state
         .async_job_manager
         .get_job(job_id)
@@ -8325,11 +8417,15 @@ pub async fn async_job_result(
 
     job.authorize_owner(context.auth(), state.config.auth.policy.anonymous_access)?;
 
+    if job.request_type == crate::operations::sof::SQL_EXPORT_JOB {
+        return sql_export_result(job);
+    }
+
     // Check if job is completed
     match job.status {
         crate::async_jobs::AsyncJobStatus::Completed => {
             if let Some(result) = job.result {
-                Ok((StatusCode::OK, Json(result)))
+                Ok((StatusCode::OK, Json(result)).into_response())
             } else {
                 Err(ApiError::Internal(
                     "Job marked as completed but result is missing".to_string(),
@@ -8356,7 +8452,7 @@ pub async fn async_job_result(
                     "diagnostics": format!("Job is still {} (progress: {:.1}%)", job.status, job.progress * 100.0),
                 }]
             });
-            Ok((StatusCode::from_u16(425).unwrap(), Json(response)))
+            Ok((StatusCode::from_u16(425).unwrap(), Json(response)).into_response())
         }
     }
 }
@@ -8387,10 +8483,16 @@ pub async fn async_job_cancel(
             _ => ApiError::Internal(format!("Failed to cancel job: {}", e)),
         })?;
 
+    if job.request_type == crate::operations::sof::SQL_EXPORT_JOB {
+        // Partial results go with the job.
+        let dir = std::path::PathBuf::from(&state.config.bulk_export.export_path)
+            .join(job_id.to_string());
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
     Ok(
         if matches!(
             job.request_type.as_str(),
-            "bulk_export" | "viewdefinition_export"
+            "bulk_export" | "viewdefinition_export" | crate::operations::sof::SQL_EXPORT_JOB
         ) {
             StatusCode::ACCEPTED
         } else {
@@ -8454,21 +8556,28 @@ pub async fn bulk_export_file(
         .await
         .map_err(|_| ApiError::not_found("Async job is unavailable"))?;
     job.authorize_owner(context.auth(), state.config.auth.policy.anonymous_access)?;
+    let expected_url = format!("{}/_bulk-files/{uuid}/{filename}", state.fhir_base_url());
+    let sql_export = job.request_type == crate::operations::sof::SQL_EXPORT_JOB;
+    let listed = job.result.as_ref().is_some_and(|result| {
+        sql_export
+            && crate::operations::sof::sql_export_locations(result).any(|url| url == expected_url)
+    });
     if job.status != crate::async_jobs::AsyncJobStatus::Completed
-        || !job.result.as_ref().is_some_and(|result| {
-            ["output", "error"].iter().any(|field| {
-                result[*field].as_array().is_some_and(|files| {
-                    files.iter().any(|file| {
-                        file["url"].as_str().is_some_and(|url| {
-                            url == format!(
-                                "{}/_bulk-files/{uuid}/{filename}",
-                                state.fhir_base_url()
-                            )
+        || !listed
+            && !job.result.as_ref().is_some_and(|result| {
+                ["output", "error"].iter().any(|field| {
+                    result[*field].as_array().is_some_and(|files| {
+                        files.iter().any(|file| {
+                            file["url"].as_str().is_some_and(|url| {
+                                url == format!(
+                                    "{}/_bulk-files/{uuid}/{filename}",
+                                    state.fhir_base_url()
+                                )
+                            })
                         })
                     })
                 })
             })
-        })
     {
         return Err(ApiError::not_found("Export file is unavailable"));
     }
@@ -8494,7 +8603,9 @@ pub async fn bulk_export_file(
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        header::HeaderValue::from_static(if job.request_type == "viewdefinition_export" {
+        header::HeaderValue::from_static(if sql_export {
+            crate::operations::sof::sql_export_media_type(&filename)
+        } else if job.request_type == "viewdefinition_export" {
             "application/x-ndjson"
         } else {
             "application/fhir+ndjson"

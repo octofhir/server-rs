@@ -1,6 +1,8 @@
-//! Runs the SQL of a SQL on FHIR SQLQuery or SQLView (`$sql-run`).
+//! Runs the SQL of SQL on FHIR SQLQuery and SQLView subjects (`$sql-run`,
+//! `$sql-export`).
 //!
-//! One job is one transaction with one snapshot (`REPEATABLE READ`):
+//! One job is one transaction with one snapshot (`REPEATABLE READ`), however
+//! many subjects it runs:
 //!
 //! 1. Each dependency becomes a temporary table (`pg_temp._sof_dep_N`; the
 //!    SQL reads it under its label, a CTE), created as the server's role: a ViewDefinition's generated SQL over the caller's
@@ -8,12 +10,14 @@
 //!    memory). `SELECT` on it is granted to [`SOF_QUERY_ROLE`].
 //! 2. The transaction turns read-only, gets a statement timeout, and switches
 //!    to [`SOF_QUERY_ROLE`], a role without privileges on any table.
-//! 3. The author's SQL runs there (SQLViews as CTEs in front of it), with its
-//!    parameters bound, never interpolated. It can read the job's temporary
-//!    tables and nothing else; the server checked its syntax first
-//!    (functions, relations) so it cannot leave the role either.
+//! 3. Each query runs there, its dependencies in front of it as CTEs named by
+//!    their labels (a table of the job, or a SQLView's SQL), its parameters
+//!    bound, never interpolated. It can read the job's temporary tables and
+//!    nothing else; the server checked its syntax first (functions,
+//!    relations) so it cannot leave the role either.
 //! 4. The transaction rolls back, dropping the temporary tables.
 
+use async_trait::async_trait;
 use futures_util::StreamExt;
 use serde_json::{Map, Value};
 use sqlx_core::column::Column;
@@ -81,24 +85,36 @@ pub enum DependencySource {
     Rows(Value),
 }
 
-/// A dependency, materialized as the temporary table `name`.
+/// A dependency, materialized once per job as a temporary table.
 pub struct DependencyTable {
-    /// The table name the SQL uses (`relatedArtifact.label`); a validated
-    /// SQL identifier.
+    /// What the dependency is, for messages (a label or a canonical).
     pub name: String,
     /// Column names and PostgreSQL types, in order.
     pub columns: Vec<(String, &'static str)>,
     pub source: DependencySource,
 }
 
-/// One `$sql-run` job.
-pub struct SqlJob {
-    pub tables: Vec<DependencyTable>,
-    /// SQLViews, as CTEs in front of the query (dependencies first).
-    pub views: Vec<(String, String)>,
+/// What a CTE in front of a query reads.
+pub enum Relation {
+    /// A table of the job, by its index in the job's `tables`.
+    Table(usize),
+    /// A SQLView's checked SQL, over CTEs listed before it.
+    Sql(String),
+}
+
+/// One query of a job: its CTEs (each named by the label the SQL uses, in
+/// dependency order), the checked SQL and its bound parameters.
+pub struct JobQuery {
+    pub ctes: Vec<(String, Relation)>,
     /// The checked SQL, with `$n` placeholders.
     pub query: String,
     pub params: Vec<SqlValue>,
+}
+
+/// One `$sql-run` job: one query, its rows returned.
+pub struct SqlJob {
+    pub tables: Vec<DependencyTable>,
+    pub query: JobQuery,
     /// Rows to return at most.
     pub limit: usize,
     /// Bytes of row JSON to return at most; more is an error.
@@ -119,6 +135,25 @@ pub struct SqlJobResult {
     pub rows: Vec<Value>,
 }
 
+/// One `$sql-export` job: every query in one snapshot, rows streamed to a
+/// [`RowSink`].
+pub struct SqlExportJob {
+    pub tables: Vec<DependencyTable>,
+    pub queries: Vec<JobQuery>,
+    pub statement_timeout_ms: u64,
+}
+
+/// Where an export job's rows go, query by query.
+#[async_trait]
+pub trait RowSink: Send {
+    /// Query `query` starts, with these result columns.
+    async fn begin(&mut self, query: usize, columns: &[SqlJobColumn]) -> Result<(), String>;
+    /// One row of query `query`, as a JSON object in column order.
+    async fn row(&mut self, query: usize, row: &str) -> Result<(), String>;
+    /// Query `query` has no more rows.
+    async fn end(&mut self, query: usize) -> Result<(), String>;
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SqlJobError {
     /// The author's SQL failed (syntax, types, a missing column, a timeout).
@@ -127,6 +162,9 @@ pub enum SqlJobError {
     /// The result exceeds the byte budget.
     #[error("{0}")]
     TooLarge(String),
+    /// The sink refused a row (an export file could not be written).
+    #[error("{0}")]
+    Sink(String),
     #[error(transparent)]
     Storage(#[from] StorageError),
 }
@@ -137,91 +175,18 @@ fn quote(name: &str) -> String {
 
 /// Run `job`; see the module documentation for the steps.
 pub async fn run_sql_job(pool: &PgPool, job: SqlJob) -> Result<SqlJobResult, SqlJobError> {
-    let mut tx = pool.begin().await.map_err(storage)?;
-    query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-        .execute(&mut *tx)
-        .await
-        .map_err(storage)?;
-    query(AssertSqlSafe(format!(
-        "SET LOCAL statement_timeout = {}",
-        job.statement_timeout_ms
-    )))
-    .execute(&mut *tx)
-    .await
-    .map_err(storage)?;
-    for (index, table) in job.tables.iter().enumerate() {
-        create_dependency_table(&mut tx, &temporary_table(index), table).await?;
-    }
-    for statement in [
-        "SET LOCAL transaction_read_only = on".to_owned(),
-        format!("SET LOCAL ROLE {SOF_QUERY_ROLE}"),
-    ] {
-        query(AssertSqlSafe(statement))
-            .execute(&mut *tx)
-            .await
-            .map_err(storage)?;
-    }
-
-    // The SQL sees each dependency under its label, as a CTE: a temporary
-    // table named by the label would shadow the server's table of that name
-    // for the generated SQL of the next dependency.
-    let list = job
-        .tables
-        .iter()
-        .enumerate()
-        .map(|(index, table)| {
-            format!(
-                "{} AS (SELECT * FROM {})",
-                quote(&table.name),
-                temporary_table(index)
-            )
-        })
-        .chain(
-            job.views
-                .iter()
-                .map(|(name, sql)| format!("{} AS ({sql})", quote(name))),
-        )
-        .collect::<Vec<_>>();
-    let ctes = if list.is_empty() {
-        String::new()
-    } else {
-        format!("WITH {} ", list.join(", "))
-    };
-    let select = format!("{ctes}SELECT * FROM ({}) _sof_q", job.query);
-    let statement = (&mut *tx)
-        .prepare(AssertSqlSafe(select).into_sql_str())
-        .await
-        .map_err(query_error)?;
-    let columns: Vec<SqlJobColumn> = statement
-        .columns()
-        .iter()
-        .map(|column| SqlJobColumn {
-            name: column.name().to_owned(),
-            sql_type: column.type_info().name().to_ascii_lowercase(),
-        })
-        .collect();
-    for (index, column) in columns.iter().enumerate() {
-        if columns[..index]
-            .iter()
-            .any(|other| other.name == column.name)
-        {
-            return Err(SqlJobError::Query(format!(
-                "Result column {} appears twice; give each column a distinct name",
-                column.name
-            )));
-        }
-    }
-
+    let mut tx = open_job(pool, &job.tables, job.statement_timeout_ms).await?;
+    let (select, columns) = prepare(&mut tx, &job.query).await?;
     let rows_sql = format!(
-        "{ctes}SELECT row_to_json(_sof_q)::text FROM ({}) _sof_q",
-        job.query
+        "{select} SELECT row_to_json(_sof_q)::text FROM ({}) _sof_q",
+        job.query.query
     );
     let mut rows = Vec::new();
     let mut bytes = 0_usize;
     {
         let mut stream = bind_scalar(
             query_scalar::<_, String>(AssertSqlSafe(rows_sql)),
-            &job.params,
+            &job.query.params,
         )
         .fetch(&mut *tx);
         while rows.len() < job.limit {
@@ -251,6 +216,147 @@ pub async fn run_sql_job(pool: &PgPool, job: SqlJob) -> Result<SqlJobResult, Sql
     }
     tx.rollback().await.map_err(storage)?;
     Ok(SqlJobResult { columns, rows })
+}
+
+/// Run every query of `job` in one snapshot, streaming each one's rows to
+/// `sink` (as `row_to_json` text, in column order), one query after another.
+pub async fn run_sql_export(
+    pool: &PgPool,
+    job: SqlExportJob,
+    sink: &mut dyn RowSink,
+) -> Result<(), SqlJobError> {
+    let mut tx = open_job(pool, &job.tables, job.statement_timeout_ms).await?;
+    for (index, job_query) in job.queries.iter().enumerate() {
+        let (select, columns) = prepare(&mut tx, job_query).await?;
+        sink.begin(index, &columns)
+            .await
+            .map_err(SqlJobError::Sink)?;
+        let rows_sql = format!(
+            "{select} SELECT row_to_json(_sof_q)::text FROM ({}) _sof_q",
+            job_query.query
+        );
+        let mut stream = bind_scalar(
+            query_scalar::<_, String>(AssertSqlSafe(rows_sql)),
+            &job_query.params,
+        )
+        .fetch(&mut *tx);
+        while let Some(row) = stream.next().await {
+            let text = row.map_err(query_error)?;
+            sink.row(index, &text).await.map_err(SqlJobError::Sink)?;
+        }
+        drop(stream);
+        sink.end(index).await.map_err(SqlJobError::Sink)?;
+    }
+    tx.rollback().await.map_err(storage)?;
+    Ok(())
+}
+
+/// Prepare every query of a job against its dependency tables without
+/// running it: names, types and result columns are checked (a missing
+/// column, a type mismatch, a repeated result column). The tables are
+/// usually empty stand-ins of the right shape, so the check reads no data.
+pub async fn check_queries(
+    pool: &PgPool,
+    tables: &[DependencyTable],
+    queries: &[JobQuery],
+    statement_timeout_ms: u64,
+) -> Result<Vec<Vec<SqlJobColumn>>, SqlJobError> {
+    let mut tx = open_job(pool, tables, statement_timeout_ms).await?;
+    let mut columns = Vec::with_capacity(queries.len());
+    for job_query in queries {
+        columns.push(prepare(&mut tx, job_query).await?.1);
+    }
+    tx.rollback().await.map_err(storage)?;
+    Ok(columns)
+}
+
+/// Begin the job's transaction: snapshot, timeout, the dependency tables,
+/// then read-only under the query role.
+async fn open_job<'p>(
+    pool: &'p PgPool,
+    tables: &[DependencyTable],
+    statement_timeout_ms: u64,
+) -> Result<PgTransaction<'p>, SqlJobError> {
+    let mut tx = pool.begin().await.map_err(storage)?;
+    query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *tx)
+        .await
+        .map_err(storage)?;
+    query(AssertSqlSafe(format!(
+        "SET LOCAL statement_timeout = {statement_timeout_ms}"
+    )))
+    .execute(&mut *tx)
+    .await
+    .map_err(storage)?;
+    for (index, table) in tables.iter().enumerate() {
+        create_dependency_table(&mut tx, &temporary_table(index), table).await?;
+    }
+    for statement in [
+        "SET LOCAL transaction_read_only = on".to_owned(),
+        format!("SET LOCAL ROLE {SOF_QUERY_ROLE}"),
+    ] {
+        query(AssertSqlSafe(statement))
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+    }
+    Ok(tx)
+}
+
+/// The `WITH …` prefix of `job_query` and its result columns, checked to be
+/// distinct.
+///
+/// The SQL sees each dependency under its label, as a CTE: a temporary table
+/// named by the label would shadow the server's table of that name for the
+/// generated SQL of the next dependency.
+async fn prepare(
+    tx: &mut PgTransaction<'_>,
+    job_query: &JobQuery,
+) -> Result<(String, Vec<SqlJobColumn>), SqlJobError> {
+    let list = job_query
+        .ctes
+        .iter()
+        .map(|(name, relation)| match relation {
+            Relation::Table(index) => {
+                format!(
+                    "{} AS (SELECT * FROM {})",
+                    quote(name),
+                    temporary_table(*index)
+                )
+            }
+            Relation::Sql(sql) => format!("{} AS ({sql})", quote(name)),
+        })
+        .collect::<Vec<_>>();
+    let ctes = if list.is_empty() {
+        String::new()
+    } else {
+        format!("WITH {}", list.join(", "))
+    };
+    let select = format!("{ctes} SELECT * FROM ({}) _sof_q", job_query.query);
+    let statement = (&mut **tx)
+        .prepare(AssertSqlSafe(select).into_sql_str())
+        .await
+        .map_err(query_error)?;
+    let columns: Vec<SqlJobColumn> = statement
+        .columns()
+        .iter()
+        .map(|column| SqlJobColumn {
+            name: column.name().to_owned(),
+            sql_type: column.type_info().name().to_ascii_lowercase(),
+        })
+        .collect();
+    for (index, column) in columns.iter().enumerate() {
+        if columns[..index]
+            .iter()
+            .any(|other| other.name == column.name)
+        {
+            return Err(SqlJobError::Query(format!(
+                "Result column {} appears twice; give each column a distinct name",
+                column.name
+            )));
+        }
+    }
+    Ok((ctes, columns))
 }
 
 /// `CREATE TEMP TABLE` for one dependency, granted to the query role. A view
