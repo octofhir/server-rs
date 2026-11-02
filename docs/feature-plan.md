@@ -26,12 +26,12 @@ Multi-year priority. Detailed plan, state and phases: [`sql-on-fhir-plan.md`](sq
 |---|---|---|---|
 | 1.1 | Views as SQL over the server's data, `$viewdefinition-run`, `$viewdefinition-export` (phase 1) | — | done (50a4fe9) |
 | 1.2 | `$sql-run`, SQLQuery / SQLView, sandbox (phases 2–3), `_format=fhir` | — | done (50a4fe9) |
-| 1.3 | `memberOf()` in `$run` and the sof CLI: pass the server's `TerminologyProvider` into the evaluation context | S | todo |
-| 1.4 | Terminology relations: ValueSet expansion and ConceptMap rows per job, with provenance (phase 4) | M | todo |
+| 1.3 | `memberOf()` in `$run` and the sof CLI: pass the server's `TerminologyProvider` into the evaluation context | S | done (server; the CLI has `--tx`) |
+| 1.4 | Terminology relations: ValueSet expansion and ConceptMap rows per job, with provenance (phase 4) | M | done |
 | 1.5 | `$sql-export`: async jobs, manifest, several subjects (phase 5) | M | todo |
 | 1.6 | v3 canonicals (`org.sql-on-fhir.ig` and `hl7.fhir.uv.sql-on-fhir`), R6 ViewDefinition (phase 6) | S–M | todo |
 | 1.7 | Parquet output, `Accept` format negotiation | S | todo |
-| 1.8 | banshee 0.2.5 in the `$sql-run` guard, so `AS t(a int)` is accepted | S | parser in (9cead17); add record functions (`jsonb_to_recordset`, …) to the allowlist |
+| 1.8 | banshee 0.2.5 in the `$sql-run` guard, so `AS t(a int)` is accepted | S | done (record functions allowed, tested end to end) |
 | 1.9 | Console: ViewDefinition page through `$sql-run`, SQLQuery editor with the banshee LSP (phase 7) | M | todo |
 | 1.10 | DuckDB as an embedded `SqlExecutor` in sof (dialect exists) | M | todo |
 
@@ -98,6 +98,8 @@ server picks up what makes sense later.
   0.2.6 (registry fixes) and 0.2.7 (package folders laid out from the content store);
   fhirschema 0.3.33 (R6 ballot5); fhirpath-rs 0.5.1; ucum 0.9.2.
 - SQL on FHIR phases 1–3, pushed (server 50a4fe9; sof 0.2.0 / 0.2.1).
+- 2026-11-02: SQL on FHIR phase 4 (terminology relations with provenance), `memberOf()` in
+  in-memory runs, record functions in the `$sql-run` guard.
 - 2026-11-01/02: cql-rs 0.2.0 / 0.2.1 (libraries end to end, real `cql` CLI with release
   binaries, cql-tests 1693/1693); banshee 0.2.5; server on the published crates with no
   `[patch.crates-io]`; JWT keys on aws-lc-rs (no `rsa` crate); `cargo audit` clean except

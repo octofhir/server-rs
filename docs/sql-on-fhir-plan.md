@@ -1,6 +1,6 @@
 # SQL on FHIR in the server — plan
 
-Status: 2026-11-01. Priority: strategic (multi-year). Quality bar: the server path
+Status: 2026-11-02. Priority: strategic (multi-year). Quality bar: the server path
 over its own PostgreSQL is the product; the CLI / in-memory paths follow it.
 
 ## Spec baseline (verify against these, not memory)
@@ -68,9 +68,60 @@ TerminologyProvider), never as the way terminology reaches SQL.
   allowlist is mandatory.
 - Tests: `tests/sql_run.rs` (own binary: two servers in one test process
   collide on global state).
-- Gaps: banshee does not parse column definition lists (`AS t(a int)`), so
-  such SQL is rejected (fail-closed) — fix in banshee; parquet; Accept-header
-  format negotiation; `$sql-export`.
+- Gaps: parquet; Accept-header format negotiation; `$sql-export`.
+
+## Current state (2026-11-02, phase 4 done)
+
+- **Terminology relations** (`operations/sof/terminology.rs`, `expansion.rs`,
+  `term_source.rs`): a SQLQuery / SQLView `depends-on` a ValueSet or
+  ConceptMap by canonical; the SQL reads it by label only. ValueSet →
+  `system, version, code, display, inactive` (varchar / boolean), unique on
+  the first three, abstract and code-less entries excluded, nested entries
+  flattened. ConceptMap → the nine columns; noMap rows kept with null
+  target; `dependsOn` / `product` / `valueSet` / source-less groups → 422;
+  `unmapped` never applied; R4 maps read too (`sourceVersion` /
+  `targetVersion`, `equivalence` converted as the R4→R5 transforms do,
+  `unmatched` = noMap).
+- Resolution, once per job before any SQL: `context` → the server's
+  resources (read as the caller) → installed packages. Unpinned and two
+  stored versions → 404; among packages the version canonical-manager
+  resolves the bare canonical to is used (core and THO publish many code
+  systems twice) and recorded. The job caches content by resolved
+  `type|url|version`, so `url` and `url|version` references see one content.
+- Membership: a supplied or stored `expansion` is used as is (offset > 0,
+  `total` above the entries at all depths, or `valueset-unclosed` → 422);
+  otherwise a strict expander computes it from `compose` (enumerated codes,
+  whole complete code systems, hierarchy and property filters, imports
+  intersected with the system part, excludes, `compose.inactive = false`)
+  and fails with the reason for anything it cannot evaluate (code system not
+  found or not `complete`, unknown filter or property, import cycle, more
+  than 250 000 members). Only a package ValueSet the local expander cannot
+  determine goes to the configured terminology server (`$expand` by
+  canonical + `valueSetVersion`); the server's own and the caller's
+  artifacts never leave it.
+- Provenance per dependency (label, url, version, source — `context`,
+  `ValueSet/<id>`, `package <name>#<version>` — who expanded it, members /
+  mappings, expansion `identifier`, `timestamp`, `parameter` incl. the code
+  system versions used and `used-valueset`): logged and returned as the
+  `X-Sof-Terminology` header (ASCII JSON, ≤ 8 KiB; parameters dropped first).
+- `memberOf()` (and `subsumes()` / `translate()`) in view paths: the
+  in-memory engine (`$run`, `$viewdefinition-run`, export) gets the server's
+  `HybridTerminologyProvider` through sof `CompileOptions`.
+- Guard: record functions (`json[b]_to_record[set]`,
+  `json[b]_populate_record[set]`) allowed; column definition lists
+  (`AS t(a int)`) parse with banshee 0.2.5 and run in the sandbox.
+- A dependency that resolves to more than one version on the server is now a
+  404 (was 400), as the spec says; the same for `subjectCanonical`.
+- Tests: `tests/sql_terminology.rs` (own binary): the spec's worked example
+  end to end, stored and package artifacts, a stand-in terminology server,
+  404 / 422 cases, a record function, `memberOf()`.
+- Known limits / follow-ups: `compose.lockedDate`, code system supplements
+  and `caseSensitive = false` are not applied by the strict expander; the
+  `$expand` operation is still the lenient expander (drops imports it cannot
+  resolve, treats a property filter on a concept without properties as a
+  match) — move it onto the strict one; canonical-manager `resolve(url|ver)`
+  returns an exact-url match without checking the version (we filter search
+  results instead) — fix there.
 
 ## Authorization of the SQL path (the hard part)
 
@@ -106,10 +157,9 @@ same kind (spec: applied before projection / before the SQL).
    interpolated), dialect content selection (`application/sql;dialect=postgresql`),
    cycle detection, one data snapshot per job (single transaction,
    `REPEATABLE READ`).
-4. **Terminology relations** — ValueSet dependency → expansion from the server
-   terminology layer into a per-job relation (`VALUES`/temp table), ConceptMap
-   → rows per spec rules incl. rejections; one resolution per job; record
-   provenance (expansion identifier/timestamp/parameters); 404/422 per spec.
+4. **Terminology relations** (done 2026-11-02) — ValueSet dependency →
+   membership into a per-job temp table, ConceptMap → rows per spec rules
+   incl. rejections; one resolution per job; provenance; 404/422 per spec.
 5. **`$sql-export`** — async jobs + manifest, multiple subjects, per-subject
    output names; reuse bulk writer.
 6. **v3 canonicals** — accept both `org.sql-on-fhir.ig` and
@@ -125,6 +175,6 @@ design.
 
 Done (2026-11-02): fhirpath-rs 0.5.1 → sof 0.2.0 (features, CompileOptions,
 source hook) → sof 0.2.1 (patched dependencies) → server-rs on the published
-crates, no `[patch.crates-io]`. Next sof release follows the next lowering
-work; banshee 0.2.5 parses column definition lists, so the server can move to
-it when the `$sql-run` guard admits `AS t(a int)`.
+crates, no `[patch.crates-io]`. Phase 4 needed no crate release (sof
+`CompileOptions` and banshee 0.2.5 already carried what it uses). Next sof
+release follows the next lowering work.
