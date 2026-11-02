@@ -2720,7 +2720,7 @@ async fn build_search_registry_fast(
             })?;
     let versions = [release.release_name(), release.version()];
     let store = PostgresPackageStore::new((*db_pool).clone());
-    let rows = store
+    let mut rows = store
         .find_resources_by_type_bulk("SearchParameter", Some(&versions))
         .await
         .map_err(|e| {
@@ -2728,6 +2728,23 @@ async fn build_search_registry_fast(
                 "bulk SearchParameter fetch failed: {e}"
             ))
         })?;
+    // SQL on FHIR 3.0.0 targets R6, so its package is pinned to another FHIR
+    // version; its ViewDefinition search parameters (url, version, name,
+    // status, ...) apply to this server's ViewDefinition, an additional
+    // resource, whatever the server's version.
+    let sof_parameters = store
+        .find_resources_by_package_and_type(
+            crate::canonical::SOF_PACKAGE,
+            crate::canonical::SOF_PACKAGE_VERSION,
+            "SearchParameter",
+        )
+        .await
+        .unwrap_or_default();
+    rows.extend(
+        sof_parameters
+            .into_iter()
+            .filter(|parameter| parameter["base"] == serde_json::json!(["ViewDefinition"])),
+    );
 
     let mut loaded = 0usize;
     let mut skipped = 0usize;

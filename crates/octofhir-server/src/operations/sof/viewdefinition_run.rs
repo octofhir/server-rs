@@ -17,7 +17,8 @@ use octofhir_sof::ViewDefinition;
 use serde_json::Value;
 
 use super::engine;
-use super::output::{OutputColumn, OutputFormat, render};
+use super::output::{Negotiated, OutputColumn, has_integer64, render};
+use super::rejection::{at, rejected};
 use super::scope::ViewScope;
 use crate::operations::handler::OperationLevel;
 use crate::operations::{OperationContext, OperationError, OperationHandler};
@@ -114,12 +115,14 @@ pub(super) async fn run_view(
     params: &Value,
 ) -> Result<Value, OperationError> {
     if parameters(params).any(|param| param["name"] == "source") {
-        return Err(OperationError::NotSupported(
-            "External data sources (source) are not supported; the view reads this server's data"
-                .into(),
+        return Err(rejected(
+            axum::http::StatusCode::BAD_REQUEST,
+            "not-supported",
+            Some("source"),
+            "External data sources (source) are not supported; the view reads this server's data",
         ));
     }
-    let format = output_format(params)?;
+    let format = output_format(params, context)?;
     let limit = limit(params)?;
     let inline = inline_resources(params)?;
     let scope = ViewScope::from_parameters(params)?;
@@ -137,6 +140,7 @@ pub(super) async fn run_view(
         &columns,
         &rows,
         state.config.search.include_limits.max_bytes,
+        has_integer64(state),
     )
 }
 
@@ -298,10 +302,16 @@ pub(super) fn inline_resources(params: &Value) -> Result<Option<Vec<Value>>, Ope
     Ok((!resources.is_empty()).then_some(resources))
 }
 
-/// `_format` (default ndjson) with `header` for csv.
-pub(super) fn output_format(params: &Value) -> Result<OutputFormat, OperationError> {
-    let format = single_text(params, "_format", &["valueCode", "valueString"])?;
-    OutputFormat::parse(format.as_deref(), header(params)?)
+/// The output `_format` (with `header` for csv) and the request's `Accept`
+/// select (see [`Negotiated`]).
+pub(super) fn output_format(
+    params: &Value,
+    context: &OperationContext,
+) -> Result<Negotiated, OperationError> {
+    let format = single_text(params, "_format", &["valueCode", "valueString"])
+        .map_err(|error| at(error, "_format"))?;
+    Negotiated::from_request(format.as_deref(), header(params)?, context.accept())
+        .map_err(|error| at(error, "_format"))
 }
 
 #[cfg(test)]

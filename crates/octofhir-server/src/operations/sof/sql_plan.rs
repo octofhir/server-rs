@@ -10,19 +10,22 @@
 
 use std::collections::HashMap;
 
+use axum::http::StatusCode;
+
 use octofhir_api::ApiError;
 use octofhir_db_postgres::queries::sql_job::{DependencySource, DependencyTable, Relation};
 use octofhir_sof::expansion::{Lookup, split_canonical};
 use octofhir_sof::library::SqlLibrary;
 use octofhir_sof::plan::{Artifact, Edge, ResolvedJob, TerminologyKind, closure};
 use octofhir_sof::relations::{CONCEPT_MAP_COLUMNS, VALUE_SET_COLUMNS, columns};
-use octofhir_sof::{CompiledView, ViewDefinition};
+use octofhir_sof::{CompiledView, Dialect, ViewDefinition};
 use serde_json::Value;
 
 use super::engine::{self, ViewSql};
+use super::rejection::{at, rejected};
 use super::scope::ViewScope;
 use super::sql_guard;
-use super::term_source::{plan_error, stored};
+use super::term_source::{plan_error, stored_latest};
 use crate::operations::{OperationContext, OperationError};
 use crate::server::AppState;
 
@@ -159,7 +162,12 @@ pub(crate) async fn view_columns(
     };
     Ok(columns
         .iter()
-        .map(|column| (column.name.clone(), column.col_type.sql_type()))
+        .map(|column| {
+            (
+                column.name.clone(),
+                Dialect::Postgres.value_type(column.col_type),
+            )
+        })
         .collect())
 }
 
@@ -186,7 +194,12 @@ async fn view_table(
             columns: sql
                 .columns()
                 .iter()
-                .map(|column| (column.name.clone(), column.col_type.sql_type()))
+                .map(|column| {
+                    (
+                        column.name.clone(),
+                        Dialect::Postgres.value_type(column.col_type),
+                    )
+                })
                 .collect(),
             source: DependencySource::View {
                 source,
@@ -200,14 +213,21 @@ async fn view_table(
         name,
         columns: columns
             .iter()
-            .map(|column| (column.name.clone(), column.col_type.sql_type()))
+            .map(|column| {
+                (
+                    column.name.clone(),
+                    Dialect::Postgres.value_type(column.col_type),
+                )
+            })
             .collect(),
         source: DependencySource::Rows(Value::Array(rows)),
     })
 }
 
 /// The subject named by exactly one of `subjectCanonical`,
-/// `subjectReference` and `subjectResource` among `parts`.
+/// `subjectReference` and `subjectResource` among `parts`: none is a 400
+/// `required`, more than one a 400 `invalid`, one that cannot be resolved a
+/// 404, each naming `subject`.
 pub(crate) async fn load_subject(
     state: &AppState,
     context: &OperationContext,
@@ -222,40 +242,50 @@ pub(crate) async fn load_subject(
             )
         })
         .collect();
-    let [param] = named.as_slice() else {
-        return Err(OperationError::InvalidParameters(
-            "Exactly one of subjectCanonical, subjectReference and subjectResource is required"
-                .into(),
-        ));
+    let param = match named.as_slice() {
+        [param] => param,
+        [] => {
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "required",
+                Some("subject"),
+                "A subject is required: one of subjectCanonical, subjectReference and subjectResource",
+            ));
+        }
+        _ => {
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "invalid",
+                Some("subject"),
+                "Exactly one of subjectCanonical, subjectReference and subjectResource is allowed",
+            ));
+        }
     };
-    match param["name"].as_str() {
+    let loaded = match param["name"].as_str() {
         Some("subjectResource") => param.get("resource").cloned().ok_or_else(|| {
             OperationError::InvalidParameters("subjectResource requires a resource".into())
         }),
-        Some("subjectCanonical") => {
-            let canonical = param["valueCanonical"]
-                .as_str()
-                .or_else(|| param["valueString"].as_str())
-                .or_else(|| param["valueUri"].as_str())
-                .ok_or_else(|| {
-                    OperationError::InvalidParameters(
-                        "subjectCanonical requires a canonical".into(),
-                    )
-                })?;
-            find_canonical(state, context, canonical).await
-        }
-        _ => {
-            let reference = param["valueReference"]["reference"]
-                .as_str()
-                .or_else(|| param["valueString"].as_str())
-                .ok_or_else(|| {
-                    OperationError::InvalidParameters(
-                        "subjectReference requires a reference".into(),
-                    )
-                })?;
-            read_reference(state, context, reference).await
-        }
-    }
+        Some("subjectCanonical") => match param["valueCanonical"]
+            .as_str()
+            .or_else(|| param["valueString"].as_str())
+            .or_else(|| param["valueUri"].as_str())
+        {
+            Some(canonical) => find_canonical(state, context, canonical).await,
+            None => Err(OperationError::InvalidParameters(
+                "subjectCanonical requires a canonical".into(),
+            )),
+        },
+        _ => match param["valueReference"]["reference"]
+            .as_str()
+            .or_else(|| param["valueString"].as_str())
+        {
+            Some(reference) => read_reference(state, context, reference).await,
+            None => Err(OperationError::InvalidParameters(
+                "subjectReference requires a reference".into(),
+            )),
+        },
+    };
+    loaded.map_err(|error| at(error, "subject"))
 }
 
 /// What a subject is.
@@ -281,7 +311,9 @@ pub(crate) fn classify(resource: &Value) -> Result<Subject, OperationError> {
     }
 }
 
-/// `Library/id` or `ViewDefinition/id`, relative or under this server's base.
+/// The resource a literal reference names on this server (`Type/id`,
+/// relative or under this server's base), as the caller may read it; what it
+/// is decides later (a resource that is no subject is a 422).
 async fn read_reference(
     state: &AppState,
     context: &OperationContext,
@@ -291,10 +323,10 @@ async fn read_reference(
     let relative = reference.strip_prefix(&base).unwrap_or(reference);
     let (resource_type, id) = relative
         .split_once('/')
-        .filter(|(resource_type, _)| matches!(*resource_type, "Library" | "ViewDefinition"))
+        .filter(|(resource_type, _)| state.resource_type_set.load().contains(*resource_type))
         .ok_or_else(|| {
             OperationError::NotFound(format!(
-                "subjectReference {reference} is not a Library or ViewDefinition of this server"
+                "subjectReference {reference} is not a resource of this server"
             ))
         })?;
     octofhir_core::validate_id(id).map_err(|_| {
@@ -308,7 +340,8 @@ async fn read_reference(
 }
 
 /// The server's Library or ViewDefinition `canonical` names, as the caller
-/// may read it; none, or more than one version, is a 404.
+/// may read it; without a version the latest one (FHIR canonical
+/// resolution); none is a 404.
 async fn find_canonical(
     state: &AppState,
     context: &OperationContext,
@@ -316,7 +349,7 @@ async fn find_canonical(
 ) -> Result<Value, OperationError> {
     let (url, version) = split_canonical(canonical);
     for resource_type in ["Library", "ViewDefinition"] {
-        match stored(state, context, resource_type, url, version).await? {
+        match stored_latest(state, context, resource_type, url, version).await? {
             Lookup::Found(resolved) => return Ok(resolved.resource),
             Lookup::Ambiguous(reason) => {
                 return Err(OperationError::NotFound(format!("Subject {reason}")));

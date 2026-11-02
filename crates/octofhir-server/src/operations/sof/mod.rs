@@ -27,6 +27,7 @@
 mod engine;
 mod export;
 mod output;
+mod rejection;
 mod run;
 mod scope;
 mod sql;
@@ -43,6 +44,7 @@ pub use sql::ViewDefinitionSqlOperation;
 pub use sql_export::{SqlExportOperation, execute_sql_export};
 pub(crate) use sql_export::{JOB_TYPE as SQL_EXPORT_JOB, locations as sql_export_locations, media_type as sql_export_media_type};
 pub use sql_run::SqlRunOperation;
+pub(crate) use output::ENVELOPE_KEY;
 pub(crate) use term_source::{
     PROVENANCE_HEADER, PROVENANCE_KEY, Remote, ServerTerminology, expansion_stamp, packaged,
     remote_value_set, stored,
@@ -50,9 +52,21 @@ pub(crate) use term_source::{
 pub use viewdefinition_run::ViewDefinitionRunSpecOperation;
 
 /// Register the SQL on FHIR operations this server implements, so they are
-/// available whether or not the SQL on FHIR IG package could be installed:
-/// `$run` and `$sql` on ViewDefinition, and `$viewdefinition-run` on system,
-/// type and instance level as the IG defines it.
+/// available whether or not the SQL on FHIR IG package could be installed.
+///
+/// `$sql-run` and `$sql-export` cite this server's own OperationDefinitions
+/// (`igs/octofhir-sof`), whose `base` is the SQL on FHIR one: the server
+/// supports every parameter but `source`, and SQL on FHIR asks a server
+/// supporting a subset to say so that way. The console's `$run` / `$sql` on
+/// ViewDefinition and `$viewdefinition-run` (a continuous-build operation
+/// that was never published) stay callable but are not advertised: their
+/// definitions carry no canonical.
+/// This server's `$sql-run` definition (base: SQL on FHIR SQLRun).
+pub(crate) const SQL_RUN_DEFINITION: &str = "http://octofhir.io/OperationDefinition/sql-run";
+
+/// This server's `$sql-export` definition (base: SQL on FHIR SQLExport).
+pub(crate) const SQL_EXPORT_DEFINITION: &str = "http://octofhir.io/OperationDefinition/sql-export";
+
 pub fn register_operation_definitions(registry: &mut crate::operations::OperationRegistry) {
     use crate::operations::{OperationDefinition, OperationKind};
     let on_view_definition = |code: &str, url: &str| OperationDefinition {
@@ -66,32 +80,23 @@ pub fn register_operation_definitions(registry: &mut crate::operations::Operatio
         parameters: vec![],
         affects_state: false,
     };
-    registry.register(on_view_definition(
-        "run",
-        "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run",
-    ));
-    registry.register(on_view_definition(
-        "sql",
-        "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql",
-    ));
-    registry.register(OperationDefinition {
+    registry.replace(on_view_definition("run", ""));
+    registry.replace(on_view_definition("sql", ""));
+    registry.replace(OperationDefinition {
         system: true,
-        ..on_view_definition(
-            "viewdefinition-run",
-            "http://sql-on-fhir.org/OperationDefinition/$viewdefinition-run",
-        )
+        ..on_view_definition("viewdefinition-run", "")
     });
-    registry.register(OperationDefinition {
+    registry.replace(OperationDefinition {
         system: true,
         type_level: false,
         instance: false,
         resource: vec![],
         ..on_view_definition(
             "sql-run",
-            "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/SQLRun",
+            SQL_RUN_DEFINITION,
         )
     });
-    registry.register(OperationDefinition {
+    registry.replace(OperationDefinition {
         system: true,
         type_level: false,
         instance: false,
@@ -99,7 +104,7 @@ pub fn register_operation_definitions(registry: &mut crate::operations::Operatio
         affects_state: true,
         ..on_view_definition(
             "sql-export",
-            "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/SQLExport",
+            SQL_EXPORT_DEFINITION,
         )
     });
 }

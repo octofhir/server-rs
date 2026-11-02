@@ -238,7 +238,7 @@ pub(crate) fn plan_error(error: PlanError) -> OperationError {
 }
 
 /// The server's `resource_type` with `url` (and `version`), as the caller
-/// may read it.
+/// may read it; two matches are an ambiguity.
 pub(crate) async fn stored(
     state: &AppState,
     context: &OperationContext,
@@ -246,10 +246,118 @@ pub(crate) async fn stored(
     url: &str,
     version: Option<&str>,
 ) -> Result<Lookup, OperationError> {
+    let matching = stored_all(state, context, resource_type, url, version, 2).await?;
+    Ok(match matching.as_slice() {
+        [] => Lookup::Missing,
+        [one] => found_stored(resource_type, one),
+        _ => Lookup::Ambiguous(match version {
+            None => format!(
+                "{url} matches more than one {resource_type} on this server; pin url|version"
+            ),
+            Some(version) => {
+                format!("{url}|{version} matches more than one {resource_type} on this server")
+            }
+        }),
+    })
+}
+
+/// Like [`stored`], but without a version the most recent version is
+/// selected, as FHIR canonical resolution does (by `versionAlgorithm` where
+/// declared, else comparing versions segment by segment); two resources with
+/// the same version are still an ambiguity.
+pub(crate) async fn stored_latest(
+    state: &AppState,
+    context: &OperationContext,
+    resource_type: &str,
+    url: &str,
+    version: Option<&str>,
+) -> Result<Lookup, OperationError> {
+    if version.is_some() {
+        return stored(state, context, resource_type, url, version).await;
+    }
+    let mut matching = stored_all(state, context, resource_type, url, None, MAX_VERSIONS).await?;
+    matching.sort_by(compare_versions);
+    Ok(match matching.as_slice() {
+        [] => Lookup::Missing,
+        [.., previous, latest] if previous["version"] == latest["version"] => {
+            Lookup::Ambiguous(format!(
+                "{url} has two {resource_type} resources with version {} on this server",
+                latest["version"].as_str().unwrap_or("(none)")
+            ))
+        }
+        [.., latest] => found_stored(resource_type, latest),
+    })
+}
+
+/// Versions of one canonical considered when selecting the latest.
+const MAX_VERSIONS: u32 = 100;
+
+fn found_stored(resource_type: &str, resource: &Value) -> Lookup {
+    Lookup::Found(Resolved {
+        origin: format!(
+            "{resource_type}/{}",
+            resource["id"].as_str().unwrap_or_default()
+        ),
+        resource: resource.clone(),
+    })
+}
+
+/// Order two versions of one artifact: by its `versionAlgorithm` (`semver`,
+/// `integer`, `date`, `alpha`, `natural`) when both declare the same, else
+/// naturally (numeric segments as numbers).
+fn compare_versions(a: &Value, b: &Value) -> std::cmp::Ordering {
+    let algorithm = |resource: &Value| {
+        resource["versionAlgorithmString"]
+            .as_str()
+            .or_else(|| resource["versionAlgorithmCoding"]["code"].as_str())
+            .map(str::to_owned)
+    };
+    let (va, vb) = (
+        a["version"].as_str().unwrap_or_default(),
+        b["version"].as_str().unwrap_or_default(),
+    );
+    let natural = || {
+        let segments = |v: &str| -> Vec<(u64, String)> {
+            v.split(['.', '-', '+'])
+                .map(|part| (part.parse::<u64>().unwrap_or(0), part.to_owned()))
+                .collect()
+        };
+        segments(va).cmp(&segments(vb))
+    };
+    match (algorithm(a), algorithm(b)) {
+        (Some(x), Some(y)) if x == y => match x.as_str() {
+            "semver" => match (
+                semver::Version::parse(va.trim_start_matches('v')),
+                semver::Version::parse(vb.trim_start_matches('v')),
+            ) {
+                (Ok(x), Ok(y)) => x.cmp(&y),
+                _ => natural(),
+            },
+            "integer" => match (va.parse::<i64>(), vb.parse::<i64>()) {
+                (Ok(x), Ok(y)) => x.cmp(&y),
+                _ => natural(),
+            },
+            "date" | "alpha" => va.cmp(vb),
+            _ => natural(),
+        },
+        _ => natural(),
+    }
+}
+
+/// Up to `limit` of the server's `resource_type` with `url` (and `version`),
+/// as the caller may read them.
+async fn stored_all(
+    state: &AppState,
+    context: &OperationContext,
+    resource_type: &str,
+    url: &str,
+    version: Option<&str>,
+    limit: u32,
+) -> Result<Vec<Value>, OperationError> {
     let registry = state.search_config.config().registry.clone();
-    let matching: Vec<Value> = if registry.get(resource_type, "url").is_some() {
+    Ok(if registry.get(resource_type, "url").is_some() {
         let mut search = octofhir_storage::SearchParams::new()
-            .with_count(2)
+            .with_count(limit)
             .with_param("url", url);
         if let Some(version) = version
             && registry.get(resource_type, "version").is_some()
@@ -265,13 +373,14 @@ pub(crate) async fn stored(
             .filter(|resource| matches_canonical(resource, url, version))
             .collect()
     } else {
-        // No `url` search parameter for this type (ViewDefinition is a
-        // logical model): find the ids, then read each as the caller.
+        // No `url` search parameter for this type: find the ids, then read
+        // each as the caller.
         let ids = octofhir_db_postgres::queries::sql_job::ids_by_canonical(
             &state.read_db_pool,
             resource_type,
             url,
             version,
+            i64::from(limit),
         )
         .await
         .map_err(crate::handlers::map_storage_error)?;
@@ -282,21 +391,6 @@ pub(crate) async fn stored(
             }
         }
         readable
-    };
-    Ok(match matching.as_slice() {
-        [] => Lookup::Missing,
-        [one] => Lookup::Found(Resolved {
-            origin: format!("{resource_type}/{}", one["id"].as_str().unwrap_or_default()),
-            resource: one.clone(),
-        }),
-        _ => Lookup::Ambiguous(match version {
-            None => format!(
-                "{url} matches more than one {resource_type} on this server; pin url|version"
-            ),
-            Some(version) => {
-                format!("{url}|{version} matches more than one {resource_type} on this server")
-            }
-        }),
     })
 }
 

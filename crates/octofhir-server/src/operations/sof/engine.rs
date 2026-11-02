@@ -22,6 +22,12 @@ use crate::operations::context::AuthorizedSource;
 use crate::operations::{OperationContext, OperationError};
 use crate::server::AppState;
 
+/// A 422: the subject conforms but cannot be processed (SQL on FHIR,
+/// `$sql-run` "Rejected requests").
+fn unprocessable(message: String) -> OperationError {
+    OperationError::Api(octofhir_api::ApiError::unprocessable_entity(message, None))
+}
+
 /// Name of the CTE holding the authorized source rows.
 pub(crate) const SOURCE_RELATION: &str = "sof_source";
 
@@ -57,9 +63,7 @@ impl ViewSql {
             Err(octofhir_sof::Error::InvalidPath(_) | octofhir_sof::Error::FhirPath(_)) => {
                 Ok(Err("path outside the SQL lowering"))
             }
-            Err(error) => Err(OperationError::InvalidParameters(format!(
-                "Invalid ViewDefinition: {error}"
-            ))),
+            Err(error) => Err(unprocessable(format!("Invalid ViewDefinition: {error}"))),
         }
     }
 
@@ -242,18 +246,17 @@ pub(crate) async fn execute(
     }
     let compiled = CompiledView::compile_with(view, &compile_options(state))
         .await
-        .map_err(|error| {
-            OperationError::InvalidParameters(format!("Invalid ViewDefinition: {error}"))
-        })?;
+        .map_err(|error| unprocessable(format!("Invalid ViewDefinition: {error}")))?;
     let mut rows = Vec::new();
     let mut output_bytes: usize = 0;
     for resource in &resources {
         if limit.is_some_and(|limit| rows.len() >= limit) {
             break;
         }
-        let data = compiled.execute_resource(resource).await.map_err(|error| {
-            OperationError::InvalidParameters(format!("Failed to execute ViewDefinition: {error}"))
-        })?;
+        let data = compiled
+            .execute_resource(resource)
+            .await
+            .map_err(|error| unprocessable(format!("Failed to execute ViewDefinition: {error}")))?;
         let result = octofhir_sof::ViewResult {
             row_count: data.len(),
             data,

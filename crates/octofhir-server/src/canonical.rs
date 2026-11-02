@@ -216,9 +216,13 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Add SQL on FHIR package when feature is enabled
     if cfg.sql_on_fhir.enabled {
-        let sof_id = "hl7.fhir.uv.sql-on-fhir".to_string();
-        let sof_ver = "2.0.0-ballot".to_string();
-        let sof_url = Some("https://build.fhir.org/ig/FHIR/sql-on-fhir-v2/package.tgz".to_string());
+        // SQL on FHIR 3.0.0 (HL7 continuous build): ViewDefinition as a
+        // resource (http://hl7.org/fhir/StructureDefinition/ViewDefinition)
+        // with its search parameters, the SQLQuery / SQLView profiles, the
+        // SQLRun / SQLExport operations and their code systems.
+        let sof_id = SOF_PACKAGE.to_string();
+        let sof_ver = SOF_PACKAGE_VERSION.to_string();
+        let sof_url = Some(SOF_PACKAGE_URL.to_string());
 
         // Check if not already in the list
         let already_added = install_specs.iter().any(|pkg| pkg.id == sof_id);
@@ -694,6 +698,16 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
             )
             .await;
         }
+        if cfg.sql_on_fhir.enabled {
+            load_embedded_package(
+                &postgres_store,
+                "octofhir-sof",
+                "0.1.0",
+                fhir_version,
+                crate::bootstrap::EMBEDDED_SOF_RESOURCES,
+            )
+            .await;
+        }
     };
 
     let _ = tokio::join!(
@@ -1161,6 +1175,12 @@ https://confluence.hl7.org/display/FHIR/NPM+Package+Specification
 fn display_fhir(v: FhirVersion) -> &'static str {
     v.release_name()
 }
+
+/// The SQL on FHIR package installed when SQL on FHIR is enabled: 3.0.0 of
+/// the HL7 continuous build.
+pub(crate) const SOF_PACKAGE: &str = "hl7.fhir.uv.sql-on-fhir";
+pub(crate) const SOF_PACKAGE_VERSION: &str = "3.0.0-ballot";
+const SOF_PACKAGE_URL: &str = "https://build.fhir.org/ig/HL7/sql-on-fhir/package.tgz";
 
 fn default_core_for(v: FhirVersion) -> (String, String) {
     match v {

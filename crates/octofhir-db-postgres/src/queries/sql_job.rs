@@ -501,15 +501,17 @@ pub async fn ids_by_canonical(
     resource_type: &str,
     url: &str,
     version: Option<&str>,
+    limit: i64,
 ) -> Result<Vec<String>, StorageError> {
     let table = crate::schema::SchemaManager::table_name(resource_type);
     let sql = format!(
         "SELECT id FROM {table} WHERE status <> 'deleted' AND resource->>'url' = $1 \
-         AND ($2::text IS NULL OR resource->>'version' = $2) ORDER BY id LIMIT 2"
+         AND ($2::text IS NULL OR resource->>'version' = $2) ORDER BY id LIMIT $3"
     );
     match query_scalar::<_, String>(AssertSqlSafe(sql))
         .bind(url)
         .bind(version)
+        .bind(limit)
         .fetch_all(pool)
         .await
     {

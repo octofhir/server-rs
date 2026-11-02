@@ -212,6 +212,20 @@ pub const EMBEDDED_SOF_COMPAT_RESOURCES: &[(&str, &str)] = &[(
     include_str!("../../../igs/octofhir-auth/StructureDefinition-CanonicalResource.json"),
 )];
 
+/// Embedded octofhir-sof IG resources: this server's `$sql-run` and
+/// `$sql-export` OperationDefinitions (SQL on FHIR SQLRun / SQLExport without
+/// `source`), which its CapabilityStatement cites.
+pub const EMBEDDED_SOF_RESOURCES: &[(&str, &str)] = &[
+    (
+        "OperationDefinition-sql-run.json",
+        include_str!("../../../igs/octofhir-sof/OperationDefinition-sql-run.json"),
+    ),
+    (
+        "OperationDefinition-sql-export.json",
+        include_str!("../../../igs/octofhir-sof/OperationDefinition-sql-export.json"),
+    ),
+];
+
 /// Embedded octofhir-notifications IG resources
 /// Notification provider, template, and log resources
 pub const EMBEDDED_NOTIFICATIONS_RESOURCES: &[(&str, &str)] = &[

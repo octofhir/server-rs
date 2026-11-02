@@ -34,7 +34,10 @@ use tokio::sync::OnceCell;
 use octofhir_sof::library::{ParameterValue, SqlLibrary, bind_parameters};
 use octofhir_sof::plan::{ContextArtifacts, Resolver};
 
-use super::output::{OutputColumn, render};
+use axum::http::StatusCode;
+
+use super::output::{OutputColumn, has_integer64, render};
+use super::rejection::{at, at_subject_if_unprocessable, rejected, together};
 use super::scope::ViewScope;
 use super::sql_guard;
 use super::sql_plan::{DIALECT, JobTables, Subject, classify, load_subject, unprocessable};
@@ -85,22 +88,53 @@ impl OperationHandler for SqlRunOperation {
                     .into(),
             ));
         }
+        check_parameters(params, RUN_PARAMETERS)?;
+        if context.is_get()
+            && let Some(name) = ["subjectResource", "parameters", "context", "resource"]
+                .into_iter()
+                .find(|name| has(params, name))
+        {
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "invalid",
+                Some(name),
+                format!("{name} carries a resource, which a GET request cannot; use POST"),
+            ));
+        }
         let parts: Vec<&Value> = parameters(params).collect();
-        let resource = load_subject(state, context, &parts).await?;
-        match classify(&resource)? {
+        let resource = match load_subject(state, context, &parts).await {
+            Ok(resource) => resource,
+            // An unresolvable subject is the more fundamental failure; an
+            // unresolvable filter is reported with it.
+            Err(error) if is_not_found(&error) => {
+                return Err(match filter_failure(state, context, params).await {
+                    Some(filter) => together(error, filter),
+                    None => error,
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        match classify(&resource).map_err(|error| at(error, "subject"))? {
             Subject::View(view) => {
                 if has(params, "parameters") {
-                    return Err(OperationError::InvalidParameters(
-                        "parameters binds the parameters of a SQLQuery; a ViewDefinition declares none"
-                            .into(),
+                    return Err(rejected(
+                        StatusCode::BAD_REQUEST,
+                        "invalid",
+                        Some("parameters"),
+                        "parameters binds the parameters of a SQLQuery; a ViewDefinition declares none",
                     ));
                 }
                 if has(params, "context") {
-                    return Err(OperationError::InvalidParameters(
-                        "context: a ViewDefinition subject has no dependencies to match".into(),
+                    return Err(rejected(
+                        StatusCode::BAD_REQUEST,
+                        "invalid",
+                        Some("context"),
+                        "context: a ViewDefinition subject has no dependencies to match",
                     ));
                 }
-                run_view(state, context, &view, params).await
+                run_view(state, context, &view, params)
+                    .await
+                    .map_err(at_subject_if_unprocessable)
             }
             Subject::Sql(library) => self.run_sql(state, context, &library, params).await,
         }
@@ -116,20 +150,24 @@ impl SqlRunOperation {
         params: &Value,
     ) -> Result<Value, OperationError> {
         if has(params, "resource") {
-            return Err(OperationError::InvalidParameters(
-                "resource supplies data to a ViewDefinition subject; a SQL subject reads its dependencies"
-                    .into(),
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "invalid",
+                Some("resource"),
+                "resource supplies data to a ViewDefinition subject; a SQL subject reads its dependencies",
             ));
         }
         if has(params, "source") {
-            return Err(OperationError::NotSupported(
-                "External data sources (source) are not supported; the query reads this server's data"
-                    .into(),
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "not-supported",
+                Some("source"),
+                "External data sources (source) are not supported; the query reads this server's data",
             ));
         }
         query_role_ready(&self.query_role, state).await?;
 
-        let format = output_format(params)?;
+        let format = output_format(params, context)?;
         let limits = state.config.search.include_limits;
         let row_limit = limit(params)?.map_or(limits.max_resources, |limit| {
             limit.min(limits.max_resources)
@@ -142,8 +180,11 @@ impl SqlRunOperation {
             [] => None,
             [param] => Some(&param["resource"]),
             _ => {
-                return Err(OperationError::InvalidParameters(
-                    "parameters must occur at most once".into(),
+                return Err(rejected(
+                    StatusCode::BAD_REQUEST,
+                    "invalid",
+                    Some("parameters"),
+                    "parameters must occur at most once",
                 ));
             }
         };
@@ -172,13 +213,19 @@ impl SqlRunOperation {
             },
         )
         .await
-        .map_err(|error| job_error(&library.display, error))?;
+        .map_err(|error| at_subject_if_unprocessable(job_error(&library.display, error)))?;
         let columns: Vec<OutputColumn> = result
             .columns
             .iter()
             .map(|column| OutputColumn::from_sql(&column.name, &column.sql_type))
             .collect();
-        let mut output = render(format, &columns, &result.rows, limits.max_bytes)?;
+        let mut output = render(
+            format,
+            &columns,
+            &result.rows,
+            limits.max_bytes,
+            has_integer64(state),
+        )?;
         if !job.provenance.is_empty() {
             let record = Value::Array(job.provenance.clone());
             tracing::info!(
@@ -222,11 +269,17 @@ pub(super) fn checked_query(
     library: &SqlLibrary,
     supplied: Option<&Value>,
 ) -> Result<(String, Vec<SqlValue>), OperationError> {
-    let values = bind_parameters(library, supplied).map_err(|error| match error {
-        octofhir_sof::Error::InvalidParameter(message) => {
-            OperationError::InvalidParameters(message)
-        }
-        other => OperationError::InvalidParameters(other.to_string()),
+    let values = bind_parameters(library, supplied).map_err(|error| {
+        let message = match error {
+            octofhir_sof::Error::InvalidParameter(message) => message,
+            other => other.to_string(),
+        };
+        rejected(
+            StatusCode::BAD_REQUEST,
+            "invalid",
+            Some("parameters"),
+            message,
+        )
     })?;
     let declared: HashMap<String, &'static str> = library
         .parameters
@@ -238,8 +291,14 @@ pub(super) fn checked_query(
         .iter()
         .map(|dependency| dependency.label.clone())
         .collect();
-    let checked = sql_guard::check(&library.sql, &relations, &declared)
-        .map_err(|error| unprocessable(format!("{}: {error}", library.display)))?;
+    let checked = sql_guard::check(&library.sql, &relations, &declared).map_err(|error| {
+        rejected(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid",
+            Some("subject"),
+            format!("{}: {error}", library.display),
+        )
+    })?;
     let bound = checked
         .parameters
         .iter()
@@ -263,6 +322,60 @@ pub(super) fn job_error(display: &str, error: SqlJobError) -> OperationError {
         SqlJobError::Sink(message) => OperationError::Internal(message),
         SqlJobError::Storage(error) => crate::handlers::map_storage_error(error).into(),
     }
+}
+
+/// The parameters of `$sql-run` (SQLRun); `source` is declared but refused.
+const RUN_PARAMETERS: &[&str] = &[
+    "subjectCanonical",
+    "subjectReference",
+    "subjectResource",
+    "parameters",
+    "context",
+    "_format",
+    "header",
+    "patient",
+    "group",
+    "_since",
+    "_limit",
+    "resource",
+    "source",
+    "_pretty",
+];
+
+/// A parameter outside `known` is not supported (400), as Declaring partial
+/// operation support requires.
+pub(super) fn check_parameters(params: &Value, known: &[&str]) -> Result<(), OperationError> {
+    match parameters(params)
+        .filter_map(|param| param["name"].as_str())
+        .find(|name| !known.contains(name))
+    {
+        Some(name) => Err(rejected(
+            StatusCode::BAD_REQUEST,
+            "not-supported",
+            Some(name),
+            format!("The parameter {name} is not supported by this operation"),
+        )),
+        None => Ok(()),
+    }
+}
+
+pub(super) fn is_not_found(error: &OperationError) -> bool {
+    match error {
+        OperationError::NotFound(_) => true,
+        OperationError::Api(api) => api.status_code() == StatusCode::NOT_FOUND,
+        _ => false,
+    }
+}
+
+/// The failure of the `patient` / `group` filters, if they name something
+/// that cannot be found.
+pub(super) async fn filter_failure(
+    state: &AppState,
+    context: &OperationContext,
+    params: &Value,
+) -> Option<OperationError> {
+    let scope = ViewScope::from_parameters(params).ok()?;
+    scope.search_params(state, context, "Patient").await.err()
 }
 
 pub(super) fn has(params: &Value, name: &str) -> bool {

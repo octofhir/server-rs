@@ -34,7 +34,7 @@ octofhir-auth-postgres = { path = "crates/octofhir-auth-postgres" }
 octofhir-config = { path = "crates/octofhir-config" }
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-graphql = { path = "crates/octofhir-graphql" }
-octofhir-sof = "0.3.0"
+octofhir-sof = { version = "0.3.1", features = ["parquet"] }
 octofhir-storage = { path = "crates/octofhir-storage" }
 octofhir-canonical-manager = { version = "0.2.8", default-features = false }
 octofhir-fhir-model = { version = "0.1.17", features = ["http-client", "caching"] }
@@ -43,12 +43,12 @@ octofhir-fhir-model = { version = "0.1.17", features = ["http-client", "caching"
 async-lsp = { version = "0.2", features = ["tokio"] }
 lsp-types = "0.97"
 
-banshee_parser = "0.2.5"
-banshee_lexer = "0.2.5"
-banshee_syntax = "0.2.5"
-banshee_hir = "0.2.5"
-banshee_completion = "0.2.5"
-banshee_format = "0.2.5"
+banshee_parser = "0.2.6"
+banshee_lexer = "0.2.6"
+banshee_syntax = "0.2.6"
+banshee_hir = "0.2.6"
+banshee_completion = "0.2.6"
+banshee_format = "0.2.6"
 text-size = "1.1"
 
 # Test utilities

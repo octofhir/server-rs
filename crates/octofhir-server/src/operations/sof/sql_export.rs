@@ -29,6 +29,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use axum::http::StatusCode;
 use chrono::Utc;
 use octofhir_db_postgres::queries::sql_job::{
     JobQuery, Relation, RowSink, SqlExportJob, SqlJobColumn, check_queries, run_sql_export,
@@ -39,13 +40,18 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 
+use octofhir_sof::ColumnInfo;
 use octofhir_sof::library::SqlLibrary;
-use octofhir_sof::output::{RowEncoder, RowFormat};
+use octofhir_sof::output::{ParquetStreamEncoder, ParquetWriter, RowEncoder, RowFormat};
 use octofhir_sof::plan::{Artifact, ContextArtifacts, Edge, ResolvedJob, Resolver};
 
+use super::output::{OutputColumn, PARQUET_MEDIA_TYPE};
+use super::rejection::{all_together, at, at_subject_if_unprocessable, rejected, together};
 use super::scope::ViewScope;
 use super::sql_plan::{DIALECT, JobTables, Subject, classify, load_subject};
-use super::sql_run::{checked_query, has, job_error, query_role_ready};
+use super::sql_run::{
+    check_parameters, checked_query, filter_failure, has, is_not_found, job_error, query_role_ready,
+};
 use super::term_source::{ServerArtifacts, plan_error, provenance_header};
 use super::viewdefinition_run::parameters;
 use crate::async_jobs::{AsyncJobRequest, AsyncJobStatus};
@@ -68,6 +74,22 @@ const CANCEL_CHECK_ROWS: usize = 50_000;
 
 /// The CTE name a ViewDefinition subject's query reads.
 const VIEW_SUBJECT: &str = "sof_subject";
+
+/// The parameters of `$sql-export` (SQLExport); `source` is declared but
+/// refused, and `_limit` / `resource` are refused as `$sql-run`'s only.
+const EXPORT_PARAMETERS: &[&str] = &[
+    "subject",
+    "context",
+    "clientTrackingId",
+    "_format",
+    "header",
+    "patient",
+    "group",
+    "_since",
+    "source",
+    "_limit",
+    "resource",
+];
 
 /// The `$sql-export` handler.
 pub struct SqlExportOperation {
@@ -92,6 +114,7 @@ enum ExportFormat {
     Ndjson,
     Csv,
     Json,
+    Parquet,
 }
 
 impl ExportFormat {
@@ -118,11 +141,12 @@ impl ExportFormat {
             "ndjson" | "application/x-ndjson" | "application/ndjson" => Ok(Self::Ndjson),
             "csv" | "text/csv" => Ok(Self::Csv),
             "json" | "application/json" => Ok(Self::Json),
+            "parquet" | PARQUET_MEDIA_TYPE | "application/parquet" => Ok(Self::Parquet),
             "fhir" => Err(OperationError::InvalidParameters(
                 "_format: fhir is offered by $sql-run only; an export produces flat files".into(),
             )),
             other => Err(OperationError::NotSupported(format!(
-                "_format {other} is not supported; use ndjson, csv or json"
+                "_format {other} is not supported; use ndjson, csv, json or parquet"
             ))),
         }
     }
@@ -132,15 +156,17 @@ impl ExportFormat {
             Self::Ndjson => "ndjson",
             Self::Csv => "csv",
             Self::Json => "json",
+            Self::Parquet => "parquet",
         }
     }
 
-    /// The row encoding of this format.
-    fn row_format(self, header: bool) -> RowFormat {
+    /// How files of this format are encoded.
+    fn file_format(self, header: bool) -> FileFormat {
         match self {
-            Self::Ndjson => RowFormat::Ndjson,
-            Self::Csv => RowFormat::Csv { header },
-            Self::Json => RowFormat::Json,
+            Self::Ndjson => FileFormat::Rows(RowFormat::Ndjson),
+            Self::Csv => FileFormat::Rows(RowFormat::Csv { header }),
+            Self::Json => FileFormat::Rows(RowFormat::Json),
+            Self::Parquet => FileFormat::Parquet,
         }
     }
 
@@ -148,6 +174,7 @@ impl ExportFormat {
         match code {
             "csv" => Self::Csv,
             "json" => Self::Json,
+            "parquet" => Self::Parquet,
             _ => Self::Ndjson,
         }
     }
@@ -157,6 +184,8 @@ impl ExportFormat {
 pub(crate) fn media_type(filename: &str) -> &'static str {
     if filename.ends_with(".csv") {
         "text/csv"
+    } else if filename.ends_with(".parquet") {
+        PARQUET_MEDIA_TYPE
     } else if filename.ends_with(".json") {
         "application/json"
     } else {
@@ -192,13 +221,19 @@ impl OperationHandler for SqlExportOperation {
             ));
         }
         if context.is_get() {
-            return Err(OperationError::InvalidParameters(
-                "$sql-export creates a job: use POST".into(),
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "required",
+                None,
+                "$sql-export creates a job: use POST",
             ));
         }
         if !context.respond_async() {
-            return Err(OperationError::InvalidParameters(
-                "$sql-export requires the header Prefer: respond-async".into(),
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "required",
+                None,
+                "$sql-export requires the header Prefer: respond-async",
             ));
         }
         for (name, reason) in [
@@ -209,23 +244,42 @@ impl OperationHandler for SqlExportOperation {
             ),
         ] {
             if has(params, name) {
-                return Err(OperationError::InvalidParameters(reason.into()));
+                return Err(rejected(
+                    StatusCode::BAD_REQUEST,
+                    "invalid",
+                    Some(name),
+                    reason,
+                ));
             }
         }
         if has(params, "source") {
-            return Err(OperationError::NotSupported(
-                "External data sources (source) are not supported; the export reads this server's data"
-                    .into(),
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "not-supported",
+                Some("source"),
+                "External data sources (source) are not supported; the export reads this server's data",
             ));
         }
-        let format = ExportFormat::parse(params)?;
-        let header = csv_header(params)?;
-        let client_tracking_id = single_string(params, "clientTrackingId")?;
+        check_parameters(params, EXPORT_PARAMETERS)?;
+        let format = ExportFormat::parse(params).map_err(|error| at(error, "_format"))?;
+        let header = csv_header(params).map_err(|error| at(error, "header"))?;
+        let client_tracking_id = single_string(params, "clientTrackingId")
+            .map_err(|error| at(error, "clientTrackingId"))?;
         let scope = ViewScope::from_parameters(params)?;
-        // A patient or group nobody can find is a 400 before anything else runs.
-        scope.search_params(state, context, "Patient").await?;
 
-        let subjects = self.subjects(state, context, params).await?;
+        // Subjects first: an unresolvable subject is the more fundamental
+        // failure, reported together with an unresolvable filter.
+        let subjects = match self.subjects(state, context, params).await {
+            Ok(subjects) => subjects,
+            Err(error) if is_not_found(&error) => {
+                return Err(match filter_failure(state, context, params).await {
+                    Some(filter) => together(error, filter),
+                    None => error,
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        scope.search_params(state, context, "Patient").await?;
         let inline = ContextArtifacts::from_parameters(params).map_err(plan_error)?;
         let source = ServerArtifacts { state, context };
         let mut resolver = Resolver::new(&source, &inline, DIALECT);
@@ -281,7 +335,9 @@ impl OperationHandler for SqlExportOperation {
         {
             query_role_ready(&self.query_role, state).await?;
         }
-        let shapes = JobTables::shapes(state, &job).await?;
+        let shapes = JobTables::shapes(state, &job)
+            .await
+            .map_err(at_subject_if_unprocessable)?;
         let queries = queries(&job, &shapes, &planned)?;
         check_queries(
             &state.db_pool,
@@ -290,7 +346,7 @@ impl OperationHandler for SqlExportOperation {
             CHECK_STATEMENT_TIMEOUT_MS,
         )
         .await
-        .map_err(|error| job_error("$sql-export", error))?;
+        .map_err(|error| at_subject_if_unprocessable(job_error("$sql-export", error)))?;
 
         let request_url = context.request_url().to_owned();
         let body = json!({
@@ -435,8 +491,11 @@ impl SqlExportOperation {
             .filter(|param| param["name"] == "subject")
             .collect();
         if repetitions.is_empty() {
-            return Err(OperationError::InvalidParameters(
-                "subject: at least one subject is required".into(),
+            return Err(rejected(
+                StatusCode::BAD_REQUEST,
+                "required",
+                Some("subject"),
+                "subject: at least one subject is required",
             ));
         }
         let mut subjects = Vec::with_capacity(repetitions.len());
@@ -444,19 +503,24 @@ impl SqlExportOperation {
         for (index, repetition) in repetitions.iter().enumerate() {
             match self.subject(state, context, index, repetition).await {
                 Ok(subject) => subjects.push(subject),
-                Err(error) => problems.push((index, error)),
+                Err(error) => problems.push((format!("subject[{index}]"), error)),
             }
         }
         if !problems.is_empty() {
-            return Err(combine(problems));
+            return Err(all_together(problems));
         }
         let mut names = HashSet::new();
         for subject in &subjects {
             if !names.insert(subject.name.as_str()) {
-                return Err(OperationError::InvalidParameters(format!(
-                    "subject: two subjects would produce the output name {}; name them apart",
-                    subject.name
-                )));
+                return Err(rejected(
+                    StatusCode::BAD_REQUEST,
+                    "invalid",
+                    Some("subject"),
+                    format!(
+                        "Two subject repetitions would produce the output name {}; name them apart",
+                        subject.name
+                    ),
+                ));
             }
         }
         let mut files = HashSet::new();
@@ -535,48 +599,6 @@ impl SqlExportOperation {
             }
         };
         Ok(NamedSubject { name, file, kind })
-    }
-}
-
-/// Several subjects' problems as one error: the most fundamental status
-/// (404, then 422, then 400) with every problem in the message.
-fn combine(mut problems: Vec<(usize, OperationError)>) -> OperationError {
-    if problems.len() == 1 {
-        return problems.remove(0).1;
-    }
-    let rank = |error: &OperationError| match error {
-        OperationError::NotFound(_) => 0,
-        OperationError::Api(_) => 1,
-        _ => 2,
-    };
-    let message = problems
-        .iter()
-        .map(|(index, error)| format!("subject[{index}]: {}", plain(error)))
-        .collect::<Vec<_>>()
-        .join("; ");
-    let worst = problems
-        .iter()
-        .map(|(_, error)| rank(error))
-        .min()
-        .unwrap_or(2);
-    match worst {
-        0 => OperationError::NotFound(message),
-        1 => super::sql_plan::unprocessable(message),
-        _ => OperationError::InvalidParameters(message),
-    }
-}
-
-/// An error's message without its status wording.
-fn plain(error: &OperationError) -> String {
-    match error {
-        OperationError::NotFound(message)
-        | OperationError::InvalidParameters(message)
-        | OperationError::NotSupported(message)
-        | OperationError::Internal(message) => message.clone(),
-        OperationError::Api(octofhir_api::ApiError::UnprocessableEntity { message, .. }) => {
-            message.clone()
-        }
-        other => other.to_string(),
     }
 }
 
@@ -717,7 +739,7 @@ pub async fn execute_sql_export(
         state: &state,
         job_id,
         dir: dir.clone(),
-        format: format.row_format(header),
+        format: format.file_format(header),
         max_rows,
         stems: subjects
             .iter()
@@ -793,7 +815,71 @@ pub(crate) fn locations(result: &Value) -> impl Iterator<Item = &str> {
 struct OpenFile {
     subject: usize,
     writer: BufWriter<File>,
-    encoder: RowEncoder,
+    encoder: Encoder,
+    columns: Vec<ColumnInfo>,
+}
+
+/// How an export file is encoded.
+#[derive(Clone, Copy, Debug)]
+enum FileFormat {
+    Rows(RowFormat),
+    Parquet,
+}
+
+impl FileFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Rows(format) => format.extension(),
+            Self::Parquet => "parquet",
+        }
+    }
+}
+
+/// The encoder of one export file.
+enum Encoder {
+    Rows(RowEncoder),
+    Parquet(Box<ParquetStreamEncoder>),
+}
+
+impl Encoder {
+    /// An encoder and the bytes its file starts with.
+    fn new(format: FileFormat, columns: &[ColumnInfo]) -> Result<(Self, Vec<u8>), String> {
+        Ok(match format {
+            FileFormat::Rows(format) => {
+                let names = columns.iter().map(|column| column.name.clone()).collect();
+                let encoder = RowEncoder::new(format, names);
+                let start = encoder.start().into_bytes();
+                (Self::Rows(encoder), start)
+            }
+            FileFormat::Parquet => {
+                let encoder = ParquetStreamEncoder::new(columns.to_vec(), &ParquetWriter::new())
+                    .map_err(|error| error.to_string())?;
+                (Self::Parquet(Box::new(encoder)), Vec::new())
+            }
+        })
+    }
+
+    fn rows(&self) -> usize {
+        match self {
+            Self::Rows(encoder) => encoder.rows(),
+            Self::Parquet(encoder) => encoder.rows(),
+        }
+    }
+
+    fn row(&mut self, row: &str) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Rows(encoder) => encoder.row_json(row).map(String::into_bytes),
+            Self::Parquet(encoder) => encoder.row_json(row),
+        }
+        .map_err(|error| error.to_string())
+    }
+
+    fn finish(self) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Rows(encoder) => Ok(encoder.finish().into_bytes()),
+            Self::Parquet(encoder) => encoder.finish().map_err(|error| error.to_string()),
+        }
+    }
 }
 
 /// Writes each subject's rows to its files.
@@ -801,7 +887,7 @@ struct FileSink<'a> {
     state: &'a AppState,
     job_id: Uuid,
     dir: PathBuf,
-    format: RowFormat,
+    format: FileFormat,
     max_rows: usize,
     /// File name stem per subject.
     stems: Vec<String>,
@@ -819,7 +905,7 @@ impl FileSink<'_> {
 
     /// Open the next file of `subject`. Its first file is `stem.ext`; once a
     /// second is needed the first becomes `stem.part1.ext`.
-    async fn open_file(&mut self, subject: usize, columns: Vec<String>) -> Result<(), String> {
+    async fn open_file(&mut self, subject: usize, columns: Vec<ColumnInfo>) -> Result<(), String> {
         let stem = &self.stems[subject];
         let ext = self.extension();
         let part = self.files[subject].len() + 1;
@@ -842,46 +928,47 @@ impl FileSink<'_> {
             .await
             .map_err(|error| format!("Cannot create an export file: {error}"))?;
         let mut writer = BufWriter::new(file);
-        let encoder = RowEncoder::new(self.format, columns);
-        write(&mut writer, &encoder.start()).await?;
+        let (encoder, start) = Encoder::new(self.format, &columns)?;
+        write(&mut writer, &start).await?;
         self.files[subject].push(name);
         self.open = Some(OpenFile {
             subject,
             writer,
             encoder,
+            columns,
         });
         Ok(())
     }
 
     async fn close_file(&mut self) -> Result<(), String> {
-        if let Some(mut open) = self.open.take() {
-            write(&mut open.writer, &open.encoder.finish()).await?;
-            open.writer
+        if let Some(open) = self.open.take() {
+            let OpenFile {
+                mut writer,
+                encoder,
+                ..
+            } = open;
+            write(&mut writer, &encoder.finish()?).await?;
+            let mut open_writer = writer;
+            open_writer
                 .flush()
                 .await
                 .map_err(|error| format!("Cannot write an export file: {error}"))?;
         }
         Ok(())
     }
-
-    async fn cancelled(&self) -> bool {
-        self.state
-            .async_job_manager
-            .get_job(self.job_id)
-            .await
-            .map(|job| job.status == AsyncJobStatus::Cancelled)
-            .unwrap_or(true)
-    }
 }
 
 #[async_trait]
 impl RowSink for FileSink<'_> {
     async fn begin(&mut self, query: usize, columns: &[SqlJobColumn]) -> Result<(), String> {
-        if self.cancelled().await {
+        if job_cancelled(self.state, self.job_id).await {
             return Err("The export was cancelled".into());
         }
-        let names = columns.iter().map(|column| column.name.clone()).collect();
-        self.open_file(query, names).await
+        let columns = columns
+            .iter()
+            .map(|column| OutputColumn::from_sql(&column.name, &column.sql_type).info())
+            .collect();
+        self.open_file(query, columns).await
     }
 
     async fn row(&mut self, query: usize, row: &str) -> Result<(), String> {
@@ -893,21 +980,18 @@ impl RowSink for FileSink<'_> {
             let columns = self
                 .open
                 .as_ref()
-                .map(|open| open.encoder.columns().to_vec())
+                .map(|open| open.columns.clone())
                 .unwrap_or_default();
             self.close_file().await?;
             self.open_file(query, columns).await?;
         }
         let open = self.open.as_mut().ok_or("No export file is open")?;
-        let encoded = open
-            .encoder
-            .row_json(row)
-            .map_err(|error| error.to_string())?;
+        let encoded = open.encoder.row(row)?;
         write(&mut open.writer, &encoded).await?;
         self.written += 1;
         if self.written >= CANCEL_CHECK_ROWS {
             self.written = 0;
-            if self.cancelled().await {
+            if job_cancelled(self.state, self.job_id).await {
                 return Err("The export was cancelled".into());
             }
         }
@@ -919,9 +1003,18 @@ impl RowSink for FileSink<'_> {
     }
 }
 
-async fn write(writer: &mut BufWriter<File>, text: &str) -> Result<(), String> {
+async fn job_cancelled(state: &AppState, job_id: Uuid) -> bool {
+    state
+        .async_job_manager
+        .get_job(job_id)
+        .await
+        .map(|job| job.status == AsyncJobStatus::Cancelled)
+        .unwrap_or(true)
+}
+
+async fn write(writer: &mut BufWriter<File>, bytes: &[u8]) -> Result<(), String> {
     writer
-        .write_all(text.as_bytes())
+        .write_all(bytes)
         .await
         .map_err(|error| format!("Cannot write an export file: {error}"))
 }
@@ -949,8 +1042,12 @@ mod tests {
             ExportFormat::parse(&with("fhir")),
             Err(OperationError::InvalidParameters(_))
         ));
+        assert_eq!(
+            ExportFormat::parse(&with("parquet")).unwrap(),
+            ExportFormat::Parquet
+        );
         assert!(matches!(
-            ExportFormat::parse(&with("parquet")),
+            ExportFormat::parse(&with("xlsx")),
             Err(OperationError::NotSupported(_))
         ));
     }
@@ -961,20 +1058,6 @@ mod tests {
         assert_eq!(file_stem("../etc/passwd"), "_etc_passwd");
         assert_eq!(file_stem("Blood pressure / day"), "Blood_pressure___day");
         assert_eq!(file_stem("..."), "output");
-    }
-
-    #[test]
-    fn problems_of_several_subjects_combine_by_severity() {
-        let error = combine(vec![
-            (0, OperationError::InvalidParameters("bad".into())),
-            (2, OperationError::NotFound("missing".into())),
-        ]);
-        match error {
-            OperationError::NotFound(message) => {
-                assert_eq!(message, "subject[0]: bad; subject[2]: missing");
-            }
-            other => panic!("{other:?}"),
-        }
     }
 
     #[test]

@@ -28,6 +28,8 @@ pub struct OperationContext {
     respond_async: bool,
     /// The request was a GET.
     is_get: bool,
+    /// The request's `Accept` header.
+    accept: Option<String>,
 }
 
 impl FromRequestParts<AppState> for OperationContext {
@@ -77,6 +79,13 @@ impl FromRequestParts<AppState> for OperationContext {
                 .flat_map(|value| value.split(','))
                 .any(|part| part.trim().eq_ignore_ascii_case("respond-async")),
             is_get: parts.method == axum::http::Method::GET,
+            accept: parts
+                .headers
+                .get_all(axum::http::header::ACCEPT)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .reduce(|first, _| first)
+                .map(str::to_owned),
         })
     }
 }
@@ -98,7 +107,13 @@ impl OperationContext {
             request_url: job.request_url,
             respond_async: false,
             is_get: false,
+            accept: None,
         })
+    }
+
+    /// The request's `Accept` header.
+    pub(crate) fn accept(&self) -> Option<&str> {
+        self.accept.as_deref()
     }
 
     /// Whether the request asked for the asynchronous pattern

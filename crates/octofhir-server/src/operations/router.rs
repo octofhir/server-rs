@@ -95,6 +95,21 @@ fn raw_binary_return(code: &str, result: &serde_json::Value) -> Result<Option<Re
     if !matches!(code, "viewdefinition-run" | "sql-run") || result["resourceType"] != "Binary" {
         return Ok(None);
     }
+    // The client asked for a FHIR representation: the Binary resource itself.
+    if result[super::sof::ENVELOPE_KEY] == true {
+        let mut binary = result.clone();
+        if let Some(object) = binary.as_object_mut() {
+            object.remove(super::sof::ENVELOPE_KEY);
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/fhir+json"),
+        );
+        return Ok(Some(
+            (StatusCode::OK, headers, Json(binary)).into_response(),
+        ));
+    }
     use base64::Engine as _;
     let content_type = result["contentType"]
         .as_str()

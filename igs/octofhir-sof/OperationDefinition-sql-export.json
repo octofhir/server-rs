@@ -1,0 +1,263 @@
+{
+  "resourceType": "OperationDefinition",
+  "id": "octofhir-sql-export",
+  "url": "http://octofhir.io/OperationDefinition/sql-export",
+  "version": "0.1.0",
+  "name": "OctoFHIRSQLExport",
+  "title": "$sql-export as OctoFHIR supports it",
+  "status": "active",
+  "kind": "operation",
+  "publisher": "OctoFHIR",
+  "description": "$sql-export of SQL on FHIR 3.0.0 as this server supports it: every parameter of the base definition except `source` (external data sources); the subject reads this server's data.",
+  "affectsState": false,
+  "code": "sql-export",
+  "base": "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/SQLExport",
+  "system": true,
+  "type": false,
+  "instance": false,
+  "parameter": [
+    {
+      "name": "subject",
+      "use": "in",
+      "min": 1,
+      "max": "*",
+      "documentation": "One or more artifacts to export, in any mixture of ViewDefinitions, SQLQuery Libraries and SQLView Libraries. Each repetition names a single subject and produces exactly one output entry in the manifest. A request supplying no subject is rejected with 400 Bad Request, as is a request in which two repetitions would produce the same output name.",
+      "part": [
+        {
+          "name": "name",
+          "use": "in",
+          "min": 0,
+          "max": "1",
+          "documentation": "Name for this subject's output entry in the manifest. Where it is omitted the server uses the subject's own name element, and where the subject declares none, a server-generated identifier. Output names are unique across the job.",
+          "type": "string"
+        },
+        {
+          "name": "subjectCanonical",
+          "use": "in",
+          "min": 0,
+          "max": "1",
+          "documentation": "Canonical URL of the ViewDefinition, SQLQuery Library or SQLView Library to export, optionally with a |version suffix pinning a version. Exactly one of subjectCanonical, subjectReference and subjectResource is supplied in each repetition.",
+          "type": "canonical",
+          "targetProfile": [
+            "http://hl7.org/fhir/StructureDefinition/ViewDefinition",
+            "http://hl7.org/fhir/uv/sql-on-fhir/StructureDefinition/SQLQuery",
+            "http://hl7.org/fhir/uv/sql-on-fhir/StructureDefinition/SQLView"
+          ]
+        },
+        {
+          "name": "subjectReference",
+          "use": "in",
+          "min": 0,
+          "max": "1",
+          "documentation": "Literal location of the subject to export: a relative URL on this server, or an absolute URL. Not a canonical URL; use subjectCanonical for that. Exactly one of subjectCanonical, subjectReference and subjectResource is supplied in each repetition.",
+          "type": "Reference",
+          "targetProfile": [
+            "http://hl7.org/fhir/StructureDefinition/ViewDefinition",
+            "http://hl7.org/fhir/uv/sql-on-fhir/StructureDefinition/SQLQuery",
+            "http://hl7.org/fhir/uv/sql-on-fhir/StructureDefinition/SQLView"
+          ]
+        },
+        {
+          "name": "subjectResource",
+          "use": "in",
+          "min": 0,
+          "max": "1",
+          "documentation": "Inline ViewDefinition, SQLQuery Library or SQLView Library to export. Exactly one of subjectCanonical, subjectReference and subjectResource is supplied in each repetition. The declared type is CanonicalResource because ViewDefinition is a logical model rather than a FHIR resource; see Common Operation Behavior (operations-common.html#declared-type).",
+          "type": "CanonicalResource",
+          "targetProfile": [
+            "http://hl7.org/fhir/StructureDefinition/ViewDefinition",
+            "http://hl7.org/fhir/uv/sql-on-fhir/StructureDefinition/SQLQuery",
+            "http://hl7.org/fhir/uv/sql-on-fhir/StructureDefinition/SQLView"
+          ]
+        },
+        {
+          "name": "parameters",
+          "use": "in",
+          "min": 0,
+          "max": "1",
+          "documentation": "Input parameter values for this subject, bound by name to the parameters the Library declares (Library.parameter.name). Permitted only where this repetition's subject is a SQLQuery or SQLView; supplying it where the subject is a ViewDefinition is rejected with 400 Bad Request, because a ViewDefinition declares no parameters.",
+          "type": "Parameters"
+        }
+      ]
+    },
+    {
+      "name": "context",
+      "use": "in",
+      "min": 0,
+      "max": "*",
+      "documentation": "Supporting artifacts the server cannot itself resolve, supplied inline and matched by canonical URL against the dependencies in the subjects' transitive relatedArtifact graphs: a ViewDefinition, a SQLView, or a ValueSet or ConceptMap whose content the SQL reads as a relation (see Terminology in SQL, terminology-in-sql.html). Applies to the job as a whole rather than to one subject, so an artifact several subjects depend on is supplied once. Accepts inline resources only; there is no context by canonical URL, because a URL is exactly what the server has already failed to resolve. A context entry produces no output entry. See Common Operation Behavior (operations-common.html#context).",
+      "type": "CanonicalResource",
+      "targetProfile": [
+        "http://hl7.org/fhir/StructureDefinition/ViewDefinition",
+        "http://hl7.org/fhir/uv/sql-on-fhir/StructureDefinition/SQLView",
+        "http://hl7.org/fhir/StructureDefinition/ValueSet",
+        "http://hl7.org/fhir/StructureDefinition/ConceptMap"
+      ]
+    },
+    {
+      "name": "clientTrackingId",
+      "use": "in",
+      "min": 0,
+      "max": "1",
+      "documentation": "Client-provided tracking identifier for the export job, echoed in the manifest.",
+      "type": "string"
+    },
+    {
+      "name": "_format",
+      "use": "in",
+      "min": 0,
+      "max": "1",
+      "documentation": "Output format for the exported files (csv, ndjson, parquet, json). Optional; if omitted, the server uses ndjson irrespective of Accept. Requesting fhir is rejected with 400 Bad Request, because an export produces flat files. See Common Operation Behavior (operations-common.html).",
+      "type": "code",
+      "binding": {
+        "strength": "extensible",
+        "valueSet": "http://hl7.org/fhir/uv/sql-on-fhir/ValueSet/ExportOutputFormatCodes"
+      }
+    },
+    {
+      "name": "header",
+      "use": "in",
+      "min": 0,
+      "max": "1",
+      "documentation": "Include CSV headers (default true). Applies only when csv output is requested.",
+      "type": "boolean"
+    },
+    {
+      "name": "patient",
+      "use": "in",
+      "min": 0,
+      "max": "*",
+      "documentation": "Restrict the FHIR resources feeding every subject in the job, before projection, to the supplied patient(s). Where a subject is a SQLQuery or SQLView, that means before the SQL executes. An unresolvable patient is rejected with 400 Bad Request. See Common Operation Behavior (operations-common.html#patient-filter).",
+      "type": "Reference"
+    },
+    {
+      "name": "group",
+      "use": "in",
+      "min": 0,
+      "max": "*",
+      "documentation": "Restrict the FHIR resources feeding every subject in the job, before projection, to members of the supplied group(s). Where a subject is a SQLQuery or SQLView, that means before the SQL executes. An unresolvable group is rejected with 400 Bad Request. See Common Operation Behavior (operations-common.html#group-filter).",
+      "type": "Reference"
+    },
+    {
+      "name": "_since",
+      "use": "in",
+      "min": 0,
+      "max": "1",
+      "documentation": "Include only resources whose state changed after this instant. See Common Operation Behavior (operations-common.html#since-filter).",
+      "type": "instant"
+    },
+    {
+      "name": "exportId",
+      "use": "out",
+      "min": 1,
+      "max": "1",
+      "documentation": "Server-generated identifier assigned to the export job.",
+      "type": "string"
+    },
+    {
+      "name": "clientTrackingId",
+      "use": "out",
+      "min": 0,
+      "max": "1",
+      "documentation": "Echoed client tracking identifier when provided.",
+      "type": "string"
+    },
+    {
+      "name": "status",
+      "use": "out",
+      "min": 1,
+      "max": "1",
+      "documentation": "Status of the export (accepted, in-progress, completed, cancelled, failed).",
+      "type": "code",
+      "binding": {
+        "strength": "required",
+        "valueSet": "http://hl7.org/fhir/uv/sql-on-fhir/ValueSet/ExportStatusCodes"
+      }
+    },
+    {
+      "name": "location",
+      "use": "out",
+      "min": 1,
+      "max": "1",
+      "documentation": "URL to poll for export status updates.",
+      "type": "uri"
+    },
+    {
+      "name": "cancelUrl",
+      "use": "out",
+      "min": 0,
+      "max": "1",
+      "documentation": "Optional URL for cancelling the export.",
+      "type": "uri"
+    },
+    {
+      "name": "_format",
+      "use": "out",
+      "min": 0,
+      "max": "1",
+      "documentation": "Format of the exported files (echoed from input if supplied).",
+      "type": "code",
+      "binding": {
+        "strength": "extensible",
+        "valueSet": "http://hl7.org/fhir/uv/sql-on-fhir/ValueSet/ExportOutputFormatCodes"
+      }
+    },
+    {
+      "name": "exportStartTime",
+      "use": "out",
+      "min": 0,
+      "max": "1",
+      "documentation": "Timestamp when the export job began.",
+      "type": "instant"
+    },
+    {
+      "name": "exportEndTime",
+      "use": "out",
+      "min": 0,
+      "max": "1",
+      "documentation": "Timestamp when the export job completed.",
+      "type": "instant"
+    },
+    {
+      "name": "exportDuration",
+      "use": "out",
+      "min": 0,
+      "max": "1",
+      "documentation": "Duration of the export in seconds.",
+      "type": "integer"
+    },
+    {
+      "name": "estimatedTimeRemaining",
+      "use": "out",
+      "min": 0,
+      "max": "1",
+      "documentation": "Estimated seconds remaining until completion. Interim polling responses only.",
+      "type": "integer"
+    },
+    {
+      "name": "output",
+      "use": "out",
+      "min": 0,
+      "max": "*",
+      "documentation": "Output information for each exported subject. Exactly one entry per subject repetition, and none for a context entry. Neither manifest order nor computation order is guaranteed; clients correlate entries by name.",
+      "part": [
+        {
+          "name": "name",
+          "use": "out",
+          "min": 1,
+          "max": "1",
+          "documentation": "Name assigned to this subject's output, derived from subject.name, else the subject's own name element, else a server-generated identifier.",
+          "type": "string"
+        },
+        {
+          "name": "location",
+          "use": "out",
+          "min": 1,
+          "max": "*",
+          "documentation": "Download URL(s) for the exported file(s).",
+          "type": "uri"
+        }
+      ]
+    }
+  ]
+}

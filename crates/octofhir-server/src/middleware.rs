@@ -661,6 +661,14 @@ fn starts_with_ignore_ascii_case(haystack: &[u8], prefix: &[u8]) -> bool {
     haystack.len() >= prefix.len() && haystack[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
+/// Paths whose responses are rows in a negotiated format: `$sql-run`,
+/// `$viewdefinition-run` (any level) and the files of an export.
+fn is_row_output_path(path: &str) -> bool {
+    path.ends_with("/$sql-run")
+        || path.ends_with("/$viewdefinition-run")
+        || path.starts_with("/fhir/_bulk-files/")
+}
+
 /// Check content negotiation for FHIR paths.
 ///
 /// Returns `Some(error_response)` if the request has an unsupported Accept or Content-Type
@@ -675,6 +683,12 @@ fn check_content_negotiation(req: &Request<Body>) -> Option<Response> {
         return None;
     }
 
+    // SQL on FHIR operations return rows in the format's own media type and
+    // negotiate `Accept` themselves (csv, ndjson, parquet, octet-stream, or a
+    // FHIR Binary envelope); their exported files have those types too.
+    if is_row_output_path(path) {
+        return None;
+    }
     // Bulk export files are NDJSON; the Bulk Data IG lets clients ask for exactly that.
     let ndjson_path = path.starts_with("/fhir/_bulk-files/");
     let accepts_hdr = req.headers().get("accept").and_then(|v| v.to_str().ok());

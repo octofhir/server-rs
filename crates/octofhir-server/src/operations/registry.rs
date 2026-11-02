@@ -92,6 +92,22 @@ impl OperationRegistry {
         }
     }
 
+    /// Registers `op` in place of every operation with the same code (one a
+    /// package brought, say): the server's own definition is the one routed
+    /// and declared. Definitions stay reachable by their URLs.
+    pub fn replace(&mut self, op: OperationDefinition) {
+        let code = op.code.clone();
+        self.system_ops.retain(|existing| existing.code != code);
+        for ops in self
+            .type_ops
+            .values_mut()
+            .chain(self.instance_ops.values_mut())
+        {
+            ops.retain(|existing| existing.code != code);
+        }
+        self.register(op);
+    }
+
     /// Gets an operation by its code.
     pub fn get_by_code(&self, code: &str) -> Option<Arc<OperationDefinition>> {
         self.by_code.get(code).cloned()

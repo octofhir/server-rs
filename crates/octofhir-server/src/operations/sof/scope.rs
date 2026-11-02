@@ -73,9 +73,12 @@ impl ViewScope {
 
         for id in &self.patients {
             if context.read(state, "Patient", id).await?.is_none() {
-                return Err(OperationError::InvalidParameters(format!(
-                    "patient: Patient/{id} cannot be found"
-                )));
+                return Err(super::rejection::rejected(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "not-found",
+                    Some("patient"),
+                    format!("patient: Patient/{id} cannot be found"),
+                ));
             }
         }
         let now = time::OffsetDateTime::now_utc();
@@ -84,9 +87,12 @@ impl ViewScope {
             let membership = crate::operations::group::resolve_membership(state, context, id, now)
                 .await
                 .map_err(|error| match error {
-                    OperationError::NotFound(_) => OperationError::InvalidParameters(format!(
-                        "group: Group/{id} cannot be found"
-                    )),
+                    OperationError::NotFound(_) => super::rejection::rejected(
+                        axum::http::StatusCode::BAD_REQUEST,
+                        "not-found",
+                        Some("group"),
+                        format!("group: Group/{id} cannot be found"),
+                    ),
                     other => other,
                 })?;
             group_members.push(membership.patient_ids);

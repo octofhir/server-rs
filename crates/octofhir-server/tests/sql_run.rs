@@ -279,11 +279,12 @@ async fn sql_run_queries_views_in_a_sandbox() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let parameters: Value = serde_json::from_str(&body).unwrap();
+    // An R4 server has no integer64: a BIGINT count is a decimal.
     assert_eq!(
         parameters,
         json!({"resourceType":"Parameters","parameter":[{"name":"row","part":[
             {"name":"family","valueString":"Alice"},
-            {"name":"observations","valueInteger64":2}
+            {"name":"observations","valueDecimal":2}
         ]}]})
     );
 

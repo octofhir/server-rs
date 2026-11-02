@@ -431,6 +431,14 @@ pub async fn build_capability_statement(
         .map(|s| s.as_str())
         .collect();
 
+    // SQL on FHIR: a server serving CRUD and search for ViewDefinition (an
+    // additional resource) declares it.
+    let mut standard_resource_types = standard_resource_types;
+    if resource_types.iter().any(|rt| rt == "ViewDefinition")
+        && !standard_resource_types.contains(&"ViewDefinition")
+    {
+        standard_resource_types.push("ViewDefinition");
+    }
     for rt in &standard_resource_types {
         let mapped = capability_search_params(search_registry, rt);
 
@@ -574,7 +582,7 @@ fn apply_capability_operations(
         }
         found
             .into_iter()
-            .map(|(name, definition)| json!({"name":name,"definition":definition}))
+            .map(|(code, definition)| sql_on_fhir_operation(&code, definition))
             .collect()
     }
     fn install(target: &mut Value, mut operations: Vec<Value>, graphql_enabled: bool) {
@@ -592,9 +600,33 @@ fn apply_capability_operations(
         install(rest, declared(registry, handlers, None), graphql_enabled);
         for resource in rest["resource"].as_array_mut().into_iter().flatten() {
             let resource_type = resource["type"].as_str().unwrap_or_default();
+            // SQL on FHIR: the ViewDefinition entry carries no operation; the
+            // data operations are system level.
+            if resource_type == "ViewDefinition" {
+                continue;
+            }
             let operations = declared(registry, handlers, Some(resource_type));
             install(resource, operations, graphql_enabled);
         }
+    }
+}
+
+/// A `rest.operation` entry. SQL on FHIR names its data operations with the
+/// `$` (`$sql-run`, `$sql-export`) and documents what this server's
+/// definitions leave to it.
+fn sql_on_fhir_operation(code: &str, definition: String) -> Value {
+    match code {
+        "sql-run" => json!({
+            "name": "$sql-run",
+            "definition": definition,
+            "documentation": "Formats: ndjson (default), json, csv (header), parquet (application/vnd.apache.parquet) and fhir. _format wins over Accept; without _format, Accept selects the format. A FHIR media type in Accept (application/fhir+json) returns any flat format as a Binary resource. _limit is capped at the server's search result limit. patient, group and _since narrow the resources feeding every ViewDefinition (_since by last update, group membership as of the request). source is not supported.",
+        }),
+        "sql-export" => json!({
+            "name": "$sql-export",
+            "definition": definition,
+            "documentation": "Formats: ndjson (default), json, csv (header) and parquet; files are split into parts past the configured rows per file. Every subject runs in one snapshot. Status: 202 while running, 303 to the result once finished; DELETE cancels. source is not supported.",
+        }),
+        _ => json!({"name": code, "definition": definition}),
     }
 }
 
