@@ -24,14 +24,14 @@ Multi-year priority. Detailed plan, state and phases: [`sql-on-fhir-plan.md`](sq
 
 | # | Item | Effort | State |
 |---|---|---|---|
-| 1.1 | Views as SQL over the server's data, `$viewdefinition-run`, `$viewdefinition-export` (phase 1) | — | done, local |
-| 1.2 | `$sql-run`, SQLQuery / SQLView, sandbox (phases 2–3) | — | done, local |
+| 1.1 | Views as SQL over the server's data, `$viewdefinition-run`, `$viewdefinition-export` (phase 1) | — | done (50a4fe9) |
+| 1.2 | `$sql-run`, SQLQuery / SQLView, sandbox (phases 2–3), `_format=fhir` | — | done (50a4fe9) |
 | 1.3 | `memberOf()` in `$run` and the sof CLI: pass the server's `TerminologyProvider` into the evaluation context | S | todo |
 | 1.4 | Terminology relations: ValueSet expansion and ConceptMap rows per job, with provenance (phase 4) | M | todo |
 | 1.5 | `$sql-export`: async jobs, manifest, several subjects (phase 5) | M | todo |
 | 1.6 | v3 canonicals (`org.sql-on-fhir.ig` and `hl7.fhir.uv.sql-on-fhir`), R6 ViewDefinition (phase 6) | S–M | todo |
 | 1.7 | Parquet output, `Accept` format negotiation | S | todo |
-| 1.8 | banshee 0.2.5 in the `$sql-run` guard, so `AS t(a int)` is accepted | S | todo |
+| 1.8 | banshee 0.2.5 in the `$sql-run` guard, so `AS t(a int)` is accepted | S | parser in (9cead17); add record functions (`jsonb_to_recordset`, …) to the allowlist |
 | 1.9 | Console: ViewDefinition page through `$sql-run`, SQLQuery editor with the banshee LSP (phase 7) | M | todo |
 | 1.10 | DuckDB as an embedded `SqlExecutor` in sof (dialect exists) | M | todo |
 
@@ -74,7 +74,7 @@ Later, from the FML library side: XML input for CDA maps, WASM build, LSP.
 | 4.5 | Conformance evidence: Inferno US Core and Subscriptions in CI, full CapabilityStatement | M–L | Aligned Networks |
 | 4.6 | R6 readiness: additional resources, new CapabilityStatement codes, `resource` search parameter type | M | with fhirschema and canonical-manager |
 | 4.7 | UDAP / FAST Security STU2 (DCR, B2B, tiered OAuth) | L | TEFCA |
-| 4.8 | `$evaluate-measure` on cql-rs, once the parser reads `valueset`, `include`, `codesystem`, `code`, `concept`, `define function` | L | parser work in cql-rs first |
+| 4.8 | `$evaluate-measure` on cql-rs | L | unblocked: cql-rs 0.2 reads `valueset`, `include`, `codesystem`, `code`, `concept`, `define function`; the CQL service loads includes from stored Libraries |
 
 ## 5. Standalone tools (new repos next to server-rs)
 
@@ -97,7 +97,11 @@ server picks up what makes sense later.
 - 2026-11-01: fml-rs 0.1.0 (engine, CLI, binaries for Linux, macOS, Windows); canonical-manager
   0.2.6 (registry fixes) and 0.2.7 (package folders laid out from the content store);
   fhirschema 0.3.33 (R6 ballot5); fhirpath-rs 0.5.1; ucum 0.9.2.
-- SQL on FHIR phases 1–3 (local, see the SoF plan).
+- SQL on FHIR phases 1–3, pushed (server 50a4fe9; sof 0.2.0 / 0.2.1).
+- 2026-11-01/02: cql-rs 0.2.0 / 0.2.1 (libraries end to end, real `cql` CLI with release
+  binaries, cql-tests 1693/1693); banshee 0.2.5; server on the published crates with no
+  `[patch.crates-io]`; JWT keys on aws-lc-rs (no `rsa` crate); `cargo audit` clean except
+  rkyv 0.7 (lockfile only); image `ghcr.io/octofhir/octofhir-server:41d1075`.
 
 ## Not doing
 
@@ -106,5 +110,4 @@ server picks up what makes sense later.
   (only with our own incremental-by-`txid` design, if ever).
 - Further investment in the FHIRPath LSP / VS Code extension and a FSH LSP (maintain only).
 - Traffic proxy / inspector; Da Vinci payer pack (maybe `$member-match` later).
-- cql-rs as a standalone product (the parser is finished for our console and 4.8 only).
 - Synthea-style clinical simulation; SDC form renderer or builder.
