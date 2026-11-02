@@ -311,6 +311,7 @@ impl IntoResponse for PackageError {
                 severity: "error",
                 code: "processing",
                 diagnostics: Some(message),
+                expression: Vec::new(),
             }],
         };
 
