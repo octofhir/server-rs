@@ -32,9 +32,28 @@ pub fn is_operation(segment: &str) -> bool {
     segment.starts_with('$')
 }
 
+/// Render an operation's result as its HTTP response.
+fn operation_response(code: &str, mut result: serde_json::Value) -> Result<Response, ApiError> {
+    // `$sql-run` hands the terminology provenance of its job over beside the
+    // result; it goes out as a header, never in the body.
+    let terminology = match (code, result.as_object_mut()) {
+        ("sql-run", Some(object)) => object.remove(super::sof::PROVENANCE_KEY),
+        _ => None,
+    };
+    let mut response = operation_body(code, result)?;
+    if let Some(serde_json::Value::String(record)) = terminology {
+        response.headers_mut().insert(
+            super::sof::PROVENANCE_HEADER,
+            axum::http::HeaderValue::from_str(&record)
+                .map_err(|_| ApiError::internal("Invalid terminology provenance header"))?,
+        );
+    }
+    Ok(response)
+}
+
 /// Render asynchronous operation kickoff with the polling location required by
 /// FHIR; the internal job envelope is not a clinical response resource.
-fn operation_response(code: &str, result: serde_json::Value) -> Result<Response, ApiError> {
+fn operation_body(code: &str, result: serde_json::Value) -> Result<Response, ApiError> {
     if matches!(code, "export" | "import") && result["status"] == "accepted" {
         let location = result["status_url"]
             .as_str()

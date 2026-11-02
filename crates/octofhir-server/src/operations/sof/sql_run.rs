@@ -7,24 +7,26 @@
 //! - a **ViewDefinition** runs as `$viewdefinition-run` does (server data or
 //!   inline `resource`, data filters, formats);
 //! - a **SQLQuery** or **SQLView** first resolves its dependencies (the
-//!   `context` artifacts supplied inline win over the server's): each
-//!   ViewDefinition becomes a table over the caller's authorized data
-//!   (`patient`, `group` and `_since` applied before the SQL), each SQLView a
-//!   CTE; `parameters` are bound to the declared `Library.parameter`s; then
-//!   the SQL runs in a sandbox (see [`super::sql_guard`] and
-//!   `octofhir_db_postgres::queries::sql_job`).
+//!   `context` artifacts supplied inline win over the server's, then the
+//!   installed packages): each ViewDefinition becomes a table over the
+//!   caller's authorized data (`patient`, `group` and `_since` applied before
+//!   the SQL), each SQLView a CTE, each ValueSet or ConceptMap a relation
+//!   with the columns "Terminology in SQL" defines, its content resolved once
+//!   for the job (see [`super::term_source`]); `parameters` are bound to the
+//!   declared `Library.parameter`s; then the SQL runs in a sandbox (see
+//!   [`super::sql_guard`] and `octofhir_db_postgres::queries::sql_job`).
 //!
 //! Errors follow the operation: 400 for invalid or conflicting input, 404 for
-//! a subject or dependency that cannot be found, 422 for an artifact that
-//! does not conform or SQL that cannot run.
+//! a subject or dependency that cannot be found or resolves to more than one
+//! version, 422 for an artifact that does not conform, a terminology
+//! dependency whose content cannot be determined, or SQL that cannot run.
 
 use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use octofhir_api::ApiError;
 use octofhir_db_postgres::queries::sql_job::{
-    DependencySource, DependencyTable, SqlJob, SqlJobError, ensure_sof_query_role,
-    ids_by_canonical, run_sql_job,
+    DependencySource, DependencyTable, SqlJob, SqlJobError, ensure_sof_query_role, run_sql_job,
 };
 use octofhir_search::SqlValue;
 use octofhir_sof::ViewDefinition;
@@ -32,10 +34,15 @@ use serde_json::Value;
 use tokio::sync::OnceCell;
 
 use super::engine::{self, ViewSql};
+use super::expansion::{Lookup, Resolved, split_canonical};
 use super::output::{OutputColumn, render};
 use super::scope::ViewScope;
 use super::sql_guard;
-use super::sql_library::{SqlLibrary, SqlLibraryKind};
+use super::sql_library::{Dependency, SqlLibrary, SqlLibraryKind};
+use super::term_source::{
+    PROVENANCE_KEY, ServerTerminology, TerminologyRelation, concept_map_relation,
+    matches_canonical, packaged, provenance_header, stored, value_set_relation,
+};
 use super::viewdefinition_run::{limit, output_format, parameters, run_view};
 use crate::operations::handler::OperationLevel;
 use crate::operations::{OperationContext, OperationError, OperationHandler};
@@ -153,8 +160,11 @@ impl SqlRunOperation {
             labels: HashMap::new(),
             tables: Vec::new(),
             views: Vec::new(),
+            terminology: HashMap::new(),
+            provenance: Vec::new(),
         };
         plan.resolve(library, &mut Vec::new()).await?;
+        let provenance = std::mem::take(&mut plan.provenance);
 
         let declared: HashMap<String, &'static str> = library
             .parameters
@@ -197,7 +207,22 @@ impl SqlRunOperation {
             .iter()
             .map(|column| OutputColumn::from_sql(&column.name, &column.sql_type))
             .collect();
-        render(format, &columns, &result.rows, limits.max_bytes)
+        let mut output = render(format, &columns, &result.rows, limits.max_bytes)?;
+        if !provenance.is_empty() {
+            let record = Value::Array(provenance.clone());
+            tracing::info!(
+                library = %library.display,
+                terminology = %record,
+                "SQL on FHIR job terminology"
+            );
+            if let Some(object) = output.as_object_mut() {
+                object.insert(
+                    PROVENANCE_KEY.to_owned(),
+                    Value::String(provenance_header(&provenance)),
+                );
+            }
+        }
+        Ok(output)
     }
 }
 
@@ -213,6 +238,11 @@ struct Plan<'a> {
     tables: Vec<DependencyTable>,
     /// SQLViews, dependencies before dependents.
     views: Vec<(String, String)>,
+    /// Terminology content by artifact (type, url, version): one resolution
+    /// per job.
+    terminology: HashMap<String, (Vec<(String, &'static str)>, Value)>,
+    /// What produced each terminology dependency's content.
+    provenance: Vec<Value>,
 }
 
 impl Plan<'_> {
@@ -250,10 +280,21 @@ impl Plan<'_> {
                 }
                 self.labels
                     .insert(dependency.label.clone(), dependency.canonical.clone());
-                let artifact = self.artifact(&dependency.canonical).await?;
+                let resolved = self.artifact(&dependency.canonical).await?;
+                let artifact = &resolved.resource;
+                // Every reference to one value set or concept map sees one
+                // content, however the canonical was written.
+                if let Some((columns, rows)) = self.terminology.get(&terminology_key(artifact)) {
+                    self.tables.push(DependencyTable {
+                        name: dependency.label.clone(),
+                        columns: columns.clone(),
+                        source: DependencySource::Rows(rows.clone()),
+                    });
+                    continue;
+                }
                 match artifact["resourceType"].as_str() {
                     Some("ViewDefinition") => {
-                        let view = ViewDefinition::from_json(&artifact).map_err(|error| {
+                        let view = ViewDefinition::from_json(artifact).map_err(|error| {
                             unprocessable(format!(
                                 "Dependency {} is not a valid ViewDefinition: {error}",
                                 dependency.canonical
@@ -263,7 +304,7 @@ impl Plan<'_> {
                         self.tables.push(table);
                     }
                     Some("Library") => {
-                        let view = SqlLibrary::from_json(&artifact).map_err(|error| {
+                        let view = SqlLibrary::from_json(artifact).map_err(|error| {
                             unprocessable(format!("Dependency {}: {error}", dependency.canonical))
                         })?;
                         if view.kind != SqlLibraryKind::View {
@@ -284,9 +325,23 @@ impl Plan<'_> {
                             .map_err(|error| unprocessable(format!("{}: {error}", view.display)))?;
                         self.views.push((dependency.label.clone(), checked.sql));
                     }
+                    Some("ValueSet") => {
+                        let source = ServerTerminology {
+                            state: self.state,
+                            context: self.context,
+                            inline: &self.inline,
+                        };
+                        let relation =
+                            value_set_relation(&source, &dependency.label, &resolved).await?;
+                        self.add_terminology(dependency, artifact, relation);
+                    }
+                    Some("ConceptMap") => {
+                        let relation = concept_map_relation(&dependency.label, &resolved)?;
+                        self.add_terminology(dependency, artifact, relation);
+                    }
                     _ => {
                         return Err(unprocessable(format!(
-                            "Dependency {} is neither a ViewDefinition nor a SQLView",
+                            "Dependency {} is not a ViewDefinition, SQLView, ValueSet or ConceptMap",
                             dependency.canonical
                         )));
                     }
@@ -297,19 +352,57 @@ impl Plan<'_> {
     }
 
     /// The artifact `canonical` (`url` or `url|version`) names: a `context`
-    /// artifact, else the server's Library or ViewDefinition.
-    async fn artifact(&self, canonical: &str) -> Result<Value, OperationError> {
+    /// artifact, else the server's Library, ViewDefinition, ValueSet or
+    /// ConceptMap, else a ValueSet or ConceptMap of an installed package.
+    async fn artifact(&self, canonical: &str) -> Result<Resolved, OperationError> {
         let (url, version) = split_canonical(canonical);
         if let Some(found) = self
             .inline
             .iter()
             .find(|artifact| matches_canonical(artifact, url, version))
         {
-            return Ok(found.clone());
+            return Ok(Resolved {
+                resource: found.clone(),
+                origin: "context".into(),
+            });
         }
-        find_canonical(self.state, self.context, url, version)
-            .await?
-            .ok_or_else(|| OperationError::NotFound(format!("Dependency {canonical} not found")))
+        let not_found =
+            |reason: String| OperationError::NotFound(format!("Dependency {canonical}: {reason}"));
+        for resource_type in ["Library", "ViewDefinition", "ValueSet", "ConceptMap"] {
+            match stored(self.state, self.context, resource_type, url, version).await? {
+                Lookup::Found(resolved) => return Ok(resolved),
+                Lookup::Ambiguous(reason) => return Err(not_found(reason)),
+                Lookup::Missing => {}
+            }
+        }
+        for resource_type in ["ValueSet", "ConceptMap"] {
+            match packaged(resource_type, url, version).await? {
+                Lookup::Found(resolved) => return Ok(resolved),
+                Lookup::Ambiguous(reason) => return Err(not_found(reason)),
+                Lookup::Missing => {}
+            }
+        }
+        Err(not_found("not found".into()))
+    }
+
+    /// A terminology dependency's relation becomes a table of the job.
+    fn add_terminology(
+        &mut self,
+        dependency: &Dependency,
+        artifact: &Value,
+        relation: TerminologyRelation,
+    ) {
+        let rows = Value::Array(relation.rows);
+        self.terminology.insert(
+            terminology_key(artifact),
+            (relation.columns.clone(), rows.clone()),
+        );
+        self.provenance.push(relation.provenance);
+        self.tables.push(DependencyTable {
+            name: dependency.label.clone(),
+            columns: relation.columns,
+            source: DependencySource::Rows(rows),
+        });
     }
 
     /// A ViewDefinition as a table: SQL over the caller's authorized rows
@@ -388,10 +481,7 @@ async fn subject(
                         "subjectCanonical requires a canonical".into(),
                     )
                 })?;
-            let (url, version) = split_canonical(canonical);
-            find_canonical(state, context, url, version)
-                .await?
-                .ok_or_else(|| OperationError::NotFound(format!("Subject {canonical} not found")))?
+            find_canonical(state, context, canonical).await?
         }
         _ => {
             let reference = param["valueReference"]["reference"]
@@ -445,68 +535,37 @@ async fn read_reference(
         .ok_or_else(|| OperationError::NotFound(format!("{relative} not found")))
 }
 
-/// The server's Library or ViewDefinition with `url` (and `version`), as the
-/// caller may read it.
+/// The server's Library or ViewDefinition `canonical` names, as the caller
+/// may read it; none, or more than one version, is a 404.
 async fn find_canonical(
     state: &AppState,
     context: &OperationContext,
-    url: &str,
-    version: Option<&str>,
-) -> Result<Option<Value>, OperationError> {
-    let registry = state.search_config.config().registry.clone();
+    canonical: &str,
+) -> Result<Value, OperationError> {
+    let (url, version) = split_canonical(canonical);
     for resource_type in ["Library", "ViewDefinition"] {
-        let matching: Vec<Value> = if registry.get(resource_type, "url").is_some() {
-            let mut search = octofhir_storage::SearchParams::new()
-                .with_count(2)
-                .with_param("url", url);
-            if let Some(version) = version {
-                search = search.with_param("version", version);
+        match stored(state, context, resource_type, url, version).await? {
+            Lookup::Found(resolved) => return Ok(resolved.resource),
+            Lookup::Ambiguous(reason) => {
+                return Err(OperationError::NotFound(format!("Subject {reason}")));
             }
-            context
-                .search(state, resource_type, &search)
-                .await?
-                .entries
-                .into_iter()
-                .map(|entry| entry.resource)
-                .filter(|resource| matches_canonical(resource, url, version))
-                .collect()
-        } else {
-            // No `url` search parameter for this type (ViewDefinition is a
-            // logical model): find the ids, then read each as the caller.
-            let ids = ids_by_canonical(&state.read_db_pool, resource_type, url, version)
-                .await
-                .map_err(crate::handlers::map_storage_error)?;
-            let mut readable = Vec::with_capacity(ids.len());
-            for id in ids {
-                if let Some(stored) = context.read(state, resource_type, &id).await? {
-                    readable.push(stored.resource);
-                }
-            }
-            readable
-        };
-        match matching.as_slice() {
-            [] => {}
-            [one] => return Ok(Some(one.clone())),
-            _ => {
-                return Err(OperationError::InvalidParameters(format!(
-                    "{url} matches more than one {resource_type}; supply url|version"
-                )));
-            }
+            Lookup::Missing => {}
         }
     }
-    Ok(None)
+    Err(OperationError::NotFound(format!(
+        "Subject {canonical} not found"
+    )))
 }
 
-fn split_canonical(canonical: &str) -> (&str, Option<&str>) {
-    match canonical.split_once('|') {
-        Some((url, version)) if !version.is_empty() => (url, Some(version)),
-        Some((url, _)) => (url, None),
-        None => (canonical, None),
-    }
-}
-
-fn matches_canonical(artifact: &Value, url: &str, version: Option<&str>) -> bool {
-    artifact["url"] == url && version.is_none_or(|version| artifact["version"] == version)
+/// The identity of a resolved artifact for the job's terminology cache:
+/// type, url and version.
+fn terminology_key(artifact: &Value) -> String {
+    format!(
+        "{}|{}|{}",
+        artifact["resourceType"].as_str().unwrap_or_default(),
+        artifact["url"].as_str().unwrap_or_default(),
+        artifact["version"].as_str().unwrap_or_default()
+    )
 }
 
 /// `context` (0..*): inline artifacts dependencies may name.

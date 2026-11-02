@@ -25,6 +25,7 @@
 //! ```
 
 mod engine;
+mod expansion;
 mod export;
 mod output;
 mod run;
@@ -33,12 +34,15 @@ mod sql;
 mod sql_guard;
 mod sql_library;
 mod sql_run;
+mod term_source;
+mod terminology;
 mod viewdefinition_run;
 
 pub use export::{ViewDefinitionExportOperation, execute_viewdefinition_export};
 pub use run::ViewDefinitionRunOperation;
 pub use sql::ViewDefinitionSqlOperation;
 pub use sql_run::SqlRunOperation;
+pub(crate) use term_source::{PROVENANCE_HEADER, PROVENANCE_KEY};
 pub use viewdefinition_run::ViewDefinitionRunSpecOperation;
 
 /// Register the SQL on FHIR operations this server implements, so they are
