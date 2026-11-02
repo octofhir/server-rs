@@ -218,6 +218,16 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "jsonb_pretty",
     "jsonb_concat",
     "row_to_json",
+    // JSON to rows: record-returning, read with a column definition list
+    // (`AS t(a int, b text)`) or the row type of a base value
+    "json_to_record",
+    "jsonb_to_record",
+    "json_to_recordset",
+    "jsonb_to_recordset",
+    "json_populate_record",
+    "jsonb_populate_record",
+    "json_populate_recordset",
+    "jsonb_populate_recordset",
     // arrays and sets
     "array_length",
     "array_lower",
@@ -528,6 +538,25 @@ mod tests {
         accepts("SELECT g FROM generate_series(1, 3) g, LATERAL (SELECT 1) l");
         accepts("SELECT 1 FROM patient UNION ALL SELECT 2 FROM obs");
         accepts("SELECT extract(year FROM birth_date) FROM patient");
+    }
+
+    #[test]
+    fn record_functions_read_with_a_column_definition_list() {
+        accepts(
+            "SELECT t.a, t.b FROM jsonb_to_recordset('[{\"a\":1,\"b\":\"x\"}]'::jsonb) \
+             AS t(a int, b text)",
+        );
+        accepts(
+            "SELECT r.code, r.n FROM obs o, \
+             LATERAL json_to_recordset(o.components::json) AS r(code varchar(20), n numeric(10, 2))",
+        );
+        accepts("SELECT * FROM jsonb_to_record('{\"a\":1}'::jsonb) AS t(a bigint)");
+        // The column list does not open a way to other functions.
+        rejects("SELECT * FROM jsonb_to_recordset('[]'::jsonb) AS t(a int DEFAULT pg_sleep(1))");
+        assert!(
+            rejects("SELECT * FROM jsonb_to_recordset(current_setting('role')::jsonb) AS t(a int)")
+                .contains("not allowed")
+        );
     }
 
     #[test]
