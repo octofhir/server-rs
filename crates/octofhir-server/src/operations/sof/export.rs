@@ -118,9 +118,11 @@ impl ViewDefinitionExportOperation {
                 &SearchParams::new().with_count(1),
             )
             .await?;
-        CompiledView::compile(&view_def).await.map_err(|error| {
-            OperationError::InvalidParameters(format!("Invalid ViewDefinition: {error}"))
-        })?;
+        CompiledView::compile_with(&view_def, &engine::compile_options(state))
+            .await
+            .map_err(|error| {
+                OperationError::InvalidParameters(format!("Invalid ViewDefinition: {error}"))
+            })?;
         // Store job parameters as JSON for the async job
         let job_params = json!({
             "type": "viewdefinition_export",
@@ -340,7 +342,7 @@ pub async fn execute_viewdefinition_export(
         return Err("Export batch and file limits must be positive".into());
     }
     let started_at = Utc::now();
-    let compiled = CompiledView::compile(&view_def)
+    let compiled = CompiledView::compile_with(&view_def, &engine::compile_options(&state))
         .await
         .map_err(|error| format!("Invalid ViewDefinition: {error}"))?;
     let view_name = view_def.name.as_deref().unwrap_or("view");

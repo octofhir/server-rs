@@ -12,7 +12,9 @@
 //! the full FHIRPath function set, e.g. `memberOf()`).
 
 use octofhir_search::BuiltQuery;
-use octofhir_sof::{ColumnInfo, CompiledView, GeneratedSql, SqlGenerator, ViewDefinition};
+use octofhir_sof::{
+    ColumnInfo, CompileOptions, CompiledView, GeneratedSql, SqlGenerator, ViewDefinition,
+};
 use octofhir_storage::SearchParams;
 use serde_json::{Map, Value};
 
@@ -184,6 +186,15 @@ pub(crate) async fn run_view_sql(
     }))
 }
 
+/// Options for the in-memory engine: the server's terminology layer resolves
+/// `memberOf()`, `subsumes()` and `translate()` in view paths.
+pub(crate) fn compile_options(state: &AppState) -> CompileOptions {
+    match &state.terminology_provider {
+        Some(provider) => CompileOptions::with_terminology(provider.clone()),
+        None => CompileOptions::default(),
+    }
+}
+
 /// Page size used when reading source resources for the in-memory engine.
 const FETCH_PAGE_SIZE: u32 = 500;
 
@@ -229,9 +240,11 @@ pub(crate) async fn execute(
             "View source exceeds the configured resource or byte budget".into(),
         ));
     }
-    let compiled = CompiledView::compile(view).await.map_err(|error| {
-        OperationError::InvalidParameters(format!("Invalid ViewDefinition: {error}"))
-    })?;
+    let compiled = CompiledView::compile_with(view, &compile_options(state))
+        .await
+        .map_err(|error| {
+            OperationError::InvalidParameters(format!("Invalid ViewDefinition: {error}"))
+        })?;
     let mut rows = Vec::new();
     let mut output_bytes: usize = 0;
     for resource in &resources {
