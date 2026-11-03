@@ -4,6 +4,7 @@
 [server]
 host = "0.0.0.0"
 port = 8888
+base_url = "https://fhir.octofhir.com"
 read_timeout_ms = 30000
 write_timeout_ms = 30000
 # Increase body limit for production (10 MiB)
@@ -58,7 +59,7 @@ sample_ratio = 0.1
 [auth]
 enabled = true
 # IMPORTANT: Change this to your actual server URL in production
-issuer = "https://fhir.octofhir.tech"
+issuer = "https://fhir.octofhir.com"
 
 [auth.oauth]
 authorization_code_lifetime = "10m"
