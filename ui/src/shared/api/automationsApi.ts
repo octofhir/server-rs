@@ -237,14 +237,14 @@ class AutomationsApiClient {
 
     let response = await executeFetch();
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       const refreshed = await refreshAuthSession(true);
       if (refreshed) {
         response = await executeFetch();
       }
     }
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       authInterceptor.handleResponse(response);
     }
 

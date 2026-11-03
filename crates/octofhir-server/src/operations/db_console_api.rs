@@ -1195,15 +1195,9 @@ pub async fn run_maintenance(
     Path((schema, table)): Path<(String, String)>,
     Json(req): Json<MaintenanceRequest>,
 ) -> Result<Response, ApiError> {
+    // VACUUM / ANALYZE / REINDEX are fixed, data-preserving operations, so they are
+    // gated by console access (enabled + required role), not by the SQL editor mode.
     check_db_console_access(&state.config.db_console, &auth_context)?;
-
-    // Maintenance is DDL-adjacent and can take heavy locks — admin only.
-    if !matches!(
-        state.config.db_console.sql_mode,
-        crate::config::SqlMode::Admin
-    ) {
-        return Err(ApiError::forbidden("Table maintenance requires admin mode"));
-    }
 
     if !is_valid_identifier(&schema) || !is_valid_identifier(&table) {
         return Err(ApiError::bad_request("Invalid schema or table name"));

@@ -14,8 +14,6 @@
 }
 
 .copyAction {
-    box-shadow: var(--octo-shadow-xs);
-    backdrop-filter: blur(4px);
 }
 
 .content {
@@ -32,12 +30,22 @@
     font-family: var(--octo-typography-mono);
 }
 
-.indicator {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    background: var(--octo-brand-gradient);
-    opacity: 0.6;
+.key {
+    color: var(--octo-syntax-key);
+}
+
+.string {
+    color: var(--octo-syntax-string);
+}
+
+.number {
+    color: var(--octo-syntax-number);
+}
+
+.literal {
+    color: var(--octo-syntax-literal);
+}
+
+.punctuation {
+    color: var(--octo-syntax-punctuation);
 }

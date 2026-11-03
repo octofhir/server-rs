@@ -56,6 +56,19 @@ export class ApiResponseError extends Error {
   }
 }
 
+/** First human-readable reason from an OperationOutcome or `{ error }` body. */
+function readErrorDetail(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const body = data as {
+    issue?: Array<{ diagnostics?: unknown; details?: { text?: unknown } }>;
+    error_description?: unknown;
+    error?: unknown;
+  };
+  const issue = body.issue?.[0];
+  const candidates = [issue?.diagnostics, issue?.details?.text, body.error_description, body.error];
+  return candidates.find((value): value is string => typeof value === "string" && value.length > 0);
+}
+
 function toHttpMethod(method: string | undefined): HttpMethod {
   switch (method) {
     case "POST":
@@ -633,14 +646,14 @@ class ServerApiClient {
 
     let response = await executeFetch();
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       const refreshed = await refreshAuthSession(true);
       if (refreshed) {
         response = await executeFetch();
       }
     }
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       authInterceptor.handleResponse(response);
     }
 
@@ -681,7 +694,7 @@ class ServerApiClient {
 
     if (!response.ok) {
       throw new ApiResponseError(
-        `HTTP ${response.status}: ${response.statusText}`,
+        readErrorDetail(data) ?? `HTTP ${response.status}: ${response.statusText}`,
         response.status,
         response.statusText,
         data

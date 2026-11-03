@@ -8,9 +8,9 @@
  *
  *     import "@octofhir/ui-kit/styles";
  *
- * Loads the UI typeface (Inter) plus the self-hosted mono font. Design tokens
+ * Loads the UI typeface (IBM Plex Sans) plus the self-hosted mono font. Design tokens
  * are emitted as `--octo-*` CSS variables by `UIProvider`.
  */
 
-import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/ibm-plex-sans/wght.css";
 import "./shared/theme/fonts.css";

@@ -5,7 +5,7 @@
 	min-height: 100vh;
 	background: #d9dbe0;
 	padding: 0 24px 48px;
-	font-family: "Inter Variable", Inter, system-ui, sans-serif;
+	font-family: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, sans-serif;
 }
 
 .top {
@@ -131,12 +131,12 @@
 }
 
 .dir[data-dir="studio"] {
-	--sg-font-head: "Inter Variable", Inter, system-ui, sans-serif;
+	--sg-font-head: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, sans-serif;
 	--sg-head-weight: 600;
 	--sg-head-tracking: -0.025em;
 	--sg-h1: 24px;
 	--sg-body: 14px;
-	--sg-label-font: "Inter Variable", Inter, system-ui, sans-serif;
+	--sg-label-font: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, sans-serif;
 	--sg-label-size: 12px;
 	--sg-label-transform: none;
 	--sg-label-tracking: 0;
@@ -158,12 +158,12 @@
 }
 
 .dir[data-dir="ink"] {
-	--sg-font-head: "Inter Variable", Inter, system-ui, sans-serif;
+	--sg-font-head: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, sans-serif;
 	--sg-head-weight: 650;
 	--sg-head-tracking: -0.02em;
 	--sg-h1: 20px;
 	--sg-body: 13.5px;
-	--sg-label-font: "Inter Variable", Inter, system-ui, sans-serif;
+	--sg-label-font: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, sans-serif;
 	--sg-label-size: 11px;
 	--sg-label-transform: uppercase;
 	--sg-label-tracking: 0.05em;

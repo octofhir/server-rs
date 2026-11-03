@@ -62,9 +62,13 @@ class AuthInterceptor {
 
 	/**
 	 * Check if a response status code indicates an authentication error.
+	 *
+	 * Only 401 means the session is gone. 403 is an authenticated request the
+	 * server refused (scope, policy, admin-only operation) and must surface as
+	 * an error instead of logging the user out.
 	 */
 	isAuthError(status: number): boolean {
-		return status === 401 || status === 403;
+		return status === 401;
 	}
 
 	/**

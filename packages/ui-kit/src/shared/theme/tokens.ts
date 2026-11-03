@@ -101,6 +101,15 @@ export const tokens = {
             focus: {
                 ring: "#b98309",
             },
+            // Code/data highlighting (JSON viewers). Mirrors ui/src/shared/monaco/theme.ts so plain
+            // viewers and editors colour the same token the same way.
+            syntax: {
+                key: "#1d4ed8",
+                string: "#15803d",
+                number: "#0e7490",
+                literal: "#855700",
+                punctuation: "#6b6b74",
+            },
             // Navigation rail: ink in both schemes (the hybrid direction's signature).
             sidebar: {
                 bg: "#111214",
@@ -193,6 +202,13 @@ export const tokens = {
             focus: {
                 ring: "#f5bd3b",
             },
+            syntax: {
+                key: "#8fb3ff",
+                string: "#86d39d",
+                number: "#6fd3e0",
+                literal: "#f7c95a",
+                punctuation: "#8b8b94",
+            },
             sidebar: {
                 bg: "#08090a",
                 text: "#c9cad0",
@@ -221,7 +237,7 @@ export const tokens = {
         },
     },
     typography: {
-        family: '"Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        family: '"IBM Plex Sans Variable", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         // Page titles and section labels are mono — part of the console's signature.
         heading: '"JetBrains Mono", "SF Mono", ui-monospace, monospace',
         mono: '"JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace',

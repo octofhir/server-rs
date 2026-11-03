@@ -4,7 +4,6 @@ import { createGraphiQLFetcher } from "@graphiql/toolkit";
 import { useColorScheme } from "@octofhir/ui-kit";
 import "graphiql/style.css";
 import { useUiSettings } from "@/shared";
-import { OCTOFHIR_THEME_DARK, OCTOFHIR_THEME_LIGHT, useOctoMonacoTheme } from "@/shared/monaco/theme";
 import classes from "./GraphQLConsolePage.module.css";
 
 const DEFAULT_QUERY = `# ⌘↵ run · ⇧⌘P prettify · ⌃Space complete
@@ -20,12 +19,8 @@ query {
 `;
 const graphQLEndpoint = `${window.location.origin}/$graphql`;
 
-const EDITOR_THEMES = { light: OCTOFHIR_THEME_LIGHT, dark: OCTOFHIR_THEME_DARK };
-
 export function GraphQLConsolePage() {
 	const { colorScheme } = useColorScheme();
-	// Registers the shared Monaco themes so GraphiQL's editors can use them.
-	useOctoMonacoTheme();
 	const [settings] = useUiSettings();
 	const fetcher = useMemo(
 		() =>
@@ -49,7 +44,6 @@ export function GraphQLConsolePage() {
 					defaultQuery={DEFAULT_QUERY}
 					shouldPersistHeaders
 					forcedTheme={colorScheme}
-					editorTheme={EDITOR_THEMES}
 				/>
 			</div>
 		</div>
