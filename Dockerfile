@@ -61,13 +61,16 @@ COPY --from=ui-builder /app/ui/dist ./ui/dist
 # `--build-arg RELEASE_LTO=thin --build-arg RELEASE_CODEGEN_UNITS=16`.
 ARG RELEASE_LTO=fat
 ARG RELEASE_CODEGEN_UNITS=1
+ARG TARGETPLATFORM
 
 # Build release binary with cached cargo registry and target dir.
 # `find … -exec touch` refreshes mtimes — BuildKit's deterministic COPY
 # would otherwise leave cargo's incremental cache unable to see source edits.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/work/server-rs/target \
+# Each platform has its own caches: a multi-platform build runs the platforms at
+# once, and two cargos unpacking into one registry collide (`.cargo-ok`: File exists).
+RUN --mount=type=cache,id=cargo-registry-${TARGETPLATFORM},target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git-${TARGETPLATFORM},target=/usr/local/cargo/git \
+    --mount=type=cache,id=server-target-${TARGETPLATFORM},target=/work/server-rs/target \
     find crates -name '*.rs' -exec touch {} + \
     && CARGO_PROFILE_RELEASE_LTO=${RELEASE_LTO} \
        CARGO_PROFILE_RELEASE_CODEGEN_UNITS=${RELEASE_CODEGEN_UNITS} \
