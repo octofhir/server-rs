@@ -1,0 +1,236 @@
+/* FML console: map editor | input + result/trace/issues. Tokens only, flat surfaces. */
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kbd {
+  margin-left: 6px;
+  font-family: var(--octo-typography-mono);
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-lg);
+  background: var(--octo-surface-1);
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 8px 2px 12px;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-2);
+  flex: none;
+}
+
+.panelTitle {
+  font-family: var(--octo-typography-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--octo-text-primary);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.mono {
+  font-family: var(--octo-typography-mono);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--octo-text-secondary);
+  font-size: 12px;
+}
+
+.editorHost {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tabs {
+  flex: none;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-2);
+}
+
+.tabBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.placeholder {
+  padding: 16px;
+  color: var(--octo-text-secondary);
+  font-size: 13px;
+}
+
+.issues {
+  display: flex;
+  flex-direction: column;
+}
+
+.issue {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.issue svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.error {
+  color: var(--octo-accent-fire);
+}
+
+.warning {
+  color: var(--octo-accent-warm);
+}
+
+/* The trace event being replayed, in the map editor. */
+.traceHighlight {
+  background: var(--octo-accent-primary-bg);
+  outline: 1px solid var(--octo-accent-primary);
+}
+
+/* ── Trace replay ── */
+
+.trace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.traceToolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  flex: none;
+}
+
+.traceBody {
+  display: grid;
+  grid-template-columns: minmax(180px, 40%) 1fr;
+  flex: 1;
+  min-height: 0;
+}
+
+.traceEvents {
+  overflow: auto;
+  border-right: 1px solid var(--octo-border-subtle);
+}
+
+.traceEvent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding-right: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--octo-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.traceEvent:hover {
+  background: var(--octo-surface-2);
+}
+
+.traceEventActive,
+.traceEventActive:hover {
+  background: var(--octo-accent-primary-bg);
+}
+
+.tracePhase {
+  width: 36px;
+  flex: none;
+  font-family: var(--octo-typography-mono);
+  font-size: 11px;
+  color: var(--octo-text-secondary);
+}
+
+.traceDetail {
+  overflow: auto;
+  padding: 8px 12px;
+}
+
+.detailSection {
+  margin-bottom: 12px;
+}
+
+.detailTitle {
+  margin-bottom: 4px;
+  font-family: var(--octo-typography-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: lowercase;
+  color: var(--octo-text-secondary);
+}
+
+.stackFrame {
+  display: block;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--octo-accent-primary-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.variable {
+  margin-bottom: 6px;
+}
+
+.variableHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.variableValue {
+  margin: 2px 0 0;
+  padding: 4px 6px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: var(--octo-radius-sm);
+  background: var(--octo-surface-2);
+  font-family: var(--octo-typography-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

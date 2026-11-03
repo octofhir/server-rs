@@ -212,6 +212,8 @@ pub struct ValidationService {
     /// Shared validator instance with pre-compiled schemas
     validator: Arc<FhirValidator>,
     schema_provider: Arc<dyn SchemaProvider>,
+    /// Core definitions of the server's release, for checking StructureMaps with fml-check.
+    structure_maps: Option<Arc<fml_check::CoreDefinitions>>,
 }
 
 impl ValidationService {
@@ -233,6 +235,7 @@ impl ValidationService {
 
         Self {
             validator: Arc::new(validator),
+            structure_maps: map_definitions(&model_provider),
             schema_provider: model_provider,
         }
     }
@@ -290,6 +293,7 @@ impl ValidationService {
 
         Self {
             validator: Arc::new(validator),
+            structure_maps: map_definitions(&model_provider),
             schema_provider: model_provider,
         }
     }
@@ -393,6 +397,14 @@ impl ValidationService {
         if !constraints.is_empty() {
             outcome.valid = false;
             outcome.issues.extend(constraints);
+        }
+        if resource["resourceType"] == "StructureMap"
+            && let Some(core) = &self.structure_maps
+        {
+            // Warnings: they do not make the resource invalid.
+            outcome
+                .issues
+                .extend(crate::operations::fml::structure_map_issues(resource, core));
         }
         outcome
     }
@@ -507,6 +519,14 @@ impl ValidationService {
             )
             .await
     }
+}
+
+/// The core definitions StructureMaps are checked against: the server's release.
+fn map_definitions(
+    model_provider: &OctoFhirModelProvider,
+) -> Option<Arc<fml_check::CoreDefinitions>> {
+    fml_check::Release::parse(model_provider.fhir_version_str())
+        .map(|release| Arc::new(fml_check::CoreDefinitions::new(release)))
 }
 
 /// Resource rules that are not encoded as base-schema FHIRPath invariants.
@@ -667,6 +687,7 @@ mod outcome_tests {
                     .with_target_profile_validation(true),
             ),
             schema_provider: provider.clone(),
+            structure_maps: None,
         });
         let body = serde_json::json!({"resourceType":"Observation", "status":"final", "code":{"text":"isolation"},
             "subject":{"reference":"Patient/same-target"}});
@@ -748,6 +769,7 @@ mod outcome_tests {
         )
         .clone();
         let service = ValidationService {
+            structure_maps: None,
             validator: Arc::new(FhirValidator::from_schemas(schemas.clone(), None)),
             schema_provider: Arc::new(
                 octofhir_fhirschema::validation::InMemorySchemaProvider::from_map(

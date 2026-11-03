@@ -51,6 +51,7 @@ pub mod definition;
 pub mod evaluate_measure;
 pub mod everything;
 pub mod fhirpath;
+pub mod fml;
 pub mod graph;
 pub(crate) mod group;
 pub mod handler;
@@ -78,6 +79,7 @@ pub use definition::{OperationDefinition, OperationKind, OperationParameter, Par
 pub use evaluate_measure::EvaluateMeasureOperation;
 pub use everything::EverythingOperation;
 pub use fhirpath::FhirPathOperation;
+pub use fml::{ConvertOperation, ExtractOperation, TransformOperation};
 pub use graph::GraphOperation;
 pub use handler::{DynOperationHandler, OperationError, OperationHandler};
 pub use loader::{LoadError, load_operations};
@@ -168,6 +170,7 @@ pub fn register_core_operations_full(
         sql_on_fhir_config,
         cql_enabled,
         crate::config::BulkImportConfig::default(),
+        crate::config::FmlConfig::default(),
     )
 }
 
@@ -179,6 +182,7 @@ pub fn register_core_operations_all(
     sql_on_fhir_config: crate::config::SqlOnFhirConfig,
     cql_enabled: bool,
     bulk_import_config: crate::config::BulkImportConfig,
+    fml_config: crate::config::FmlConfig,
 ) -> HashMap<String, DynOperationHandler> {
     let mut handlers: HashMap<String, DynOperationHandler> = HashMap::new();
 
@@ -307,6 +311,12 @@ pub fn register_core_operations_all(
 
     // $graph operation
     handlers.insert("graph".to_string(), Arc::new(GraphOperation::new()));
+
+    // StructureMap/$transform, QuestionnaireResponse/$extract and $convert (FHIR Mapping Language)
+    let (transform, extract, convert) = fml::operations(fml_config);
+    handlers.insert("transform".to_string(), Arc::new(transform));
+    handlers.insert("extract".to_string(), Arc::new(extract));
+    handlers.insert("convert".to_string(), Arc::new(convert));
 
     handlers
 }

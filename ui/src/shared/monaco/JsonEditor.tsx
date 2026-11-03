@@ -1,7 +1,7 @@
 import Editor, { type OnChange, type OnMount } from "@monaco-editor/react";
 import { useColorScheme } from "@octofhir/ui-kit";
 import type * as Monaco from "monaco-editor";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ensureOctofhirThemes, OCTOFHIR_THEME_DARK, OCTOFHIR_THEME_LIGHT } from "./lspClient";
 import { bindEditorKey } from "./keybinding";
 
@@ -26,6 +26,10 @@ export interface JsonEditorProps {
   schema?: object;
   /** Resource type for schema URI (used for Monaco schema matching) */
   resourceType?: string;
+  /** Character offsets of a range to highlight and scroll to (end exclusive). */
+  highlight?: { start: number; end: number };
+  /** Class name of the highlight decoration. */
+  highlightClassName?: string;
 }
 
 // Helper to configure Monaco JSON Schema
@@ -68,9 +72,13 @@ export function JsonEditor({
   onValidationError,
   schema,
   resourceType,
+  highlight,
+  highlightClassName,
 }: JsonEditorProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
+  const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  const [mounted, setMounted] = useState(false);
   const { colorScheme } = useColorScheme();
   const editorTheme = colorScheme === "dark" ? OCTOFHIR_THEME_DARK : OCTOFHIR_THEME_LIGHT;
 
@@ -85,6 +93,8 @@ export function JsonEditor({
     (editor, monaco) => {
       editorRef.current = editor;
       monacoRef.current = monaco;
+      decorationsRef.current = editor.createDecorationsCollection();
+      setMounted(true);
 
       // Add Ctrl+Enter command for execute
       if (onExecute) {
@@ -123,6 +133,28 @@ export function JsonEditor({
     },
     [onExecute, onValidationError, readOnly]
   );
+
+  // The highlighted range, kept in view.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const decorations = decorationsRef.current;
+    if (!mounted || !editor || !model || !decorations) return;
+    if (!highlight) {
+      decorations.clear();
+      return;
+    }
+    const start = model.getPositionAt(highlight.start);
+    const end = model.getPositionAt(highlight.end);
+    const range = {
+      startLineNumber: start.lineNumber,
+      startColumn: start.column,
+      endLineNumber: end.lineNumber,
+      endColumn: end.column,
+    };
+    decorations.set([{ range, options: { className: highlightClassName } }]);
+    editor.revealRangeInCenterIfOutsideViewport(range);
+  }, [mounted, highlight, highlightClassName, value]);
 
   // Handle value changes from React
   const handleChange: OnChange = useCallback(

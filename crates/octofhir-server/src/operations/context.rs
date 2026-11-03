@@ -30,6 +30,8 @@ pub struct OperationContext {
     is_get: bool,
     /// The request's `Accept` header.
     accept: Option<String>,
+    /// The request's `Content-Type` header.
+    content_type: Option<String>,
 }
 
 impl FromRequestParts<AppState> for OperationContext {
@@ -86,6 +88,11 @@ impl FromRequestParts<AppState> for OperationContext {
                 .filter_map(|value| value.to_str().ok())
                 .reduce(|first, _| first)
                 .map(str::to_owned),
+            content_type: parts
+                .headers
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
         })
     }
 }
@@ -108,7 +115,13 @@ impl OperationContext {
             respond_async: false,
             is_get: false,
             accept: None,
+            content_type: None,
         })
+    }
+
+    /// The request's `Content-Type` header.
+    pub(crate) fn content_type(&self) -> Option<&str> {
+        self.content_type.as_deref()
     }
 
     /// The request's `Accept` header.

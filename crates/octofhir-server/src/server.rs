@@ -1080,6 +1080,8 @@ async fn build_app_with_runtime(
             tracing::info!("Registered $validate at system level");
             // SQL on FHIR operations, independent of the IG package download
             crate::operations::sof::register_operation_definitions(&mut registry);
+            // FML operations ($transform, SDC $extract)
+            crate::operations::fml::register_operation_definitions(&mut registry, cfg.fml.enabled);
             // Register $status for Subscription (R5 subscription status)
             registry.register(crate::operations::OperationDefinition {
                 code: "status".to_string(),
@@ -1175,6 +1177,8 @@ async fn build_app_with_runtime(
             });
             // SQL on FHIR operations, independent of the IG package download
             crate::operations::sof::register_operation_definitions(&mut registry);
+            // FML operations ($transform, SDC $extract)
+            crate::operations::fml::register_operation_definitions(&mut registry, cfg.fml.enabled);
             // Register $status for Subscription (R5 subscription status)
             registry.register(crate::operations::OperationDefinition {
                 code: "status".to_string(),
@@ -1263,6 +1267,7 @@ async fn build_app_with_runtime(
             cfg.sql_on_fhir.clone(),
             cfg.cql.enabled,
             cfg.bulk_import.clone(),
+            cfg.fml.clone(),
         ));
     tracing::info!(
         count = operation_handlers.len(),
@@ -2147,6 +2152,23 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         .route(
             "/api/notebooks/{id}/run",
             axum::routing::post(crate::notebook_run::notebook_run),
+        )
+        // FML editor: check as you type, format, compile to a StructureMap
+        .route(
+            "/api/fml/check",
+            axum::routing::post(crate::operations::fml::api::check),
+        )
+        .route(
+            "/api/fml/format",
+            axum::routing::post(crate::operations::fml::api::format),
+        )
+        .route(
+            "/api/fml/compile",
+            axum::routing::post(crate::operations::fml::api::compile),
+        )
+        .route(
+            "/api/fml/print",
+            axum::routing::post(crate::operations::fml::api::print),
         )
         // DB Console API endpoints
         .route(

@@ -92,7 +92,9 @@ fn operation_body(code: &str, result: serde_json::Value) -> Result<Response, Api
 /// Binary's content in its media type (FHIR operations, "return" parameter;
 /// SQL on FHIR returns view rows this way).
 fn raw_binary_return(code: &str, result: &serde_json::Value) -> Result<Option<Response>, ApiError> {
-    if !matches!(code, "viewdefinition-run" | "sql-run") || result["resourceType"] != "Binary" {
+    if !matches!(code, "viewdefinition-run" | "sql-run" | "convert")
+        || result["resourceType"] != "Binary"
+    {
         return Ok(None);
     }
     // The client asked for a FHIR representation: the Binary resource itself.
@@ -123,6 +125,12 @@ fn raw_binary_return(code: &str, result: &serde_json::Value) -> Result<Option<Re
         axum::http::HeaderValue::from_str(content_type)
             .map_err(|_| ApiError::internal("Invalid Binary contentType"))?,
     );
+    // $convert: values the maps could not carry over.
+    if let Some(outcome) = super::fml::outcome_header(result)
+        && let Ok(value) = axum::http::HeaderValue::from_str(&outcome)
+    {
+        headers.insert("x-conversion-outcome", value);
+    }
     Ok(Some((StatusCode::OK, headers, data).into_response()))
 }
 

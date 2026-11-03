@@ -34,6 +34,7 @@ const CqlConsolePage = page(() => import("@/pages/cql-console"), "CqlConsolePage
 const DatabasePage = page(() => import("@/pages/database"), "DatabasePage");
 const DbConsolePage = page(() => import("@/pages/db-console"), "DbConsolePage");
 const FhirPathConsolePage = page(() => import("@/pages/fhirpath-console"), "FhirPathConsolePage");
+const FmlConsolePage = page(() => import("@/pages/fml-console"), "FmlConsolePage");
 const GraphQLConsolePage = page(() => import("@/pages/graphql-console"), "GraphQLConsolePage");
 const LogsViewerPage = page(() => import("@/pages/logs"), "LogsViewerPage");
 const CapabilityStatementPage = page(() => import("@/pages/metadata"), "CapabilityStatementPage");
@@ -122,6 +123,7 @@ export function AppRoutes() {
         <Route path="/graphql" element={<GraphQLConsolePage />} />
         <Route path="/fhirpath" element={<FhirPathConsolePage />} />
         <Route path="/cql" element={<CqlConsolePage />} />
+        <Route path="/fml" element={<FmlConsolePage />} />
         <Route path="/notebooks" element={<NotebookListPage />} />
         <Route path="/notebooks/:id" element={<NotebookEditorPage />} />
         <Route path="/settings" element={<SettingsPage />} />

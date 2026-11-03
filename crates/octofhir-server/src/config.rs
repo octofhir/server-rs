@@ -59,6 +59,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub bulk_import: BulkImportConfig,
 
+    /// FHIR Mapping Language: StructureMap `$transform`
+    #[serde(default)]
+    pub fml: FmlConfig,
+
     /// FHIR Subscriptions (topic-based notifications)
     #[serde(default)]
     pub subscriptions: SubscriptionsConfig,
@@ -1619,6 +1623,41 @@ pub struct SqlOnFhirConfig {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
+}
+
+/// FHIR Mapping Language (`StructureMap/$transform`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FmlConfig {
+    /// Register `StructureMap/$transform`. Default: true.
+    pub enabled: bool,
+    /// Role a user needs for `debug=true`: the trace holds every value the map reads and writes,
+    /// so it is clinical data. Default: `admin`.
+    pub debug_role: String,
+    /// A transform running longer is cancelled. Default: 30000.
+    pub timeout_ms: u64,
+    /// Rules one transform may run. Default: 20 000 000.
+    pub max_rules: u64,
+    /// Trace events kept with `debug=true`; later ones are left out (`truncated`). Default: 10 000.
+    pub max_trace_events: usize,
+    /// Folders of FML maps (`.fml`) and StructureMap / ConceptMap JSON, searched after the
+    /// server's own resources and its packages: for maps no package publishes, such as the HL7
+    /// cross-version maps (a checkout of github.com/HL7/fhir-cross-version, `input`) that
+    /// `$convert` uses.
+    pub map_folders: Vec<String>,
+}
+
+impl Default for FmlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            debug_role: "admin".into(),
+            timeout_ms: 30_000,
+            max_rules: 20_000_000,
+            max_trace_events: 10_000,
+            map_folders: Vec::new(),
+        }
+    }
 }
 
 pub mod loader {

@@ -25,21 +25,12 @@ Multi-year priority. Remaining work and the spec baseline: [`sql-on-fhir-plan.md
 | # | Item | Effort |
 |---|---|---|
 | 1.1 | Console: ViewDefinition page through `$sql-run`, SQLQuery editor with the banshee LSP, terminology dependencies visible | M |
-| 1.2 | DuckDB as an embedded `SqlExecutor` in sof (dialect exists) | M |
 
-## 2. FML and version conversion in the server
+## 2. FML
 
-The engine is [fml-rs](https://github.com/octofhir/fml-rs); what is left is the server side.
-
-| # | Item | Effort | Notes |
-|---|---|---|---|
-| 2.1 | `StructureMap/$transform` and `StructureMap/[id]/$transform` | M | `source`, `content` (also a Binary, for logical models and other FHIR versions), `supportingMap`, `srcMap` (FML text) and `sourceMap` (StructureMap) for unsaved maps, `model` (StructureDefinitions / ConceptMaps for the run); `return` as a Binary when the result is not a resource of the server's FHIR version; maps resolved from the database and installed packages through canonical-manager (`MapResolver`); `translate()` through the server's ConceptMaps (`TranslateService`, async, tx fallback); `debug=true` in the query or the body returns the trace Parameters of the IG debug page (`fml_engine::debug_parameters` with `fml_model::Locations` for text positions); `Limits` and a cancel flag on every run; debug traces carry clinical data: separate permission, never logged |
-| 2.2 | `$convert` between FHIR versions | M | HL7 cross-version maps (R4↔R5, R5↔R6 as they mature); target version from `Accept` `fhirVersion`; values that did not carry over reported in an OperationOutcome next to the result (`Transformed.warnings`) |
-| 2.3 | `Questionnaire/$extract` on StructureMap (`questionnaire-targetStructureMap`) | S | thin wrapper over 2.1; headless only, no form renderer (SDC stays deferred) |
-| 2.4 | Console: FML page — editor (fml-syntax highlighting, format, `fml-check` diagnostics as you type), run against a pasted or stored resource, result next to the input, the loss report (`warnings`), and a trace replay over the debug Parameters: stack from the open `enter` events, step in / over / out / back by depth, variables grouped by `contextType`, the event's range highlighted in the editor; maps saved as StructureMap | M | not a visual map editor; the same Parameters fhirpath-lab and its VS Code extension read |
-| 2.5 | Validate StructureMaps on write with `fml-check` (issues as OperationOutcome warnings) | S | definitions from the server's packages |
-
-Later, from the FML library side: XML input for CDA maps, WASM build, LSP.
+The engine is [fml-rs](https://github.com/octofhir/fml-rs); the server has `$transform`,
+`$convert`, `QuestionnaireResponse/$extract`, StructureMap checks in validation, and the FML
+console page. Left, from the library side: XML input for CDA maps, WASM build, LSP.
 
 ## 3. Quick wins (days each)
 
