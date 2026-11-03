@@ -22,7 +22,8 @@
 //! `includeDesignations` then shape the result.
 
 use async_trait::async_trait;
-use octofhir_sof::expansion::{Expander, ExpansionError, Lookup};
+use octofhir_fhir_model::terminology::ExpandedValueSet;
+use octofhir_sof::expansion::{Expander, ExpansionError, ExpansionStamp, Lookup};
 use octofhir_sof::plan::ContextArtifacts;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -30,7 +31,7 @@ use serde_json::{Value, json};
 use crate::canonical::get_manager;
 use crate::operations::handler::OperationLevel;
 use crate::operations::sof::{
-    Remote, ServerTerminology, expansion_stamp, packaged, remote_value_set, stored,
+    REMOTE_COUNT, ServerTerminology, packaged, stored, terminology_server,
 };
 use crate::operations::{OperationContext, OperationError, OperationHandler};
 use crate::server::AppState;
@@ -196,9 +197,10 @@ impl ExpandOperation {
             Lookup::Ambiguous(reason) => return Err(OperationError::NotFound(reason)),
             Lookup::Missing => {}
         }
-        let server = state.config.terminology.server_url.trim_end_matches('/');
-        if !server.is_empty()
-            && let Ok(Remote::Expanded(value_set)) = remote_value_set(server, url, version).await
+        if let Some(provider) = terminology_server(state)
+            && let Ok(ExpandedValueSet::Found(value_set)) = provider
+                .expand_valueset_resource(url, version, Some(REMOTE_COUNT))
+                .await
         {
             return Ok((value_set, false));
         }
@@ -273,20 +275,24 @@ impl ExpandOperation {
         };
         let expanded = Expander::new(&source)
             .with_designations(params.include_designations)
-            .expand(value_set, &expansion_stamp())
+            .expand(value_set, &ExpansionStamp::now())
             .await;
         let expansion = match expanded {
             Ok(expansion) => expansion,
             Err(ExpansionError::Undeterminable(reason)) => {
-                let server = state.config.terminology.server_url.trim_end_matches('/');
-                let url = value_set["url"].as_str();
-                match (published && !server.is_empty(), url) {
-                    (true, Some(url)) => {
-                        match remote_value_set(server, url, value_set["version"].as_str()).await {
-                            Ok(Remote::Expanded(remote)) => remote["expansion"].clone(),
-                            _ => return Err(cannot_expand(value_set, &reason)),
-                        }
-                    }
+                let provider = terminology_server(state).filter(|_| published);
+                match (provider, value_set["url"].as_str()) {
+                    (Some(provider), Some(url)) => match provider
+                        .expand_valueset_resource(
+                            url,
+                            value_set["version"].as_str(),
+                            Some(REMOTE_COUNT),
+                        )
+                        .await
+                    {
+                        Ok(ExpandedValueSet::Found(remote)) => remote["expansion"].clone(),
+                        _ => return Err(cannot_expand(value_set, &reason)),
+                    },
                     _ => return Err(cannot_expand(value_set, &reason)),
                 }
             }

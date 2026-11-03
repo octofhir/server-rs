@@ -20,9 +20,13 @@ TerminologyProvider), never as the way terminology reaches SQL.
 - Views over the server's data run as SQL with the same authorization as `search`
   (`plan_search`); per-resource policies fall back to the in-memory engine.
 - Operations: `$viewdefinition-run`, `$viewdefinition-export`, `$sql-run`, `$sql-export`
-  (`crates/octofhir-server/src/operations/sof/`); sandbox in `sql_guard.rs` and
-  `octofhir-db-postgres` `sql_job`; terminology relations in `terminology.rs`,
-  `expansion.rs`, `term_source.rs`; host-independent spec logic in sof 0.3.x.
+  (`crates/octofhir-server/src/operations/sof/`); sandbox: the static check is
+  `octofhir_sof::guard`, the database half is `octofhir-db-postgres` `sql_job`;
+  artifacts and terminology in `term_source.rs` over sof's `plan` / `catalog`
+  (`compare_versions`, `value_set_content`); a value set beyond the strict
+  expander goes to the terminology server through the server's
+  `TerminologyProvider` (the one `memberOf()` uses), only for published value
+  sets. Temporal parameters bind as text (sof 0.3.3).
 - Tests: `tests/sql_run.rs`, `tests/sql_terminology.rs`, `tests/sql_export.rs`,
   `tests/sql_conformance.rs` (each its own binary).
 
@@ -30,12 +34,9 @@ TerminologyProvider), never as the way terminology reaches SQL.
 
 1. **Console** — the ViewDefinition page runs through `$sql-run`; SQLQuery editor with the
    banshee LSP; terminology dependencies visible.
-2. **DuckDB** as an embedded `SqlExecutor` in sof (the dialect exists).
-3. **Strict expander gaps**: `compose.lockedDate`, code system supplements and
+2. **Strict expander gaps**: `compose.lockedDate`, code system supplements and
    `caseSensitive = false` are not applied.
-4. **sof for wasm32**: tokio `full` pulls mio; make the async runtime optional (backends stay
-   opt-in features).
-5. `$viewdefinition-export` still returns the v2 bulk-style manifest (not part of 3.0, which
+3. `$viewdefinition-export` still returns the v2 bulk-style manifest (not part of 3.0, which
    replaces it with `$sql-export`); decide whether to keep it.
 
 Later / explicitly not now: maintained materialized views (`$viewdefinition-materialize`) —

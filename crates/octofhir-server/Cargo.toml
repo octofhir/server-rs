@@ -86,6 +86,10 @@ json-patch = { workspace = true }
 octofhir-fhirpath = { workspace = true }
 octofhir-fhir-model = { workspace = true }
 octofhir-fhirschema = { workspace = true }
+fml-syntax = { workspace = true }
+fml-model = { workspace = true }
+fml-check = { workspace = true }
+fml-engine = { workspace = true }
 
 # UI embedding
 include_dir = "0.7"
@@ -141,7 +145,6 @@ arc-swap = "1.9"  # Lock-free atomic pointer swapping for hot paths
 moka = { version = "0.12", features = ["future"] }  # LRU cache for lazy schema loading
 parking_lot = "0.12"  # High-performance RwLock for operation provider caching
 regex.workspace = true
-semver = "1.0.28"
 tokio-util = { version = "0.7.18", features = ["compat", "rt"] }
 
 # Prometheus metrics

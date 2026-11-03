@@ -14,7 +14,7 @@
 //!   with the columns "Terminology in SQL" defines, its content resolved once
 //!   for the job (see [`super::term_source`]); `parameters` are bound to the
 //!   declared `Library.parameter`s; then the SQL runs in a sandbox (see
-//!   [`super::sql_guard`] and `octofhir_db_postgres::queries::sql_job`).
+//!   [`octofhir_sof::guard`] and `octofhir_db_postgres::queries::sql_job`).
 //!
 //! Errors follow the operation: 400 for invalid or conflicting input, 404 for
 //! a subject or dependency that cannot be found or resolves to more than one
@@ -31,6 +31,7 @@ use octofhir_search::SqlValue;
 use serde_json::Value;
 use tokio::sync::OnceCell;
 
+use octofhir_sof::guard;
 use octofhir_sof::library::{ParameterValue, SqlLibrary, bind_parameters};
 use octofhir_sof::plan::{ContextArtifacts, Resolver};
 
@@ -39,7 +40,6 @@ use axum::http::StatusCode;
 use super::output::{OutputColumn, has_integer64, render};
 use super::rejection::{at, at_subject_if_unprocessable, rejected, together};
 use super::scope::ViewScope;
-use super::sql_guard;
 use super::sql_plan::{DIALECT, JobTables, Subject, classify, load_subject, unprocessable};
 use super::term_source::{PROVENANCE_KEY, ServerArtifacts, plan_error, provenance_header};
 use super::viewdefinition_run::{limit, output_format, parameters, run_view};
@@ -291,7 +291,7 @@ pub(super) fn checked_query(
         .iter()
         .map(|dependency| dependency.label.clone())
         .collect();
-    let checked = sql_guard::check(&library.sql, &relations, &declared).map_err(|error| {
+    let checked = guard::check(&library.sql, &relations, &declared).map_err(|error| {
         rejected(
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid",

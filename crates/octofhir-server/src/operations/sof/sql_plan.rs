@@ -5,7 +5,7 @@
 //! materializes each table artifact once per job (a ViewDefinition over the
 //! caller's authorized data, or a relation's rows) and gives every query its
 //! dependencies as CTEs named by the labels its SQL uses, each SQLView's SQL
-//! checked by [`super::sql_guard`] (see
+//! checked by [`octofhir_sof::guard`] (see
 //! `octofhir_db_postgres::queries::sql_job`).
 
 use std::collections::HashMap;
@@ -15,6 +15,7 @@ use axum::http::StatusCode;
 use octofhir_api::ApiError;
 use octofhir_db_postgres::queries::sql_job::{DependencySource, DependencyTable, Relation};
 use octofhir_sof::expansion::{Lookup, split_canonical};
+use octofhir_sof::guard;
 use octofhir_sof::library::SqlLibrary;
 use octofhir_sof::plan::{Artifact, Edge, ResolvedJob, TerminologyKind, closure};
 use octofhir_sof::relations::{CONCEPT_MAP_COLUMNS, VALUE_SET_COLUMNS, columns};
@@ -24,7 +25,6 @@ use serde_json::Value;
 use super::engine::{self, ViewSql};
 use super::rejection::{at, rejected};
 use super::scope::ViewScope;
-use super::sql_guard;
 use super::term_source::{plan_error, stored_latest};
 use crate::operations::{OperationContext, OperationError};
 use crate::server::AppState;
@@ -127,7 +127,7 @@ impl JobTables {
                                 .iter()
                                 .map(|dependency| dependency.label.clone())
                                 .collect();
-                            let checked = sql_guard::check(sql, &relations, &HashMap::new())
+                            let checked = guard::check(sql, &relations, &HashMap::new())
                                 .map_err(|error| unprocessable(format!("{display}: {error}")))?;
                             Relation::Sql(checked.sql)
                         }

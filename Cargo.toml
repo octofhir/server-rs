@@ -34,10 +34,10 @@ octofhir-auth-postgres = { path = "crates/octofhir-auth-postgres" }
 octofhir-config = { path = "crates/octofhir-config" }
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-graphql = { path = "crates/octofhir-graphql" }
-octofhir-sof = { version = "0.3.1", features = ["parquet"] }
+octofhir-sof = { version = "0.3.3", features = ["parquet", "guard"] }
 octofhir-storage = { path = "crates/octofhir-storage" }
-octofhir-canonical-manager = { version = "0.2.8", default-features = false }
-octofhir-fhir-model = { version = "0.1.17", features = ["http-client", "caching"] }
+octofhir-canonical-manager = { version = "0.2.9", default-features = false }
+octofhir-fhir-model = { version = "0.1.18", features = ["http-client", "caching"] }
 
 # async-lsp for SQL language server (better state management than tower-lsp)
 async-lsp = { version = "0.2", features = ["tokio"] }
@@ -101,13 +101,19 @@ hostname = "0.4"
 # JSON Patch (RFC 6902)
 json-patch = "4"
 
-octofhir-fhirpath = { version = "0.5.1", features = ["lsp"] }
-octofhir-fhirschema = { version = "0.3.33" }
+octofhir-fhirpath = { version = "0.5.4", features = ["lsp"] }
+octofhir-fhirschema = { version = "0.3.34" }
 
 octofhir-cql = { version = "0.2.1", default-features = false }
 octofhir-cql-types = { version = "0.2.1" }
 octofhir-cql-eval = { version = "0.2.1" }
 octofhir-cql-model = { version = "0.2.1" }
+
+# FHIR Mapping Language (StructureMap $transform)
+fml-syntax = { version = "0.2.1" }
+fml-model = { version = "0.2.1" }
+fml-check = { version = "0.2.1", features = ["fhirschema"] }
+fml-engine = { version = "0.2.1", features = ["fhirpath"] }
 
 # Environment
 dotenvy = "0.15"
@@ -129,6 +135,12 @@ assert-json-diff = "2.0"
 [profile.dev]
 incremental = true
 debug = 2
+
+# Dependencies (FHIRPath, validation, FML, serde, sqlx, …) built with optimizations even in debug
+# builds: they otherwise run 5–10 times slower, and they change rarely, so they are compiled
+# once. The workspace's own crates stay unoptimized for fast rebuilds.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 lto = true

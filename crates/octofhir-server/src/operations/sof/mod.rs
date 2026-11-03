@@ -31,11 +31,10 @@ mod rejection;
 mod run;
 mod scope;
 mod sql;
-mod sql_guard;
 mod sql_export;
 mod sql_plan;
 mod sql_run;
-mod term_source;
+pub(crate) mod term_source;
 mod viewdefinition_run;
 
 pub use export::{ViewDefinitionExportOperation, execute_viewdefinition_export};
@@ -46,8 +45,8 @@ pub(crate) use sql_export::{JOB_TYPE as SQL_EXPORT_JOB, locations as sql_export_
 pub use sql_run::SqlRunOperation;
 pub(crate) use output::ENVELOPE_KEY;
 pub(crate) use term_source::{
-    PROVENANCE_HEADER, PROVENANCE_KEY, Remote, ServerTerminology, expansion_stamp, packaged,
-    remote_value_set, stored,
+    PROVENANCE_HEADER, PROVENANCE_KEY, REMOTE_COUNT, ServerTerminology, packaged, stored,
+    terminology_server,
 };
 pub use viewdefinition_run::ViewDefinitionRunSpecOperation;
 

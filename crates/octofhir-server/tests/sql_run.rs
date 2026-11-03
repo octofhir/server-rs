@@ -352,6 +352,42 @@ async fn sql_run_queries_views_in_a_sandbox() {
     assert_eq!(body.lines().next(), Some("id,family,active"));
     assert_eq!(body.lines().count(), 4, "{body}");
 
+    // Temporal parameters bind as text in their FHIR form, as the temporal
+    // columns of a view are, so the guide's `effective_date >= :from_date`
+    // compares like with like; a value that is not a FHIR date is a 400.
+    for (family, born) in [("Dora", "1990-05-01"), ("Eve", "1970-01-01")] {
+        create(
+            &client,
+            &fhir,
+            json!({"resourceType":"Patient","name":[{"family":family}],"birthDate":born}),
+        )
+        .await;
+    }
+    let dated_view = json!({"resourceType":"ViewDefinition","status":"active",
+        "url":"http://example.org/ViewDefinition/dated","name":"dated","resource":"Patient",
+        "select":[{"column":[
+            {"name":"family","path":"name.family.first()","type":"string"},
+            {"name":"born","path":"birthDate","type":"date"}]}]});
+    let born_after = sql_library(
+        "sql-query",
+        "http://example.org/Library/BornAfter",
+        "SELECT family FROM dated WHERE born >= :from_date ORDER BY family",
+        &[("dated", "http://example.org/ViewDefinition/dated")],
+        json!([{"name":"from_date","use":"in","type":"date","min":1}]),
+    );
+    let from_date = |value: &str| {
+        json!([{"name":"subjectResource","resource":born_after},
+               {"name":"context","resource":dated_view},
+               {"name":"parameters","resource":{"resourceType":"Parameters",
+                   "parameter":[{"name":"from_date","valueDate":value}]}}])
+    };
+    let (status, _, body) = run(&client, &sql_run, from_date("1980-01-01")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body.trim(), r#"{"family":"Dora"}"#);
+    let (status, _, body) = run(&client, &sql_run, from_date("1980-13-01")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("is not a FHIR date"), "{body}");
+
     // The sandbox: other tables, functions outside the allowlist, a qualified
     // name, more than one statement.
     for (sql, expected) in [

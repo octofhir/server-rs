@@ -10,7 +10,7 @@
 use async_trait::async_trait;
 use octofhir_canonical_manager::CanonicalManager;
 use octofhir_fhir_model::terminology::{
-    ConnectionStatus, ExpansionParameters, HttpTerminologyProvider, LookupResult,
+    ConnectionStatus, ExpandedValueSet, ExpansionParameters, HttpTerminologyProvider, LookupResult,
     SubsumptionResult, TerminologyProvider, TranslationResult, ValidationResult, ValueSetConcept,
     ValueSetExpansion,
 };
@@ -788,6 +788,34 @@ impl TerminologyProvider for HybridTerminologyProvider {
     async fn test_connection(&self) -> octofhir_fhir_model::error::Result<ConnectionStatus> {
         // Delegate to remote
         self.remote.test_connection().await
+    }
+
+    fn endpoint(&self) -> Option<&str> {
+        self.remote.endpoint()
+    }
+
+    /// The terminology server's whole expansion: what the server's own
+    /// strict expander cannot compute (published value sets with SNOMED CT
+    /// or LOINC filters) is asked of it by canonical.
+    async fn expand_valueset_resource(
+        &self,
+        url: &str,
+        version: Option<&str>,
+        count: Option<u32>,
+    ) -> octofhir_fhir_model::error::Result<ExpandedValueSet> {
+        self.remote
+            .expand_valueset_resource(url, version, count)
+            .await
+    }
+
+    async fn expand_valueset_definition(
+        &self,
+        value_set: &serde_json::Value,
+        count: Option<u32>,
+    ) -> octofhir_fhir_model::error::Result<ExpandedValueSet> {
+        self.remote
+            .expand_valueset_definition(value_set, count)
+            .await
     }
 }
 

@@ -2051,6 +2051,29 @@ impl SearchStorage for PostgresPackageStore {
             .collect()
     }
 
+    async fn get_cache_entries_of_types(&self, resource_types: &[String]) -> Vec<ResourceIndex> {
+        if resource_types.is_empty() {
+            return self.get_cache_entries().await;
+        }
+        // Indexed by `idx_fcm_resource_type`: a lookup of ConceptMaps or StructureMaps reads
+        // those, not the whole package index.
+        let sql = format!(
+            "{} WHERE url IS NOT NULL AND url <> '' AND resource_type = ANY($1)",
+            Self::RESOURCE_SELECT
+        );
+        match query(AssertSqlSafe(sql))
+            .bind(resource_types)
+            .fetch_all(&self.pool)
+            .await
+        {
+            Ok(rows) => rows.iter().map(row_to_resource_index).collect(),
+            Err(e) => {
+                warn!("Failed to get cache entries by type: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
     async fn find_by_type_and_package(
         &self,
         resource_type: &str,
