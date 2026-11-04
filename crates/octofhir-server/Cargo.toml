@@ -36,7 +36,7 @@ octofhir-notifications = { path = "../octofhir-notifications" }
 octofhir-notebook = { path = "../octofhir-notebook" }
 octofhir-cql-service = { path = "../octofhir-cql-service" }
 octofhir-canonical-manager = { workspace = true }
-octofhir-graphql = { path = "../octofhir-graphql" }
+octofhir-graphql = { path = "../octofhir-graphql", features = ["http"] }
 # otter-runtime = "0.1"
 octofhir-sof = { workspace = true }
 async-trait = { workspace = true }

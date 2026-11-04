@@ -1,6 +1,18 @@
 use std::process::Command;
 
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../../ui/dist");
+    println!("cargo:rerun-if-env-changed=OCTOFHIR_EMBED_GIT_INFO");
+
+    // CI and local edit loops can omit provenance to avoid rebuilding the
+    // server solely because HEAD changed. Normal and release builds retain it.
+    if std::env::var("OCTOFHIR_EMBED_GIT_INFO").is_ok_and(|value| value == "0") {
+        println!("cargo:rustc-env=GIT_COMMIT=unknown");
+        println!("cargo:rustc-env=GIT_COMMIT_TIMESTAMP=unknown");
+        return;
+    }
+
     // Get git commit hash
     if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output() {
         if output.status.success() {
@@ -30,7 +42,6 @@ fn main() {
 
     // Cargo runs this script in the crate directory, which has no .git.
     // Resolve Git's actual paths, including linked worktrees and packed refs.
-    println!("cargo:rerun-if-changed=build.rs");
     for name in ["HEAD", "refs", "packed-refs"] {
         if let Ok(output) = Command::new("git")
             .args(["rev-parse", "--git-path", name])
@@ -44,7 +55,4 @@ fn main() {
             }
         }
     }
-
-    // Re-run if UI dist changes
-    println!("cargo:rerun-if-changed=../../ui/dist");
 }
