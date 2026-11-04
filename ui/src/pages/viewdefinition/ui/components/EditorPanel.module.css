@@ -42,6 +42,9 @@
   flex: 2 1 200px;
   min-width: 160px;
 }
+.metaUrl {
+  flex: 1 1 100%;
+}
 .metaResource {
   flex: 1 1 160px;
   min-width: 140px;
@@ -71,5 +74,5 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--octo-text-primary, #111);
+  color: var(--octo-text-primary);
 }

@@ -21,7 +21,7 @@ palette everywhere, `g` followed by a letter jumps to a page, and `?` lists ever
 |------|--------------|
 | **SQL** (`g s`) | A Postgres console with completion, formatting, history and charts of results. |
 | **GraphQL** (`g g`), **FHIRPath** (`g f`), **CQL** (`g q`) | Consoles for each language against live data. |
-| **Views** (`g v`) | Author and preview SQL-on-FHIR ViewDefinitions. |
+| **Views** (`g v`) | SQL on FHIR: author ViewDefinitions and SQLQuery / SQLView Libraries over them, and run either through `$sql-run`. The SQL editor completes and checks against the query's dependencies (their labels and columns) and its `:name` parameters, and applies the same sandbox check the server does. Each dependency shows what it resolved to: a view's columns, or for a ValueSet or ConceptMap its version, size and where its content came from. |
 | **Terminology** (`g t`) | Search value sets, code systems and concept maps across installed packages; expand and filter value sets, check codes, browse concept hierarchies with `$lookup`, test `$subsumes` and `$translate`. |
 | **Validation** (`g x`) | Validate up to 5,000 stored resources at once against the base specification or a profile. Issues are grouped by message and path so systematic problems stand out. |
 | **Notebooks** (`g n`) | Notebooks that mix Markdown with REST, SQL, GraphQL, FHIRPath, CQL and ViewDefinition cells, inputs and charts. |

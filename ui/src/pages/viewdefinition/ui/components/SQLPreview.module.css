@@ -10,3 +10,7 @@
   max-height: calc(100vh - 300px);
   overflow: auto;
 }
+
+.planBadge {
+  margin-bottom: var(--octo-spacing-xs);
+}

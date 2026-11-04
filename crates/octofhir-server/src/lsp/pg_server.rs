@@ -5,10 +5,10 @@ use async_lsp::lsp_types::notification::PublishDiagnostics;
 use async_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind as LspCompletionItemKind,
     CompletionOptions, CompletionParams, CompletionResponse, Diagnostic, DiagnosticSeverity,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, InitializeParams, InitializeResult, NumberOrString, OneOf, Position,
-    PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Url,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentFormattingParams, InitializeParams, InitializeResult,
+    NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
 };
 use async_lsp::{ClientSocket, LanguageServer, ResponseError};
 use banshee_completion::types::{CompletionItemKind, TableType};
@@ -26,6 +26,7 @@ use std::sync::Arc;
 use text_size::{TextRange, TextSize};
 
 use super::SchemaCache;
+use super::sof_catalog::{SofCatalog, SofDiagnostic, SofHirProvider, SofSchemaProvider};
 
 struct ResourceIdJsonbLintPack;
 
@@ -84,6 +85,19 @@ pub struct PostgresLspServer {
     documents: HashMap<Url, DocumentState>,
     schema_cache: Arc<SchemaCache>,
     model_snapshot: Arc<ModelSchemaSnapshot>,
+    /// SQL on FHIR mode: the query's relations and parameters stand in for
+    /// the database catalog (see [`super::sof_catalog`]).
+    sof: Option<Arc<SofCatalog>>,
+}
+
+/// What the SQL in the editor runs against.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LspMode {
+    /// The server's database (the DB console).
+    #[default]
+    Database,
+    /// A SQL on FHIR SQLQuery or SQLView: its dependencies only.
+    SqlOnFhir,
 }
 
 impl PostgresLspServer {
@@ -91,6 +105,7 @@ impl PostgresLspServer {
         client: ClientSocket,
         db_pool: Arc<sqlx_postgres::PgPool>,
         octofhir_provider: Arc<crate::model_provider::OctoFhirModelProvider>,
+        mode: LspMode,
     ) -> Self {
         let schema_cache = Arc::new(SchemaCache::new(db_pool));
         let model_snapshot = Arc::new(ModelSchemaSnapshot::build(octofhir_provider));
@@ -99,6 +114,7 @@ impl PostgresLspServer {
             documents: HashMap::new(),
             schema_cache,
             model_snapshot,
+            sof: (mode == LspMode::SqlOnFhir).then(|| Arc::new(SofCatalog::default())),
         }
     }
 
@@ -193,18 +209,10 @@ impl PostgresLspServer {
     fn collect_semantic_diagnostics(
         text: &str,
         parse: &banshee_syntax::Parse,
-        schema_cache: &SchemaCache,
-        model_snapshot: &ModelSchemaSnapshot,
+        provider: &dyn HirSchemaProvider,
+        options: &HirAnalysisOptions,
     ) -> Vec<Diagnostic> {
-        let provider = HirSchemaProviderAdapter::new(schema_cache, model_snapshot);
-        let options = HirAnalysisOptions::new()
-            .with_builtin_lint_packs([
-                HirBuiltinLintPack::Core,
-                HirBuiltinLintPack::Jsonb,
-                HirBuiltinLintPack::Convention,
-            ])
-            .with_external_lint_pack(Arc::new(ResourceIdJsonbLintPack));
-        let analysis = analyze_query_with_options(parse, &provider, &options);
+        let analysis = analyze_query_with_options(parse, provider, options);
 
         analysis
             .diagnostics
@@ -362,17 +370,10 @@ impl PostgresLspServer {
     }
 
     fn publish_diagnostics(&self, uri: Url, version: i32, text: String) {
-        let (parse, mut diagnostics) = Self::collect_parse_diagnostics(&text);
-
-        // Also run semantic analysis if parse succeeded (no critical errors)
-        let semantic_diagnostics = Self::collect_semantic_diagnostics(
-            &text,
-            &parse,
-            &self.schema_cache,
-            &self.model_snapshot,
-        );
-        diagnostics.extend(semantic_diagnostics);
-        diagnostics.extend(Self::collect_where_jsonb_boolean_diagnostics(&text));
+        let diagnostics = match &self.sof {
+            Some(catalog) => Self::sof_diagnostics(&text, catalog),
+            None => self.database_diagnostics(&text),
+        };
 
         let params = PublishDiagnosticsParams {
             uri,
@@ -383,6 +384,61 @@ impl PostgresLspServer {
         if let Err(err) = self.client.notify::<PublishDiagnostics>(params) {
             tracing::warn!(error = %err, "Failed to publish diagnostics");
         }
+    }
+
+    fn database_diagnostics(&self, text: &str) -> Vec<Diagnostic> {
+        let (parse, mut diagnostics) = Self::collect_parse_diagnostics(text);
+
+        // Also run semantic analysis if parse succeeded (no critical errors)
+        let provider = HirSchemaProviderAdapter::new(&self.schema_cache, &self.model_snapshot);
+        let options = HirAnalysisOptions::new()
+            .with_builtin_lint_packs([
+                HirBuiltinLintPack::Core,
+                HirBuiltinLintPack::Jsonb,
+                HirBuiltinLintPack::Convention,
+            ])
+            .with_external_lint_pack(Arc::new(ResourceIdJsonbLintPack));
+        diagnostics.extend(Self::collect_semantic_diagnostics(
+            text, &parse, &provider, &options,
+        ));
+        diagnostics.extend(Self::collect_where_jsonb_boolean_diagnostics(text));
+        diagnostics
+    }
+
+    /// Diagnostics of a SQL on FHIR query: syntax and names over the masked
+    /// text (`:name` parameters read as placeholders), undeclared parameters,
+    /// and the sandbox check once the SQL parses.
+    fn sof_diagnostics(text: &str, catalog: &SofCatalog) -> Vec<Diagnostic> {
+        let (masked, own) = catalog.mask_parameters(text);
+        let (parse, mut diagnostics) = Self::collect_parse_diagnostics(&masked);
+        let parses = diagnostics.is_empty();
+        let options = HirAnalysisOptions::new().with_builtin_lint_packs([HirBuiltinLintPack::Core]);
+        let semantic =
+            Self::collect_semantic_diagnostics(&masked, &parse, &SofHirProvider(catalog), &options);
+        // A relation whose columns are not known yet (a SQLView that did not
+        // prepare) would make every column of it look unknown.
+        let columns_known = catalog.columns_known();
+        diagnostics.extend(semantic.into_iter().filter(|diagnostic| {
+            columns_known || !diagnostic.message.to_ascii_lowercase().contains("column")
+        }));
+        let to_lsp = |diagnostic: SofDiagnostic| Diagnostic {
+            range: Self::text_range_to_lsp_range(text, diagnostic.range),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some(diagnostic.source.to_string()),
+            message: diagnostic.message,
+            ..Default::default()
+        };
+        diagnostics.extend(own.into_iter().map(to_lsp));
+        let has_errors = diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Some(DiagnosticSeverity::ERROR));
+        if parses
+            && !has_errors
+            && let Some(guard) = catalog.guard_diagnostic(text)
+        {
+            diagnostics.push(to_lsp(guard));
+        }
+        diagnostics
     }
 
     fn map_completion_kind(kind: CompletionItemKind) -> Option<LspCompletionItemKind> {
@@ -427,6 +483,39 @@ impl PostgresLspServer {
     }
 }
 
+impl PostgresLspServer {
+    /// Completion of a SQL on FHIR query: its parameters after `:`, else
+    /// banshee's over the query's relations and the allowed functions.
+    fn sof_completion(
+        catalog: &SofCatalog,
+        state: &DocumentState,
+        position: Position,
+    ) -> CompletionResponse {
+        let offset = Self::position_to_offset(&state.text, position);
+        let items = match catalog.parameter_completions(&state.text, offset) {
+            Some(items) => items,
+            None => {
+                let (masked, _) = catalog.mask_parameters(&state.text);
+                let parse = banshee_parser::parse(&masked);
+                let provider = SofSchemaProvider(catalog);
+                let request = CompletionRequest::new(&masked, TextSize::new(offset as u32))
+                    .with_parse(&parse)
+                    .with_schema_provider(&provider)
+                    .with_function_provider(&provider)
+                    .with_limit(0);
+                complete(request).items
+            }
+        };
+        CompletionResponse::List(async_lsp::lsp_types::CompletionList {
+            is_incomplete: false,
+            items: items
+                .into_iter()
+                .map(Self::to_lsp_completion_item)
+                .collect(),
+        })
+    }
+}
+
 impl LanguageServer for PostgresLspServer {
     type Error = ResponseError;
     type NotifyResult = std::ops::ControlFlow<async_lsp::Result<()>>;
@@ -451,6 +540,7 @@ impl LanguageServer for PostgresLspServer {
                             "'".into(), // Inside string literals
                             "{".into(), // Inside array literals like '{name}'
                             ",".into(), // Between elements in array literals
+                            ":".into(), // SQL on FHIR `:name` parameters
                         ]),
                         resolve_provider: Some(false),
                         ..Default::default()
@@ -467,6 +557,9 @@ impl LanguageServer for PostgresLspServer {
         &mut self,
         _params: async_lsp::lsp_types::InitializedParams,
     ) -> Self::NotifyResult {
+        if self.sof.is_some() {
+            return std::ops::ControlFlow::Continue(());
+        }
         let schema_cache = self.schema_cache.clone();
         tokio::spawn(async move {
             if let Err(err) = schema_cache.refresh().await {
@@ -474,6 +567,24 @@ impl LanguageServer for PostgresLspServer {
             }
         });
 
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn did_change_configuration(
+        &mut self,
+        params: DidChangeConfigurationParams,
+    ) -> Self::NotifyResult {
+        if self.sof.is_some() {
+            match SofCatalog::from_settings(&params.settings) {
+                Some(catalog) => {
+                    self.sof = Some(Arc::new(catalog));
+                    for (uri, state) in &self.documents {
+                        self.publish_diagnostics(uri.clone(), state.version, state.text.clone());
+                    }
+                }
+                None => tracing::debug!("LSP settings without a valid sof catalog ignored"),
+            }
+        }
         std::ops::ControlFlow::Continue(())
     }
 
@@ -540,8 +651,12 @@ impl LanguageServer for PostgresLspServer {
         let doc_state = self.documents.get(&uri).cloned();
         let schema_cache = self.schema_cache.clone();
         let model_snapshot = self.model_snapshot.clone();
+        let sof = self.sof.clone();
 
         Box::pin(async move {
+            if let (Some(catalog), Some(state)) = (sof, doc_state.as_ref()) {
+                return Ok(Some(Self::sof_completion(&catalog, state, position)));
+            }
             let Some(state) = doc_state else {
                 return Ok(Some(CompletionResponse::List(
                     async_lsp::lsp_types::CompletionList {
@@ -1172,7 +1287,7 @@ impl HirSchemaProvider for HirSchemaProviderAdapter<'_> {
 }
 
 /// Parse a PostgreSQL data type string into an HIR DataType.
-fn parse_data_type(type_str: &str) -> HirDataType {
+pub(super) fn parse_data_type(type_str: &str) -> HirDataType {
     let type_lower = type_str.to_lowercase();
     match type_lower.as_str() {
         "integer" | "int" | "int4" | "serial" => HirDataType::Integer,
@@ -1425,5 +1540,60 @@ mod tests {
             "did not expect WHERE jsonb lint warning, got: {:?}",
             diagnostics
         );
+    }
+
+    fn sof_catalog(columns: bool) -> SofCatalog {
+        let patient_columns = if columns {
+            serde_json::json!([{"name": "id", "type": "text"}, {"name": "birth_date", "type": "text"}])
+        } else {
+            serde_json::json!([])
+        };
+        SofCatalog::from_settings(&serde_json::json!({"sof": {
+            "relations": [{"name": "patient", "kind": "ViewDefinition", "columns": patient_columns}],
+            "parameters": [{"name": "from_date", "type": "date"}]
+        }}))
+        .expect("catalog")
+    }
+
+    fn sof_errors(sql: &str, catalog: &SofCatalog) -> Vec<Diagnostic> {
+        PostgresLspServer::sof_diagnostics(sql, catalog)
+            .into_iter()
+            .filter(|diagnostic| diagnostic.severity == Some(DiagnosticSeverity::ERROR))
+            .collect()
+    }
+
+    #[test]
+    fn test_sof_diagnostics_accept_a_valid_query_with_parameters() {
+        let sql = "SELECT p.id FROM patient AS p WHERE p.birth_date >= :from_date";
+        let diagnostics = PostgresLspServer::sof_diagnostics(sql, &sof_catalog(true));
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn test_sof_diagnostics_name_unknown_tables_and_undeclared_parameters() {
+        let catalog = sof_catalog(true);
+        let unknown_table = sof_errors("SELECT o.id FROM observation AS o", &catalog);
+        assert!(!unknown_table.is_empty());
+        let unknown_column = sof_errors("SELECT p.nope FROM patient AS p", &catalog);
+        assert!(!unknown_column.is_empty());
+        let undeclared = sof_errors(
+            "SELECT p.id FROM patient AS p WHERE p.birth_date >= :to_date",
+            &catalog,
+        );
+        assert!(
+            undeclared.iter().any(|d| d.message.contains(":to_date")),
+            "{undeclared:?}"
+        );
+        let refused = sof_errors("SELECT pg_sleep(1) AS pause FROM patient", &catalog);
+        assert!(
+            refused.iter().any(|d| d.message.contains("pg_sleep")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn test_sof_diagnostics_skip_columns_of_relations_not_yet_described() {
+        let diagnostics = sof_errors("SELECT p.anything FROM patient AS p", &sof_catalog(false));
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 }

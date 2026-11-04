@@ -1,6 +1,6 @@
 # SQL on FHIR in the server — plan
 
-Status: 2026-11-03. Only work still to do; phases 1–6 are done (git history). Priority: strategic (multi-year). Quality bar: the server path
+Status: 2026-11-04. Only work still to do; phases 1–6 are done (git history). Priority: strategic (multi-year). Quality bar: the server path
 over its own PostgreSQL is the product; the CLI / in-memory paths follow it.
 
 ## Spec baseline (verify against these, not memory)
@@ -27,16 +27,20 @@ TerminologyProvider), never as the way terminology reaches SQL.
   expander goes to the terminology server through the server's
   `TerminologyProvider` (the one `memberOf()` uses), only for published value
   sets. Temporal parameters bind as text (sof 0.3.3).
+- Console: the Views page runs ViewDefinitions, SQLQueries and SQLViews through `$sql-run`;
+  the console-only `$sql-describe` (`sql_describe.rs`) resolves a subject's dependencies as
+  `$sql-run` does and prepares its SQL without data (columns, provenance, `check`); the SQL
+  editor's language server runs in SQL on FHIR mode (`/api/lsp/pg?mode=sof`,
+  `lsp/sof_catalog.rs`): the dependencies' labels and columns instead of the catalog.
 - Tests: `tests/sql_run.rs`, `tests/sql_terminology.rs`, `tests/sql_export.rs`,
-  `tests/sql_conformance.rs` (each its own binary).
+  `tests/sql_conformance.rs`, `tests/sql_describe.rs` (each its own binary);
+  `scripts/test-sof-console.ts` against a running server.
 
 ## To do
 
-1. **Console** — the ViewDefinition page runs through `$sql-run`; SQLQuery editor with the
-   banshee LSP; terminology dependencies visible.
-2. **Strict expander gaps**: `compose.lockedDate`, code system supplements and
+1. **Strict expander gaps**: `compose.lockedDate`, code system supplements and
    `caseSensitive = false` are not applied.
-3. `$viewdefinition-export` still returns the v2 bulk-style manifest (not part of 3.0, which
+2. `$viewdefinition-export` still returns the v2 bulk-style manifest (not part of 3.0, which
    replaces it with `$sql-export`); decide whether to keep it.
 
 Later / explicitly not now: maintained materialized views (`$viewdefinition-materialize`) —

@@ -1,5 +1,4 @@
 import {
-  Badge,
   ChartBuilder,
   type ChartSpec,
   type EChartsType,
@@ -9,22 +8,33 @@ import {
   Text,
 } from "@octofhir/ui-kit";
 import { ChartColumnBig, Table as TableIcon, Waypoints } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { RunResult, SqlResult } from "../../lib/useViewDefinition";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import type { RunResult } from "../../lib/sofApi";
 import classes from "./PreviewPanel.module.css";
 import { ResultTable } from "./ResultTable";
-import { SQLPreview } from "./SQLPreview";
 
 type PreviewTab = "table" | "chart" | "plan";
 
 interface PreviewPanelProps {
   runResult: RunResult | null;
-  sqlResult: SqlResult | null;
-  onRefreshSql: () => void;
+  /** Why the last run failed. */
+  runError?: string;
+  /** What the Plan tab shows (the generated SQL, or how dependencies resolve). */
+  plan: ReactNode;
+  planLabel: string;
+  /** Called when the Plan tab opens. */
+  onPlanOpen?: () => void;
   isLoading: boolean;
 }
 
-export function PreviewPanel({ runResult, sqlResult, onRefreshSql, isLoading }: PreviewPanelProps) {
+export function PreviewPanel({
+  runResult,
+  runError,
+  plan,
+  planLabel,
+  onPlanOpen,
+  isLoading,
+}: PreviewPanelProps) {
   const [tab, setTab] = useState<PreviewTab>("table");
   const hasRows = !!runResult && runResult.rowCount > 0;
 
@@ -47,15 +57,15 @@ export function PreviewPanel({ runResult, sqlResult, onRefreshSql, isLoading }: 
     setChartSpec((prev) => prev ?? suggestChartSpec(tabular));
   }, [tab, hasRows, tabular]);
 
-  // Keep the latest onRefreshSql in a ref so switching to the Plan tab fires it
+  // Keep the latest onPlanOpen in a ref so switching to the Plan tab fires it
   // exactly once, without re-running an effect every time the callback identity
   // changes (which would otherwise loop forever).
-  const refreshSqlRef = useRef(onRefreshSql);
-  refreshSqlRef.current = onRefreshSql;
+  const planOpenRef = useRef(onPlanOpen);
+  planOpenRef.current = onPlanOpen;
 
   const selectTab = (id: PreviewTab) => {
     setTab(id);
-    if (id === "plan") refreshSqlRef.current();
+    if (id === "plan") planOpenRef.current?.();
   };
 
   const tabBtn = (id: PreviewTab, icon: React.ReactNode, text: string, show = true) =>
@@ -76,20 +86,29 @@ export function PreviewPanel({ runResult, sqlResult, onRefreshSql, isLoading }: 
         <div className={classes.tabs}>
           {tabBtn("table", <TableIcon size={13} />, "Table")}
           {tabBtn("chart", <ChartColumnBig size={13} />, "Chart")}
-          {tabBtn("plan", <Waypoints size={13} />, "Plan")}
+          {tabBtn("plan", <Waypoints size={13} />, planLabel)}
         </div>
         <div className={classes.meta}>
           {isLoading && <Spin size="sm" />}
           {runResult && (
             <Text size="xs" c="dimmed">
-              {runResult.rowCount} rows · {runResult.columns.length} cols
+              {runResult.rowCount} rows · {runResult.columns.length} cols · {runResult.elapsedMs} ms
             </Text>
           )}
         </div>
       </div>
 
       <div className={classes.body}>
+        {runError && tab !== "plan" && (
+          <div className={classes.runError}>
+            <Text size="xs" fw={600}>
+              The run failed
+            </Text>
+            <pre>{runError}</pre>
+          </div>
+        )}
         {tab === "table" &&
+          !runError &&
           (runResult ? (
             <div className={classes.scroll}>
               <ResultTable result={runResult} />
@@ -112,26 +131,13 @@ export function PreviewPanel({ runResult, sqlResult, onRefreshSql, isLoading }: 
             <Empty label="Run the view to chart its output." />
           ))}
 
-        {tab === "plan" && (
-          <div className={classes.scroll}>
-            {sqlResult ? (
-              <>
-                <Badge size="xs" variant="light" className={classes.planBadge}>
-                  Generated PostgreSQL · informational
-                </Badge>
-                <SQLPreview result={sqlResult} isLoading={isLoading} error={null} />
-              </>
-            ) : (
-              <Empty label="The compiled SQL plan appears here." />
-            )}
-          </div>
-        )}
+        {tab === "plan" && <div className={classes.scroll}>{plan}</div>}
       </div>
     </div>
   );
 }
 
-function Empty({ label }: { label: string }) {
+export function Empty({ label }: { label: string }) {
   return (
     <div className={classes.empty}>
       <TableIcon size={30} strokeWidth={1.2} />

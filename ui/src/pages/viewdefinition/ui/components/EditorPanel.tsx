@@ -117,6 +117,17 @@ export function EditorPanel({
                 size="xs"
                 className={classes.metaStatus}
               />
+              <TextInput
+                label="URL"
+                placeholder="https://example.org/ViewDefinition/patient"
+                value={viewDef.url ?? ""}
+                onChange={(v) => {
+                  const { url: _url, ...rest } = viewDef;
+                  onChange(v ? { ...viewDef, url: v } : rest);
+                }}
+                className={classes.metaUrl}
+                size="xs"
+              />
             </div>
 
             {/* Projection (recursive select tree) */}

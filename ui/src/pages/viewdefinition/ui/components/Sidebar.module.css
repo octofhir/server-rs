@@ -29,7 +29,7 @@
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: var(--octo-text-secondary, #555);
+  color: var(--octo-text-secondary);
   cursor: pointer;
 }
 .railBtn:hover {
@@ -38,7 +38,7 @@
 .railCount {
   font-size: 11px;
   font-weight: 600;
-  color: var(--octo-text-muted, #9aa1ad);
+  color: var(--octo-text-muted);
 }
 
 .header {
@@ -52,7 +52,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--octo-text-primary, #111);
+  color: var(--octo-text-primary);
 }
 .collapseBtn {
   display: inline-flex;
@@ -63,7 +63,7 @@
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: var(--octo-text-secondary, #666);
+  color: var(--octo-text-secondary);
   cursor: pointer;
 }
 .collapseBtn:hover {
@@ -84,6 +84,28 @@
   gap: 2px;
 }
 
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.group + .group {
+  margin-top: var(--octo-spacing-sm);
+}
+
+.groupTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--octo-text-muted);
+}
+
 .item {
   display: flex;
   align-items: center;
@@ -95,14 +117,14 @@
   background: transparent;
   text-align: left;
   cursor: pointer;
-  color: var(--octo-text-primary, #1a1b1e);
+  color: var(--octo-text-primary);
   transition: background 90ms ease;
 }
 .item:hover {
   background: var(--octo-surface-2);
 }
 .item[data-selected="true"] {
-  background: color-mix(in oklch, var(--octo-accent-primary, #10b981) 14%, transparent);
+  background: var(--octo-accent-primary-subtle);
 }
 
 .statusDot {
@@ -125,8 +147,8 @@
 .itemResource {
   flex: 0 0 auto;
   font-size: 10px;
-  font-family: var(--octo-font-mono, monospace);
-  color: var(--octo-text-muted, #9aa1ad);
+  font-family: var(--octo-typography-mono);
+  color: var(--octo-text-muted);
 }
 
 .emptyState {

@@ -23,13 +23,16 @@ use tower::ServiceBuilder;
 
 use crate::server::AppState;
 
-use super::pg_server::PostgresLspServer;
+use super::pg_server::{LspMode, PostgresLspServer};
 
 /// Query parameters for LSP WebSocket connection.
 #[derive(Debug, Deserialize)]
 pub struct LspQueryParams {
     /// Authentication token (required)
     pub token: Option<String>,
+    /// `sof` for a SQL on FHIR query (its dependencies, not the database
+    /// catalog); the DB console otherwise.
+    pub mode: Option<String>,
 }
 
 /// WebSocket handler for PostgreSQL LSP.
@@ -65,13 +68,20 @@ pub async fn pg_lsp_websocket_handler(
         })?;
     let claims = token_data.claims;
 
-    // Check db_console permission from claims
+    let mode = match params.mode.as_deref() {
+        Some("sof") => LspMode::SqlOnFhir,
+        _ => LspMode::Database,
+    };
+
+    // The SQL on FHIR mode reads no catalog: it knows only the relations the
+    // client sends, so any authenticated user may use it. The DB console
+    // mode needs db_console permission from claims.
     // Allowed if user has:
     // - system/*.* scope (full system access)
     // - system/*.read scope (system read access)
     // - user/*.* scope (full user access)
     // - db_console scope (explicit db console access)
-    if !has_db_console_permission(&claims) {
+    if mode == LspMode::Database && !has_db_console_permission(&claims) {
         tracing::warn!(
             client_id = %claims.client_id,
             scope = %claims.scope,
@@ -88,7 +98,12 @@ pub async fn pg_lsp_websocket_handler(
     // Upgrade to WebSocket
     Ok(ws.on_upgrade(move |socket| {
         tracing::debug!("WebSocket upgrade completed, calling handle_lsp_connection");
-        handle_lsp_connection(socket, state.db_pool.clone(), state.model_provider.clone())
+        handle_lsp_connection(
+            socket,
+            state.db_pool.clone(),
+            state.model_provider.clone(),
+            mode,
+        )
     }))
 }
 
@@ -118,8 +133,9 @@ async fn handle_lsp_connection(
     socket: axum::extract::ws::WebSocket,
     db_pool: Arc<sqlx_postgres::PgPool>,
     octofhir_provider: Arc<crate::model_provider::OctoFhirModelProvider>,
+    mode: LspMode,
 ) {
-    tracing::info!("LSP WebSocket connection started");
+    tracing::info!(?mode, "LSP WebSocket connection started");
 
     // Split WebSocket into read and write halves
     let (ws_write, ws_read) = socket.split();
@@ -260,6 +276,7 @@ async fn handle_lsp_connection(
             client_socket.clone(),
             db_pool.clone(),
             octofhir_provider.clone(),
+            mode,
         );
 
         // Create Router and manually register all LSP methods
@@ -278,7 +295,10 @@ async fn handle_lsp_connection(
             .notification::<notification::Initialized>(|st, params| st.initialized(params))
             .notification::<notification::DidOpenTextDocument>(|st, params| st.did_open(params))
             .notification::<notification::DidChangeTextDocument>(|st, params| st.did_change(params))
-            .notification::<notification::DidCloseTextDocument>(|st, params| st.did_close(params));
+            .notification::<notification::DidCloseTextDocument>(|st, params| st.did_close(params))
+            .notification::<notification::DidChangeConfiguration>(|st, params| {
+                st.did_change_configuration(params)
+            });
 
         // Add middleware layers - use the original router variable
         tracing::debug!("Wrapping router with middleware layers");

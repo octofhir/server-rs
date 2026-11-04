@@ -1,4 +1,4 @@
-import { Code, Loader, Text } from "@octofhir/ui-kit";
+import { Badge, Code, Loader, Text } from "@octofhir/ui-kit";
 import type { SqlResult } from "../../lib/useViewDefinition";
 import classes from "./SQLPreview.module.css";
 
@@ -40,5 +40,24 @@ export function SQLPreview({ result, isLoading, error }: SQLPreviewProps) {
     <Code block className={classes.sqlCode}>
       {result.sql}
     </Code>
+  );
+}
+
+/** The Plan tab of a ViewDefinition: the PostgreSQL it compiles to. */
+export function ViewSqlPlan({ result, isLoading }: { result: SqlResult | null; isLoading: boolean }) {
+  if (!result && !isLoading) {
+    return (
+      <Text size="sm" c="dimmed" ta="center" py="md">
+        The compiled SQL plan appears here.
+      </Text>
+    );
+  }
+  return (
+    <>
+      <Badge size="xs" variant="light" className={classes.planBadge}>
+        Generated PostgreSQL · informational
+      </Badge>
+      <SQLPreview result={result} isLoading={isLoading} error={null} />
+    </>
   );
 }

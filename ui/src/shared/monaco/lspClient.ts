@@ -46,6 +46,8 @@ let monacoReady: Promise<void> | undefined;
 let languageRegistered = false;
 let activeConnection: PgLspConnection | undefined;
 let currentFormatterConfig: FormatterConfig | undefined;
+/** Last `workspace/didChangeConfiguration` settings, re-sent after a reconnect. */
+let currentSettings: unknown;
 
 export const PG_LANGUAGE_ID = "pgsql";
 
@@ -180,6 +182,7 @@ export async function startPgLsp(getUrl: () => string): Promise<() => void> {
 export function stopPgLsp(): void {
   activeConnection?.dispose();
   activeConnection = undefined;
+  currentSettings = undefined;
 }
 
 export function bindModelToLanguageServer(model: monaco.editor.ITextModel): () => void {
@@ -187,6 +190,16 @@ export function bindModelToLanguageServer(model: monaco.editor.ITextModel): () =
     return () => {};
   }
   return activeConnection.bindModel(model);
+}
+
+/**
+ * Send `workspace/didChangeConfiguration` settings to the language server; they
+ * are kept and sent again on every (re)connection. The SQL on FHIR mode
+ * (`?mode=sof`) takes the query's relations and parameters this way.
+ */
+export function setPgLspSettings(settings: unknown): void {
+  currentSettings = settings;
+  activeConnection?.sendSettings(settings);
 }
 
 export function forceSyncModelToLanguageServer(model: monaco.editor.ITextModel): void {
@@ -379,6 +392,11 @@ class PgLspConnection {
     this.sendDidChange(model);
   }
 
+  public sendSettings(settings: unknown): void {
+    if (!this.initialized) return; // sent on initialization
+    this.sendNotification("workspace/didChangeConfiguration", { settings });
+  }
+
   private async connect(): Promise<void> {
     if (this.disposed) return;
 
@@ -467,6 +485,12 @@ class PgLspConnection {
       method: "initialized",
       params: {},
     });
+    if (currentSettings !== undefined) {
+      this.rawSend({
+        method: "workspace/didChangeConfiguration",
+        params: { settings: currentSettings },
+      });
+    }
     this.flushNotificationQueue();
     for (const doc of this.documents.values()) {
       this.sendDidOpen(doc.model);

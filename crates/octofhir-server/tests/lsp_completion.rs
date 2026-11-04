@@ -6,7 +6,7 @@ use async_lsp::lsp_types::{
 };
 use async_lsp::{ClientSocket, LanguageServer};
 use octofhir_fhir_model::provider::FhirVersion as ModelFhirVersion;
-use octofhir_server::lsp::PostgresLspServer;
+use octofhir_server::lsp::{LspMode, PostgresLspServer};
 use octofhir_server::model_provider::OctoFhirModelProvider;
 use sqlx_core::executor::Executor;
 use sqlx_core::migrate::Migrator;
@@ -337,7 +337,7 @@ async fn lsp_completion_suggests_tables_after_from() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_from.sql").expect("uri");
     let sql = "SELECT * FROM ".to_string();
@@ -401,7 +401,7 @@ async fn lsp_completion_filters_tables_by_prefix() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_prefix.sql").expect("uri");
     let sql = format!("SELECT * FROM {table}", table = "lsp_pat_");
@@ -458,7 +458,7 @@ async fn lsp_completion_filters_tables_by_schema_prefix() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_schema_prefix.sql").expect("uri");
     let sql = "SELECT * FROM public.lsp_schema_".to_string();
@@ -511,7 +511,7 @@ async fn lsp_completion_resolves_alias_columns() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_alias.sql").expect("uri");
     let sql = format!("SELECT p. FROM {table} p", table = table_name);
@@ -574,7 +574,7 @@ async fn lsp_completion_suggests_tables_after_join_update_insert() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_join.sql").expect("uri");
     let sql = format!("SELECT * FROM {table} JOIN ", table = table_left);
@@ -638,7 +638,7 @@ async fn lsp_completion_suggests_columns_in_where_and_order_by() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_where.sql").expect("uri");
     let sql = format!("SELECT * FROM {table} WHERE ", table = table_name);
@@ -690,7 +690,7 @@ async fn lsp_completion_suggests_jsonb_paths() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_jsonb.sql").expect("uri");
     let sql = "SELECT resource -> 'na' FROM patient".to_string();
@@ -745,7 +745,7 @@ async fn lsp_completion_suggests_nested_jsonb_paths() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_jsonb_nested.sql").expect("uri");
     let sql = "SELECT patient.resource->'name'->0->'fa' FROM patient".to_string();
@@ -808,7 +808,7 @@ async fn lsp_completion_suggests_jsonb_paths_with_hash_arrow() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_jsonb_hash_arrow.sql").expect("uri");
     // Test #> operator with array literal syntax
@@ -866,7 +866,7 @@ async fn lsp_completion_suggests_nested_jsonb_paths_with_hash_arrow() {
         .expect("create table");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_jsonb_hash_arrow_nested.sql").expect("uri");
     // Test nested path with #> operator
@@ -937,7 +937,7 @@ async fn lsp_completion_returns_tables_columns_and_functions() {
         .expect("create function");
 
     let client = ClientSocket::new_closed();
-    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider);
+    let mut server = PostgresLspServer::new(client, pool.clone(), model_provider, LspMode::Database);
 
     let uri = Url::parse("file:///lsp_completion_tables.sql").expect("uri");
     let sql = "SELECT * FROM ".to_string();

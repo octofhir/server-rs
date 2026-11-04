@@ -1,30 +1,45 @@
 import { Badge, Text, TextInput } from "@octofhir/ui-kit";
-import { PanelLeftClose, PanelLeftOpen, Search, Table2 } from "lucide-react";
+import { Database, PanelLeftClose, PanelLeftOpen, Search, Table2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { ViewDefinition } from "../../lib/useViewDefinition";
 import classes from "./Sidebar.module.css";
 
+/** A saved ViewDefinition or SQL query (SQLQuery / SQLView Library). */
+export interface SidebarItem {
+  key: string;
+  kind: "view" | "sql";
+  id: string;
+  name: string;
+  status: string;
+  /** Resource type of a view, profile of a query. */
+  meta: string;
+}
+
 interface SidebarProps {
-  items: ViewDefinition[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  items: SidebarItem[];
+  selectedKey: string | null;
+  onSelect: (item: SidebarItem) => void;
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  active: "var(--octo-accent-primary, #10b981)",
-  draft: "var(--octo-accent-warm, #f59e0b)",
-  retired: "var(--octo-text-muted, #9aa1ad)",
-  unknown: "var(--octo-text-muted, #9aa1ad)",
+  active: "var(--octo-accent-primary)",
+  draft: "var(--octo-border-strong)",
+  retired: "var(--octo-text-muted)",
+  unknown: "var(--octo-text-muted)",
 };
 
-export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
+const GROUPS = [
+  { kind: "view", title: "Views", icon: Table2 },
+  { kind: "sql", title: "SQL queries", icon: Database },
+] as const;
+
+export function Sidebar({ items, selectedKey, onSelect }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return items;
-    return items.filter((vd) => (vd.name || "").toLowerCase().includes(q));
+    return items.filter((item) => (item.name || "").toLowerCase().includes(q));
   }, [items, query]);
 
   if (collapsed) {
@@ -34,8 +49,8 @@ export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
           type="button"
           className={classes.railBtn}
           onClick={() => setCollapsed(false)}
-          aria-label="Expand saved views"
-          title="Saved views"
+          aria-label="Expand saved views and queries"
+          title="Saved"
         >
           <PanelLeftOpen size={16} />
         </button>
@@ -50,7 +65,7 @@ export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
         <span className={classes.headTitle}>
           <Table2 size={14} />
           <Text size="sm" fw={600}>
-            Saved views
+            Saved
           </Text>
           <Badge size="xs" variant="light">
             {items.length}
@@ -71,7 +86,7 @@ export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
           size="xs"
           value={query}
           onChange={setQuery}
-          placeholder="Filter views…"
+          placeholder="Filter saved…"
           leftSection={<Search size={13} />}
           aria-label="Filter saved views"
         />
@@ -81,26 +96,39 @@ export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
         {filtered.length === 0 ? (
           <div className={classes.emptyState}>
             <Text size="xs" c="dimmed">
-              {items.length === 0 ? "No saved views yet" : "No matches"}
+              {items.length === 0 ? "Nothing saved yet" : "No matches"}
             </Text>
           </div>
         ) : (
-          filtered.map((vd) => (
-            <button
-              key={vd.id}
-              type="button"
-              className={classes.item}
-              data-selected={selectedId === vd.id ? "true" : undefined}
-              onClick={() => vd.id && onSelect(vd.id)}
-            >
-              <span
-                className={classes.statusDot}
-                style={{ background: STATUS_COLOR[vd.status] ?? STATUS_COLOR.unknown }}
-              />
-              <span className={classes.itemLabel}>{vd.name || "Untitled"}</span>
-              <span className={classes.itemResource}>{vd.resource}</span>
-            </button>
-          ))
+          GROUPS.map((group) => {
+            const members = filtered.filter((item) => item.kind === group.kind);
+            if (members.length === 0) return null;
+            const Icon = group.icon;
+            return (
+              <div key={group.kind} className={classes.group}>
+                <span className={classes.groupTitle}>
+                  <Icon size={12} />
+                  {group.title}
+                </span>
+                {members.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={classes.item}
+                    data-selected={selectedKey === item.key ? "true" : undefined}
+                    onClick={() => onSelect(item)}
+                  >
+                    <span
+                      className={classes.statusDot}
+                      style={{ background: STATUS_COLOR[item.status] ?? STATUS_COLOR.unknown }}
+                    />
+                    <span className={classes.itemLabel}>{item.name || "Untitled"}</span>
+                    <span className={classes.itemResource}>{item.meta}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })
         )}
       </div>
     </aside>

@@ -70,8 +70,20 @@
   padding: var(--octo-spacing-sm);
 }
 
-.planBadge {
-  margin-bottom: var(--octo-spacing-xs);
+.runError {
+  margin: var(--octo-spacing-md);
+  padding: var(--octo-spacing-sm) var(--octo-spacing-md);
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--octo-radius-md);
+  background: var(--octo-surface-1);
+  color: var(--octo-accent-fire);
+}
+
+.runError pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  font-family: var(--octo-typography-mono);
+  font-size: 12px;
 }
 
 .empty {

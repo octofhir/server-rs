@@ -8,6 +8,7 @@
 //! - `$run` - Execute a ViewDefinition and return tabular results
 //! - `$sql` - Generate SQL from a ViewDefinition without executing
 //! - `$viewdefinition-export` - Async bulk export of ViewDefinition results to NDJSON
+//! - `$sql-describe` - The columns and dependencies a `$sql-run` would read (console)
 //!
 //! # Example
 //!
@@ -31,6 +32,7 @@ mod rejection;
 mod run;
 mod scope;
 mod sql;
+mod sql_describe;
 mod sql_export;
 mod sql_plan;
 mod sql_run;
@@ -41,6 +43,7 @@ pub use export::{ViewDefinitionExportOperation, execute_viewdefinition_export};
 pub(crate) use output::ENVELOPE_KEY;
 pub use run::ViewDefinitionRunOperation;
 pub use sql::ViewDefinitionSqlOperation;
+pub use sql_describe::SqlDescribeOperation;
 pub(crate) use sql_export::{
     JOB_TYPE as SQL_EXPORT_JOB, locations as sql_export_locations,
     media_type as sql_export_media_type,
@@ -60,9 +63,9 @@ pub use viewdefinition_run::ViewDefinitionRunSpecOperation;
 /// (`igs/octofhir-sof`), whose `base` is the SQL on FHIR one: the server
 /// supports every parameter but `source`, and SQL on FHIR asks a server
 /// supporting a subset to say so that way. The console's `$run` / `$sql` on
-/// ViewDefinition and `$viewdefinition-run` (a continuous-build operation
-/// that was never published) stay callable but are not advertised: their
-/// definitions carry no canonical.
+/// ViewDefinition, the console's `$sql-describe` and `$viewdefinition-run`
+/// (a continuous-build operation that was never published) stay callable but
+/// are not advertised: their definitions carry no canonical.
 /// This server's `$sql-run` definition (base: SQL on FHIR SQLRun).
 pub(crate) const SQL_RUN_DEFINITION: &str = "http://octofhir.io/OperationDefinition/sql-run";
 
@@ -87,6 +90,13 @@ pub fn register_operation_definitions(registry: &mut crate::operations::Operatio
     registry.replace(OperationDefinition {
         system: true,
         ..on_view_definition("viewdefinition-run", "")
+    });
+    registry.replace(OperationDefinition {
+        system: true,
+        type_level: false,
+        instance: false,
+        resource: vec![],
+        ..on_view_definition("sql-describe", "")
     });
     registry.replace(OperationDefinition {
         system: true,

@@ -92,7 +92,7 @@ pub use router::{
     merged_type_post_handler, system_operation_handler, type_operation_handler,
 };
 pub use sof::{
-    SqlExportOperation, SqlRunOperation, ViewDefinitionRunOperation,
+    SqlDescribeOperation, SqlExportOperation, SqlRunOperation, ViewDefinitionRunOperation,
     ViewDefinitionRunSpecOperation, ViewDefinitionSqlOperation, execute_sql_export,
     execute_viewdefinition_export,
 };
@@ -264,6 +264,11 @@ pub fn register_core_operations_all(
     handlers.insert(
         "sql-run".to_string(),
         Arc::new(SqlRunOperation::new(sql_on_fhir_config.enabled)),
+    );
+    // $sql-describe (console): the columns and dependencies of a $sql-run subject.
+    handlers.insert(
+        "sql-describe".to_string(),
+        Arc::new(SqlDescribeOperation::new(sql_on_fhir_config.enabled)),
     );
 
     // Notification operations
