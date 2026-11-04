@@ -9,7 +9,7 @@ authors.workspace = true
 repository.workspace = true
 
 [features]
-default = ["http", "server-auth"]
+default = []
 http = ["dep:axum", "server-auth"]
 server-auth = ["dep:octofhir-auth"]
 
@@ -19,7 +19,7 @@ required-features = ["server-auth"]
 
 [dependencies]
 # GraphQL framework with dynamic schema support
-async-graphql = { version = "7", features = ["dynamic-schema", "dataloader"] }
+async-graphql = { version = "7", default-features = false, features = ["dynamic-schema", "dataloader"] }
 async-graphql-parser = "7"
 async-graphql-value = "7"
 
