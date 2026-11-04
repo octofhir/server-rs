@@ -49,8 +49,13 @@ pub(crate) async fn request_timeout_middleware(
         axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
     ) || (request.method() == axum::http::Method::POST
         && request.uri().path().ends_with("/_search"));
+    // Bundles, and package comparisons that may download guides from the registry, get the
+    // long budget.
     let bundle = request.method() == axum::http::Method::POST
-        && request.uri().path().trim_end_matches('/') == "/fhir";
+        && matches!(
+            request.uri().path().trim_end_matches('/'),
+            "/fhir" | "/api/packages/diff"
+        );
     let duration = if read {
         timeouts.read
     } else if bundle {

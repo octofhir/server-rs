@@ -15,7 +15,7 @@ import {
 	Select,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { CircleAlert as CircleExclamation, Search as Magnifier, Archive, Eye, Check, TriangleAlert as TriangleExclamation, ArrowDownToLine, Globe } from "lucide-react";
+import { CircleAlert as CircleExclamation, Search as Magnifier, Archive, Eye, Check, TriangleAlert as TriangleExclamation, ArrowDownToLine, Globe, GitCompareArrows } from "lucide-react";
 import {
 	usePackages,
 	usePackageLookup,
@@ -30,6 +30,7 @@ import {
 	getFhirVersionCompatibilityView,
 } from "@/entities/fhir-package";
 import { InstallProgressModal } from "./InstallProgressModal";
+import { PackageCompareTab } from "./PackageCompareTab";
 import classes from "./PackagesPage.module.css";
 
 function FhirVersionBadge({
@@ -399,6 +400,9 @@ export function PackagesPage() {
 					<Tabs.Tab value="registry" leftSection={<Globe size={14} />}>
 						Registry
 					</Tabs.Tab>
+					<Tabs.Tab value="compare" leftSection={<GitCompareArrows size={14} />}>
+						Compare
+					</Tabs.Tab>
 				</Tabs.List>
 
 				<Tabs.Panel value="installed" pt="md">
@@ -410,6 +414,10 @@ export function PackagesPage() {
 
 				<Tabs.Panel value="registry" pt="md">
 					<RegistryTab serverVersion={serverVersion} />
+				</Tabs.Panel>
+
+				<Tabs.Panel value="compare" pt="md">
+					<PackageCompareTab />
 				</Tabs.Panel>
 			</Tabs>
 		</WorkspacePageLayout>

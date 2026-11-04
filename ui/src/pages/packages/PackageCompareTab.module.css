@@ -1,0 +1,75 @@
+.stack {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+.toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.name {
+	width: min(100%, 320px);
+}
+
+.select {
+	width: min(100%, 200px);
+}
+
+.arrow {
+	color: var(--octo-text-muted);
+	flex-shrink: 0;
+}
+
+.filters {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+}
+
+.search {
+	width: min(100%, 360px);
+}
+
+.notes {
+	margin: 0;
+	padding-left: 16px;
+	font-size: var(--octo-font-size-sm, 12px);
+}
+
+.profile {
+	display: flex;
+	min-width: 0;
+	max-width: 320px;
+	align-items: baseline;
+	gap: 6px;
+}
+
+.dim {
+	color: var(--octo-text-muted);
+	font-size: 11px;
+	flex-shrink: 0;
+}
+
+.mono {
+	white-space: nowrap;
+	font-family: var(--octo-font-mono);
+	font-size: 12px;
+	color: var(--octo-text-primary);
+	background: none;
+	padding: 0;
+}
+
+.truncate {
+	min-width: 0;
+	max-width: 420px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	display: block;
+}

@@ -1570,6 +1570,38 @@ pub async fn lookup_package_versions(name: &str) -> Result<Vec<String>, String> 
         .map_err(|e| format!("failed to lookup package {}: {}", name, e))
 }
 
+/// Download `name@version` from the package registry into the package cache, without
+/// installing it: nothing is written to the package store, so the server's profiles, search
+/// parameters and validation stay as they are. Returns the tarball's path.
+pub async fn download_registry_package(
+    cfg: &AppConfig,
+    name: &str,
+    version: &str,
+) -> Result<std::path::PathBuf, String> {
+    use octofhir_canonical_core::{FcmConfig, PackageSpec};
+
+    let mut fcm_cfg = FcmConfig::default();
+    fcm_cfg.apply_env_overrides();
+    let base = std::path::PathBuf::from(cfg.packages.path.as_deref().unwrap_or(".fhir"));
+    let client = octofhir_canonical_core::registry::RegistryClient::new(
+        &fcm_cfg.registry,
+        base.join("cache"),
+    )
+    .await
+    .map_err(|e| format!("registry init error: {e}"))?;
+    let spec = PackageSpec {
+        name: name.to_owned(),
+        version: version.to_owned(),
+        priority: 1,
+        url: None,
+    };
+    client
+        .download_package(&spec)
+        .await
+        .map(|download| download.file_path)
+        .map_err(|e| format!("cannot download {name}@{version}: {e}"))
+}
+
 /// Search result for a package in the registry.
 #[derive(Debug, Clone)]
 pub struct RegistrySearchResult {

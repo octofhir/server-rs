@@ -598,6 +598,48 @@ export interface PackageInstallRequest {
   version: string;
 }
 
+/** Severity of a package diff change (fhir-diff). */
+export type PackageDiffSeverity = "breaking" | "warning" | "info";
+
+export interface PackageDiffChange {
+  rule: string;
+  severity: PackageDiffSeverity;
+  /** Element path; slices written `:name` (`Patient.identifier:mrn.system`). */
+  path: string;
+  message: string;
+  old?: string;
+  new?: string;
+}
+
+export interface PackageDiffProfile {
+  url: string;
+  name: string;
+  title?: string;
+  type_name: string;
+  status: "added" | "removed" | "changed" | "unchanged";
+  old_version?: string;
+  new_version?: string;
+  file: string;
+  changes: PackageDiffChange[];
+}
+
+/** `POST /api/packages/diff` (JSON): two installed packages compared profile by profile. */
+export interface PackageDiffReport {
+  old: string;
+  new: string;
+  profiles: PackageDiffProfile[];
+  notes?: string[];
+}
+
+export interface PackageDiffRequest {
+  /** `name@version` of an installed package. */
+  old: string;
+  new: string;
+  profiles?: string[];
+}
+
+export type PackageDiffDownloadFormat = "markdown" | "sarif" | "text";
+
 export interface PackageInstallResponse {
   success: boolean;
   name: string;

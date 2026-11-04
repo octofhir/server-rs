@@ -19,6 +19,9 @@ import type {
   PackageListResponse,
   PackageLookupResponse,
   PackageResourcesResponse,
+  PackageDiffDownloadFormat,
+  PackageDiffReport,
+  PackageDiffRequest,
   PackageSearchResponse,
   QueryHistoryResponse,
   RestConsoleResponse,
@@ -521,6 +524,15 @@ function isPackageDetailResponse(value: unknown): value is PackageDetailResponse
       (resource) =>
         isRecord(resource) && typeof resource.resourceType === "string" && isNumber(resource.count)
     )
+  );
+}
+
+function isPackageDiffReport(value: unknown): value is PackageDiffReport {
+  return (
+    isRecord(value) &&
+    typeof value.old === "string" &&
+    typeof value.new === "string" &&
+    Array.isArray(value.profiles)
   );
 }
 
@@ -1061,6 +1073,32 @@ class ServerApiClient {
     const url = `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/resources${queryString ? `?${queryString}` : ""}`;
     const response = await this.request(url);
     return assertResponse(response.data, isPackageResourcesResponse, "getPackageResources");
+  }
+
+  /**
+   * Compare two installed packages profile by profile (fhir-diff). A large guide takes a few
+   * seconds, so the timeout is longer than the default.
+   */
+  async diffPackages(request: PackageDiffRequest): Promise<PackageDiffReport> {
+    const response = await this.request(
+      "/api/packages/diff",
+      { method: "POST", body: JSON.stringify(request) },
+      { timeoutMs: 120000 }
+    );
+    return assertResponse(response.data, isPackageDiffReport, "diffPackages");
+  }
+
+  /** The same diff as Markdown, SARIF or text, to save as a file. */
+  async downloadPackageDiff(
+    request: PackageDiffRequest,
+    format: PackageDiffDownloadFormat
+  ): Promise<string> {
+    const response = await this.request(
+      "/api/packages/diff",
+      { method: "POST", body: JSON.stringify({ ...request, format }) },
+      { timeoutMs: 120000 }
+    );
+    return typeof response.data === "string" ? response.data : JSON.stringify(response.data, null, 2);
   }
 
   /**

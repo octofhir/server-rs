@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 import { serverApi } from "../serverApi";
-import type { PackageInstallRequest } from "../types";
+import type { PackageDiffRequest, PackageInstallRequest } from "../types";
 
 // Query keys for cache management
 export const packageKeys = {
@@ -20,6 +20,7 @@ export const packageKeys = {
   fhirSchema: (name: string, version: string, url: string) =>
     [...packageKeys.all, "fhirschema", name, version, url] as const,
   lookup: (name: string) => [...packageKeys.all, "lookup", name] as const,
+  diff: (request: PackageDiffRequest) => [...packageKeys.all, "diff", request] as const,
 };
 
 /**
@@ -200,4 +201,16 @@ export function useInstallPackageWithProgress() {
     error,
     latestEvent: events[events.length - 1] ?? null,
   };
+}
+
+/**
+ * Hook to compare two installed packages (fhir-diff). Runs only when both are chosen.
+ */
+export function usePackageDiff(request: PackageDiffRequest | null) {
+  return useQuery({
+    queryKey: request ? packageKeys.diff(request) : [...packageKeys.all, "diff", "none"],
+    queryFn: () => serverApi.diffPackages(request as PackageDiffRequest),
+    enabled: request !== null,
+    staleTime: 1000 * 60 * 10,
+  });
 }

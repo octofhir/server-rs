@@ -2,6 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 manifest=tests/library-consumer/Cargo.toml
+# Build the consumer into the workspace's target directory: its own would duplicate every
+# dependency build (several GB) next to the test crate.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
 for feature in api config notifications cql core storage search search-canonical graphql; do
   cargo run --manifest-path "$manifest" --no-default-features --features "$feature"
   tree=$(cargo tree --manifest-path "$manifest" --no-default-features --features "$feature" --edges normal,build --prefix none --format '{p}')

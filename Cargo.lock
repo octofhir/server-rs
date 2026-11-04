@@ -2008,6 +2008,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fhir-diff"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0a795ab8b359a035ea90681e0f418a89963b58a34bf1d5c1bcb8c073c8184ce"
+dependencies = [
+ "octofhir-fhirschema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3901,9 +3912,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-canonical-core"
-version = "0.2.11"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "254fc10917e8afe60d3d6b6c8d99688bffc2046d4e7d0edfb0f2d5bb461f84f6"
+checksum = "914183557c6ac125008a5b55cf044b2177afb6454d93b13780bd83bddd5000d4"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4364,6 +4375,7 @@ dependencies = [
  "dashmap",
  "deadpool-redis",
  "dotenvy",
+ "fhir-diff",
  "filetime",
  "flate2",
  "fml-check",

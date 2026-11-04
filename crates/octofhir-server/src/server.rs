@@ -2246,6 +2246,10 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         )
         .route("/api/packages/search", get(handlers::api_packages_search))
         .route(
+            "/api/packages/diff",
+            axum::routing::post(crate::package_diff::api_packages_diff),
+        )
+        .route(
             "/api/packages/install",
             axum::routing::post(handlers::api_packages_install),
         )

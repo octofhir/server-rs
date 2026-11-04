@@ -118,7 +118,8 @@ export function Select({
             w={w}
         >
         <BaseSelect.Root
-            value={value ?? undefined}
+            // `null` is a controlled select with nothing chosen; only `undefined` is uncontrolled.
+            value={value}
             defaultValue={defaultValue ?? undefined}
             disabled={disabled}
             name={name}

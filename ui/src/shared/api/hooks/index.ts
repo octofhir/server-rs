@@ -62,6 +62,7 @@ export {
   useInstallPackage,
   useInstallPackageWithProgress,
   usePackageDetails,
+  usePackageDiff,
   usePackageFhirSchema,
   usePackageLookup,
   usePackageResourceContent,

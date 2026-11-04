@@ -41,6 +41,7 @@ pub mod oauth;
 pub mod observability;
 pub mod operation_registry;
 pub mod operations;
+pub mod package_diff;
 pub mod patch;
 pub mod prometheus;
 pub mod reconcile;
