@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 /// FHIR R4B SearchParameter type enumeration
-/// See: https://hl7.org/fhir/R4B/search.html#table
+/// See: <https://hl7.org/fhir/R4B/search.html#table>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchParameterType {

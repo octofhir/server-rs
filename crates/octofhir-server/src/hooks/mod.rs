@@ -12,7 +12,7 @@
 //! # Architecture
 //!
 //! Hooks are registered with the [`HookRegistry`] during server startup.
-//! When a resource is created/updated/deleted, the [`EventedStorage`] wrapper
+//! When a resource is created/updated/deleted, the `EventedStorage` wrapper
 //! emits events that are dispatched to registered hooks.
 //!
 //! Each hook runs in isolation with:

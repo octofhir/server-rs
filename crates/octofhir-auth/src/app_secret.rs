@@ -29,7 +29,6 @@ use argon2::{
     Argon2,
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
 };
-use rand::Rng;
 
 /// Generate a new cryptographically secure app secret.
 ///
@@ -50,7 +49,7 @@ use rand::Rng;
 /// assert!(secret.starts_with("app_"));
 /// ```
 pub fn generate_app_secret() -> String {
-    let bytes: [u8; 32] = rand::thread_rng().r#gen();
+    let bytes: [u8; 32] = rand::random();
     format!("app_{}", hex::encode(bytes))
 }
 

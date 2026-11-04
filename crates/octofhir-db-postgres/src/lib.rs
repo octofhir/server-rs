@@ -41,11 +41,11 @@
 //!
 //! The crate is organized into several modules:
 //!
-//! - [`config`]: Configuration types for the storage backend
-//! - [`error`]: Error types specific to PostgreSQL operations
+//! - `config`: Configuration types for the storage backend
+//! - `error`: Error types specific to PostgreSQL operations
 //! - [`pool`]: Connection pool management
-//! - [`schema`]: Schema management (table creation, indexes)
-//! - [`storage`]: Main `FhirStorage` implementation
+//! - `schema`: Schema management (table creation, indexes)
+//! - `storage`: Main `FhirStorage` implementation
 //! - [`queries`]: SQL query implementations
 //! - [`migrations`]: Database migration management
 

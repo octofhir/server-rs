@@ -5,9 +5,11 @@
 //! - Database: Listen for PostgreSQL NOTIFY events
 //! - API: Runtime configuration updates via HTTP
 
+#[cfg(feature = "postgres")]
 mod database;
 mod file;
 
+#[cfg(feature = "postgres")]
 pub use database::{DatabaseSource, DatabaseSourceConfig};
 pub use file::{FileSource, FileWatcherConfig};
 

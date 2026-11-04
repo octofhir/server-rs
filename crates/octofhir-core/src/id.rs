@@ -32,7 +32,7 @@ pub fn generate_id() -> String {
 /// - Be between 1 and 64 characters
 /// - Contain only: A-Z, a-z, 0-9, -, .
 ///
-/// See: http://hl7.org/fhir/datatypes.html#id
+/// See: <http://hl7.org/fhir/datatypes.html#id>
 pub fn validate_id(id: &str) -> Result<(), IdError> {
     // Check length constraints
     if id.is_empty() {

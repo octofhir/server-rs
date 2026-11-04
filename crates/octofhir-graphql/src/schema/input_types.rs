@@ -15,7 +15,7 @@ use tracing::{debug, trace};
 /// ## Design Decision
 ///
 /// FHIR resources have deeply nested structures with extensions, choice types
-/// (value[x]), and contained resources. Rather than generating complex input
+/// (value`[x]`), and contained resources. Rather than generating complex input
 /// object hierarchies that mirror the full FHIR schema, we use a JSON scalar
 /// approach where the `resource` field accepts the full FHIR resource as JSON.
 ///

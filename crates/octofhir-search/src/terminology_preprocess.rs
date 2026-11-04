@@ -1,7 +1,7 @@
 //! Pre-expand FHIR terminology modifiers into Token values and trusted predicates.
 //!
-//! Per FHIR R4 §3.1.1.5.5 (https://hl7.org/fhir/R4/search.html#in) and
-//! §3.1.1.5.11 (https://hl7.org/fhir/R4/search.html#token) the `:in` and
+//! Per FHIR R4 §3.1.1.5.5 (<https://hl7.org/fhir/R4/search.html#in>) and
+//! §3.1.1.5.11 (<https://hl7.org/fhir/R4/search.html#token>) the `:in` and
 //! `:not-in` modifiers on a Token search parameter take a ValueSet URL and
 //! match against any code in the expanded set.
 //!

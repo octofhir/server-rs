@@ -3,7 +3,7 @@
 //! Implements the FHIR CodeSystem/$lookup operation to look up a code
 //! within a code system and return information about it.
 //!
-//! Specification: http://hl7.org/fhir/codesystem-operation-lookup.html
+//! Specification: <http://hl7.org/fhir/codesystem-operation-lookup.html>
 //!
 //! Supported invocation levels:
 //! - System: `POST /$lookup` with system and code parameters

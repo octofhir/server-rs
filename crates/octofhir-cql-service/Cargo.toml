@@ -17,15 +17,13 @@ octofhir-cql-eval = { workspace = true }
 octofhir-cql-model = { workspace = true }
 
 # Workspace octofhir dependencies
-octofhir-core = { workspace = true }
 octofhir-storage = { path = "../octofhir-storage" }
 octofhir-fhirpath = { workspace = true }
 octofhir-fhir-model = { workspace = true }
 
 # Async runtime and utilities
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 async-trait = { workspace = true }
-futures-util = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -42,14 +40,12 @@ anyhow = { workspace = true }
 
 # Caching
 dashmap = { workspace = true }
-arc-swap = { workspace = true }
 
 # Redis (optional L2 cache)
 deadpool-redis = { version = "0.23", optional = true }
-redis = { version = "1.2", optional = true, features = ["tokio-comp", "connection-manager"] }
 
 # Base64 encoding/decoding for CQL content
-base64 = "0.22"
+base64 = "0.23"
 
 # Logging
 tracing = { workspace = true }
@@ -59,8 +55,8 @@ time = { workspace = true }
 
 [features]
 default = []
-redis-cache = ["deadpool-redis", "redis"]
+redis-cache = ["dep:deadpool-redis"]
+# The old implicit feature never enabled L2 cache APIs; keep selector compatibility.
 
 [dev-dependencies]
-tokio-test = { workspace = true }
-tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

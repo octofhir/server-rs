@@ -10,7 +10,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```text
 //! // Authorization code grant
 //! POST /auth/token
 //! Content-Type: application/x-www-form-urlencoded

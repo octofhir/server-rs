@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Client;
 use serde_json::json;
 use sha2::Sha256;
@@ -124,6 +124,17 @@ impl NotificationAdapter for WebhookAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // RFC 4231, test case 1: guards interoperability across the HMAC/SHA-2 update.
+    #[test]
+    fn webhook_signature_matches_rfc_4231() {
+        let adapter = WebhookAdapter::new();
+        let key = String::from_utf8(vec![0x0b; 20]).unwrap();
+        assert_eq!(
+            adapter.sign_payload("Hi There", &key),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+    }
 
     #[test]
     fn test_webhook_signature() {

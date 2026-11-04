@@ -35,7 +35,7 @@ use std::fmt;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// GET /authorize?
 ///   response_type=code
 ///   &client_id=my-app
@@ -103,7 +103,7 @@ pub struct AuthorizationRequest {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// HTTP/1.1 302 Found
 /// Location: https://app.example.com/callback?
 ///   code=SplxlOBeZQQYbYS6WxSbIA
@@ -154,7 +154,7 @@ impl AuthorizationResponse {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// HTTP/1.1 302 Found
 /// Location: https://app.example.com/callback?
 ///   error=invalid_request

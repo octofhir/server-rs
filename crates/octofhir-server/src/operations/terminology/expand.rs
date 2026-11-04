@@ -3,7 +3,7 @@
 //! Implements the FHIR ValueSet/$expand operation to expand a ValueSet
 //! to its enumerated codes.
 //!
-//! Specification: http://hl7.org/fhir/valueset-operation-expand.html
+//! Specification: <http://hl7.org/fhir/valueset-operation-expand.html>
 //!
 //! Supported invocation levels:
 //! - System: `POST /$expand` with inline ValueSet or URL

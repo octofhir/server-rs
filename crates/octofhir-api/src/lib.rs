@@ -1,5 +1,6 @@
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+#[cfg(feature = "http")]
 use axum::response::{IntoResponse, Response};
+use http::{header, HeaderMap, HeaderValue, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use std::sync::Arc;
@@ -342,6 +343,7 @@ impl ApiError {
     }
 }
 
+#[cfg(feature = "http")]
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status_code();
@@ -394,7 +396,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http"))]
 mod tests {
     use super::*;
     use axum::response::IntoResponse;
@@ -467,7 +469,7 @@ mod tests {
 // -------------------------
 // API Response Wrapper (Task 3.4.1)
 // -------------------------
-use axum::http::HeaderName;
+use http::HeaderName;
 
 #[derive(Debug, Clone)]
 pub struct ApiResponse<T> {
@@ -495,6 +497,7 @@ impl<T> ApiResponse<T> {
     }
 }
 
+#[cfg(feature = "http")]
 impl<T: Serialize> IntoResponse for ApiResponse<T> {
     fn into_response(self) -> Response {
         let body = match serde_json::to_vec(&self.value) {
@@ -531,7 +534,7 @@ impl<T: Serialize> IntoResponse for ApiResponse<T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http"))]
 mod response_tests {
     use super::*;
     use serde_json::json;
@@ -903,7 +906,7 @@ pub fn check_if_none_match(headers: &HeaderMap, version: impl Into<String>) -> b
     false
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http"))]
 mod caching_tests {
     use super::*;
 
@@ -2178,13 +2181,11 @@ mod capability_statement_tests {
         assert_eq!(j["resourceType"], "CapabilityStatement");
         assert_eq!(j["fhirVersion"], "4.3.0");
         // format contains application/fhir+json
-        assert!(
-            j["format"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|v| v == "application/fhir+json")
-        );
+        assert!(j["format"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "application/fhir+json"));
         // rest[0].mode == server
         assert_eq!(j["rest"][0]["mode"], "server");
         // resource type and interactions
@@ -2398,12 +2399,10 @@ mod capability_statement_builder_tests {
         assert_eq!(resources.len(), 2);
         assert_eq!(resources[0].type_, "Patient");
         assert!(resources[0].interaction.iter().any(|i| i.code == "read"));
-        assert!(
-            resources[0]
-                .interaction
-                .iter()
-                .any(|i| i.code == "search-type")
-        );
+        assert!(resources[0]
+            .interaction
+            .iter()
+            .any(|i| i.code == "search-type"));
         assert!(resources[0].search_param.iter().any(|p| p.name == "_id"));
         assert_eq!(resources[1].type_, "Observation");
         assert!(resources[1].interaction.iter().any(|i| i.code == "read"));
@@ -2590,11 +2589,9 @@ mod search_param_docs_tests {
         let params = common_search_params();
         assert!(params.iter().any(|p| p.name == "_id"
             && p.documentation.as_deref() == Some("Logical id of the resource (Resource.id)")));
-        assert!(
-            params
-                .iter()
-                .any(|p| p.name == "_lastUpdated" && p.type_ == "date")
-        );
+        assert!(params
+            .iter()
+            .any(|p| p.name == "_lastUpdated" && p.type_ == "date"));
     }
 
     #[test]

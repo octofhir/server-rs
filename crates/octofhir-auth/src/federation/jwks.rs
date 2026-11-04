@@ -45,7 +45,7 @@
 //! # Difference from ClientJwksCache
 //!
 //! - [`ProviderJwksCache`] - For validating tokens **from** external providers
-//! - [`ClientJwksCache`] - For verifying client assertions in `private_key_jwt` auth
+//! - [`ClientJwksCache`](crate::federation::ClientJwksCache) - For verifying client assertions in `private_key_jwt` auth
 
 use std::collections::HashMap;
 use std::sync::Arc;

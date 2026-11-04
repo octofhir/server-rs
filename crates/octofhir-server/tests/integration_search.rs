@@ -136,6 +136,14 @@ fn create_config(postgres_url: &str) -> AppConfig {
 async fn start_server(
     config: &AppConfig,
 ) -> (String, tokio::sync::oneshot::Sender<()>, TestServerHandle) {
+    // Each #[tokio::test] owns a runtime. Refresh the manager's pool rather than
+    // retaining a pool created by an earlier, already stopped test runtime.
+    // SEARCH_TEST_LOCK serializes these fixture rebuilds.
+    if octofhir_server::canonical::get_manager().is_some() {
+        octofhir_server::canonical::rebuild_from_config_async(config)
+            .await
+            .expect("rebuild canonical registry for search fixture runtime");
+    }
     let config_manager = Arc::new(
         ConfigurationManager::builder()
             .build()

@@ -242,7 +242,7 @@ pub const DEFAULT_LAUNCH_CONTEXT_TTL: u64 = 600;
 #[must_use]
 pub fn generate_launch_id() -> String {
     let mut bytes = [0u8; 32];
-    rand::Rng::fill(&mut rand::thread_rng(), &mut bytes);
+    rand::fill(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

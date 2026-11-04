@@ -9,6 +9,12 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "2"
 
     services:
       postgres:
@@ -63,8 +69,25 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      - name: Independent library consumers
+        run: bash scripts/check-library-deps.sh
+
+      - name: Minimal library feature matrix
+        run: |
+          for package in octofhir-api octofhir-config octofhir-notifications; do
+            cargo test --locked -p "$package" --no-default-features
+            cargo clippy --locked -p "$package" --no-default-features --all-targets -- -D warnings
+          done
+          cargo test --locked -p octofhir-notifications --no-default-features --features smtp
+          cargo test --locked -p octofhir-notifications --no-default-features --features http
+
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --workspace --all-features --no-deps
 
       - name: Test
         env:
@@ -78,5 +101,5 @@ jobs:
           OCTOFHIR__STORAGE__POSTGRES__PASSWORD: postgres
           OCTOFHIR__STORAGE__POSTGRES__DATABASE: octofhir
         # Run every test binary so one red run lists every failure.
-        run: cargo test --all --all-features --no-fail-fast
+        run: cargo test --locked --all --all-features --no-fail-fast
 

@@ -8,7 +8,6 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,12 +46,13 @@ impl SecretValue {
 
         // Generate random nonce
         let mut nonce_bytes = [0u8; NONCE_SIZE];
-        rand::thread_rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        getrandom::fill(&mut nonce_bytes)
+            .map_err(|e| ConfigError::encryption(format!("Failed to generate nonce: {e}")))?;
+        let nonce = Nonce::from(nonce_bytes);
 
         // Encrypt
         let ciphertext = cipher
-            .encrypt(nonce, plaintext.as_bytes())
+            .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|e| ConfigError::encryption(format!("Encryption failed: {e}")))?;
 
         Ok(Self {
@@ -80,14 +80,13 @@ impl SecretValue {
             .decode(&self.nonce)
             .map_err(|e| ConfigError::encryption(format!("Invalid nonce base64: {e}")))?;
 
-        if nonce_bytes.len() != NONCE_SIZE {
-            return Err(ConfigError::encryption("Invalid nonce size"));
-        }
-
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce_bytes: [u8; NONCE_SIZE] = nonce_bytes
+            .try_into()
+            .map_err(|_| ConfigError::encryption("Invalid nonce size"))?;
+        let nonce = Nonce::from(nonce_bytes);
 
         let plaintext = cipher
-            .decrypt(nonce, ciphertext.as_ref())
+            .decrypt(&nonce, ciphertext.as_ref())
             .map_err(|e| ConfigError::encryption(format!("Decryption failed: {e}")))?;
 
         String::from_utf8(plaintext)
@@ -203,7 +202,7 @@ impl Secrets {
     /// Generate a new random key
     pub fn generate_key() -> [u8; KEY_SIZE] {
         let mut key = [0u8; KEY_SIZE];
-        rand::thread_rng().fill_bytes(&mut key);
+        getrandom::fill(&mut key).expect("operating system entropy for configuration key");
         key
     }
 

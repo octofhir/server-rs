@@ -126,7 +126,7 @@ impl OperationRegistry {
     /// Gets a type-level operation by resource type and code.
     ///
     /// Falls back to operations defined on an abstract base type
-    /// ([`ABSTRACT_BASES`]) if no type-specific operation is found.
+    /// (`ABSTRACT_BASES`) if no type-specific operation is found.
     pub fn get_type_operation(
         &self,
         resource_type: &str,
@@ -152,7 +152,7 @@ impl OperationRegistry {
     /// Gets an instance-level operation by resource type and code.
     ///
     /// Falls back to operations defined on an abstract base type
-    /// ([`ABSTRACT_BASES`]) if no type-specific operation is found.
+    /// (`ABSTRACT_BASES`) if no type-specific operation is found.
     pub fn get_instance_operation(
         &self,
         resource_type: &str,

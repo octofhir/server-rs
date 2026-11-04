@@ -1,6 +1,6 @@
 //! String search parameter implementation.
 //!
-//! Per FHIR R4 §3.1.1.5.6 (https://hl7.org/fhir/R4/search.html#string):
+//! Per FHIR R4 §3.1.1.5.6 (<https://hl7.org/fhir/R4/search.html#string>):
 //! - (default): starts-with, case-insensitive AND accent-insensitive
 //! - :exact: exact, case-sensitive, accent-sensitive, full-string equality
 //! - :contains: substring, case-insensitive AND accent-insensitive

@@ -116,35 +116,35 @@ impl StandaloneContextRequirements {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FhirOperation {
-    /// Read a resource by ID (GET /[type]/[id])
+    /// Read a resource by ID (`GET /[type]/[id]`)
     Read,
-    /// Read a specific version (GET /[type]/[id]/_history/[vid])
+    /// Read a specific version (`GET /[type]/[id]/_history/[vid]`)
     VRead,
-    /// Update a resource (PUT /[type]/[id])
+    /// Update a resource (`PUT /[type]/[id]`)
     Update,
-    /// Patch a resource (PATCH /[type]/[id])
+    /// Patch a resource (`PATCH /[type]/[id]`)
     Patch,
-    /// Delete a resource (DELETE /[type]/[id])
+    /// Delete a resource (`DELETE /[type]/[id]`)
     Delete,
-    /// Create a resource (POST /[type])
+    /// Create a resource (`POST /[type]`)
     Create,
-    /// Search with GET (GET /[type]?params)
+    /// Search with GET (`GET /[type]?params`)
     Search,
-    /// Type-level search (POST /[type]/_search)
+    /// Type-level search (`POST /[type]/_search`)
     SearchType,
-    /// System-level search (GET /?params or POST /_search)
+    /// System-level search (`GET /?params or POST /_search`)
     SearchSystem,
-    /// Capabilities/conformance statement (GET /metadata)
+    /// Capabilities/conformance statement (`GET /metadata`)
     Capabilities,
-    /// Batch operation (POST / with Bundle type=batch)
+    /// Batch operation (`POST / with Bundle type=batch`)
     Batch,
-    /// Transaction operation (POST / with Bundle type=transaction)
+    /// Transaction operation (`POST / with Bundle type=transaction`)
     Transaction,
-    /// History of a resource instance (GET /[type]/[id]/_history)
+    /// History of a resource instance (`GET /[type]/[id]/_history`)
     HistoryInstance,
-    /// History of a resource type (GET /[type]/_history)
+    /// History of a resource type (`GET /[type]/_history`)
     HistoryType,
-    /// System history (GET /_history)
+    /// System history (`GET /_history`)
     HistorySystem,
     /// Named operation ($operation)
     Operation,

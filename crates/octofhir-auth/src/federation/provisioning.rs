@@ -1,6 +1,6 @@
 //! User provisioning service for federated authentication.
 //!
-//! This module provides the [`UserProvisioningService`] for handling user
+//! This module provides [`ProvisioningConfig`] and [`ProvisioningResult`] for handling user
 //! provisioning and identity linking during federated authentication.
 //!
 //! # Overview
@@ -16,15 +16,13 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use octofhir_auth::federation::provisioning::{UserProvisioningService, ProvisioningConfig};
+//! ```
+//! use octofhir_auth::federation::provisioning::ProvisioningConfig;
 //!
-//! let config = ProvisioningConfig::default();
-//! let service = UserProvisioningService::new(user_storage, Some(fhir_storage), config);
-//!
-//! // Process authentication result
-//! let result = service.provision_user(auth_result).await?;
-//! println!("User {} provisioned", result.user.id);
+//! let config = ProvisioningConfig::new()
+//!     .with_auto_provision(false)
+//!     .with_link_by_email(true)
+//!     .with_create_fhir_resources(false);
 //! ```
 
 use super::auth::IdpAuthResult;

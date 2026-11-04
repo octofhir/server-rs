@@ -5,7 +5,9 @@ use time::OffsetDateTime;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
-use crate::adapters::{EmailAdapter, NotificationAdapter, TelegramAdapter, WebhookAdapter};
+use crate::adapters::{EmailAdapter, NotificationAdapter};
+#[cfg(feature = "http")]
+use crate::adapters::{TelegramAdapter, WebhookAdapter};
 use crate::error::NotificationError;
 use crate::provider::{NotificationProvider, ProviderConfig};
 use crate::queue::{NotificationProviderStorage, NotificationQueueStorage};
@@ -26,7 +28,9 @@ where
     providers: Arc<P>,
     templates: Arc<TemplateRenderer>,
     email_adapter: EmailAdapter,
+    #[cfg(feature = "http")]
     telegram_adapter: TelegramAdapter,
+    #[cfg(feature = "http")]
     webhook_adapter: WebhookAdapter,
     decrypt_fn: DecryptFn,
 }
@@ -47,7 +51,9 @@ where
             providers,
             templates,
             email_adapter: EmailAdapter::new(),
+            #[cfg(feature = "http")]
             telegram_adapter: TelegramAdapter::new(),
+            #[cfg(feature = "http")]
             webhook_adapter: WebhookAdapter::new(),
             decrypt_fn,
         }
@@ -157,16 +163,24 @@ where
 
         // 4. Send via appropriate adapter
         let result = match notification.channel {
+            #[cfg(not(feature = "http"))]
+            NotificationChannel::Telegram | NotificationChannel::Webhook => {
+                return Err(NotificationError::InvalidConfig(
+                    "HTTP delivery is not enabled".into(),
+                ));
+            }
             NotificationChannel::Email => {
                 self.email_adapter
                     .send(&decrypted_config, notification, &content)
                     .await?
             }
+            #[cfg(feature = "http")]
             NotificationChannel::Telegram => {
                 self.telegram_adapter
                     .send(&decrypted_config, notification, &content)
                     .await?
             }
+            #[cfg(feature = "http")]
             NotificationChannel::Webhook => {
                 self.webhook_adapter
                     .send(&decrypted_config, notification, &content)

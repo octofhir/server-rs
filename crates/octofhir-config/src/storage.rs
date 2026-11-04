@@ -2,13 +2,18 @@
 //!
 //! Provides CRUD operations for configuration stored in PostgreSQL.
 
+#[cfg(feature = "postgres")]
 use crate::ConfigError;
+#[cfg(feature = "postgres")]
 use crate::secrets::{SecretValue, Secrets};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "postgres")]
 use sqlx_core::query::query;
+#[cfg(feature = "postgres")]
 use sqlx_core::query_as::query_as;
+#[cfg(feature = "postgres")]
 use sqlx_postgres::PgPool;
 use uuid::Uuid;
 
@@ -86,11 +91,13 @@ impl From<StoredConfigHistoryRow> for StoredConfig {
 }
 
 /// Configuration storage operations
+#[cfg(feature = "postgres")]
 pub struct ConfigStorage {
     pool: PgPool,
     secrets: Option<Secrets>,
 }
 
+#[cfg(feature = "postgres")]
 impl ConfigStorage {
     /// Create a new config storage
     pub fn new(pool: PgPool) -> Self {
@@ -307,6 +314,7 @@ impl ConfigStorage {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl std::fmt::Debug for ConfigStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConfigStorage")
