@@ -86,6 +86,7 @@ fhir-diff = { workspace = true }
 fml-syntax = { workspace = true }
 fml-model = { workspace = true }
 fml-check = { workspace = true }
+ccda-fhir = { workspace = true }
 fml-engine = { workspace = true }
 
 # UI embedding

@@ -1082,6 +1082,9 @@ async fn build_app_with_runtime(
             crate::operations::sof::register_operation_definitions(&mut registry);
             // FML operations ($transform, SDC $extract)
             crate::operations::fml::register_operation_definitions(&mut registry, cfg.fml.enabled);
+            if cfg.fml.enabled {
+                crate::operations::ccda::register_operation_definitions(&mut registry);
+            }
             // Register $status for Subscription (R5 subscription status)
             registry.register(crate::operations::OperationDefinition {
                 code: "status".to_string(),
@@ -1179,6 +1182,9 @@ async fn build_app_with_runtime(
             crate::operations::sof::register_operation_definitions(&mut registry);
             // FML operations ($transform, SDC $extract)
             crate::operations::fml::register_operation_definitions(&mut registry, cfg.fml.enabled);
+            if cfg.fml.enabled {
+                crate::operations::ccda::register_operation_definitions(&mut registry);
+            }
             // Register $status for Subscription (R5 subscription status)
             registry.register(crate::operations::OperationDefinition {
                 code: "status".to_string(),
@@ -2169,6 +2175,10 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         .route(
             "/api/fml/print",
             axum::routing::post(crate::operations::fml::api::print),
+        )
+        .route(
+            "/api/fml/cda-run",
+            axum::routing::post(crate::operations::ccda::cda_run),
         )
         // DB Console API endpoints
         .route(

@@ -1049,6 +1049,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ccda-fhir"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59cb76c657c7b94ffc44b2eaa69551cc4812ceb0fb47385bfec9335c3bafde7b"
+dependencies = [
+ "fml-check",
+ "fml-engine",
+ "fml-model",
+ "fml-syntax",
+ "fml-xml",
+ "octofhir-fhir-model",
+ "octofhir-fhirpath",
+ "octofhir-fhirschema",
+ "roxmltree",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2057,9 +2076,9 @@ dependencies = [
 
 [[package]]
 name = "fml-check"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0949d9700dd452325c8e26c738f9c991a4e82f998fe6169b7d3783042725148f"
+checksum = "ac85d73c3a5cbf76875b4452b7de42b1ac4a9bc2237aa9123369124e2418695a"
 dependencies = [
  "fml-syntax",
  "octofhir-fhirschema",
@@ -2068,9 +2087,9 @@ dependencies = [
 
 [[package]]
 name = "fml-engine"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46c6f40a1f22aede62045827264bcacbe912b63c2724934ba3c375b9fd0b5694"
+checksum = "0765ff2f4611a94688a768a64d5c5c494f406b4560f6a987904e7c315e348e35"
 dependencies = [
  "fml-check",
  "fml-model",
@@ -2084,9 +2103,9 @@ dependencies = [
 
 [[package]]
 name = "fml-model"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afaba27364ba65fe3438fb8df6fc77c5371b89d6f0658b9f4a893c61c303186b"
+checksum = "e42b05ec748becd948e4c2912f6040bbc9daeb5b4c69e68d3ff87ad1de3e9739"
 dependencies = [
  "fml-syntax",
  "serde",
@@ -2095,11 +2114,21 @@ dependencies = [
 
 [[package]]
 name = "fml-syntax"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "651959bea051b4b23b511da0c6e38e512ec168e19dc25013dddf4911160e2b95"
+checksum = "a8d34299032607913c0762a7a14ab7bf311d64534233153d7a23e2ca9c5e90eb"
 dependencies = [
  "rowan",
+]
+
+[[package]]
+name = "fml-xml"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bab27e6c588da4100a9deddb317a14f0e35aa389d02f8e666234092144b08d79"
+dependencies = [
+ "roxmltree",
+ "serde_json",
 ]
 
 [[package]]
@@ -4205,9 +4234,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirpath"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "700efc153434acc90e140b49317da0efb956b4168ce4e66ba250a448f52c701c"
+checksum = "1a6e075f0656930d30b3327249988048d35260c834cc565dd2af156da805258d"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -4251,9 +4280,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirschema"
-version = "0.3.36"
+version = "0.3.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c905b503381ef754d4a980f9990ebba2230e1cb8b225432f754132c82fd42d4e"
+checksum = "db35989c7c44e049b68c46dee111b668ca05623a79ddde99a788e357d5e7188a"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -4370,6 +4399,7 @@ dependencies = [
  "banshee_parser",
  "banshee_syntax",
  "base64 0.23.1",
+ "ccda-fhir",
  "chrono",
  "config",
  "dashmap",
@@ -5677,6 +5707,15 @@ dependencies = [
  "memoffset",
  "rustc-hash 1.1.0",
  "text-size",
+]
+
+[[package]]
+name = "roxmltree"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

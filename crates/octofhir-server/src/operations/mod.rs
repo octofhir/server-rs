@@ -42,6 +42,7 @@
 //! ```
 
 pub mod auth_session;
+pub mod ccda;
 pub mod bulk;
 mod care_dates;
 pub mod context;
@@ -318,10 +319,18 @@ pub fn register_core_operations_all(
     handlers.insert("graph".to_string(), Arc::new(GraphOperation::new()));
 
     // StructureMap/$transform, QuestionnaireResponse/$extract and $convert (FHIR Mapping Language)
+    let fml_enabled = fml_config.enabled;
     let (transform, extract, convert) = fml::operations(fml_config);
     handlers.insert("transform".to_string(), Arc::new(transform));
     handlers.insert("extract".to_string(), Arc::new(extract));
     handlers.insert("convert".to_string(), Arc::new(convert));
+
+    // $ccda-to-fhir and $fhir-to-ccda (C-CDA documents as Binary, FML maps)
+    if fml_enabled {
+        let (to_fhir, to_cda) = ccda::operations();
+        handlers.insert("ccda-to-fhir".to_string(), Arc::new(to_fhir));
+        handlers.insert("fhir-to-ccda".to_string(), Arc::new(to_cda));
+    }
 
     handlers
 }
