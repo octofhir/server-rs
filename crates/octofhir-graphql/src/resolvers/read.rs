@@ -3,8 +3,8 @@
 //! Implements resolvers for queries like `Patient(_id: "123")` that fetch
 //! a single FHIR resource by its ID.
 
+use crate::authorization::FhirOperation;
 use async_graphql::dynamic::{FieldFuture, ResolverContext};
-use octofhir_auth::smart::scopes::FhirOperation;
 use tracing::{debug, warn};
 
 use super::{evaluate_access, get_graphql_context, json_to_graphql_value};

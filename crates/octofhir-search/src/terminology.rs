@@ -29,19 +29,7 @@ const DEFAULT_TERMINOLOGY_SERVER: &str = "https://tx.fhir.org/r4";
 /// Threshold for large ValueSet expansion (500 codes)
 /// Below this: Use traditional IN clause
 /// At or above: Use temporary table with bulk insert
-/// Direction for hierarchy traversal in subsumption searches.
-///
-/// Used for `:below` and `:above` modifiers in token searches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HierarchyDirection {
-    /// Descendants (subsumes) - used for `:below` modifier
-    /// Finds all codes that are subsumed by (descendants of) the given code
-    Below,
-
-    /// Ancestors (subsumed-by) - used for `:above` modifier
-    /// Finds all codes that subsume (ancestors of) the given code
-    Above,
-}
+pub use crate::terminology_provider::HierarchyDirection;
 
 /// Configuration for terminology service integration.
 ///
@@ -796,6 +784,20 @@ impl TerminologyProvider for HybridTerminologyProvider {
 pub struct CacheStats {
     pub expansion_cache_size: usize,
     pub validation_cache_size: usize,
+}
+
+#[async_trait]
+impl crate::terminology_provider::HierarchyProvider for HybridTerminologyProvider {
+    async fn expand_hierarchy(
+        &self,
+        system: &str,
+        code: &str,
+        direction: HierarchyDirection,
+    ) -> Result<Vec<String>, String> {
+        HybridTerminologyProvider::expand_hierarchy(self, system, code, direction)
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 #[cfg(test)]

@@ -26,8 +26,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
+#[cfg(feature = "canonical")]
 use octofhir_canonical_manager::CanonicalManager;
 
+#[cfg(feature = "canonical")]
 use crate::loader::{ElementTypeResolver, LoaderError, load_search_parameters};
 use crate::query_cache::{CacheStatsSnapshot, QueryCache};
 use crate::registry::SearchParameterRegistry;
@@ -128,6 +130,7 @@ impl ReloadableSearchConfig {
     /// # Returns
     ///
     /// A new `ReloadableSearchConfig` or an error if loading fails.
+    #[cfg(feature = "canonical")]
     pub async fn new(
         canonical_manager: &CanonicalManager,
         options: SearchOptions,
@@ -195,6 +198,7 @@ impl ReloadableSearchConfig {
     ///
     /// Uses atomic pointer swap - old readers continue with old config, new readers get new config.
     /// This operation does NOT block concurrent readers!
+    #[cfg(feature = "canonical")]
     pub async fn reload_registry(
         &self,
         canonical_manager: &CanonicalManager,

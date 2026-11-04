@@ -904,7 +904,10 @@ mod tests {
             }
             let stored = std::fs::read_to_string(&path).unwrap_or_default();
             assert!(
-                stored == text,
+                // Other workspace features may enable serde_json/preserve_order.
+                // Compare dashboard contents, preserving array order but ignoring JSON key order.
+                serde_json::from_str::<serde_json::Value>(&stored).ok()
+                    == Some(serde_json::from_str::<serde_json::Value>(&text).unwrap()),
                 "{} is stale; regenerate with UPDATE_GRAFANA_DASHBOARDS=1",
                 path.display()
             );

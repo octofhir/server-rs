@@ -27,8 +27,8 @@ mod search;
 mod update;
 
 pub use access::{
-    build_policy_context, deny_reason_to_graphql_error, evaluate_access,
-    evaluate_access_with_resource, extract_resource_type, map_graphql_to_fhir_operation,
+    deny_reason_to_graphql_error, evaluate_access, evaluate_access_with_resource,
+    extract_resource_type, map_graphql_to_fhir_operation,
 };
 pub use connection::ConnectionResolver;
 pub use create::CreateResolver;

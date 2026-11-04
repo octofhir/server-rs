@@ -1,4 +1,34 @@
 fn main() {
+    #[cfg(feature = "core")]
+    {
+        let reference = octofhir_core::parse_reference("Patient/123", None).unwrap();
+        assert_eq!(reference, octofhir_core::parse_reference("Patient/123", None).unwrap());
+        assert!(octofhir_core::validate_id("patient-123").is_ok());
+    }
+    #[cfg(feature = "storage")]
+    {
+        let params = octofhir_storage::SearchParams::new().with_param("_id", "123");
+        assert_eq!(params.parameters["_id"], ["123"]);
+    }
+    #[cfg(feature = "search")]
+    {
+        use octofhir_search::{SearchParameterRegistry, build_native_ir_query_from_params, parse_query_string, register_common_parameters};
+        let registry = SearchParameterRegistry::new();
+        register_common_parameters(&registry);
+        let params = parse_query_string("_id=patient-123&_count=5", 10, 100);
+        let query = build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap().builder.build().unwrap();
+        assert!(query.sql.contains("patient"));
+        assert!(query.sql.contains("$1"));
+        assert!(!query.sql.contains("patient-123"));
+        assert!(!query.params.is_empty());
+    }
+    #[cfg(feature = "graphql")]
+    {
+        assert!(matches!(octofhir_graphql::GraphQLContextBuilder::new().build(), Err(octofhir_graphql::context::ContextBuilderError::MissingField("storage"))));
+        let operation = octofhir_graphql::resolvers::access::map_graphql_to_fhir_operation("PatientCreate").unwrap();
+        assert_eq!(operation, octofhir_graphql::authorization::FhirOperation::Create);
+    }
+
     #[cfg(feature = "cql")]
     {
         use octofhir_cql_service::library_cache::{CompiledLibrary, LibraryCache};

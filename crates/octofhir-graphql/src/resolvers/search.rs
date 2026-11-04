@@ -3,9 +3,9 @@
 //! Implements resolvers for queries like `PatientList(name: "John", _count: 10)`
 //! that search for FHIR resources using search parameters.
 
+use crate::authorization::FhirOperation;
 use async_graphql::Value;
 use async_graphql::dynamic::{FieldFuture, ResolverContext};
-use octofhir_auth::smart::scopes::FhirOperation;
 use octofhir_storage::{SearchParams, TotalMode};
 use tracing::{debug, warn};
 

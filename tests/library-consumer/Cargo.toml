@@ -8,12 +8,20 @@ publish = false
 
 [features]
 default = []
+core = ["dep:octofhir-core"]
+storage = ["dep:octofhir-storage"]
+search = ["dep:octofhir-search"]
+graphql = ["dep:octofhir-graphql"]
 api = ["dep:octofhir-api"]
 config = ["dep:octofhir-config", "dep:tokio"]
 notifications = ["dep:octofhir-notifications"]
 cql = ["dep:octofhir-cql-service"]
 
 [dependencies]
+octofhir-core = { path = "../../crates/octofhir-core", default-features = false, optional = true }
+octofhir-storage = { path = "../../crates/octofhir-storage", default-features = false, optional = true }
+octofhir-search = { path = "../../crates/octofhir-search", default-features = false, optional = true }
+octofhir-graphql = { path = "../../crates/octofhir-graphql", default-features = false, optional = true }
 octofhir-cql-service = { path = "../../crates/octofhir-cql-service", default-features = false, optional = true }
 octofhir-api = { path = "../../crates/octofhir-api", default-features = false, optional = true }
 octofhir-config = { path = "../../crates/octofhir-config", default-features = false, optional = true }

@@ -6,10 +6,12 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+#[cfg(feature = "canonical")]
 use crate::common::register_common_parameters;
 use crate::parameters::{
     ElementTypeHint, SearchModifier, SearchParameter, SearchParameterComponent, SearchParameterType,
 };
+#[cfg(feature = "canonical")]
 use crate::registry::SearchParameterRegistry;
 
 /// Resolves FHIR element type information from schema at registry build time.
@@ -52,6 +54,7 @@ pub enum LoaderError {
 /// # Returns
 ///
 /// A populated `SearchParameterRegistry`, or an error if the query fails.
+#[cfg(feature = "canonical")]
 pub async fn load_search_parameters(
     manager: &octofhir_canonical_manager::CanonicalManager,
     resolver: Option<&dyn ElementTypeResolver>,
@@ -389,6 +392,7 @@ async fn resolve_element_type_for_param(
 ///
 /// Used after `register_common_parameters` to retroactively resolve types
 /// for the built-in common parameters.
+#[cfg(feature = "canonical")]
 async fn resolve_registry_element_types(
     registry: &SearchParameterRegistry,
     resolver: &dyn ElementTypeResolver,

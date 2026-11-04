@@ -31,12 +31,12 @@
 //! - Only top-level params are walked. Terminology modifiers nested inside
 //!   `_has:…` or chained-reference parameters reach the sync dispatcher
 //!   directly and still return `NotImplemented`.
-//! - `:above` / `:below` use the concrete `HybridTerminologyProvider` through
+//! - `:above` / `:below` use a caller-provided hierarchy provider through
 //!   [`pre_expand_subsumption_modifiers`].
 
 use crate::parameters::SearchParameterType;
 use crate::registry::SearchParameterRegistry;
-use crate::terminology::{HierarchyDirection, HybridTerminologyProvider};
+use crate::terminology_provider::{HierarchyDirection, HierarchyProvider};
 use octofhir_fhir_model::terminology::TerminologyProvider;
 use octofhir_storage::SearchParams;
 use std::sync::Arc;
@@ -205,9 +205,9 @@ fn escape_token_literal(value: &str) -> String {
 /// - `:above=system|code` matches when the resource code is `code` or any
 ///   ancestor.
 ///
-/// The hierarchy traversal lives on `HybridTerminologyProvider` (SNOMED ECL
-/// or remote `$expand` with ECL), so this function takes the concrete
-/// provider — not the dyn-trait used elsewhere.
+/// The caller supplies hierarchy traversal through [`HierarchyProvider`].
+/// Providers can use local data or remote services without coupling SQL compilation
+/// to either transport.
 ///
 /// Rewrites in place:
 ///   `code:below=sys|c` → `code=sys|c,sys|child1,sys|child2,…`
@@ -215,11 +215,11 @@ fn escape_token_literal(value: &str) -> String {
 ///
 /// Failure modes mirror [`pre_expand_terminology_modifiers`]: hierarchies
 /// larger than [`DEFAULT_MAX_EXPANSION_SIZE`] return `ExpansionTooLarge`.
-pub async fn pre_expand_subsumption_modifiers(
+pub async fn pre_expand_subsumption_modifiers<T: HierarchyProvider + ?Sized>(
     params: &mut SearchParams,
     registry: &SearchParameterRegistry,
     resource_type: &str,
-    terminology: &Arc<HybridTerminologyProvider>,
+    terminology: &Arc<T>,
     max_expansion: usize,
 ) -> Result<(), TerminologyPreprocessError> {
     let mut rewrites: Vec<(String, String, Vec<String>)> = Vec::new();

@@ -8,6 +8,15 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+default = ["http", "server-auth"]
+http = ["dep:axum", "server-auth"]
+server-auth = ["dep:octofhir-auth"]
+
+[[test]]
+name = "query_integration"
+required-features = ["server-auth"]
+
 [dependencies]
 # GraphQL framework with dynamic schema support
 async-graphql = { version = "7", features = ["dynamic-schema", "dataloader"] }
@@ -17,7 +26,7 @@ async-graphql-value = "7"
 # Local dependencies
 octofhir-storage = { path = "../octofhir-storage" }
 octofhir-search = { path = "../octofhir-search" }
-octofhir-auth = { path = "../octofhir-auth" }
+octofhir-auth = { path = "../octofhir-auth", optional = true }
 octofhir-core = { path = "../octofhir-core" }
 
 # FHIR model provider for schema generation
@@ -52,7 +61,7 @@ regex = { workspace = true }
 
 
 # HTTP framework for handlers
-axum = { workspace = true }
+axum = { workspace = true, optional = true }
 
 # Async utilities
 async-trait = { workspace = true }

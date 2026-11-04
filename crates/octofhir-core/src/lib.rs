@@ -1,4 +1,5 @@
 pub mod error;
+#[cfg(feature = "events")]
 pub mod events;
 pub mod fhir;
 pub mod fhir_reference;

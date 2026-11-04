@@ -2,8 +2,8 @@
 //!
 //! Handles `{Resource}Update` mutations for updating existing FHIR resources.
 
+use crate::authorization::FhirOperation;
 use async_graphql::dynamic::{FieldFuture, ResolverContext};
-use octofhir_auth::smart::scopes::FhirOperation;
 use tracing::{debug, trace, warn};
 
 use super::create::{extract_resource_from_input, storage_error_to_graphql};
