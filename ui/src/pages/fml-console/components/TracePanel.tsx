@@ -20,6 +20,8 @@ export interface TracePanelProps {
   trace: DebugResult;
   current: number;
   onSelect: (index: number) => void;
+  /** Where input paths are in an XML input (CDA), by path. */
+  positions?: Record<string, { line: number; column: number }>;
 }
 
 const STATUS_COLOR: Record<DebugResult["status"], string> = {
@@ -34,7 +36,7 @@ function valueText(variable: TraceVariable): string {
   return JSON.stringify(variable.value, null, 2);
 }
 
-export function TracePanel({ trace, current, onSelect }: TracePanelProps) {
+export function TracePanel({ trace, current, onSelect, positions }: TracePanelProps) {
   const events = trace.events;
   const event = events[current];
   const stack = useMemo(() => stackAt(events, current), [events, current]);
@@ -159,6 +161,9 @@ export function TracePanel({ trace, current, onSelect }: TracePanelProps) {
                     <span className={classes.mono}>{variable.name}</span>
                     {variable.dataType && <span className={classes.muted}>{variable.dataType}</span>}
                     {variable.path && <span className={`${classes.muted} ${classes.mono}`}>{variable.path}</span>}
+                    {variable.path && positions?.[variable.path] && (
+                      <span className={classes.muted}>line {positions[variable.path].line}</span>
+                    )}
                   </div>
                   <pre className={classes.variableValue}>{valueText(variable)}</pre>
                 </div>

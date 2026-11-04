@@ -30,6 +30,8 @@ export interface JsonEditorProps {
   highlight?: { start: number; end: number };
   /** Class name of the highlight decoration. */
   highlightClassName?: string;
+  /** The editor's language: JSON unless another is given (`xml`). */
+  language?: string;
 }
 
 // Helper to configure Monaco JSON Schema
@@ -74,6 +76,7 @@ export function JsonEditor({
   resourceType,
   highlight,
   highlightClassName,
+  language = "json",
 }: JsonEditorProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -185,7 +188,7 @@ export function JsonEditor({
     <div className={className} style={{ height, width: "100%" }}>
       <Editor
         height="100%"
-        language="json"
+        language={language}
         theme={editorTheme}
         value={value}
         onChange={handleChange}

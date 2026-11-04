@@ -1,8 +1,9 @@
 /**
  * FML console: write a map (or open a stored one), check it as you type, run it over a resource
- * with `StructureMap/$transform` (with models of its own: logical models and ConceptMaps), replay
- * the debug trace against the source, save the map as a StructureMap, and share all of it as a
- * link.
+ * with `StructureMap/$transform` (with models of its own: logical models and ConceptMaps) or over
+ * a CDA document (`/api/fml/cda-run`: the CDA model, the C-CDA templates and the converter's
+ * maps), replay the debug trace against the source and the input, save the map as a
+ * StructureMap, and share all of it as a link.
  */
 
 import {
@@ -16,8 +17,8 @@ import {
   TextInput,
 } from "@octofhir/ui-kit";
 import { useMutation } from "@tanstack/react-query";
-import { CircleAlert, Download, Link2, Play, Save, TriangleAlert, Wand2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { CircleAlert, Download, FileUp, Link2, Play, Save, TriangleAlert, Wand2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fhirClient, HttpError } from "@/shared/api/fhirClient";
 import { isRecord } from "@/shared/api/guards";
 import { usePaletteContribution } from "@/shared/command-palette";
@@ -43,6 +44,7 @@ const STORAGE_SOURCE = "octofhir.fml.source";
 const STORAGE_INPUT = "octofhir.fml.input";
 const STORAGE_TRACE = "octofhir.fml.trace";
 const STORAGE_MODELS = "octofhir.fml.models";
+const STORAGE_CDA = "octofhir.fml.cda";
 
 /** StructureDefinitions of logical models and ConceptMaps for this run only: an array or a Bundle. */
 const MODELS_HINT = "[]";
@@ -70,6 +72,8 @@ interface RunResult {
   result?: unknown;
   trace?: DebugResult;
   issues: OutcomeIssue[];
+  /** For a CDA input: where each input path is in the XML. */
+  positions?: Record<string, { line: number; column: number }>;
   /** The run asked for a trace and was refused one (the role is missing). */
   traceRefused: boolean;
 }
@@ -129,12 +133,61 @@ async function transform(
   return { result: response.data, issues: [], traceRefused: false };
 }
 
+/** A map run over a CDA document: read into the CDA model, run with the converter's maps. */
+async function runOnCda(source: string, xml: string, debug: boolean): Promise<RunResult> {
+  const response = await fhirClient.customRequest({
+    method: "POST",
+    url: "/api/fml/cda-run",
+    data: { source, xml, debug },
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = isRecord(response.data) ? response.data : {};
+  const trace = data.debug ? parseDebugParameters(data.debug) : undefined;
+  const readIssues: OutcomeIssue[] = Array.isArray(data.issues)
+    ? data.issues.filter(isRecord).map((issue) => ({
+        severity: "warning",
+        code: "not-supported",
+        diagnostics: String(issue.message ?? ""),
+        expression: typeof issue.path === "string" ? [issue.path] : undefined,
+        line: typeof issue.line === "number" ? issue.line : undefined,
+      }))
+    : [];
+  const failure: OutcomeIssue[] =
+    typeof data.error === "string" ? [{ severity: "error", code: "processing", diagnostics: data.error }] : [];
+  const positions = isRecord(data.positions)
+    ? (data.positions as Record<string, { line: number; column: number }>)
+    : undefined;
+  return {
+    result: data.result ?? undefined,
+    trace,
+    issues: [...failure, ...(trace?.issues ?? []), ...readIssues],
+    positions,
+    traceRefused: false,
+  };
+}
+
+/** Character offsets of a line of a text (1-based), for highlighting it. */
+function lineRange(text: string, line: number): { start: number; end: number } | undefined {
+  let start = 0;
+  for (let n = 1; n < line; n++) {
+    const next = text.indexOf("\n", start);
+    if (next < 0) return undefined;
+    start = next + 1;
+  }
+  const end = text.indexOf("\n", start);
+  return { start, end: end < 0 ? text.length : end };
+}
+
 export function FmlConsolePage() {
   const [source, setSource] = useState(() => stored(STORAGE_SOURCE, DEFAULT_SOURCE));
   const [input, setInput] = useState(() => stored(STORAGE_INPUT, sampleJson("patient")));
   const [traceOn, setTraceOn] = useState(() => stored(STORAGE_TRACE, "true") === "true");
   const [models, setModels] = useState(() => stored(STORAGE_MODELS, MODELS_HINT));
+  const [cda, setCda] = useState(() => stored(STORAGE_CDA, ""));
   const [inputTab, setInputTab] = useState("input");
+  /** What a run takes: the JSON input or the CDA document, the last of the two shown. */
+  const [runOn, setRunOn] = useState<"json" | "cda">("json");
+  const fileRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState("");
   const [check, setCheck] = useState<CheckResult>({ problems: [] });
   const [tab, setTab] = useState("result");
@@ -144,6 +197,11 @@ export function FmlConsolePage() {
   useEffect(() => store(STORAGE_INPUT, input), [input]);
   useEffect(() => store(STORAGE_TRACE, String(traceOn)), [traceOn]);
   useEffect(() => store(STORAGE_MODELS, models), [models]);
+  useEffect(() => store(STORAGE_CDA, cda), [cda]);
+  useEffect(() => {
+    if (inputTab === "input") setRunOn("json");
+    if (inputTab === "cda") setRunOn("cda");
+  }, [inputTab]);
 
   // A shared link opens with the map, input and models it carries.
   useEffect(() => {
@@ -180,6 +238,14 @@ export function FmlConsolePage() {
 
   const run = useMutation<RunResult, Error>({
     mutationFn: async () => {
+      if (runOn === "cda") {
+        if (!cda.trim()) throw new Error("Load a CDA document first");
+        try {
+          return await runOnCda(source, cda, traceOn);
+        } catch (error) {
+          return { issues: failureIssues(error), traceRefused: false };
+        }
+      }
       let content: unknown;
       try {
         content = JSON.parse(input);
@@ -315,13 +381,30 @@ export function FmlConsolePage() {
     () => (inputPath ? locate(input, inputPath) : undefined),
     [input, inputPath]
   );
+  // In a CDA document: the line of the element the event is about.
+  const cdaLine = inputPath ? data?.positions?.[inputPath]?.line : undefined;
+  const cdaHighlight = useMemo(
+    () => (cdaLine ? lineRange(cda, cdaLine) : undefined),
+    [cda, cdaLine]
+  );
+
+  const loadCdaFile = (file: File | undefined) => {
+    if (!file) return;
+    file
+      .text()
+      .then((text) => {
+        setCda(text);
+        setInputTab("cda");
+      })
+      .catch(() => notifications.show({ color: "red", title: "Not loaded", message: file.name }));
+  };
 
   const loadSample = (key: SampleKey) => setInput(sampleJson(key));
 
   return (
     <ToolWorkspaceLayout
       title="FML"
-      description="Write a FHIR Mapping Language map, run it with $transform, step through what it did"
+      description="Write a FHIR Mapping Language map, run it over a resource or a CDA document, step through what it did"
       className="page-enter"
       actions={
         <div className={classes.actions}>
@@ -404,6 +487,7 @@ export function FmlConsolePage() {
                       onChange={setInputTab}
                       options={[
                         { value: "input", content: "Input" },
+                        { value: "cda", content: "CDA" },
                         { value: "models", content: "Models" },
                       ]}
                     />
@@ -432,6 +516,26 @@ export function FmlConsolePage() {
                         ))}
                       </>
                     )}
+                    {inputTab === "cda" && (
+                      <>
+                        <input
+                          ref={fileRef}
+                          type="file"
+                          accept=".xml,text/xml,application/xml"
+                          hidden
+                          onChange={(event) => {
+                            loadCdaFile(event.target.files?.[0]);
+                            event.target.value = "";
+                          }}
+                        />
+                        <Button size="xs" variant="subtle" onClick={() => fileRef.current?.click()}>
+                          <Button.Icon side="left">
+                            <FileUp size={13} />
+                          </Button.Icon>
+                          Load CDA file
+                        </Button>
+                      </>
+                    )}
                   </div>
                   <div className={classes.editorHost}>
                     {inputTab === "input" ? (
@@ -441,6 +545,16 @@ export function FmlConsolePage() {
                         onExecute={runMap}
                         height="100%"
                         highlight={inputHighlight}
+                        highlightClassName={classes.traceHighlight}
+                      />
+                    ) : inputTab === "cda" ? (
+                      <JsonEditor
+                        language="xml"
+                        value={cda}
+                        onChange={setCda}
+                        onExecute={runMap}
+                        height="100%"
+                        highlight={runOn === "cda" ? cdaHighlight : undefined}
                         highlightClassName={classes.traceHighlight}
                       />
                     ) : (
@@ -471,7 +585,7 @@ export function FmlConsolePage() {
                         </div>
                       ))}
                     {tab === "trace" && trace && (
-                      <TracePanel trace={trace} current={current} onSelect={setCurrent} />
+                      <TracePanel trace={trace} current={current} onSelect={setCurrent} positions={data?.positions} />
                     )}
                     {tab === "issues" && (
                       <div className={classes.issues}>
