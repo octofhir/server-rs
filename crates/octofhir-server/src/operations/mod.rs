@@ -42,9 +42,9 @@
 //! ```
 
 pub mod auth_session;
-pub mod ccda;
 pub mod bulk;
 mod care_dates;
+pub mod ccda;
 pub mod context;
 pub mod cql;
 pub mod db_console_api;
