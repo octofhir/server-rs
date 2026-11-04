@@ -19,10 +19,10 @@ use sqlx_core::row::Row;
 use sqlx_postgres::PgPool;
 use tracing::{debug, info, instrument, warn};
 
-use octofhir_canonical_manager::domain::{PackageInfo, ResourceIndex};
-use octofhir_canonical_manager::error::{FcmError, StorageError};
-use octofhir_canonical_manager::package::{ExtractedPackage, FhirResource};
-use octofhir_canonical_manager::traits::{PackageStore, SearchStorage};
+use octofhir_canonical_core::domain::{PackageInfo, ResourceIndex};
+use octofhir_canonical_core::error::{FcmError, StorageError};
+use octofhir_canonical_core::package::{ExtractedPackage, FhirResource};
+use octofhir_canonical_core::traits::{PackageStore, SearchStorage};
 
 use crate::SchemaManager;
 
@@ -1508,7 +1508,7 @@ impl PackageStore for PostgresPackageStore {
     async fn add_package(
         &self,
         package: &ExtractedPackage,
-    ) -> octofhir_canonical_manager::error::Result<()> {
+    ) -> octofhir_canonical_core::error::Result<()> {
         info!(
             "PostgreSQL storage: add_package called for {}@{} with {} resources",
             package.name,
@@ -1700,7 +1700,7 @@ impl PackageStore for PostgresPackageStore {
         &self,
         name: &str,
         version: &str,
-    ) -> octofhir_canonical_manager::error::Result<bool> {
+    ) -> octofhir_canonical_core::error::Result<bool> {
         info!("Removing package {}@{}", name, version);
 
         let result = query("DELETE FROM fcm.packages WHERE name = $1 AND version = $2")
@@ -1725,7 +1725,7 @@ impl PackageStore for PostgresPackageStore {
     async fn find_resource(
         &self,
         canonical_url: &str,
-    ) -> octofhir_canonical_manager::error::Result<Option<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Option<ResourceIndex>> {
         debug!("Finding resource by canonical URL: {}", canonical_url);
 
         let sql = format!(
@@ -1743,7 +1743,7 @@ impl PackageStore for PostgresPackageStore {
     }
 
     #[instrument(skip(self))]
-    async fn list_packages(&self) -> octofhir_canonical_manager::error::Result<Vec<PackageInfo>> {
+    async fn list_packages(&self) -> octofhir_canonical_core::error::Result<Vec<PackageInfo>> {
         debug!("Listing all packages");
 
         let rows = query(
@@ -1780,7 +1780,7 @@ impl SearchStorage for PostgresPackageStore {
     async fn find_resource(
         &self,
         canonical_url: &str,
-    ) -> octofhir_canonical_manager::error::Result<Option<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Option<ResourceIndex>> {
         PackageStore::find_resource(self, canonical_url).await
     }
 
@@ -1788,7 +1788,7 @@ impl SearchStorage for PostgresPackageStore {
         &self,
         canonical_url: &str,
         fhir_version: &str,
-    ) -> octofhir_canonical_manager::error::Result<Option<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Option<ResourceIndex>> {
         debug!(
             "Finding resource {} with FHIR version {}",
             canonical_url, fhir_version
@@ -1812,7 +1812,7 @@ impl SearchStorage for PostgresPackageStore {
     async fn find_by_base_url(
         &self,
         base_url: &str,
-    ) -> octofhir_canonical_manager::error::Result<Vec<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Vec<ResourceIndex>> {
         debug!("Finding resources by base URL: {}", base_url);
 
         let pattern = format!("{}%", base_url.trim_end_matches('/'));
@@ -1834,7 +1834,7 @@ impl SearchStorage for PostgresPackageStore {
     async fn find_latest_by_base_url(
         &self,
         base_url: &str,
-    ) -> octofhir_canonical_manager::error::Result<Option<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Option<ResourceIndex>> {
         let results = self.find_by_base_url(base_url).await?;
         Ok(results.into_iter().next())
     }
@@ -1842,7 +1842,7 @@ impl SearchStorage for PostgresPackageStore {
     async fn find_resource_by_name(
         &self,
         name: &str,
-    ) -> octofhir_canonical_manager::error::Result<Option<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Option<ResourceIndex>> {
         debug!("Finding resource by name: {}", name);
 
         let sql = format!(
@@ -1863,7 +1863,7 @@ impl SearchStorage for PostgresPackageStore {
         &self,
         resource_type: String,
         id: String,
-    ) -> octofhir_canonical_manager::error::Result<Vec<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Vec<ResourceIndex>> {
         debug!("Finding resources by type {} and id {}", resource_type, id);
 
         let sql = format!(
@@ -1885,7 +1885,7 @@ impl SearchStorage for PostgresPackageStore {
         &self,
         resource_type: String,
         name: String,
-    ) -> octofhir_canonical_manager::error::Result<Vec<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Vec<ResourceIndex>> {
         debug!(
             "Finding resources by type {} and name {}",
             resource_type, name
@@ -1912,7 +1912,7 @@ impl SearchStorage for PostgresPackageStore {
         types: Option<&[&str]>,
         _exclude_extensions: bool,
         _sort_by_priority: bool,
-    ) -> octofhir_canonical_manager::error::Result<Option<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Option<ResourceIndex>> {
         let results = self.find_resource_infos(key, types, Some(1)).await?;
         Ok(results.into_iter().next())
     }
@@ -1922,7 +1922,7 @@ impl SearchStorage for PostgresPackageStore {
         key: &str,
         types: Option<&[&str]>,
         limit: Option<usize>,
-    ) -> octofhir_canonical_manager::error::Result<Vec<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Vec<ResourceIndex>> {
         debug!("Finding resource infos for key: {}", key);
 
         let mut sql = format!(
@@ -1959,7 +1959,7 @@ impl SearchStorage for PostgresPackageStore {
     async fn list_base_resource_type_names(
         &self,
         fhir_version: &str,
-    ) -> octofhir_canonical_manager::error::Result<Vec<String>> {
+    ) -> octofhir_canonical_core::error::Result<Vec<String>> {
         debug!("Listing base resource type names for FHIR {}", fhir_version);
 
         let names: Vec<String> = query_scalar(
@@ -1985,7 +1985,7 @@ impl SearchStorage for PostgresPackageStore {
     async fn get_resource(
         &self,
         resource_index: &ResourceIndex,
-    ) -> octofhir_canonical_manager::error::Result<FhirResource> {
+    ) -> octofhir_canonical_core::error::Result<FhirResource> {
         debug!(
             "Getting resource content for: {}",
             resource_index.canonical_url
@@ -2078,7 +2078,7 @@ impl SearchStorage for PostgresPackageStore {
         &self,
         resource_type: &str,
         package_name: &str,
-    ) -> octofhir_canonical_manager::error::Result<Vec<ResourceIndex>> {
+    ) -> octofhir_canonical_core::error::Result<Vec<ResourceIndex>> {
         debug!(
             "Finding resources by type {} and package {}",
             resource_type, package_name
@@ -2099,7 +2099,7 @@ impl SearchStorage for PostgresPackageStore {
         Ok(rows.iter().map(row_to_resource_index).collect())
     }
 
-    async fn list_packages(&self) -> octofhir_canonical_manager::error::Result<Vec<PackageInfo>> {
+    async fn list_packages(&self) -> octofhir_canonical_core::error::Result<Vec<PackageInfo>> {
         PackageStore::list_packages(self).await
     }
 
@@ -2108,7 +2108,7 @@ impl SearchStorage for PostgresPackageStore {
         package_name: &str,
         package_version: &str,
         priority: i32,
-    ) -> octofhir_canonical_manager::error::Result<()> {
+    ) -> octofhir_canonical_core::error::Result<()> {
         debug!(
             "Setting priority {} for package {}@{}",
             priority, package_name, package_version

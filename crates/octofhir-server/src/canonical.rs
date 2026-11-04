@@ -22,7 +22,7 @@ pub struct LoadedPackage {
 #[derive(Debug, Default, Clone)]
 pub struct CanonicalRegistry {
     packages: Vec<LoadedPackage>,
-    manager: Option<std::sync::Arc<octofhir_canonical_manager::CanonicalManager>>,
+    manager: Option<std::sync::Arc<octofhir_canonical_core::CanonicalManager>>,
 }
 
 impl CanonicalRegistry {
@@ -46,7 +46,7 @@ static REGISTRY: OnceLock<Arc<RwLock<CanonicalRegistry>>> = OnceLock::new();
 
 /// Lock-free manager access using ArcSwap for high-performance reads.
 /// This avoids RwLock contention in the hot path of terminology lookups.
-static MANAGER: OnceLock<ArcSwap<Option<Arc<octofhir_canonical_manager::CanonicalManager>>>> =
+static MANAGER: OnceLock<ArcSwap<Option<Arc<octofhir_canonical_core::CanonicalManager>>>> =
     OnceLock::new();
 
 pub fn set_registry(reg: Arc<RwLock<CanonicalRegistry>>) {
@@ -59,7 +59,7 @@ pub fn set_registry(reg: Arc<RwLock<CanonicalRegistry>>) {
 }
 
 /// Update the lock-free manager cache. Called when rebuilding the registry.
-fn update_manager_cache(manager: Option<Arc<octofhir_canonical_manager::CanonicalManager>>) {
+fn update_manager_cache(manager: Option<Arc<octofhir_canonical_core::CanonicalManager>>) {
     if let Some(swap) = MANAGER.get() {
         swap.store(Arc::new(manager));
     } else {
@@ -118,7 +118,7 @@ fn build_registry(cfg: &AppConfig) -> CanonicalRegistry {
 ///
 /// Uses lock-free ArcSwap for high-performance reads without RwLock contention.
 /// This is critical for terminology lookups which happen on every validation.
-pub fn get_manager() -> Option<Arc<octofhir_canonical_manager::CanonicalManager>> {
+pub fn get_manager() -> Option<Arc<octofhir_canonical_core::CanonicalManager>> {
     // Fast path: use lock-free ArcSwap
     if let Some(swap) = MANAGER.get() {
         let guard = swap.load();
@@ -131,8 +131,8 @@ pub fn get_manager() -> Option<Arc<octofhir_canonical_manager::CanonicalManager>
 }
 
 async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistry, String> {
-    use octofhir_canonical_manager::traits::PackageStore;
-    use octofhir_canonical_manager::{CanonicalManager, FcmConfig};
+    use octofhir_canonical_core::traits::PackageStore;
+    use octofhir_canonical_core::{CanonicalManager, FcmConfig};
 
     // Start with default FCM config; allow env overrides and quick init flags
     let mut fcm_cfg = FcmConfig::default();
@@ -331,7 +331,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Only do network preflight for packages that aren't already installed
     let storage = fcm_cfg.get_expanded_storage_config();
-    let registry_client = octofhir_canonical_manager::registry::RegistryClient::new(
+    let registry_client = octofhir_canonical_core::registry::RegistryClient::new(
         &fcm_cfg.registry,
         storage.cache_dir.clone(),
     )
@@ -396,7 +396,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Install all packages in a single batch call for efficiency
     let install_start = std::time::Instant::now();
-    let batch_specs: Vec<octofhir_canonical_manager::PackageSpec> = packages_to_install
+    let batch_specs: Vec<octofhir_canonical_core::PackageSpec> = packages_to_install
         .iter()
         .map(|pkg| {
             tracing::info!(
@@ -405,7 +405,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                 url = ?pkg.url,
                 "queued package for batch installation"
             );
-            octofhir_canonical_manager::PackageSpec {
+            octofhir_canonical_core::PackageSpec {
                 name: pkg.id.clone(),
                 version: pkg.version.clone().unwrap_or_default(),
                 priority: 1,
@@ -453,7 +453,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                         "Parallel pipeline failed; falling back to per-package install"
                     );
                     for (name, version) in spec_names {
-                        let spec = octofhir_canonical_manager::PackageSpec {
+                        let spec = octofhir_canonical_core::PackageSpec {
                             name: name.clone(),
                             version: version.clone(),
                             priority: 1,
@@ -1023,14 +1023,14 @@ const REGISTRY_ATTEMPTS: u32 = 4;
 /// packages.fhir.org drops connections now and then; one blip shouldn't fail a server start
 /// (or a test fixture). Errors the registry answers with are returned at once.
 async fn fetch_metadata_with_retry(
-    client: &octofhir_canonical_manager::registry::RegistryClient,
+    client: &octofhir_canonical_core::registry::RegistryClient,
     name: &str,
     version: &str,
-) -> octofhir_canonical_manager::Result<octofhir_canonical_manager::registry::PackageMetadata> {
+) -> octofhir_canonical_core::Result<octofhir_canonical_core::registry::PackageMetadata> {
     let mut attempt = 1;
     loop {
         match client.get_package_metadata(name, version).await {
-            Err(octofhir_canonical_manager::FcmError::Network(error))
+            Err(octofhir_canonical_core::FcmError::Network(error))
                 if attempt < REGISTRY_ATTEMPTS =>
             {
                 let delay = std::time::Duration::from_millis(500 << (attempt - 1));
@@ -1044,7 +1044,7 @@ async fn fetch_metadata_with_retry(
 }
 
 async fn preflight_validate_all(
-    client: &octofhir_canonical_manager::registry::RegistryClient,
+    client: &octofhir_canonical_core::registry::RegistryClient,
     roots: &[(String, String)],
     desired: FhirVersion,
 ) -> Result<(), String> {
@@ -1345,7 +1345,7 @@ pub async fn install_package_parallel_runtime(
     version: &str,
     _server_fhir_version: &str,
 ) -> Result<ParallelInstallResult, String> {
-    use octofhir_canonical_manager::PackageSpec;
+    use octofhir_canonical_core::PackageSpec;
 
     let manager = get_manager().ok_or_else(|| "canonical manager not available".to_string())?;
 
@@ -1492,9 +1492,8 @@ async fn update_global_registry_with_package(name: &str, version: &str) -> bool 
 pub async fn install_package_runtime_with_progress(
     name: &str,
     version: &str,
-) -> Result<tokio::sync::mpsc::UnboundedReceiver<octofhir_canonical_manager::InstallEvent>, String>
-{
-    use octofhir_canonical_manager::ChannelCallback;
+) -> Result<tokio::sync::mpsc::UnboundedReceiver<octofhir_canonical_core::InstallEvent>, String> {
+    use octofhir_canonical_core::ChannelCallback;
 
     let manager = get_manager().ok_or_else(|| "canonical manager not available".to_string())?;
 

@@ -43,7 +43,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::terminology::{HybridTerminologyProvider, TerminologyConfig};
-use octofhir_canonical_manager::CanonicalManager;
+use octofhir_canonical_core::CanonicalManager;
 
 /// Default debounce duration in milliseconds
 const DEFAULT_DEBOUNCE_MS: u64 = 500;

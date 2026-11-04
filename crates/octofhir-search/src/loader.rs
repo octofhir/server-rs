@@ -56,7 +56,7 @@ pub enum LoaderError {
 /// A populated `SearchParameterRegistry`, or an error if the query fails.
 #[cfg(feature = "canonical")]
 pub async fn load_search_parameters(
-    manager: &octofhir_canonical_manager::CanonicalManager,
+    manager: &octofhir_canonical_core::CanonicalManager,
     resolver: Option<&dyn ElementTypeResolver>,
 ) -> Result<SearchParameterRegistry, LoaderError> {
     let registry = SearchParameterRegistry::new();

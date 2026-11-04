@@ -12,7 +12,7 @@ description = "Search parameter parsing and execution for OctoFHIR server"
 
 [features]
 default = []
-canonical = ["dep:octofhir-canonical-manager"]
+canonical = ["dep:octofhir-canonical-core"]
 remote-terminology = ["canonical", "octofhir-fhir-model/http-client", "octofhir-fhir-model/caching"]
 watch = ["remote-terminology", "dep:notify", "dep:toml", "tokio/fs"]
 
@@ -22,7 +22,7 @@ octofhir-core = { path = "../octofhir-core" }
 octofhir-storage = { path = "../octofhir-storage" }
 
 # Canonical manager for loading search parameters from packages
-octofhir-canonical-manager = { workspace = true, optional = true }
+octofhir-canonical-core = { workspace = true, optional = true }
 
 # FHIR model with terminology support
 octofhir-fhir-model = { workspace = true }

@@ -33,7 +33,7 @@ octofhir-auth = { path = "crates/octofhir-auth" }
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-sof = { version = "0.3.4", default-features = false, features = ["parquet", "guard"] }
 octofhir-storage = { path = "crates/octofhir-storage" }
-octofhir-canonical-manager = { version = "0.2.10", default-features = false }
+octofhir-canonical-core = { version = "0.2.11", default-features = false }
 octofhir-fhir-model = { version = "0.1.19", default-features = false, features = ["serde"] }
 
 # async-lsp for SQL language server (better state management than tower-lsp)
