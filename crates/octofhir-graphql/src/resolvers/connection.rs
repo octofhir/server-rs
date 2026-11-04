@@ -3,9 +3,9 @@
 //! Implements resolvers for queries like `PatientConnection(cursor: "abc")` that
 //! provide cursor-based pagination with navigation links.
 
+use crate::authorization::FhirOperation;
 use async_graphql::Value;
 use async_graphql::dynamic::{FieldFuture, ResolverContext};
-use octofhir_auth::smart::scopes::FhirOperation;
 use octofhir_storage::{SearchParams, TotalMode};
 use tracing::{debug, warn};
 

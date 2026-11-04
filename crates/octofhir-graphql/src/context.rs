@@ -13,8 +13,7 @@
 //!     .with_storage(storage.clone())
 //!     .with_search_config(search_config.clone())
 //!     .with_model_provider(model_provider.clone())
-//!     .with_policy_evaluator(policy_evaluator.clone())
-//!     .with_auth_context(Some(auth_context))
+//!     .with_authorizer(authorizer.clone())
 //!     .with_request_id("req-123")
 //!     .build()?;
 //! ```
@@ -22,7 +21,10 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use crate::authorization::Authorizer;
+#[cfg(feature = "server-auth")]
 use octofhir_auth::middleware::AuthContext;
+#[cfg(feature = "server-auth")]
 use octofhir_auth::policy::PolicyEvaluator;
 use octofhir_search::SearchConfig;
 use octofhir_storage::DynStorage;
@@ -45,11 +47,11 @@ pub struct GraphQLContext {
     /// Search configuration with parameter registry.
     pub search_config: SearchConfig,
 
-    /// Policy evaluator for access control.
-    pub policy_evaluator: Arc<PolicyEvaluator>,
+    /// Required access checks for this request.
+    pub authorizer: Arc<dyn Authorizer>,
 
-    /// Authentication context for the current request (None for unauthenticated).
-    pub auth_context: Option<AuthContext>,
+    /// Informational identity; access decisions always go through the authorizer.
+    pub identity: GraphQLIdentity,
 
     /// Request ID for tracing and correlation.
     pub request_id: String,
@@ -74,16 +76,13 @@ impl GraphQLContext {
     /// Returns whether the request is authenticated.
     #[must_use]
     pub fn is_authenticated(&self) -> bool {
-        self.auth_context.is_some()
+        self.identity.authenticated
     }
 
     /// Returns the user ID if authenticated.
     #[must_use]
     pub fn user_id(&self) -> Option<String> {
-        self.auth_context
-            .as_ref()
-            .and_then(|ctx| ctx.user.as_ref())
-            .map(|u| u.id.to_string())
+        self.identity.user_id.clone()
     }
 
     /// Returns whether this is an instance-level query.
@@ -150,7 +149,11 @@ impl GraphQLContext {
 pub struct GraphQLContextBuilder {
     storage: Option<DynStorage>,
     search_config: Option<SearchConfig>,
+    authorizer: Option<Arc<dyn Authorizer>>,
+    identity: GraphQLIdentity,
+    #[cfg(feature = "server-auth")]
     policy_evaluator: Option<Arc<PolicyEvaluator>>,
+    #[cfg(feature = "server-auth")]
     auth_context: Option<AuthContext>,
     request_id: Option<String>,
     source_ip: Option<IpAddr>,
@@ -158,7 +161,28 @@ pub struct GraphQLContextBuilder {
     target_resource_id: Option<String>,
 }
 
+/// Identity metadata supplied by the authentication adapter.
+#[derive(Debug, Clone, Default)]
+pub struct GraphQLIdentity {
+    pub authenticated: bool,
+    pub user_id: Option<String>,
+}
+
 impl GraphQLContextBuilder {
+    /// Sets the required authorization implementation.
+    #[must_use]
+    pub fn with_authorizer(mut self, authorizer: Arc<dyn Authorizer>) -> Self {
+        self.authorizer = Some(authorizer);
+        self
+    }
+
+    /// Sets identity metadata; this never grants access.
+    #[must_use]
+    pub fn with_identity(mut self, identity: GraphQLIdentity) -> Self {
+        self.identity = identity;
+        self
+    }
+
     /// Creates a new builder.
     #[must_use]
     pub fn new() -> Self {
@@ -181,6 +205,7 @@ impl GraphQLContextBuilder {
 
     /// Sets the policy evaluator.
     #[must_use]
+    #[cfg(feature = "server-auth")]
     pub fn with_policy_evaluator(mut self, evaluator: Arc<PolicyEvaluator>) -> Self {
         self.policy_evaluator = Some(evaluator);
         self
@@ -188,6 +213,7 @@ impl GraphQLContextBuilder {
 
     /// Sets the authentication context.
     #[must_use]
+    #[cfg(feature = "server-auth")]
     pub fn with_auth_context(mut self, auth: Option<AuthContext>) -> Self {
         self.auth_context = auth;
         self
@@ -247,9 +273,32 @@ impl GraphQLContextBuilder {
             .search_config
             .ok_or(ContextBuilderError::MissingField("search_config"))?;
 
-        let policy_evaluator = self
-            .policy_evaluator
-            .ok_or(ContextBuilderError::MissingField("policy_evaluator"))?;
+        let authorizer = self.authorizer;
+        let identity = self.identity;
+        #[cfg(feature = "server-auth")]
+        let (authorizer, identity) = if let Some(evaluator) = self.policy_evaluator {
+            if authorizer.is_some() {
+                return Err(ContextBuilderError::ConflictingAuthorizers);
+            }
+            let identity = GraphQLIdentity {
+                authenticated: self.auth_context.is_some(),
+                user_id: self
+                    .auth_context
+                    .as_ref()
+                    .and_then(|auth| auth.user.as_ref())
+                    .map(|user| user.id.to_string()),
+            };
+            (
+                Some(Arc::new(crate::server_auth::PolicyAuthorizer {
+                    evaluator,
+                    auth: self.auth_context,
+                }) as Arc<dyn Authorizer>),
+                identity,
+            )
+        } else {
+            (authorizer, identity)
+        };
+        let authorizer = authorizer.ok_or(ContextBuilderError::MissingField("authorizer"))?;
 
         let request_id = self
             .request_id
@@ -262,8 +311,8 @@ impl GraphQLContextBuilder {
         Ok(GraphQLContext {
             storage,
             search_config,
-            policy_evaluator,
-            auth_context: self.auth_context,
+            authorizer,
+            identity,
             request_id,
             source_ip: self.source_ip,
             target_resource_type: self.target_resource_type,
@@ -276,6 +325,9 @@ impl GraphQLContextBuilder {
 /// Errors that can occur when building a GraphQLContext.
 #[derive(Debug, thiserror::Error)]
 pub enum ContextBuilderError {
+    /// Select either a custom authorizer or the server policy adapter.
+    #[error("Both a custom authorizer and a server policy evaluator were provided")]
+    ConflictingAuthorizers,
     /// A required field was not provided.
     #[error("Missing required field: {0}")]
     MissingField(&'static str),

@@ -8,6 +8,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+events = ["octofhir-core/events"]
+
 [dependencies]
 async-trait = "0.1"
 metrics = "0.24"

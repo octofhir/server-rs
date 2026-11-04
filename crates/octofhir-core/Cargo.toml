@@ -10,6 +10,10 @@ keywords.workspace = true
 categories.workspace = true
 description = "Core FHIR types and utilities for OctoFHIR server"
 
+[features]
+default = []
+events = ["dep:tokio", "dep:async-trait", "dep:futures-util", "dep:tracing"]
+
 [dependencies]
 # Workspace dependencies
 serde = { workspace = true }
@@ -20,13 +24,13 @@ time = { workspace = true }
 uuid = { workspace = true }
 regex = { workspace = true }
 url = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 unicode-normalization = "0.1"
 
 # Events system
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
-async-trait = { workspace = true }
-futures-util = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"], optional = true }
+async-trait = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

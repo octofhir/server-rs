@@ -41,17 +41,21 @@
 //! - [`types`] - FHIR custom scalar types for GraphQL
 //! - [`schema`] - Schema building and lazy loading
 //! - [`context`] - GraphQL execution context
-//! - [`handler`] - Axum HTTP handlers
+//! - `handler` (feature `http`) - Axum HTTP handlers
 //! - [`error`] - Error types for GraphQL operations
 
+pub mod authorization;
 pub mod config;
 pub mod context;
 pub mod error;
+#[cfg(feature = "http")]
 pub mod handler;
 pub mod loaders;
 pub mod operations;
 pub mod resolvers;
 pub mod schema;
+#[cfg(feature = "server-auth")]
+pub mod server_auth;
 pub mod subscriptions;
 pub mod types;
 
@@ -59,6 +63,7 @@ pub mod types;
 pub use config::GraphQLConfig;
 pub use context::{GraphQLContext, GraphQLContextBuilder};
 pub use error::GraphQLError;
+#[cfg(feature = "http")]
 pub use handler::{graphql_handler, graphql_handler_get, instance_graphql_handler};
 pub use loaders::{DataLoaders, ReferenceKey, ReferenceLoader, ResourceKey, ResourceLoader};
 pub use operations::GraphQLOperationProvider;

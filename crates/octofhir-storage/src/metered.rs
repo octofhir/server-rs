@@ -1,9 +1,10 @@
-//! Timing of storage operations, recorded by [`crate::EventedStorage`] around every call it
+//! Timing of storage operations, recorded by the evented storage wrapper around every call it
 //! delegates, so dashboards can tell time spent in the database from the rest of a request.
 
 use std::future::Future;
 use std::time::Instant;
 
+#[cfg(feature = "events")]
 use serde_json::Value;
 
 /// Histogram of storage call latency, by operation, resource type and outcome.
@@ -30,6 +31,7 @@ pub async fn timed<T, E>(
 }
 
 /// The `resourceType` of a resource about to be written; `*` when absent.
+#[cfg(feature = "events")]
 pub(crate) fn resource_type_of(resource: &Value) -> &str {
     resource
         .get("resourceType")

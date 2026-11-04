@@ -2,9 +2,9 @@
 //!
 //! Handles `{Resource}Create` mutations for creating new FHIR resources.
 
+use crate::authorization::FhirOperation;
 use async_graphql::dynamic::{FieldFuture, ResolverContext, ValueAccessor};
 use async_graphql::{ErrorExtensions, Value};
-use octofhir_auth::smart::scopes::FhirOperation;
 use tracing::{debug, trace, warn};
 
 use super::{evaluate_access_with_resource, get_graphql_context, json_to_graphql_value};

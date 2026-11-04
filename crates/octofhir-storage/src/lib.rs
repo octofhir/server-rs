@@ -53,6 +53,7 @@
 //! ```
 
 mod error;
+#[cfg(feature = "events")]
 pub mod evented;
 pub mod metered;
 mod traits;
@@ -60,6 +61,7 @@ mod types;
 
 // Re-export everything from submodules
 pub use error::{ErrorCategory, StorageError};
+#[cfg(feature = "events")]
 pub use evented::{EventedStorage, EventedTransaction};
 pub use traits::{
     BatchUpdateOutcome, ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage,
@@ -86,6 +88,7 @@ pub type DynStorage = std::sync::Arc<dyn FhirStorage>;
 /// ```
 pub mod prelude {
     pub use crate::error::{ErrorCategory, StorageError};
+    #[cfg(feature = "events")]
     pub use crate::evented::{EventedStorage, EventedTransaction};
     pub use crate::traits::{
         BatchUpdateOutcome, ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage,

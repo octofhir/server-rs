@@ -74,7 +74,7 @@ jobs:
 
       - name: Minimal library feature matrix
         run: |
-          for package in octofhir-api octofhir-config octofhir-notifications; do
+          for package in octofhir-api octofhir-config octofhir-notifications octofhir-core octofhir-storage octofhir-search octofhir-graphql; do
             cargo test --locked -p "$package" --no-default-features
             cargo clippy --locked -p "$package" --no-default-features --all-targets -- -D warnings
           done

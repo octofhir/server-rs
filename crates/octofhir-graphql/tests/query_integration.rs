@@ -2439,3 +2439,82 @@ async fn debug_task_backbone_detection() {
         }
     }
 }
+
+struct RejectingAuthorizer;
+
+#[async_trait::async_trait]
+impl octofhir_graphql::authorization::Authorizer for RejectingAuthorizer {
+    async fn authorize(
+        &self,
+        context: &GraphQLContext,
+        operation: octofhir_graphql::authorization::FhirOperation,
+        resource_type: &str,
+        resource_id: Option<&str>,
+        _resource: Option<serde_json::Value>,
+    ) -> Result<(), octofhir_graphql::authorization::AuthorizationError> {
+        assert_eq!(context.request_id, "custom-authorizer");
+        assert_eq!(
+            operation,
+            octofhir_graphql::authorization::FhirOperation::Read
+        );
+        assert_eq!(resource_type, "Patient");
+        assert_eq!(resource_id, Some("123"));
+        Err(octofhir_graphql::authorization::AuthorizationError {
+            message: "Denied by external authorization".into(),
+            code: "policy-denied".into(),
+            policy_id: Some("external-policy".into()),
+            details: Some(serde_json::json!({"reason": "restricted"})),
+        })
+    }
+}
+
+#[tokio::test]
+async fn custom_authorizer_denial_reaches_graphql_without_exposing_the_resource() {
+    let registry = create_test_registry();
+    let schema = build_test_schema(registry.clone()).await;
+    let context = GraphQLContextBuilder::new()
+        .with_storage(
+            Arc::new(MockStorage::with_resources(vec![create_test_patient(
+                "123", "Private", "male",
+            )])) as DynStorage,
+        )
+        .with_search_config(SearchConfig::new(registry))
+        .with_authorizer(Arc::new(RejectingAuthorizer))
+        .with_request_id("custom-authorizer")
+        .build()
+        .unwrap();
+    let response = schema
+        .execute(async_graphql::Request::new("{ Patient(_id: \"123\") { id } }").data(context))
+        .await;
+    assert_eq!(response.errors.len(), 1);
+    let error = &response.errors[0];
+    assert_eq!(error.message, "Denied by external authorization");
+    let extensions = error.extensions.as_ref().unwrap();
+    assert_eq!(
+        extensions.get("policyId"),
+        Some(&async_graphql::Value::from("external-policy"))
+    );
+    assert!(extensions.get("operationOutcome").is_some());
+    assert!(!response.data.to_string().contains("123"));
+}
+
+#[test]
+fn graphql_context_requires_an_authorizer_and_rejects_ambiguous_adapters() {
+    let builder = || {
+        GraphQLContextBuilder::new()
+            .with_storage(Arc::new(MockStorage::with_resources(vec![])) as DynStorage)
+            .with_search_config(SearchConfig::new(create_test_registry()))
+            .with_request_id("authorization-required")
+    };
+    assert!(matches!(
+        builder().build(),
+        Err(octofhir_graphql::context::ContextBuilderError::MissingField("authorizer"))
+    ));
+    assert!(matches!(
+        builder()
+            .with_authorizer(Arc::new(RejectingAuthorizer))
+            .with_policy_evaluator(create_policy_evaluator())
+            .build(),
+        Err(octofhir_graphql::context::ContextBuilderError::ConflictingAuthorizers)
+    ));
+}

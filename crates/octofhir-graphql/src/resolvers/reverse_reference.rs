@@ -11,9 +11,9 @@
 //! }
 //! ```
 
+use crate::authorization::FhirOperation;
 use async_graphql::Value;
 use async_graphql::dynamic::{FieldFuture, ResolverContext};
-use octofhir_auth::smart::scopes::FhirOperation;
 use octofhir_storage::SearchParams;
 use tracing::{debug, warn};
 

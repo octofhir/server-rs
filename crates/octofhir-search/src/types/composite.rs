@@ -145,9 +145,18 @@ mod tests {
                 && clause.contains("numrange(100, NULL, '()')"),
             "CLAUSE={clause}"
         );
-        // The system is checked as a non-indexable filter...
-        assert!(
-            clause.contains("jsonb_contains(resource, '{\"code\":{\"coding\":[{\"code\":\"8480-6\",\"system\":\"http://loinc.org\"}]}}'"),
+        // The system is checked as a non-indexable filter. Cargo feature unification
+        // can enable serde_json/preserve_order; object key order is not SQL semantics.
+        let system_filter = clause
+            .split("jsonb_contains(resource, '")
+            .nth(1)
+            .unwrap()
+            .split("'::jsonb)")
+            .next()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(system_filter).unwrap(),
+            serde_json::json!({"code": {"coding": [{"code": "8480-6", "system": "http://loinc.org"}]}}),
             "CLAUSE={clause}"
         );
         // ...beside the bare-code containment it implies, matching the bare-code partial index.

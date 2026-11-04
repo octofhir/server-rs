@@ -1,4 +1,5 @@
 pub mod common;
+#[cfg(feature = "watch")]
 pub mod config_watcher;
 pub mod filter;
 pub mod include;
@@ -11,15 +12,16 @@ pub mod query_cache;
 pub mod registry;
 pub mod reloadable;
 pub mod sql_builder;
+#[cfg(feature = "remote-terminology")]
 pub mod terminology;
 pub mod terminology_preprocess;
+pub mod terminology_provider;
 pub mod types;
 pub mod ucum;
 
 pub use common::register_common_parameters;
 pub use loader::{
-    ElementTypeResolver, LoaderError, load_search_parameters, parse_search_parameter,
-    resolve_element_type_for_param_public,
+    ElementTypeResolver, LoaderError, parse_search_parameter, resolve_element_type_for_param_public,
 };
 pub use parameters::{
     ElementTypeHint, SearchModifier, SearchParameter, SearchParameterDefinition,
@@ -55,6 +57,7 @@ pub use sql_builder::{
     typed_extract_fn_name,
 };
 // Chaining / reverse-chaining now live in the IR (`ir::chain`).
+#[cfg(feature = "watch")]
 pub use config_watcher::{
     ConfigCallback, ConfigWatcher, ReloadableTerminologyProvider, WatcherConfig, WatcherError,
     WatcherHandle, watch_and_reload,
@@ -72,9 +75,8 @@ pub use query_cache::{
     QueryCacheKey, QueryParamKey,
 };
 pub use reloadable::{ReloadableSearchConfig, SearchConfig, SearchOptions};
-pub use terminology::{
-    CacheStats, HierarchyDirection, HybridTerminologyProvider, TerminologyConfig, TerminologyError,
-};
+#[cfg(feature = "remote-terminology")]
+pub use terminology::{CacheStats, HybridTerminologyProvider, TerminologyConfig, TerminologyError};
 
 // SearchParams to query builder conversion
 pub use params_converter::{
@@ -82,3 +84,7 @@ pub use params_converter::{
     build_native_ir_query_from_params, build_native_ir_query_from_params_with_config,
     parse_query_string,
 };
+
+#[cfg(feature = "canonical")]
+pub use loader::load_search_parameters;
+pub use terminology_provider::{HierarchyDirection, HierarchyProvider};
