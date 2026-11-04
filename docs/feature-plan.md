@@ -71,6 +71,7 @@ server picks up what makes sense later.
 | 5.6 | Example generator by profile, valid by construction, plus negative mutants per constraint | L | after 5.2 |
 | 5.7 | capcheck: check a CapabilityStatement against the server's real behavior | M | |
 | 5.8 | Debug trace for FHIRPath / CQL in the proposed cross-engine format | S–M | FML already has its trace |
+| 5.9 | **ccda-fhir**: C-CDA ⇄ FHIR in both directions on FML | L (first stage ~4 months) | decided 2026-11-04 (`reports/Ресерч C-CDA ⇄ FHIR — 2026-11-04.md`, variant A): FML maps on fml-rs over the HL7 CDA logical models (`hl7.cda.uv.core`, `hl7.cda.us.ccda`), XML read/write as a new `fml-xml` crate; a pair of maps per domain (CDA→FHIR, FHIR→CDA) over shared data type maps, round-trip both ways in CI on HL7 C-CDA-Examples. First stage: header + Allergies, Problems, Medications, Immunizations, Results, Vital Signs, Procedures, both directions, R4 / US Core 6.1.0. Repo `octofhir/ccda-fhir` (maps, ConceptMaps, corpus, metrics, CLI); server `$ccda-to-fhir` / `$fhir-to-ccda` over `Binary`, API stays JSON-only |
 
 ## Not doing
 
