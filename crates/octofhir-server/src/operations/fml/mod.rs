@@ -12,8 +12,8 @@ mod transform;
 
 use std::sync::Arc;
 
-pub use convert::ConvertOperation;
 pub(crate) use check::structure_map_issues;
+pub use convert::ConvertOperation;
 pub(crate) use convert::outcome_header;
 pub use extract::ExtractOperation;
 pub use transform::TransformOperation;

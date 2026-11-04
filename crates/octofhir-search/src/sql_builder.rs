@@ -1678,7 +1678,7 @@ fn date_bound_paths(segments: &[String], period_bound: &str) -> Vec<Vec<String>>
 /// Scalar (point-valued) date extraction paths for the per-occurrence multirange
 /// index — every shape whose value is a single date/dateTime/instant string.
 /// Period objects are handled separately by [`date_period_object_paths`] so each
-/// occurrence's start/end stay paired. See [`fhir_extract_date_multirange`] (SQL).
+/// occurrence's start/end stay paired. See `fhir_extract_date_multirange` (SQL).
 pub fn date_scalar_paths(segments: &[String]) -> Vec<Vec<String>> {
     let Some((leaf, parent)) = segments.split_last() else {
         return vec![Vec::new()];

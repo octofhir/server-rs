@@ -48,7 +48,7 @@ pub enum HierarchyDirection {
 /// Terminology is always enabled - this config controls the server URL and cache settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminologyConfig {
-    /// URL of the terminology server (default: https://tx.fhir.org/r4)
+    /// URL of the terminology server (default: <https://tx.fhir.org/r4>)
     #[serde(default = "default_server_url")]
     pub server_url: String,
 

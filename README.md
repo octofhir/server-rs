@@ -115,6 +115,22 @@ cd ui && pnpm install && pnpm dev   # console with hot reload on http://localhos
 The console's components live in [`packages/ui-kit`](packages/ui-kit) (Storybook:
 `pnpm -C packages/ui-kit storybook`).
 
+### Library dependency profiles
+
+The HTTP server enables its required integrations. Independent consumers can use
+`default-features = false` for `octofhir-api` (DTOs without Axum),
+`octofhir-config` (files/events/secrets without PostgreSQL), and
+`octofhir-notifications` (queues/templates without delivery clients). Existing
+defaults retain HTTP responses, database configuration, and all notification
+adapters. Notifications also offer separate `smtp` and `http` features. The default
+`octofhir-cql-service` profile also avoids HTTP/TLS/LSP and database drivers; hosts
+supply storage through its existing traits.
+
+Run `bash scripts/check-library-deps.sh` to exercise these independent consumers
+and check that transport/database dependencies stay out of their minimal graphs.
+See [dependency release notes](docs/DEPENDENCY_RELEASE_2026-11-04.txt) for scope
+and compatibility constraints.
+
 ## Conformance
 
 Results of the [FHIR262](https://github.com/HealthSamurai/fhir262) conformance suite

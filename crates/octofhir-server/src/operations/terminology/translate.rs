@@ -3,7 +3,7 @@
 //! Implements the FHIR ConceptMap/$translate operation to translate a code
 //! from one code system to another using ConceptMap resources.
 //!
-//! Specification: http://hl7.org/fhir/conceptmap-operation-translate.html
+//! Specification: <http://hl7.org/fhir/conceptmap-operation-translate.html>
 //!
 //! Supported invocation levels:
 //! - System: `POST /$translate` with code and source/target parameters

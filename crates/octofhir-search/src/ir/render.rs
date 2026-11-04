@@ -1744,7 +1744,7 @@ fn date_inplace_clause_expr(
     }
 }
 
-/// Render in-place date clauses (one OR group). See [`date_inplace_clause_expr`].
+/// Render in-place date clauses (one OR group). See `date_inplace_clause_expr`.
 pub fn render_date_inplace_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[DateClause],

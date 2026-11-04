@@ -1,0 +1,76 @@
+Dependency release, 2026-11-04
+
+The server explicitly enables integrations used by its HTTP host. Libraries can
+omit transports without changing their existing default configuration.
+
+- octofhir-api 0.1.1: default http feature retains Axum IntoResponse support.
+  default-features=false retains JSON DTOs, RawJson, headers and status codes
+  using the same http 1.x types, without Axum. RawValue is an explicit feature
+  requirement of this library rather than an accidental workspace union.
+- octofhir-config 0.0.2: default postgres retains storage, PgPool builder and DB
+  watcher. default-features=false retains files, merging, events, feature flags,
+  encrypted secrets and the existing no-database manager behavior.
+- octofhir-notifications 0.0.2: default delivery enables smtp and http adapters.
+  default-features=false retains providers, queue traits, notification service,
+  DTOs and templates. smtp excludes HTTP clients; http excludes Lettre. A provider
+  missing its selected transport returns an explicit configuration error.
+- FHIRPath LSP is enabled by the server crate, not every library consuming the
+  workspace dependency. Search explicitly enables its genuine model HTTP/cache
+  terminology provider. Its unused direct SQLx dependency has been removed.
+- Updated OctoFHIR library versions retain the original server integrations.
+  UCUM quantity search uses the existing native math backend, without fuzzy search.
+- Private telemetry, crypto, QuickJS and CLI dependencies are updated together.
+  AES-GCM interoperability tests verify old and new encrypted values in both
+  directions; a webhook signature is checked against RFC 4231 case 1.
+
+Patch compatibility constraints
+
+JWT 10 and Argon2 0.5 expose upstream types in public authentication functions;
+changing their major lines requires a planned public API migration. JWT's selected
+AWS-LC backend is retained for its existing security rationale. No authorization
+checks or policy evaluation are bypassed to reduce dependencies. GraphQL's public
+context depends on the real policy evaluator, so its authorization engine remains.
+The current testcontainers-modules adapter requires testcontainers 0.27; upgrading
+only the direct dependency would produce incompatible container types. External
+config file format support is retained because the loader autodetects formats.
+
+Verification
+
+scripts/check-library-deps.sh runs independent consumers of the four minimal
+libraries and rejects transport/database dependencies in their normal/build trees.
+The default CQL-service profile also stays free of HTTP/TLS/LSP and SQLx.
+Full workspace all-target/all-feature checking is supplemented by tests, strict
+Clippy, rustdoc and RustSec. Raw results and any failed attempts are retained in
+/tmp/octofhir-release-evidence/server-rs. Database tests use isolated containers;
+no existing user database is used. Existing explicitly ignored tests remain
+ignored unless separately exercised. A debug-only UI placeholder matches CI and
+is not a production UI build or release binary. No crates.io publication is
+introduced for previously Git-only server packages.
+
+Remaining transitive advisories
+
+The pinned RustSec snapshot reports zero vulnerability entries and two warnings:
+- bincode 2.0.1 is unmaintained (RUSTSEC-2025-0141), through promql-parser's
+  grmtools build chain. The latest parser still uses that serialization toolchain;
+  an application dependency alias cannot replace its persisted format.
+- lru 0.16.4 is reported unsound (RUSTSEC-2026-0253), through async-graphql 7.2.1
+  dataloader. The fixed line starts at 0.18.2, outside its upstream requirement.
+  The application's two DataLoader fields use the default NoCache implementation;
+  they do not select async_graphql::dataloader::LruCache. The advisory requires
+  pop(), a key destructor that panics, and continued use after caught unwinding.
+  This traces the application's selected cache, not a guarantee for arbitrary
+  downstream consumers constructing other upstream cache types. Keep tracking
+  an upstream dependency update; do not hide the warning or substitute a fork.
+
+Primary sources: https://rustsec.org/advisories/RUSTSEC-2025-0141
+https://rustsec.org/advisories/RUSTSEC-2026-0253
+
+Unused dependency review
+
+Removed 33 source-verified normal/dev dependency edges (34 declarations including
+the duplicate Storage Tokio dev entry) across ten crates. This includes the
+unused async-graphql-axum adapter and direct Redis dependency in CQL-service;
+its real Redis L2 APIs still use deadpool-redis and its redis re-export. The old
+implicit redis selector is accepted as a compatibility no-op; redis-cache enables
+L2. humantime-serde is retained because public config serde attributes use it.
+Cargo-machete has no remaining findings after recording that exact false positive.

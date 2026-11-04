@@ -108,7 +108,7 @@ pub async fn subscription_ping(
 ///
 /// Returns a `history` Bundle whose SubscriptionStatus (type `query-event`) lists past
 /// notifications with their number, time and focus, so a client that missed deliveries can
-/// tell which changes to re-read. At most [`HISTORY_PAGE`] events per call, oldest first.
+/// tell which changes to re-read. At most `HISTORY_PAGE` events per call, oldest first.
 pub async fn subscription_event_history(
     state: &AppState,
     id: &str,

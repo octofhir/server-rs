@@ -34,7 +34,7 @@ pub struct IdentityProviderConfig {
     /// Human-readable name for display (e.g., "Google", "Azure AD").
     pub name: String,
 
-    /// The OIDC issuer URL (e.g., "https://accounts.google.com").
+    /// The OIDC issuer URL (e.g., <https://accounts.google.com>).
     pub issuer: Url,
 
     /// OAuth client ID registered with the provider.

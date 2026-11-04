@@ -11,7 +11,6 @@ repository.workspace = true
 [dependencies]
 # GraphQL framework with dynamic schema support
 async-graphql = { version = "7", features = ["dynamic-schema", "dataloader"] }
-async-graphql-axum = "7"
 async-graphql-parser = "7"
 async-graphql-value = "7"
 
@@ -20,7 +19,6 @@ octofhir-storage = { path = "../octofhir-storage" }
 octofhir-search = { path = "../octofhir-search" }
 octofhir-auth = { path = "../octofhir-auth" }
 octofhir-core = { path = "../octofhir-core" }
-octofhir-api = { path = "../octofhir-api" }
 
 # FHIR model provider for schema generation
 octofhir-fhir-model = { workspace = true }
@@ -30,7 +28,7 @@ octofhir-fhirschema = { workspace = true }
 octofhir-fhirpath = { workspace = true }
 
 # Core dependencies
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -43,19 +41,15 @@ time = { workspace = true }
 url = { workspace = true }
 
 # UUID handling
-uuid = { workspace = true }
 
 # Base64 for FhirBase64Binary and cursor encoding
-base64 = "0.22"
+base64 = "0.23"
 
 # URL encoding for search parameters
-urlencoding = "2"
 
 # Regex for validation
 regex = { workspace = true }
 
-# TOML parsing for config tests
-toml = { workspace = true }
 
 # HTTP framework for handlers
 axum = { workspace = true }
@@ -66,4 +60,6 @@ futures-util = { workspace = true }
 async-stream = "0.3"
 
 [dev-dependencies]
-tokio-test = { workspace = true }
+# Only used by config deserialization tests.
+toml = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

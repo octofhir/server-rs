@@ -1,5 +1,8 @@
+#[cfg(any(feature = "smtp", feature = "http"))]
 pub mod email;
+#[cfg(feature = "http")]
 pub mod telegram;
+#[cfg(feature = "http")]
 pub mod webhook;
 
 use async_trait::async_trait;
@@ -39,6 +42,9 @@ pub trait NotificationAdapter: Send + Sync {
     fn supports(&self, provider: &str) -> bool;
 }
 
+#[cfg(any(feature = "smtp", feature = "http"))]
 pub use email::EmailAdapter;
+#[cfg(feature = "http")]
 pub use telegram::TelegramAdapter;
+#[cfg(feature = "http")]
 pub use webhook::WebhookAdapter;

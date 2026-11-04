@@ -3,7 +3,7 @@
 //! Implements the FHIR CodeSystem/$closure operation to maintain a client-side
 //! transitive closure table for concept hierarchies.
 //!
-//! Specification: http://hl7.org/fhir/codesystem-operation-closure.html
+//! Specification: <http://hl7.org/fhir/codesystem-operation-closure.html>
 //!
 //! The closure table is used to efficiently query ancestor/descendant relationships
 //! in hierarchical code systems like SNOMED CT, ICD-10, etc.

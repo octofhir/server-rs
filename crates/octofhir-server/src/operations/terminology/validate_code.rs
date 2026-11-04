@@ -3,8 +3,8 @@
 //! Implements the FHIR $validate-code operation for both CodeSystem and ValueSet.
 //!
 //! Specifications:
-//! - CodeSystem: http://hl7.org/fhir/codesystem-operation-validate-code.html
-//! - ValueSet: http://hl7.org/fhir/valueset-operation-validate-code.html
+//! - CodeSystem: <http://hl7.org/fhir/codesystem-operation-validate-code.html>
+//! - ValueSet: <http://hl7.org/fhir/valueset-operation-validate-code.html>
 //!
 //! Supported invocation levels:
 //! - System: `POST /$validate-code` with url or coding

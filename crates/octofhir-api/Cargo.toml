@@ -1,12 +1,16 @@
 [package]
 name = "octofhir-api"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version.workspace = true
 description = "API types for OctoFHIR server"
 
 [dependencies]
-axum = { workspace = true }
+axum = { workspace = true, optional = true }
+http = "1"
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror = { workspace = true }
+[features]
+default = ["http"]
+http = ["dep:axum"]

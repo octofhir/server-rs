@@ -1,9 +1,12 @@
 use async_trait::async_trait;
+#[cfg(feature = "smtp")]
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType,
     transport::smtp::authentication::Credentials,
 };
+#[cfg(feature = "http")]
 use reqwest::Client;
+#[cfg(feature = "http")]
 use serde_json::json;
 
 use super::{NotificationAdapter, RenderedContent, SendResult};
@@ -12,16 +15,19 @@ use crate::provider::ProviderConfig;
 use crate::types::Notification;
 
 pub struct EmailAdapter {
+    #[cfg(feature = "http")]
     http_client: Client,
 }
 
 impl EmailAdapter {
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "http")]
             http_client: Client::new(),
         }
     }
 
+    #[cfg(feature = "http")]
     async fn send_sendgrid(
         &self,
         config: &ProviderConfig,
@@ -89,6 +95,7 @@ impl EmailAdapter {
         }
     }
 
+    #[cfg(feature = "smtp")]
     async fn send_smtp(
         &self,
         config: &ProviderConfig,
@@ -170,9 +177,27 @@ impl NotificationAdapter for EmailAdapter {
     ) -> Result<SendResult, NotificationError> {
         // Determine provider by available config
         if config.api_key.is_some() {
-            self.send_sendgrid(config, notification, content).await
+            #[cfg(feature = "http")]
+            {
+                self.send_sendgrid(config, notification, content).await
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                Err(NotificationError::InvalidConfig(
+                    "SendGrid requires the http feature".into(),
+                ))
+            }
         } else if config.smtp_host.is_some() {
-            self.send_smtp(config, notification, content).await
+            #[cfg(feature = "smtp")]
+            {
+                self.send_smtp(config, notification, content).await
+            }
+            #[cfg(not(feature = "smtp"))]
+            {
+                Err(NotificationError::InvalidConfig(
+                    "SMTP requires the smtp feature".into(),
+                ))
+            }
         } else {
             Err(NotificationError::InvalidConfig(
                 "No email provider configured".into(),
@@ -181,6 +206,8 @@ impl NotificationAdapter for EmailAdapter {
     }
 
     fn supports(&self, provider: &str) -> bool {
-        matches!(provider, "sendgrid" | "smtp" | "email")
+        provider == "email"
+            || (cfg!(feature = "http") && provider == "sendgrid")
+            || (cfg!(feature = "smtp") && provider == "smtp")
     }
 }

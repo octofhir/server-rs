@@ -14,7 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 tracing = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
@@ -27,15 +27,15 @@ ipnetwork = { workspace = true }
 # aws-lc-rs backend: constant-time RSA/ECDSA (the RustCrypto rsa crate has
 # RUSTSEC-2023-0071, the Marvin timing attack, with no fixed release)
 jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
-base64 = "0.22"
+base64 = "0.23"
 
 # Key generation and parsing (jsonwebtoken doesn't generate keys)
 aws-lc-rs = "1"
-pem = "3"
-rand = "0.8"
+pem = "4"
+rand = "0.10"
 
 # PKCE and token hashing
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 # Configuration
@@ -43,7 +43,7 @@ humantime-serde = "1"
 num_cpus = "1"
 
 # Scripting
-rquickjs = { version = "0.11", features = ["parallel"] }
+rquickjs = { version = "0.14", features = ["parallel"] }
 
 # HTTP client for JWKS fetching
 reqwest = { version = "0.13", features = ["json", "form"] }
@@ -54,7 +54,6 @@ axum-extra = { version = "0.12", features = ["cookie"] }
 cookie = { version = "0.18", features = ["percent-encode"] }
 
 # Admin API types
-octofhir-api = { path = "../octofhir-api" }
 
 # Core types
 octofhir-core = { path = "../octofhir-core" }
@@ -62,9 +61,12 @@ octofhir-storage = { path = "../octofhir-storage" }
 argon2 = { version = "0.5.3", features = ["std"] }
 
 [dev-dependencies]
-tokio-test = { workspace = true }
 criterion = { version = "0.8", features = ["async_tokio"] }
 
 [[bench]]
 name = "quickjs_bench"
 harness = false
+
+[package.metadata.cargo-machete]
+# Used by serde(with = "humantime_serde") on public config durations.
+ignored = ["humantime-serde"]

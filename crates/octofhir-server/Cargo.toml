@@ -50,14 +50,12 @@ async-lsp = { workspace = true }
 
 # PostgreSQL Language Server
 banshee_parser = { workspace = true }
-banshee_lexer = { workspace = true }
 banshee_syntax = { workspace = true }
 banshee_hir = { workspace = true }
 banshee_completion = { workspace = true }
 banshee_format = { workspace = true }
 text-size = { workspace = true }
-hyper = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 tokio-stream = "0.1"
 futures-util = { workspace = true }
 serde = { workspace = true }
@@ -65,9 +63,7 @@ serde_json = { workspace = true }
 memchr = "2"
 indexmap = { workspace = true }
 config = { workspace = true }
-toml = { workspace = true }
 notify = { workspace = true }
-notify-debouncer-mini = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
@@ -83,7 +79,7 @@ url = { workspace = true }
 ipnetwork = { workspace = true }
 time = { workspace = true }
 json-patch = { workspace = true }
-octofhir-fhirpath = { workspace = true }
+octofhir-fhirpath = { workspace = true, features = ["lsp"] }
 octofhir-fhir-model = { workspace = true }
 octofhir-fhirschema = { workspace = true }
 fml-syntax = { workspace = true }
@@ -109,7 +105,7 @@ reqwest = { workspace = true }
 lettre = { version = "0.11", features = ["tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }
 
 # WebSocket client for proxy
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 
 # Database
 # Note: Use sqlx-postgres/sqlx-core directly for database operations
@@ -129,17 +125,15 @@ sqlx-postgres = { version = "0.9.0", default-features = false, features = [
 chrono = { version = "0.4", features = ["serde"] }
 
 # Password hashing
-argon2 = { version = "0.5.3", features = ["std"] }
 
 # Random generation and encoding for client secrets
-rand = "0.8"
+rand = "0.10"
 hex = "0.4"
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Redis caching (optional, for horizontal scaling)
 deadpool-redis = "0.23"
 redis = { version = "1.2", features = ["tokio-comp", "connection-manager"] }
-rmp-serde = "1.3"  # MessagePack for efficient serialization
 dashmap = "6.2"  # Concurrent HashMap for L1 cache
 arc-swap = "1.9"  # Lock-free atomic pointer swapping for hot paths
 moka = { version = "0.12", features = ["future"] }  # LRU cache for lazy schema loading
@@ -156,7 +150,7 @@ futures = "0.3.32"
 
 # High-performance allocator (optional, enabled by default)
 mimalloc = { version = "0.1", default-features = false, optional = true }
-base64 = "0.22.1"
+base64 = "0.23"
 
 # Cron scheduling for automation
 # croner = "2.0"
@@ -168,11 +162,9 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 aws-lc-rs = "1"
-pem = "3"
-tokio-test = { workspace = true }
+pem = "4"
 wiremock = { workspace = true }
 reqwest = { workspace = true }
 filetime = { workspace = true }
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
-insta = "1.47.2"

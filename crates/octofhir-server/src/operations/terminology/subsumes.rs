@@ -3,7 +3,7 @@
 //! Implements the FHIR CodeSystem/$subsumes operation to test the subsumption
 //! relationship between two codes in a code system.
 //!
-//! Specification: http://hl7.org/fhir/codesystem-operation-subsumes.html
+//! Specification: <http://hl7.org/fhir/codesystem-operation-subsumes.html>
 //!
 //! Supported invocation levels:
 //! - System: `GET/POST /$subsumes` with system and codes

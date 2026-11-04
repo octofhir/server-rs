@@ -157,7 +157,7 @@ pub fn generate_device_fingerprint(user_agent: Option<&str>, ip: Option<&str>) -
     hasher.update(user_agent.unwrap_or(""));
     hasher.update(ip.unwrap_or(""));
 
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]

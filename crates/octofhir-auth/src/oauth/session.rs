@@ -113,7 +113,7 @@ impl AuthorizationSession {
     #[must_use]
     pub fn generate_code() -> String {
         let mut bytes = [0u8; 32];
-        rand::Rng::fill(&mut rand::thread_rng(), &mut bytes);
+        rand::fill(&mut bytes);
         URL_SAFE_NO_PAD.encode(bytes)
     }
 

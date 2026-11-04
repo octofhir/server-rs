@@ -874,7 +874,10 @@ mod tests {
                 }
             }
         }
-        assert!(per_instance > 20, "only {per_instance} queries keep $instance");
+        assert!(
+            per_instance > 20,
+            "only {per_instance} queries keep $instance"
+        );
         let variable = &out["templating"]["list"][0];
         assert_eq!(
             variable["definition"],

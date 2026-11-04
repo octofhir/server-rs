@@ -1,6 +1,6 @@
 //! Arc-owning storage adapters for use with authentication middleware.
 //!
-//! These adapters wrap the lifetime-based storage types and own an Arc<PgPool>,
+//! These adapters wrap the lifetime-based storage types and own an `Arc<PgPool>`,
 //! allowing them to be used as `Arc<dyn Storage>` in middleware.
 
 use std::sync::Arc;

@@ -38,12 +38,15 @@ pub(crate) mod term_source;
 mod viewdefinition_run;
 
 pub use export::{ViewDefinitionExportOperation, execute_viewdefinition_export};
+pub(crate) use output::ENVELOPE_KEY;
 pub use run::ViewDefinitionRunOperation;
 pub use sql::ViewDefinitionSqlOperation;
+pub(crate) use sql_export::{
+    JOB_TYPE as SQL_EXPORT_JOB, locations as sql_export_locations,
+    media_type as sql_export_media_type,
+};
 pub use sql_export::{SqlExportOperation, execute_sql_export};
-pub(crate) use sql_export::{JOB_TYPE as SQL_EXPORT_JOB, locations as sql_export_locations, media_type as sql_export_media_type};
 pub use sql_run::SqlRunOperation;
-pub(crate) use output::ENVELOPE_KEY;
 pub(crate) use term_source::{
     PROVENANCE_HEADER, PROVENANCE_KEY, REMOTE_COUNT, ServerTerminology, packaged, stored,
     terminology_server,
@@ -90,10 +93,7 @@ pub fn register_operation_definitions(registry: &mut crate::operations::Operatio
         type_level: false,
         instance: false,
         resource: vec![],
-        ..on_view_definition(
-            "sql-run",
-            SQL_RUN_DEFINITION,
-        )
+        ..on_view_definition("sql-run", SQL_RUN_DEFINITION)
     });
     registry.replace(OperationDefinition {
         system: true,
@@ -101,9 +101,6 @@ pub fn register_operation_definitions(registry: &mut crate::operations::Operatio
         instance: false,
         resource: vec![],
         affects_state: true,
-        ..on_view_definition(
-            "sql-export",
-            SQL_EXPORT_DEFINITION,
-        )
+        ..on_view_definition("sql-export", SQL_EXPORT_DEFINITION)
     });
 }

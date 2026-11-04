@@ -40,7 +40,7 @@ impl From<ConfigSource> for Priority {
 /// Partial configuration that may have some fields set
 ///
 /// Used for merging configurations from different sources.
-/// Each field is Option<Value> to allow partial overrides.
+/// Each field is `Option<Value>` to allow partial overrides.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PartialConfig {
     #[serde(skip_serializing_if = "Option::is_none")]

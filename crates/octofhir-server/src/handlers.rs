@@ -1675,7 +1675,7 @@ pub async fn read_resource(
     }
 }
 
-/// GET /[type]/[id]/_history/[vid] - Read a specific version of a resource
+/// GET `/[type]/[id]/_history/[vid]` - Read a specific version of a resource
 #[tracing::instrument(name = "fhir.vread", skip_all, fields(resource_type = %resource_type, id = %id, version_id = %version_id))]
 pub async fn vread_resource(
     State(state): State<crate::server::AppState>,
@@ -2418,7 +2418,7 @@ async fn conditional_write_response(
     })
 }
 
-/// PUT /[type]?[search params] - Conditional update based on search criteria
+/// PUT `/[type]?[search` params] - Conditional update based on search criteria
 #[tracing::instrument(name = "fhir.conditional_update", skip_all, fields(resource_type = %resource_type))]
 pub async fn conditional_update_resource(
     State(state): State<crate::server::AppState>,
@@ -2634,7 +2634,7 @@ pub async fn delete_resource(
     ))
 }
 
-/// DELETE /[type]?[search params] - Conditional single-resource delete.
+/// DELETE `/[type]?[search` params] - Conditional single-resource delete.
 #[tracing::instrument(name = "fhir.conditional_delete", skip_all, fields(resource_type = %resource_type))]
 pub async fn conditional_delete_resource(
     State(state): State<crate::server::AppState>,
@@ -2684,7 +2684,7 @@ pub async fn conditional_delete_resource(
     ))
 }
 
-/// PATCH /[type]/[id] - Patch a resource using JSON Patch (RFC 6902)
+/// PATCH `/[type]/[id]` - Patch a resource using JSON Patch (RFC 6902)
 #[tracing::instrument(name = "fhir.patch", skip_all, fields(resource_type = %resource_type, id = %id))]
 pub async fn patch_resource(
     State(state): State<crate::server::AppState>,
@@ -2881,7 +2881,7 @@ pub async fn patch_resource(
     }
 }
 
-/// PATCH /[type]?[search params] - Conditional patch with snapshot version pinning.
+/// PATCH `/[type]?[search` params] - Conditional patch with snapshot version pinning.
 #[tracing::instrument(name = "fhir.conditional_patch", skip_all, fields(resource_type = %resource_type))]
 pub async fn conditional_patch_resource(
     State(state): State<crate::server::AppState>,
@@ -3213,7 +3213,7 @@ async fn apply_search_visibility(
     }
 }
 
-/// POST /[type]/_search - Search via POST with form-encoded parameters
+/// POST `/[type]/_search` - Search via POST with form-encoded parameters
 #[tracing::instrument(name = "fhir.search.post", skip_all, fields(resource_type = %resource_type))]
 pub async fn search_resource_post(
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,

@@ -1,7 +1,7 @@
 //! FHIR _filter parameter parser and SQL generator.
 //!
 //! Implements the FHIR R5 _filter parameter syntax for advanced search filtering.
-//! See: https://www.hl7.org/fhir/search_filter.html
+//! See: <https://www.hl7.org/fhir/search_filter.html>
 //!
 //! # Syntax
 //!
@@ -489,7 +489,7 @@ fn build_condition(
 }
 
 /// Add the SQL condition of a `_filter` value to `builder`. Comparisons name
-/// search parameters of `resource_type` (see [`build_condition`]); an unknown
+/// search parameters of `resource_type` (see `build_condition`); an unknown
 /// parameter, a chained path or an operator the parameter type cannot express
 /// is an error rather than a filter that silently matches nothing.
 ///

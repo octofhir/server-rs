@@ -138,7 +138,7 @@ pub fn build_number_search(
 /// Build search for Quantity types.
 ///
 /// Quantity has value, unit, system, and code fields.
-/// Search format: [prefix]number|system|code or [prefix]number||code or just [prefix]number
+/// Search format: `[prefix]`number|system|code or `[prefix]`number||code or just `[prefix]`number
 pub fn build_quantity_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,

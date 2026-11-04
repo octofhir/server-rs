@@ -1253,9 +1253,14 @@ async fn test_transaction_commit_all_creates() {
         .await
         .expect("transaction request");
 
-    assert!(resp.status().is_success(), "Transaction should succeed");
+    let status = resp.status();
+    let body = resp.text().await.expect("read transaction response");
+    assert!(
+        status.is_success(),
+        "Transaction should succeed: {status}: {body}"
+    );
 
-    let response_bundle: Value = resp.json().await.expect("parse response");
+    let response_bundle: Value = serde_json::from_str(&body).expect("parse response");
     assert_eq!(response_bundle["type"], "transaction-response");
 
     // Extract created IDs from response

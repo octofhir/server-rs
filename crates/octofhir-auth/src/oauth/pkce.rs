@@ -190,7 +190,7 @@ impl std::fmt::Display for PkceChallengeMethod {
 /// From Section 4.1:
 /// > code_verifier = high-entropy cryptographic random STRING using the
 /// > unreserved characters [A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~"
-/// > from Section 2.3 of [RFC3986], with a minimum length of 43 characters
+/// > from Section 2.3 of [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986#section-2.3), with a minimum length of 43 characters
 /// > and a maximum length of 128 characters.
 #[derive(Debug, Clone)]
 pub struct PkceVerifier(String);
@@ -227,10 +227,7 @@ impl PkceVerifier {
     /// Generates 32 random bytes and encodes them as base64url (43 characters).
     #[must_use]
     pub fn generate() -> Self {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        // `gen` is a reserved keyword in Rust 2024, so we use r#gen
-        let bytes: [u8; 32] = rng.r#gen();
+        let bytes: [u8; 32] = rand::random();
         let verifier = URL_SAFE_NO_PAD.encode(bytes);
         Self(verifier)
     }

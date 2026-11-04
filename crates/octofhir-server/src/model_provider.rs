@@ -234,7 +234,7 @@ impl OctoFhirModelProvider {
 
     /// Get a schema by canonical URL (for meta.profile validation).
     ///
-    /// e.g., "http://hl7.org/fhir/StructureDefinition/Patient"
+    /// e.g., "<http://hl7.org/fhir/StructureDefinition/Patient>"
     pub async fn get_schema_by_url(&self, url: &str) -> Option<Arc<FhirSchema>> {
         // Check URL cache first
         if let Some(schema) = self.url_cache.get(url).await.flatten() {

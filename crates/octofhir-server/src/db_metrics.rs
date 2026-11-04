@@ -1,8 +1,8 @@
 //! PostgreSQL statistics on `/metrics`: connections by state, lock waits, the longest open
 //! transaction, transaction and block counters, database and table sizes, and resource counts.
 //!
-//! Read from `pg_stat_*` views when Prometheus scrapes, at most once per [`MIN_INTERVAL`] however
-//! many scrapers there are, and abandoned after [`TIMEOUT`] so a slow database never stalls a
+//! Read from `pg_stat_*` views when Prometheus scrapes, at most once per `MIN_INTERVAL` however
+//! many scrapers there are, and abandoned after `TIMEOUT` so a slow database never stalls a
 //! scrape. These describe the database, not the instance: every instance reports the same values,
 //! so dashboards aggregate them with `max`, not `sum`.
 
@@ -43,7 +43,7 @@ const STATES: &[&str] = &[
 
 static LAST_RUN_SECS: AtomicU64 = AtomicU64::new(0);
 
-/// Refreshes the PostgreSQL gauges unless they were refreshed less than [`MIN_INTERVAL`] ago.
+/// Refreshes the PostgreSQL gauges unless they were refreshed less than `MIN_INTERVAL` ago.
 /// `resource_types` maps table names back to resource types for `octofhir_fhir_resources`.
 pub async fn collect(pool: &PgPool, resource_types: &HashSet<String>) {
     let now = SystemTime::now()

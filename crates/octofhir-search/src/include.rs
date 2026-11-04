@@ -295,7 +295,7 @@ fn get_reference_at_path(resource: &serde_json::Value, path: &str) -> Option<Str
 
 /// Parse a FHIR reference value into (type, id).
 ///
-/// Handles formats: "Patient/123", "http://example.org/fhir/Patient/123"
+/// Handles formats: "Patient/123", "<http://example.org/fhir/Patient/123>"
 ///
 /// Note: This function treats all absolute URLs as local since it doesn't have
 /// access to the server's base URL. For proper base URL validation, use

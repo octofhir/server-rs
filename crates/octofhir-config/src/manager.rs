@@ -11,8 +11,10 @@ use crate::feature_flags::{FeatureContext, FeatureFlags};
 use crate::merger::MergedConfig;
 use crate::secrets::Secrets;
 use crate::sources::{ConfigSource, WatchHandle};
+#[cfg(feature = "postgres")]
 use crate::storage::ConfigStorage;
 
+#[cfg(feature = "postgres")]
 use sqlx_postgres::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,6 +24,7 @@ use tracing::{debug, error, info, warn};
 /// Configuration manager builder
 pub struct ConfigurationManagerBuilder {
     file_path: Option<PathBuf>,
+    #[cfg(feature = "postgres")]
     db_pool: Option<PgPool>,
     secrets: Option<Secrets>,
 }
@@ -31,6 +34,7 @@ impl ConfigurationManagerBuilder {
     pub fn new() -> Self {
         Self {
             file_path: None,
+            #[cfg(feature = "postgres")]
             db_pool: None,
             secrets: None,
         }
@@ -43,6 +47,7 @@ impl ConfigurationManagerBuilder {
     }
 
     /// Set the database pool for database source
+    #[cfg(feature = "postgres")]
     pub fn with_database(mut self, pool: PgPool) -> Self {
         self.db_pool = Some(pool);
         self
@@ -65,12 +70,14 @@ impl ConfigurationManagerBuilder {
         }
 
         // Add database source if pool provided
+        #[cfg(feature = "postgres")]
         if let Some(pool) = self.db_pool.clone() {
             use crate::sources::DatabaseSource;
             sources.push(Box::new(DatabaseSource::new(pool)));
         }
 
         // Create storage if database available
+        #[cfg(feature = "postgres")]
         let storage = self.db_pool.map(|pool| {
             if let Some(secrets) = self.secrets.clone() {
                 ConfigStorage::with_secrets(pool, secrets)
@@ -104,6 +111,7 @@ impl ConfigurationManagerBuilder {
             sources,
             merged: Arc::new(RwLock::new(merged)),
             event_bus: event_tx,
+            #[cfg(feature = "postgres")]
             storage,
             secrets: self.secrets,
             watch_handles: Arc::new(RwLock::new(Vec::new())),
@@ -126,6 +134,7 @@ pub struct ConfigurationManager {
     /// Event bus for broadcasting changes
     event_bus: broadcast::Sender<ConfigChangeEvent>,
     /// Database storage (if available)
+    #[cfg(feature = "postgres")]
     storage: Option<ConfigStorage>,
     /// Secrets manager (if available)
     secrets: Option<Secrets>,
@@ -293,7 +302,11 @@ impl ConfigurationManager {
         is_secret: bool,
         updated_by: Option<&str>,
     ) -> Result<(), ConfigError> {
+        #[cfg(not(feature = "postgres"))]
+        let _ = (description, updated_by);
+
         // Store in database if available
+        #[cfg(feature = "postgres")]
         if let Some(storage) = &self.storage {
             storage
                 .set(
@@ -341,11 +354,15 @@ impl ConfigurationManager {
         key: &str,
     ) -> Result<bool, ConfigError> {
         // Delete from database if available
+        #[cfg(feature = "postgres")]
         let deleted = if let Some(storage) = &self.storage {
             storage.delete(&category.to_string(), key).await?
         } else {
             false
         };
+
+        #[cfg(not(feature = "postgres"))]
+        let deleted = false;
 
         // Broadcast delete event
         let event =
@@ -361,16 +378,16 @@ impl ConfigurationManager {
         category: ConfigCategory,
         key: &str,
     ) -> Result<Option<serde_json::Value>, ConfigError> {
+        #[cfg(feature = "postgres")]
         if let Some(storage) = &self.storage {
-            storage.get_decrypted(&category.to_string(), key).await
-        } else {
-            // Fall back to merged config
-            let config = self.merged.read().await;
-            Ok(config
-                .get_category(&category.to_string())
-                .and_then(|v| v.get(key))
-                .cloned())
+            return storage.get_decrypted(&category.to_string(), key).await;
         }
+        // Preserve the existing no-database fallback.
+        let config = self.merged.read().await;
+        Ok(config
+            .get_category(&category.to_string())
+            .and_then(|v| v.get(key))
+            .cloned())
     }
 
     /// Toggle a feature flag
@@ -391,6 +408,7 @@ impl ConfigurationManager {
         }
 
         // Store in database if available
+        #[cfg(feature = "postgres")]
         if let Some(storage) = &self.storage {
             storage
                 .set(
@@ -425,9 +443,13 @@ impl ConfigurationManager {
 
 impl std::fmt::Debug for ConfigurationManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[cfg(feature = "postgres")]
+        let has_storage = self.storage.is_some();
+        #[cfg(not(feature = "postgres"))]
+        let has_storage = false;
         f.debug_struct("ConfigurationManager")
             .field("sources", &self.sources.len())
-            .field("has_storage", &self.storage.is_some())
+            .field("has_storage", &has_storage)
             .field("has_secrets", &self.secrets.is_some())
             .finish()
     }

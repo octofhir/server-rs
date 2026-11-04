@@ -18,7 +18,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
@@ -26,7 +26,7 @@ uuid = { workspace = true }
 argon2 = { version = "0.5.3", features = ["std"] }
 
 # Random generation
-rand = "0.8"
+rand = "0.10"
 
 # Encoding
 hex = "0.4"
@@ -46,4 +46,4 @@ sqlx-postgres = { version = "0.9.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-tokio-test = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

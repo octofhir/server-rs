@@ -14,7 +14,7 @@ use tracing::debug;
 ///
 /// When an AccessPolicy resource is created, updated, or deleted, this hook
 /// sends a notification to the [`PolicyChangeNotifier`], which triggers the
-/// [`PolicyReloadService`] to refresh the policy cache.
+/// `PolicyReloadService` to refresh the policy cache.
 ///
 /// # Example
 ///

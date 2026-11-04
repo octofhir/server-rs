@@ -25,7 +25,7 @@ pub struct ExplainNode {
     /// Short name of the operation: `sum by (le)`, `rate`, `/`, the metric name, …
     pub label: String,
     pub children: Vec<ExplainNode>,
-    /// Absent for literals and for nodes past [`MAX_EVALUATED`].
+    /// Absent for literals and for nodes past `MAX_EVALUATED`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<NodeResult>,
 }
@@ -108,7 +108,7 @@ fn node(expr: &Expr) -> ExplainNode {
     }
 }
 
-/// Evaluates every node of `root` (pre-order, up to [`MAX_EVALUATED`]) as an instant query.
+/// Evaluates every node of `root` (pre-order, up to `MAX_EVALUATED`) as an instant query.
 pub async fn evaluate(client: &PrometheusClient, root: &mut ExplainNode, time: Option<f64>) {
     let mut exprs = Vec::new();
     collect(root, &mut exprs);

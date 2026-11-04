@@ -754,7 +754,7 @@ pub enum PackageSpec {
         /// Optional direct URL to download the package tarball from.
         /// If provided, this URL will be used instead of querying the registry.
         /// Useful for packages not in the registry or CI builds.
-        /// Example: "https://build.fhir.org/ig/FHIR/sql-on-fhir-v2/package.tgz"
+        /// Example: "<https://build.fhir.org/ig/FHIR/sql-on-fhir-v2/package.tgz>"
         url: Option<String>,
     },
 }

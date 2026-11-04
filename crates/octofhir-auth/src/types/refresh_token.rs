@@ -122,7 +122,7 @@ impl RefreshToken {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
         let mut bytes = [0u8; 32];
-        rand::Rng::fill(&mut rand::thread_rng(), &mut bytes);
+        rand::fill(&mut bytes);
         URL_SAFE_NO_PAD.encode(bytes)
     }
 }
