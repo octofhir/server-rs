@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use octofhir_canonical_manager::CanonicalManager;
+use octofhir_canonical_core::CanonicalManager;
 
 /// Errors that can occur during compartment operations
 #[derive(Debug, Error)]

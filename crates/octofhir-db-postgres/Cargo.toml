@@ -14,7 +14,7 @@ octofhir-core = { workspace = true, features = ["events"] }
 octofhir-storage = { workspace = true, features = ["events"] }
 octofhir-search = { path = "../octofhir-search", features = ["remote-terminology"] }
 octofhir-fhir-model = { workspace = true }
-octofhir-canonical-manager = { workspace = true }
+octofhir-canonical-core = { workspace = true }
 octofhir-notifications = { path = "../octofhir-notifications" }
 
 # Async

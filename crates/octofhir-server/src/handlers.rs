@@ -8743,7 +8743,7 @@ pub struct PackageResourcesQuery {
 
 /// GET /api/packages - List all installed packages
 pub async fn api_packages_list(State(state): State<crate::server::AppState>) -> impl IntoResponse {
-    use octofhir_canonical_manager::traits::PackageStore;
+    use octofhir_canonical_core::traits::PackageStore;
     use octofhir_db_postgres::PostgresPackageStore;
 
     let store = PostgresPackageStore::new(state.db_pool.as_ref().clone());
@@ -9336,7 +9336,7 @@ pub async fn api_packages_install_stream(
     let stream = UnboundedReceiverStream::new(receiver).map(move |event| {
         if matches!(
             event,
-            octofhir_canonical_manager::InstallEvent::Completed { .. }
+            octofhir_canonical_core::InstallEvent::Completed { .. }
         ) {
             let refresh_state = refresh_state.clone();
             tokio::spawn(async move {
@@ -9381,7 +9381,7 @@ pub async fn api_packages_lookup(
     Path(name): Path<String>,
 ) -> Result<Json<PackageLookupResponse>, ApiError> {
     use crate::canonical::lookup_package_versions;
-    use octofhir_canonical_manager::traits::PackageStore;
+    use octofhir_canonical_core::traits::PackageStore;
     use octofhir_db_postgres::PostgresPackageStore;
 
     tracing::info!(package = %name, "API request to lookup package versions");

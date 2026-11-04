@@ -27,7 +27,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 #[cfg(feature = "canonical")]
-use octofhir_canonical_manager::CanonicalManager;
+use octofhir_canonical_core::CanonicalManager;
 
 #[cfg(feature = "canonical")]
 use crate::loader::{ElementTypeResolver, LoaderError, load_search_parameters};

@@ -8,7 +8,7 @@
 //! `octofhir-fhir-model`, which provides TTL-based caching using the moka library.
 
 use async_trait::async_trait;
-use octofhir_canonical_manager::CanonicalManager;
+use octofhir_canonical_core::CanonicalManager;
 use octofhir_fhir_model::terminology::{
     ConnectionStatus, ExpansionParameters, HttpTerminologyProvider, LookupResult,
     SubsumptionResult, TerminologyProvider, TranslationResult, ValidationResult, ValueSetConcept,
