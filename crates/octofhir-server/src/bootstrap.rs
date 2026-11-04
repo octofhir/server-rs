@@ -486,9 +486,8 @@ pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error
 
 /// Generate a secure random client secret (256-bit, hex-encoded to 64 chars).
 pub fn generate_client_secret() -> String {
-    use rand::Rng;
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill(&mut bytes);
+    rand::fill(&mut bytes);
     hex::encode(bytes)
 }
 

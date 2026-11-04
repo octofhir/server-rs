@@ -124,7 +124,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Password hashing
 
 # Random generation and encoding for client secrets
-rand = "0.8"
+rand = "0.10"
 hex = "0.4"
 sha2 = "0.11"
 
@@ -160,7 +160,7 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 aws-lc-rs = "1"
-pem = "3"
+pem = "4"
 wiremock = { workspace = true }
 reqwest = { workspace = true }
 filetime = { workspace = true }

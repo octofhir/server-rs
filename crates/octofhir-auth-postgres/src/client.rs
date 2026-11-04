@@ -507,7 +507,7 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
 
         // Generate new secret (32 bytes = 256 bits, hex encoded = 64 chars)
         let mut bytes = [0u8; 32];
-        rand::Rng::fill(&mut rand::thread_rng(), &mut bytes);
+        rand::fill(&mut bytes);
         let plain_secret = hex::encode(bytes);
 
         // Hash with Argon2id
