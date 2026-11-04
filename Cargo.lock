@@ -700,9 +700,9 @@ dependencies = [
 
 [[package]]
 name = "banshee_completion"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b76ac17e54f4376f0782cf2c6e49d0e274fdc88451bb772b815cbee9a57ba8b6"
+checksum = "3ba66e582b3f0f4a0122643b3fcd363375ffe06402a910493556fc0f5764e013"
 dependencies = [
  "banshee_hir",
  "banshee_parser",
@@ -712,9 +712,9 @@ dependencies = [
 
 [[package]]
 name = "banshee_format"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4ddbce940f19f4cde7e973706525beadc126b9d29e8814ba2bf2fbc8d990dc2"
+checksum = "ab876f2809c2d7b6d1e17e63aa0a5a9bf5bb958e6856f49cc227e008846a8d9e"
 dependencies = [
  "banshee_parser",
  "banshee_syntax",
@@ -724,9 +724,9 @@ dependencies = [
 
 [[package]]
 name = "banshee_hir"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "119d74349a44799ef9a4dfa27e182fa543d011665615fd690e66de382d5db441"
+checksum = "8eb96651f9b32e570452f65af87cfb033f9fdf7949be112c6afdf91a2fc4c675"
 dependencies = [
  "banshee_syntax",
  "text-size",
@@ -734,9 +734,9 @@ dependencies = [
 
 [[package]]
 name = "banshee_lexer"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89cbb9966d5e180f62bd1d5211ed7262c127595146864d79417bba602e7a6a7e"
+checksum = "c7b2729c21f3de6290a4731998e1dd49f159b51393d96bf4cd85d466d5c1027f"
 dependencies = [
  "banshee_syntax",
  "text-size",
@@ -744,9 +744,9 @@ dependencies = [
 
 [[package]]
 name = "banshee_parser"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3e71047ca010bbfd3c20482c871b325293d230244ea6626b8c3d79d01fde5d9"
+checksum = "91301a569d5dd042fbf57e410b16488ebb0270fff687e49107171b22204e0c98"
 dependencies = [
  "banshee_lexer",
  "banshee_syntax",
@@ -756,9 +756,9 @@ dependencies = [
 
 [[package]]
 name = "banshee_syntax"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef9dd3dbe70dd1d97bd72134e62c30872b300c4b55f1b08d1c82f26618705da8"
+checksum = "01c220803b13215585f5502bdfd65cf833494b63e4c8a16417151133d807f984"
 dependencies = [
  "cstree",
  "phf",
@@ -4240,9 +4240,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirschema"
-version = "0.3.35"
+version = "0.3.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15a73528e7c5312fe7de6c91fef2d048f95dc72421c4f9906c82a8d07bb8f27f"
+checksum = "c905b503381ef754d4a980f9990ebba2230e1cb8b225432f754132c82fd42d4e"
 dependencies = [
  "async-recursion",
  "async-trait",

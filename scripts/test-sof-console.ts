@@ -243,6 +243,19 @@ console.log("Library storage");
   );
   const bundle = (await res.json()) as { entry?: { resource: { id: string } }[] };
   check(res.ok && bundle.entry?.some((e) => e.resource.id === "console-check"), "found by Library.type", bundle);
+
+  // The console saves with the SQLQuery profile; its sql-text extension slice must validate.
+  const profiled = {
+    ...sqlLibrary(SQL),
+    id: "console-check-profiled",
+    meta: { profile: ["http://hl7.org/fhir/uv/sql-on-fhir/StructureDefinition/SQLQuery"] },
+  };
+  const saved = await fetch(`${BASE_URL}/fhir/Library/${profiled.id}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(profiled),
+  });
+  check(saved.ok, "saved with the SQLQuery profile", saved.ok ? saved.status : await saved.text());
 }
 
 console.log("SQL language server, mode=sof");

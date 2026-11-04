@@ -79,7 +79,7 @@ url = { workspace = true }
 ipnetwork = { workspace = true }
 time = { workspace = true }
 json-patch = { workspace = true }
-octofhir-fhirpath = { workspace = true, features = ["lsp"] }
+octofhir-fhirpath = { workspace = true, features = ["lsp", "sql-on-fhir"] }
 octofhir-fhir-model = { workspace = true }
 octofhir-fhirschema = { workspace = true }
 fml-syntax = { workspace = true }
