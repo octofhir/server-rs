@@ -126,11 +126,39 @@ GET /fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2
 | `measure` | The Measure's canonical URL, at `Measure/$evaluate-measure` |
 
 A population criterion names a `define` of the library: `true`, or a list with something in it,
-puts the subject in that population. Measures are read as patient-based.
+puts the subject in that population. With a `populationBasis` extension naming a resource type, such
+as `Encounter`, the defines return resources and each one is counted.
 
-Proportion, ratio and cohort scoring are supported, with `denominator-exclusion`,
-`denominator-exception` and `numerator-exclusion`. `group.stratifier` produces one stratum per value
-of its define. Continuous variable scoring is refused.
+Proportion, ratio, cohort and continuous variable scoring are supported, with `denominator-exclusion`,
+`denominator-exception`, `numerator-exclusion` and `measure-population-exclusion`. `group.stratifier`
+produces one stratum per value of its define.
+
+For continuous variable, the `measure-observation` criterion names a CQL function. It takes one member of
+the `measure-population`, or no argument in a subject-based measure, and returns a number or a Quantity.
+The `cqfm-aggregateMethod` extension on that population (`sum`, `average`, `median`, `minimum`, `maximum`,
+`count`) turns the values into `measureScore`. Ratio measures with observations are not supported.
 
 The library is compiled once for the run and all data is read under the caller's grants. The result
 is a `MeasureReport`, which is not stored.
+
+## Data requirements
+
+`$data-requirements` says what a Measure or Library reads before anything runs:
+
+```http
+GET /fhir/Measure/screening/$data-requirements?periodStart=2024-01-01&periodEnd=2024-12-31
+GET /fhir/Library/screening/$data-requirements
+```
+
+`periodStart` and `periodEnd` are required on a Measure, as the operation defines them. The result is a
+`module-definition` Library:
+
+| Element | Holds |
+|---|---|
+| `dataRequirement` | One entry per distinct retrieve in the library and everything it includes, with `codeFilter` for the value set or codes of the retrieve |
+| `relatedArtifact` | `depends-on` entries for the Measure's library, included libraries, value sets and code systems |
+| `parameter` | The library's parameters, such as `Measurement Period` as `Period` |
+
+Filters come from the retrieve itself. A condition in a `where` clause, such as `O.status = 'final'`, is not
+turned into a filter. Both operations work on an instance; the system-level `Library` form with `target` is
+not implemented.

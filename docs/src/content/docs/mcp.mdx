@@ -83,6 +83,7 @@ rebinding. Requests without `Origin` pass.
 | `read_resource` | `resourceType`, `id` | `GET /fhir/{type}/{id}` |
 | `search_resources` | `resourceType`, `query` | `GET /fhir/{type}?{query}`. To page, call it again with the query of the `next` link. |
 | `patient_summary` | `patientId` | [`GET /fhir/Patient/{id}/$summary`](/server-rs/patient-summary/) |
+| `evaluate_measure` | `measureId`, `periodStart`, `periodEnd`, `subject` | [`POST /fhir/Measure/{id}/$evaluate-measure`](/server-rs/cql/) |
 | `lookup_code` | `system`, `code` | `POST /fhir/CodeSystem/$lookup` |
 | `validate_code` | `valueSet`, `code`, `system` | `POST /fhir/ValueSet/$validate-code`, with [`_explain`](/server-rs/terminology/#which-definitions-decided-the-answer) on, and `inferSystem` when `system` is absent |
 | `validate_resource` | `resource`, `profile` | `POST /fhir/{type}/$validate`; nothing is stored |

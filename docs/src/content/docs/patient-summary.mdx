@@ -1,6 +1,6 @@
 ---
 title: Patient Summary
-description: Patient/$summary builds an International Patient Summary document (IPS 2.0.1) from a patient's current data
+description: Patient/$summary builds an International Patient Summary (IPS 2.0.1) or a Europe Patient Summary document from a patient's current data
 ---
 
 `Patient/$summary` returns an International Patient Summary, following the
@@ -52,6 +52,8 @@ server selects as follows, from the Patient compartment, up to 100 resources per
 | Social History | `29762-2` | Observation with `category` social-history, newest first | |
 | Alerts | `104605-1` | Flag with status active | |
 | Advance Directives | `42348-3` | Consent with `status` active | |
+| Functional Status | `47420-5` | ClinicalImpression with `status` completed, newest first | |
+| History of Pregnancy | `10162-6` | Observation with the pregnancy status code `82810-3` or a code of `pregnancies-summary-uv-ips`, newest first | |
 
 A required section with nothing to show stays in the document, with the `emptyReason` `unavailable` (from
 `http://terminology.hl7.org/CodeSystem/list-empty-reason`) and the narrative "No information available". An
@@ -82,9 +84,29 @@ A document is read on its own, so what the section resources point at comes alon
 a Medication or a Practitioner, are read and added under the caller's grants. This goes one level deep. A
 reference to another server is not followed, and a resource the caller may not read is left out.
 
+## Profiles
+
+The `profile` parameter names the Composition profile of the document. The Bundle profile of the same
+guide is accepted too, and a `|version` suffix is ignored. Any other canonical gets an OperationOutcome
+rather than a document that follows something else.
+
+```http
+GET /fhir/Patient/123/$summary?profile=http://hl7.eu/fhir/eps/StructureDefinition/composition-eu-eps
+```
+
+| Profile | Canonical | Differences |
+|---|---|---|
+| International Patient Summary 2.0.1, the default | `http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips` | |
+| HL7 Europe Patient Summary 1.0.0-ballot | `http://hl7.eu/fhir/eps/StructureDefinition/composition-eu-eps` | History of Procedures and Medical Devices are required; adds Travel History (`10182-4`, Observation `94651-7`) |
+
+The Composition declares the chosen profile in `meta.profile`.
+
 ## Not done
 
-- The `profile` parameter is ignored: the document always follows the selection above.
-- EU Patient Summary is not implemented.
+- The Patient Story section and the Patient History section of the Europe profile are narrative and are
+  not generated.
+- The pregnancy section holds the pregnancy status and the outcome summary, not the expected delivery date
+  or gestational age slices of the Europe profile.
+- Functional Status holds assessments, not disabilities recorded as Condition.
 
 Agents reach this operation through the `patient_summary` tool of the [MCP endpoint](/server-rs/mcp/).
