@@ -1168,7 +1168,7 @@ async fn build_app_with_runtime(
             crate::operations::register_export_definitions(
                 &mut registry,
                 cfg.bulk_export.enabled,
-                cfg.sql_on_fhir.enabled,
+                cfg.sql_on_fhir.enabled && cfg.sql_on_fhir.viewdefinition_export,
                 cfg.bulk_submit.enabled,
             );
             Arc::new(registry)
@@ -1267,7 +1267,7 @@ async fn build_app_with_runtime(
             crate::operations::register_export_definitions(
                 &mut registry,
                 cfg.bulk_export.enabled,
-                cfg.sql_on_fhir.enabled,
+                cfg.sql_on_fhir.enabled && cfg.sql_on_fhir.viewdefinition_export,
                 cfg.bulk_submit.enabled,
             );
             Arc::new(registry)

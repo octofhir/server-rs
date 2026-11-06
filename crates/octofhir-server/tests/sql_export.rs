@@ -23,6 +23,14 @@ impl Drop for ServerHandle {
 }
 
 async fn start_server(postgres_url: &str, export_path: &str) -> (String, ServerHandle) {
+    start_configured(postgres_url, export_path, |_| {}).await
+}
+
+async fn start_configured(
+    postgres_url: &str,
+    export_path: &str,
+    configure: impl FnOnce(&mut AppConfig),
+) -> (String, ServerHandle) {
     let mut config = AppConfig::default();
     config.storage.postgres = Some(PostgresStorageConfig {
         url: Some(postgres_url.to_owned()),
@@ -42,6 +50,7 @@ async fn start_server(postgres_url: &str, export_path: &str) -> (String, ServerH
         path: None,
         url: Some("https://hl7.org/fhir/R4/hl7.fhir.r4.core.tgz".into()),
     }];
+    configure(&mut config);
     let config_manager = Arc::new(
         ConfigurationManager::builder()
             .build()
@@ -521,4 +530,66 @@ async fn sql_export_runs_subjects_as_one_job() {
         assert_eq!(status, expected, "{parameters:?}: {body}");
         assert!(body.to_string().contains(text), "{text}: {body}");
     }
+
+    // ViewDefinition/$export, the export of 2.0, is there next to $sql-export.
+    let response = client
+        .post(format!("{fhir}/ViewDefinition/$export"))
+        .header("Prefer", "respond-async")
+        .json(&view_export())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+fn view_export() -> Value {
+    json!({"resourceType": "Parameters", "parameter": [{"name": "viewDefinition", "resource": {
+        "resourceType": "ViewDefinition", "status": "active", "resource": "Patient",
+        "select": [{"column": [{"name": "id", "path": "id", "type": "id"}]}]}}]})
+}
+
+#[tokio::test]
+async fn the_export_of_2_0_can_be_switched_off() {
+    let postgres = Postgres::default()
+        .with_tag("18-alpine")
+        .start()
+        .await
+        .expect("postgres");
+    let port = postgres.get_host_port_ipv4(5432).await.unwrap();
+    let exports = tempfile::tempdir().unwrap();
+    let (fhir, _server) = start_configured(
+        &format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres"),
+        exports.path().to_str().unwrap(),
+        |config| config.sql_on_fhir.viewdefinition_export = false,
+    )
+    .await;
+    let client = Client::builder().redirect(Policy::none()).build().unwrap();
+
+    let response = client
+        .post(format!("{fhir}/ViewDefinition/$export"))
+        .header("Prefer", "respond-async")
+        .json(&view_export())
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(response.status(), StatusCode::ACCEPTED);
+
+    // $sql-export stays.
+    let statement: Value = client
+        .get(format!("{fhir}/metadata"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let operations = statement["rest"][0]["operation"].as_array().unwrap();
+    assert!(
+        operations
+            .iter()
+            .any(|operation| operation["name"] == "$sql-export")
+    );
+    let (status, _, body) = kick_off(&client, &fhir, vec![], true).await;
+    assert_ne!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    assert!(!body.to_string().contains("not enabled"), "{body}");
 }

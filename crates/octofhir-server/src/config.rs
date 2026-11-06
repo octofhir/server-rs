@@ -1767,13 +1767,25 @@ impl Default for AuditConfig {
 ///
 /// When enabled, the SQL on FHIR IG package (`hl7.fhir.uv.sql-on-fhir`) is installed,
 /// which creates the `viewdefinition` table dynamically via FCM.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SqlOnFhirConfig {
     /// Enable SQL on FHIR feature
     /// When true, installs the SQL on FHIR package and enables ViewDefinition operations
     /// Default: false
-    #[serde(default)]
     pub enabled: bool,
+    /// `ViewDefinition/$export`, the export of SQL on FHIR 2.0, which 3.0 replaced with
+    /// `$sql-export`. Default: true.
+    pub viewdefinition_export: bool,
+}
+
+impl Default for SqlOnFhirConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            viewdefinition_export: true,
+        }
+    }
 }
 
 /// FHIR Mapping Language (`StructureMap/$transform`).

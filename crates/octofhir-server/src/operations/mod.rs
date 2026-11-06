@@ -243,12 +243,13 @@ pub fn register_core_operations_all(
             bulk_export_config.clone(),
         )),
     );
-    if bulk_export_config.enabled || sql_on_fhir_config.enabled {
+    let view_export = sql_on_fhir_config.enabled && sql_on_fhir_config.viewdefinition_export;
+    if bulk_export_config.enabled || view_export {
         handlers.insert(
             "export".to_string(),
             Arc::new(ExportOperation::with_sql_on_fhir(
                 bulk_export_config,
-                sql_on_fhir_config.enabled,
+                view_export,
             )),
         );
     }
