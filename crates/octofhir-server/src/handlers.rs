@@ -8416,6 +8416,19 @@ fn compartment_search_request(
 // Async Job Handlers (FHIR Asynchronous Request Pattern)
 // ============================================================================
 
+/// A poll that failed while the job itself may be fine: the client can try again.
+fn transient_poll_failure(message: String) -> ApiError {
+    ApiError::Issues {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        summary: message.clone(),
+        issues: vec![octofhir_api::OperationOutcomeIssue::error(
+            "transient",
+            message,
+            None,
+        )],
+    }
+}
+
 /// GET /_async-status/{job-id}
 ///
 /// Retrieve status and progress of an asynchronous job.
@@ -8433,7 +8446,7 @@ pub async fn async_job_status(
             crate::async_jobs::AsyncJobError::NotFound(_) => {
                 ApiError::NotFound(format!("Async job not found: {}", job_id))
             }
-            _ => ApiError::Internal(format!("Failed to get job status: {}", e)),
+            _ => transient_poll_failure(format!("Failed to get job status: {e}")),
         })?;
 
     job.authorize_owner(context.auth(), state.config.auth.policy.anonymous_access)?;
@@ -10364,6 +10377,17 @@ async fn reconcile_app_operations(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_failed_poll_says_it_can_be_tried_again() {
+        let error = super::transient_poll_failure("The database did not answer".to_owned());
+        assert_eq!(
+            error.status_code(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let outcome = serde_json::to_value(error.to_operation_outcome()).unwrap();
+        assert_eq!(outcome["issue"][0]["code"], "transient");
+    }
 
     #[test]
     fn declared_capabilities_add_the_claim_and_their_profiles() {

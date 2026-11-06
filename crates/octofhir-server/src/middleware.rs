@@ -651,10 +651,12 @@ fn asks_plain_json(headers: &axum::http::HeaderMap) -> bool {
 }
 
 /// A JSON body of the FHIR API is `application/fhir+json`, whichever handler built it. The
-/// discovery documents under `.well-known` are plain JSON by their own specifications.
+/// discovery documents under `.well-known` and the manifests of async jobs are plain JSON by
+/// their own specifications.
 fn mark_fhir_json(path: &str, headers: &mut axum::http::HeaderMap) {
-    let fhir_api =
-        (path == "/fhir" || path.starts_with("/fhir/")) && !path.contains("/.well-known/");
+    let fhir_api = (path == "/fhir" || path.starts_with("/fhir/"))
+        && !path.contains("/.well-known/")
+        && !path.starts_with("/fhir/_async-status");
     let json = headers
         .get(axum::http::header::CONTENT_TYPE)
         .is_some_and(|value| value.as_bytes().starts_with(b"application/json"));
@@ -1987,6 +1989,10 @@ mod fhir_media_type_tests {
         );
         assert_eq!(
             marked("/fhir/.well-known/smart-configuration", "application/json"),
+            "application/json"
+        );
+        assert_eq!(
+            marked("/fhir/_async-status/1", "application/json"),
             "application/json"
         );
     }

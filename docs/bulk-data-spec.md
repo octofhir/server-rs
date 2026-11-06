@@ -64,7 +64,7 @@ Yes: implemented. Part: see the note. No: not implemented. "Req" is the IG's str
 | Too frequent polling: 429 with `Retry-After` | SHOULD | yes | `bulk::PollGate` |
 | 429 when a client starts a second export | SHOULD if wanted | no, jobs queue | |
 | Failure: 5XX, OperationOutcome, `application/fhir+json` | SHOULD | yes | `async_job_status` |
-| `transient` issue code on poll failure | SHOULD | no | |
+| `transient` issue code on poll failure | SHOULD | yes | `handlers.rs` `transient_poll_failure` |
 | Complete: 200, `application/json`, `Expires` | SHALL, SHOULD | yes | `async_job_status` |
 | `transactionTime`, `requiresAccessToken`, `output` | SHALL | yes | `ManifestHeader::document` |
 | `outputOrganizedBy` | SHALL when organized | yes | `document` |
