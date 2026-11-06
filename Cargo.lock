@@ -2091,9 +2091,9 @@ dependencies = [
 
 [[package]]
 name = "fhir-diff"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0a795ab8b359a035ea90681e0f418a89963b58a34bf1d5c1bcb8c073c8184ce"
+checksum = "29c3281c8ef43587ab18d8150b6684bc29151dda083e228750f4c00e93349897"
 dependencies = [
  "octofhir-fhirschema",
  "serde",
@@ -4348,9 +4348,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirschema"
-version = "0.3.37"
+version = "0.3.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db35989c7c44e049b68c46dee111b668ca05623a79ddde99a788e357d5e7188a"
+checksum = "324c47b81ee600be00d26b18427f4626e003b676e6bfab8eb71c23026c655c6a"
 dependencies = [
  "async-recursion",
  "async-trait",
