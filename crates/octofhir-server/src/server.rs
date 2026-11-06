@@ -2022,7 +2022,25 @@ async fn build_app_with_runtime(
     state.async_job_manager.set_executor(executor);
     tracing::info!("Async job executor configured for bulk export and ViewDefinition export");
 
-    Ok(build_router(state, body_limit, cfg.server.compression).layer(axum::Extension(owner)))
+    let internal_router = state.internal_router.clone();
+    let app = build_router(state, body_limit, cfg.server.compression);
+    internal_router.store(Some(Arc::new(app.clone())));
+    Ok(app
+        .layer(axum::Extension(owner))
+        .layer(axum::Extension(Arc::new(InternalRouterGuard(
+            internal_router,
+        )))))
+}
+
+/// The state refers to the application that holds it, for tools that call it as a client.
+/// Only the application handed out carries this guard, so dropping that application
+/// breaks the cycle and releases the state's pools.
+struct InternalRouterGuard(Arc<arc_swap::ArcSwapOption<Router>>);
+
+impl Drop for InternalRouterGuard {
+    fn drop(&mut self) {
+        self.0.store(None);
+    }
 }
 
 /// Creates routes for internal administrative resources.
@@ -2064,6 +2082,12 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
     // middleware, bypassing auth, which caused "Missing AuthContext extension" errors.
 
     let mut router = Router::new()
+        // Model Context Protocol: authenticates per tool call, through this same router
+        .route("/mcp", axum::routing::post(crate::mcp::handle))
+        .route(
+            "/.well-known/oauth-protected-resource/mcp",
+            get(crate::mcp::protected_resource),
+        )
         // Health and info endpoints
         .route("/", get(handlers::root))
         .route("/healthz", get(handlers::healthz))

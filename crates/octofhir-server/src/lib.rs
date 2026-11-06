@@ -48,6 +48,7 @@ pub mod reconcile;
 pub mod reference_resolver;
 pub mod rest_console;
 pub mod routes;
+pub mod mcp;
 pub mod search_pages;
 pub mod secrets;
 pub mod server;

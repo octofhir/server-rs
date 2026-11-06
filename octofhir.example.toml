@@ -189,3 +189,47 @@ local_cache_max_entries = 10000
 # FHIR resource read cache TTL in seconds (0 = disabled)
 # Caches read-by-id results in DashMap L1 + optional Redis L2
 resource_ttl_secs = 60
+
+# ============================================
+# BULK DATA (Bulk Data Access IG)
+# ============================================
+[bulk_export]
+# IG version $export follows. "stu3" is the published 3.0.0: GET and POST kick-off, `error`
+# and `request` in the manifest. "stu4" is 4.0.0-ballot: POST only, `outcome` instead of
+# `error`, no `request`, includeAssociatedData as a Coding, repeated parameters only.
+spec_version = "stu3"
+# Output files per manifest page when a client sets allowPartialManifests.
+max_files_per_manifest = 100
+# Shortest gap between status polls of one job; faster polls get 429 with Retry-After. 0 = off.
+min_poll_interval_ms = 1000
+
+[bulk_submit]
+# $bulk-submit and $bulk-submit-status, independent of spec_version. Limits come from
+# [bulk_import]; manifest and file URLs pass through server.outbound_allowlist.
+enabled = true
+# The IG has submitters agreed out of band. With none, every submission is refused.
+# Tokens need `system/bulk-submit`: add it to the client's scopes, and to
+# auth.smart.supported_scopes to advertise it.
+# [[bulk_submit.submitters]]
+# system = "https://example.org/submitters"
+# value = "provider-a"
+# client_id = "provider-a-backend"   # optional: only this client may act as the submitter
+# provider_client_id = "octofhir"    # optional: our client id at the provider, for oauthMetadataUrl
+# provider_scope = "system/*.read"
+
+# ============================================
+# MODEL CONTEXT PROTOCOL (POST /mcp)
+# ============================================
+[mcp]
+# Tools run as the caller's own REST requests, so the token decides what an agent can do.
+enabled = true
+# Offer write_resource. Each write is labelled AI asserted and recorded with a Provenance.
+allow_writes = false
+
+# ============================================
+# CONFORMANCE CLAIMS
+# ============================================
+[capability]
+# CapabilityStatements of loaded packages this deployment has tested against. They go into
+# CapabilityStatement.instantiates, and their supportedProfile lists join each resource.
+# instantiates = ["http://hl7.org/fhir/us/core/CapabilityStatement/us-core-server"]

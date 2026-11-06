@@ -58,6 +58,15 @@ pub struct AppConfig {
     /// Bulk import configuration ($import operation)
     #[serde(default)]
     pub bulk_import: BulkImportConfig,
+    /// Bulk submit configuration ($bulk-submit, $bulk-submit-status)
+    #[serde(default)]
+    pub bulk_submit: BulkSubmitConfig,
+    /// Model Context Protocol endpoint (POST /mcp)
+    #[serde(default)]
+    pub mcp: McpConfig,
+    /// What the CapabilityStatement declares beyond the base specification
+    #[serde(default)]
+    pub capability: CapabilityConfig,
 
     /// FHIR Mapping Language: StructureMap `$transform`
     #[serde(default)]
@@ -1100,6 +1109,67 @@ impl Default for GraphQLConfig {
             max_depth: default_graphql_max_depth(),
             max_complexity: default_graphql_max_complexity(),
             resource_types: Vec::new(),
+        }
+    }
+}
+
+/// Conformance claims of the CapabilityStatement. Installing a package claims nothing;
+/// an operator who has tested the server against an IG names it here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CapabilityConfig {
+    /// Canonical URLs of CapabilityStatements from loaded packages. Each goes into
+    /// `instantiates`, and its `supportedProfile` lists join those of each resource.
+    #[serde(default)]
+    pub instantiates: Vec<String>,
+}
+
+/// Model Context Protocol endpoint. Tools run as the caller's own REST requests, so
+/// the token decides what an agent can reach.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    /// Serve `POST /mcp`. Default: true.
+    #[serde(default = "default_mcp_enabled")]
+    pub enabled: bool,
+    /// Offer `write_resource`, labelled and recorded as AI asserted. Default: false.
+    #[serde(default)]
+    pub allow_writes: bool,
+}
+
+fn default_mcp_enabled() -> bool {
+    true
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_mcp_enabled(),
+            allow_writes: false,
+        }
+    }
+}
+
+/// Version of the Bulk Data Access IG that `$export` follows.
+///
+/// STU 4 removes parts of STU 3 rather than adding to it, so one endpoint cannot
+/// be exact for both: GET kick-off, comma-delimited values and the `request`
+/// manifest field are gone, `error` became `outcome`, and `includeAssociatedData`
+/// became a Coding. `$bulk-submit` only adds operations and is independent of this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BulkSpecVersion {
+    /// Published STU 3 (3.0.0): GET and POST kick-off, `error` in the manifest.
+    #[default]
+    Stu3,
+    /// STU 4 (4.0.0-ballot): POST kick-off only, `outcome` in the manifest.
+    Stu4,
+}
+
+impl BulkSpecVersion {
+    /// Version of the OperationDefinitions this mode implements.
+    pub fn ig_version(self) -> &'static str {
+        match self {
+            Self::Stu3 => "3.0.0",
+            Self::Stu4 => "4.0.0-ballot",
         }
     }
 }

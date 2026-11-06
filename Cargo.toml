@@ -65,7 +65,7 @@ anyhow = "1"
 
 # HTTP server
 axum = { version = "0.8", features = ["json",  "macros"] }
-tower = { version = "0.5", features = ["timeout", "load-shed", "limit"] }
+tower = { version = "0.5", features = ["timeout", "load-shed", "limit", "util"] }
 tower-http = { version = "0.7", features = ["trace", "cors", "compression-gzip"] }
 
 # Storage and concurrency

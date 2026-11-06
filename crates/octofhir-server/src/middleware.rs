@@ -1422,6 +1422,11 @@ fn should_skip_auth(req: &Request<Body>, registry: &OperationRegistryService) ->
         return true;
     }
 
+    // Each MCP tool call comes back through this middleware as the caller's own request.
+    if path == "/mcp" || path == "/.well-known/oauth-protected-resource/mcp" {
+        return true;
+    }
+
     if path.starts_with("/ui") {
         tracing::debug!(path = %path, "Skipping auth: static UI path");
         return true;
