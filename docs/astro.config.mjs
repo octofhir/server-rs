@@ -87,6 +87,7 @@ export default defineConfig({
           items: [
             { label: 'Event System', link: 'event-system/' },
             { label: 'Performance', link: 'performance/' },
+            { label: 'Conformance', link: 'conformance/' },
           ]
         },
         { label: 'Application Platform', link: 'applications/' },

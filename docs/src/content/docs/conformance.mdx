@@ -1,0 +1,43 @@
+---
+title: Conformance
+description: What was measured, with what, and what did not pass
+---
+
+Results from local runs of the Inferno test kits against a debug build, on 2026-11-06. The kits run
+locally before releases, not in CI: they are long runs. `just --list` shows the `inferno-*` recipes.
+
+| Suite | Passed | Failed | Skipped |
+|---|---|---|---|
+| Bulk Data v2.0.0 (export, Group, Patient, system) | 48 | 0 | 0 |
+| Bulk Data `$bulk-submit` consumer (4.0.0-ballot) | 15 | 3 | 0 |
+| US Core v6.1.0, FHIR API | 326 | 1 | 125 |
+| US Core v5.0.1, FHIR API | 299 | 2 | 105 |
+
+## What did not pass
+
+**`ViewDefinition` in the CapabilityStatement** (both US Core runs). With SQL on FHIR enabled the
+statement lists ViewDefinition, which is not in the R4 `ResourceType` value set. On R6 it is valid, as
+an additional resource.
+
+**One Patient in the US Core v5.0.1 run**. The kit's validator reports that it has no
+`v3-AdministrativeGender` code system in version `2021-12-01`, which it needs for an extension of the
+test patient. The resource comes back as it was loaded.
+
+**`$bulk-submit`** (three tests). They expect the manifest and its files to be fetched while the kit
+is at its waiting step. The server fetches them as soon as the submission arrives, before that step.
+
+Skipped tests were not run, so they say nothing either way. The runs use one synthetic patient.
+
+## Checking the statement
+
+capcheck, a tool of ours, puts each claim of the CapabilityStatement to the test against a running
+server. It is what found that JSON answers of the API were not `application/fhir+json`. On the same
+day, with writes on:
+
+| FHIR version | Passed | Failed | Could not be checked |
+|---|---|---|---|
+| R4 | 3099 | 0 | 1537 |
+| R6 | 3162 | 0 | 1191 |
+
+What could not be checked is mostly search parameters of type `special` and `composite`, operations
+that cannot be called safely with a GET, and reads of types with no stored resource.
