@@ -3,7 +3,7 @@ title: Performance Tuning
 description: Query caching, index optimization, and performance best practices
 ---
 
-OctoFHIR includes built-in performance optimizations including query caching, automatic index analysis, and configurable tuning options.
+OctoFHIR includes built-in performance optimizations including query caching, an index advisor, and configurable tuning options.
 
 For the current query/index execution model, see [Search Indexing](./search-indexing).
 
@@ -11,163 +11,60 @@ For the current query/index execution model, see [Search Indexing](./search-inde
 
 ### Overview
 
-OctoFHIR caches query execution plans to improve performance for repeated searches:
+OctoFHIR caches prepared query templates for repeated searches:
 
-- **Cache key**: Based on parameter structure (not values)
-- **Cache hit**: Skip query planning, reuse prepared statement
-- **Expected improvement**: 30-50% faster for cached queries
+- **Cache key**: based on parameter structure (resource type, parameters, modifiers), not values
+- **Cache hit**: skip building the SQL, bind the new values
+- **Eviction**: least recently used at capacity; an entry also expires after an hour
 
 ### Configuration
 
 ```toml
 [search]
 default_count = 10
-max_count = 1000
-
-# Query cache settings
-cache_enabled = true
+max_count = 100
 cache_capacity = 1000      # Maximum cached queries
-cache_max_age_secs = 3600  # Cache entry TTL
 ```
 
-### How It Works
-
-1. **First request**: Query is parsed, planned, and cached
-2. **Subsequent requests**: Cache hit, only values are bound
-3. **Cache eviction**: LRU (Least Recently Used) when capacity reached
-
-### Cache Statistics
-
-Monitor cache performance via admin endpoint:
-
-```bash
-GET /admin/cache/stats
-```
-
-Response:
-
-```json
-{
-  "query_cache": {
-    "hits": 15420,
-    "misses": 1230,
-    "size": 456,
-    "capacity": 1000,
-    "hit_ratio": 0.926
-  }
-}
-```
-
-### Cache Invalidation
-
-The cache automatically invalidates when:
-
-- TTL expires
-- Server restarts
-- Manual clear via admin API
-
-```bash
-POST /admin/cache/clear
-```
+The cache lives in memory, per process, so a restart empties it.
 
 ## Index Optimization
 
-### Automatic Index Analysis
-
-OctoFHIR analyzes query performance and suggests indexes:
-
-```bash
-GET /admin/indexes/suggestions?resource_type=Patient
-```
-
-Response:
-
-```json
-{
-  "suggestions": [
-    {
-      "table": "patient",
-      "column": "resource->>'family'",
-      "type": "btree",
-      "reason": "Frequently searched, currently using sequential scan",
-      "estimated_improvement": "10x",
-      "create_statement": "CREATE INDEX idx_patient_family ON patient ((resource->>'family'));"
-    }
-  ]
-}
-```
-
 ### Built-In Indexes (Default)
 
-In most setups, you do **not** need to handcraft indexes on day one.
+In most setups, you do **not** need to handcraft indexes on day one. A resource table has:
 
-OctoFHIR already creates and maintains:
+1. The primary key on `id`.
+2. A whole-document GIN index on `resource`, for searches that run as JSON containment.
+3. Covering and GIN indexes on the generated `profile` column, for `_profile`.
+4. Functional indexes for the parameters in `search.indexed_params`, built at startup.
 
-1. Resource-table indexes (per resource type table):
-   - GIN on `resource` JSONB for containment paths
-   - BTREE on lifecycle columns (`updated_at`, `status`, etc.)
-2. Denormalized search tables:
-   - `search_idx_reference` for reference lookup, include/revinclude, chaining
-   - `search_idx_date` for date range and precision-aware date matching
+There are no side tables of search values, and `updated_at` has no index by default. See
+[Search Indexing](./search-indexing) for what each parameter type gets.
 
-This gives good defaults for real-world FHIR traffic without manual SQL tuning.
+### Index Advice
+
+The index advisor reports on one resource table, from the table's shape, from `pg_stat_statements` when it is
+available, and from request URLs you give it. It is read-only.
+
+```bash
+GET /api/db-console/index-advisor?resourceType=Patient
+```
+
+See [the index advisor](./no-reindex#the-index-advisor) for the request and what it suggests. In the
+[web console](/server-rs/console/) it is **Index advice** on the **Database** page.
 
 ### Optional Custom Indexes
 
-Add custom indexes only after measuring a real hotspot (via EXPLAIN plans, slow-query logs, or index suggestions API).
-
-Common candidates:
-
-- Heavy string prefix/contains traffic on a specific field
-- Custom extension fields queried at high frequency
-- Tenant-specific filter patterns in multi-tenant deployments
-
-Example (optional, workload-driven):
-
-```sql
--- Example: optimize frequent Patient.family prefix lookups
-CREATE INDEX idx_patient_family_text
-ON patient ((LOWER(resource->'name'->0->>'family')));
-```
-
-### GIN vs BTREE
-
-| Index Type | Use Case | Example |
-|------------|----------|---------|
-| BTREE | Equality, ranges, ordered scans | `search_idx_date.range_start`, `target_id` lookups |
-| GIN | JSONB containment and array/object matching | `resource @> {...}` for exact-style filters |
+To index a search parameter, add it to `search.indexed_params`. Add other indexes by hand only after measuring
+a real hotspot, and check with `EXPLAIN` that the planner uses them: an index helps only if its expression
+matches the predicate the search generates.
 
 ### Analyzing Query Performance
 
-Enable slow query logging:
-
-```toml
-[search]
-slow_query_threshold_ms = 100  # Log queries slower than 100ms
-```
-
-View slow queries:
-
-```bash
-GET /admin/queries/slow?limit=10
-```
-
-Response:
-
-```json
-{
-  "slow_queries": [
-    {
-      "query_hash": "abc123",
-      "execution_time_ms": 450,
-      "resource_type": "Observation",
-      "parameters": ["code", "date", "subject"],
-      "sequential_scans": ["observation"],
-      "suggestion": "Add index on (resource->'code'->'coding')"
-    }
-  ]
-}
-```
+- The **Explain** panel of the **Requests** page shows the SQL and plan behind a search.
+- `allow_debug_search_plan` turns on [debug plans](./search-indexing#debug-plans) over HTTP.
+- `pg_stat_statements` in PostgreSQL gives the slowest statements, and the SQL console can query it.
 
 ## Connection Pooling
 
@@ -192,24 +89,9 @@ idle_timeout_ms = 600000
 
 ### Monitoring
 
-```bash
-GET /admin/db/stats
-```
-
-```json
-{
-  "pool": {
-    "size": 20,
-    "available": 15,
-    "in_use": 5,
-    "waiting": 0
-  },
-  "queries": {
-    "total": 125000,
-    "avg_time_ms": 12.5
-  }
-}
-```
+The metrics `db_pool_connections_active`, `db_pool_connections_idle` and `db_pool_connections_max` show the
+pool of an instance, and `pg_connections` the connections to the database. See
+[Metrics & Dashboards](/server-rs/metrics/).
 
 ### Read Replicas
 
@@ -265,72 +147,52 @@ When resources are modified:
 
 ```bash
 # Slower: scans all observations
-GET /Observation?status=final
+GET /fhir/Observation?status=final
 
 # Faster: filters by code first (likely indexed)
-GET /Observation?code=http://loinc.org|8867-4&status=final
+GET /fhir/Observation?code=http://loinc.org|8867-4&status=final
 ```
 
 ### Limit Results
 
 ```bash
 # Returns up to 10 results (default)
-GET /Patient?family=Smith
+GET /fhir/Patient?family=Smith
 
 # Explicitly limit
-GET /Patient?family=Smith&_count=50
+GET /fhir/Patient?family=Smith&_count=50
 
 # Just get the count
-GET /Patient?family=Smith&_summary=count
+GET /fhir/Patient?family=Smith&_summary=count
 ```
 
 ### Use _elements
 
 ```bash
 # Returns full resources
-GET /Patient?family=Smith
+GET /fhir/Patient?family=Smith
 
 # Returns only needed fields (less data transfer)
-GET /Patient?family=Smith&_elements=id,name,birthDate
+GET /fhir/Patient?family=Smith&_elements=id,name,birthDate
 ```
 
 ### Avoid Large _include
 
 ```bash
 # Can return many resources
-GET /Patient?_revinclude=Observation:subject
+GET /fhir/Patient?_revinclude=Observation:subject
 
 # Better: paginate and fetch separately
-GET /Patient?family=Smith&_count=10
-GET /Observation?subject=Patient/123&_count=50
+GET /fhir/Patient?family=Smith&_count=10
+GET /fhir/Observation?subject=Patient/123&_count=50
 ```
 
 ## Monitoring and Metrics
 
 ### Prometheus Metrics
 
-OctoFHIR exposes Prometheus metrics at `/metrics`:
-
-```
-# Query cache
-octofhir_query_cache_hits_total
-octofhir_query_cache_misses_total
-octofhir_query_cache_size
-
-# Search performance
-octofhir_search_duration_seconds{resource_type, modifier}
-octofhir_search_results_total{resource_type}
-
-# Transaction performance
-octofhir_transaction_duration_seconds
-octofhir_transaction_entries_total
-octofhir_transaction_rollback_total
-
-# Database
-octofhir_db_pool_connections_total
-octofhir_db_query_duration_seconds
-octofhir_slow_query_total
-```
+OctoFHIR exposes Prometheus metrics at `/metrics`. [Metrics & Dashboards](/server-rs/metrics/) lists them, with
+the built-in dashboards.
 
 ### OpenTelemetry
 
@@ -367,7 +229,7 @@ export const options = {
 };
 
 export default function () {
-  const res = http.get('http://localhost:8080/Patient?family=Smith', {
+  const res = http.get('http://localhost:8888/fhir/Patient?family=Smith', {
     headers: { 'Accept': 'application/fhir+json' },
   });
 
@@ -401,22 +263,15 @@ k6 run loadtest.js
 
 ### Slow Queries
 
-1. Check for missing indexes:
+1. Look at the plan of the search, in the **Explain** panel of the **Requests** page or with a
+   [debug plan](./search-indexing#debug-plans).
+
+2. Check whether the parameter is in `search.indexed_params`, and ask the index advisor:
    ```bash
-   GET /admin/indexes/suggestions
+   GET /api/db-console/index-advisor?resourceType=Patient
    ```
 
-2. Enable slow query logging:
-   ```toml
-   [search]
-   slow_query_threshold_ms = 50
-   ```
-
-3. Analyze specific query:
-   ```bash
-   POST /admin/queries/analyze
-   {"query": "Patient?family=Smith&birthdate=lt1980"}
-   ```
+3. Bound what the search returns with `_count`, `_elements` and date windows.
 
 ### High Memory Usage
 
@@ -426,10 +281,7 @@ k6 run loadtest.js
    cache_capacity = 500
    ```
 
-2. Check for large result sets:
-   ```bash
-   GET /admin/queries/large_results
-   ```
+2. Check for large result sets: lower `search.max_count` and `search.include_limits`.
 
 ### Connection Pool Exhaustion
 
@@ -441,7 +293,7 @@ k6 run loadtest.js
 
 2. Check for long-running queries:
    ```bash
-   GET /admin/db/active_queries
+   GET /api/db-console/active-queries
    ```
 
 3. Consider using PgBouncer for connection pooling

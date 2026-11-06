@@ -57,6 +57,7 @@ export default defineConfig({
             { label: 'Search Indexing', link: 'search-indexing/' },
             { label: 'Search Architecture', link: 'search-architecture/' },
             { label: 'Date Search', link: 'date-search/' },
+            { label: 'No reindexing', link: 'no-reindex/' },
           ]
         },
         {
@@ -64,8 +65,15 @@ export default defineConfig({
           collapsed: false,
           items: [
             { label: 'Transactions', link: 'transactions/' },
-            { label: 'Bulk Data Export', link: 'bulk-export/' },
+            { label: 'Bulk Data', link: 'bulk-export/' },
             { label: 'Terminology', link: 'terminology/' },
+            { label: 'SQL on FHIR', link: 'sql-on-fhir/' },
+            { label: 'FHIR Mapping Language', link: 'fml/' },
+            { label: 'C-CDA', link: 'ccda/' },
+            { label: 'CQL', link: 'cql/' },
+            { label: 'Notebooks', link: 'notebooks/' },
+            { label: 'Patient Summary', link: 'patient-summary/' },
+            { label: 'MCP', link: 'mcp/' },
             { label: 'Subscriptions', link: 'subscriptions/' },
             { label: 'Notifications', link: 'notifications/' },
             { label: 'Metrics & Dashboards', link: 'metrics/' },

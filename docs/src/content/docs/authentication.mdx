@@ -10,7 +10,7 @@ OctoFHIR implements **SMART on FHIR** authorization based on OAuth 2.0 and OpenI
 | Endpoint | Description |
 |----------|-------------|
 | `GET /.well-known/smart-configuration` | SMART configuration metadata |
-| `GET /.well-known/jwks.json` | Server's public keys for JWT verification |
+| `GET /.well-known/jwks.json`, `GET /auth/jwks` | Server's public keys for JWT verification |
 
 ## OAuth Endpoints
 
@@ -68,6 +68,15 @@ patient/Patient.rs          # Read/search Patient in patient context
 user/Observation.cruds      # Full access to Observations for logged-in user
 system/*.rs                 # Read/search all resources (backend service)
 ```
+
+SMART v1 suffixes are accepted and mean the same as their v2 counterparts. Clients of the Bulk Data IG
+STU 1 and 2 still ask for them.
+
+| v1 suffix | v2 permissions | Example |
+|-----------|----------------|---------|
+| `.read` | `.rs` | `system/*.read` |
+| `.write` | `.cud` | `system/Patient.write` |
+| `.*` | `.cruds` | `patient/*.*` |
 
 ### Identity Scopes
 
@@ -130,7 +139,7 @@ curl -X POST http://localhost:8888/auth/token \
 
 # 3. Use access token
 curl -H "Authorization: Bearer ACCESS_TOKEN" \
-  http://localhost:8888/Patient
+  http://localhost:8888/fhir/Patient
 ```
 
 ## Example: Client Credentials Flow
@@ -141,6 +150,96 @@ curl -X POST http://localhost:8888/auth/token \
   -d "grant_type=client_credentials" \
   -d "scope=system/Patient.rs"
 ```
+
+## SMART Backend Services
+
+A backend service authenticates with a signed JWT (`private_key_jwt`) instead of a secret. The server
+holds only the client's public keys.
+
+### Register the client
+
+Register a confidential `Client` with the `client_credentials` grant and its public keys. Clients are
+internal resources, served at the root rather than under `/fhir`:
+
+```http
+PUT /Client/reporting-backend
+Authorization: Bearer {admin token}
+Content-Type: application/json
+
+{
+  "resourceType": "Client",
+  "id": "reporting-backend",
+  "clientId": "reporting-backend",
+  "name": "Reporting backend",
+  "confidential": true,
+  "active": true,
+  "grantTypes": ["client_credentials"],
+  "scopes": ["system/*.read"],
+  "jwks": "{\"keys\":[{\"kty\":\"EC\",\"crv\":\"P-384\",\"alg\":\"ES384\",\"use\":\"sig\",\"kid\":\"key-1\",\"x\":\"...\",\"y\":\"...\"}]}"
+}
+```
+
+Give the keys in one of two ways:
+
+| Field | Value |
+|-------|-------|
+| `jwks` | The JWK Set as a JSON string. The resource has no JSON object type, so the set is text inside the resource. |
+| `jwksUri` | Where the server fetches the JWK Set. HTTPS only; other schemes are refused at the token endpoint. Fetched sets are cached. |
+
+With both, `jwks` wins.
+
+### Add an AccessPolicy
+
+Scopes alone do not grant access. The policy engine denies by default, so the client also needs an
+[access policy](/server-rs/access-policies/) that matches it:
+
+```http
+PUT /AccessPolicy/reporting-backend-access
+Authorization: Bearer {admin token}
+Content-Type: application/json
+
+{
+  "resourceType": "AccessPolicy",
+  "id": "reporting-backend-access",
+  "name": "Reporting backend",
+  "active": true,
+  "engine": {"type": "allow"},
+  "matcher": {"clients": ["reporting-backend"]},
+  "priority": 1
+}
+```
+
+### Request a token
+
+Sign an assertion with the private key. Use RS384 or ES384, the algorithms SMART Backend Services
+requires, and name the key in the `kid` header.
+
+| Claim | Value |
+|-------|-------|
+| `iss`, `sub` | The client id |
+| `aud` | The token endpoint, exactly: `{base_url}/auth/token` |
+| `exp` | At most 5 minutes from now |
+| `jti` | A unique value per assertion |
+
+Send it with no `client_id`: the client is the assertion's `iss`, verified against the client's keys.
+
+```bash
+curl -X POST https://fhir.example.org/auth/token \
+  -d "grant_type=client_credentials" \
+  -d "scope=system/*.read" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+  -d "client_assertion=SIGNED_JWT"
+```
+
+The server records each `jti` until its assertion expires. A second use of the same `jti` is refused with
+`invalid_client`, and the record is in the database, so a restart does not reopen the window.
+
+The requested scopes must be covered by the client's `scopes`. A client that runs
+[`$bulk-submit`](/server-rs/bulk-export/#bulk-submit) needs `system/bulk-submit` there. To advertise a
+scope in the SMART configuration, add it to `auth.smart.supported_scopes`.
+
+The Inferno Bulk Data test kit authenticates this way: `scripts/inferno/run-bulk.ts` registers such a
+client with its AccessPolicy.
 
 ## Interactive Authorization Flow
 

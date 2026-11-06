@@ -1,0 +1,90 @@
+---
+title: Patient Summary
+description: Patient/$summary builds an International Patient Summary document (IPS 2.0.1) from a patient's current data
+---
+
+`Patient/$summary` returns an International Patient Summary, following the
+[IPS IG 2.0.1](https://hl7.org/fhir/uv/ips/), as a FHIR document Bundle. The document is built on request
+from the patient's current data and is not stored.
+
+## Requests
+
+By id:
+
+```http
+GET /fhir/Patient/123/$summary
+Authorization: Bearer {token}
+```
+
+By identifier, which the IG requires at type level:
+
+```http
+GET /fhir/Patient/$summary?identifier=http://example.org/mrn|12345
+Authorization: Bearer {token}
+```
+
+| Outcome | Status |
+|---|---|
+| `identifier` is missing | 400 |
+| More than one Patient has the identifier | 400 |
+| No such Patient | 404 |
+
+Every search runs under the caller's grants, so a summary holds only what the caller may read. A section
+whose type the caller may not read counts as empty.
+
+## Sections
+
+The IG leaves what is relevant to the implementer beyond current allergies, medications and problems. The
+server selects as follows, from the Patient compartment, up to 100 resources per search:
+
+| Section | LOINC | Selected | Required |
+|---|---|---|---|
+| Problems | `11450-4` | Condition with `clinical-status` active, recurrence or relapse | yes |
+| Allergies and Intolerances | `48765-2` | AllergyIntolerance with `clinical-status` active | yes |
+| Medication Summary | `10160-0` | MedicationStatement and MedicationRequest with `status` active | yes |
+| Immunizations | `11369-6` | Immunization with `status` completed, newest first | |
+| Results | `30954-2` | DiagnosticReport, and Observation with `category` laboratory, newest first | |
+| Vital Signs | `8716-3` | Observation with `category` vital-signs, newest first | |
+| History of Procedures | `47519-4` | Procedure, newest first | |
+| Medical Devices | `46264-8` | DeviceUseStatement with status active | |
+| Past Problems | `11348-0` | Condition with `clinical-status` inactive, remission or resolved | |
+| Plan of Care | `18776-5` | CarePlan with `status` active | |
+| Social History | `29762-2` | Observation with `category` social-history, newest first | |
+| Alerts | `104605-1` | Flag with status active | |
+| Advance Directives | `42348-3` | Consent with `status` active | |
+
+A required section with nothing to show stays in the document, with the `emptyReason` `unavailable` (from
+`http://terminology.hl7.org/CodeSystem/list-empty-reason`) and the narrative "No information available". An
+optional section with nothing to show is left out. A resource type the server does not have counts as empty.
+
+Each section has a generated narrative with one line per entry.
+
+## The document
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "document",
+  "identifier": {"system": "urn:ietf:rfc:3986", "value": "urn:uuid:..."},
+  "timestamp": "2026-11-06T12:00:00+00:00",
+  "entry": [
+    {"resource": {"resourceType": "Composition", "status": "final", "title": "International Patient Summary"}},
+    {"resource": {"resourceType": "Patient", "id": "123"}},
+    {"resource": {"resourceType": "Device", "deviceName": [{"name": "OctoFHIR", "type": "manufacturer-name"}]}}
+  ]
+}
+```
+
+The entries are the Composition (type `60591-5`, Patient summary Document), the Patient, a Device that is the
+author, and the resources of the sections.
+
+A document is read on its own, so what the section resources point at comes along: local references, such as
+a Medication or a Practitioner, are read and added under the caller's grants. This goes one level deep. A
+reference to another server is not followed, and a resource the caller may not read is left out.
+
+## Not done
+
+- The `profile` parameter is ignored: the document always follows the selection above.
+- EU Patient Summary is not implemented.
+
+Agents reach this operation through the `patient_summary` tool of the [MCP endpoint](/server-rs/mcp/).

@@ -30,10 +30,10 @@ Search for resources with codes that are members of a ValueSet:
 
 ```bash
 # Find observations with codes in the vital-signs ValueSet
-GET /Observation?code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+GET /fhir/Observation?code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
 
 # Find conditions with ICD-10 diabetes codes
-GET /Condition?code:in=http://example.org/ValueSet/diabetes-icd10
+GET /fhir/Condition?code:in=http://example.org/ValueSet/diabetes-icd10
 ```
 
 ### :not-in Modifier
@@ -42,7 +42,7 @@ Exclude resources with codes in a ValueSet:
 
 ```bash
 # Find observations that are NOT vital signs
-GET /Observation?code:not-in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+GET /fhir/Observation?code:not-in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
 ```
 
 ## Hierarchy Modifiers (SNOMED CT)
@@ -54,7 +54,7 @@ Search for a code and all its descendants (subsumption):
 ```bash
 # Find conditions with diabetes or any subtype
 # 73211009 = Diabetes mellitus
-GET /Condition?code:below=http://snomed.info/sct|73211009
+GET /fhir/Condition?code:below=http://snomed.info/sct|73211009
 ```
 
 This matches:
@@ -69,7 +69,7 @@ Search for a code and all its ancestors:
 
 ```bash
 # Find conditions that subsume Type 2 diabetes
-GET /Condition?code:above=http://snomed.info/sct|44054006
+GET /fhir/Condition?code:above=http://snomed.info/sct|44054006
 ```
 
 This matches:
@@ -83,10 +83,10 @@ This matches:
 
 ```bash
 # Exact SNOMED CT code match
-GET /Condition?code=http://snomed.info/sct|73211009
+GET /fhir/Condition?code=http://snomed.info/sct|73211009
 
 # Hierarchy search
-GET /Condition?code:below=http://snomed.info/sct|73211009
+GET /fhir/Condition?code:below=http://snomed.info/sct|73211009
 ```
 
 SNOMED CT hierarchy is resolved using ECL (Expression Constraint Language):
@@ -97,17 +97,17 @@ SNOMED CT hierarchy is resolved using ECL (Expression Constraint Language):
 
 ```bash
 # Exact LOINC code
-GET /Observation?code=http://loinc.org|8867-4
+GET /fhir/Observation?code=http://loinc.org|8867-4
 
 # LOINC panel members (via ValueSet)
-GET /Observation?code:in=http://loinc.org/vs/LP200060-1
+GET /fhir/Observation?code:in=http://loinc.org/vs/LP200060-1
 ```
 
 ### ICD-10
 
 ```bash
 # ICD-10-CM diagnosis code
-GET /Condition?code=http://hl7.org/fhir/sid/icd-10-cm|E11.9
+GET /fhir/Condition?code=http://hl7.org/fhir/sid/icd-10-cm|E11.9
 ```
 
 ## Performance Optimization
@@ -151,9 +151,9 @@ For very large ValueSets (>1000 codes), the server:
 Explicitly expand a ValueSet:
 
 ```bash
-GET /ValueSet/$expand?url=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+GET /fhir/ValueSet/$expand?url=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
 
-POST /ValueSet/$expand
+POST /fhir/ValueSet/$expand
 Content-Type: application/fhir+json
 
 {
@@ -185,9 +185,9 @@ code systems and concept maps are resolved from installed packages.
 Validate a code against a ValueSet:
 
 ```bash
-GET /ValueSet/$validate-code?url=http://hl7.org/fhir/ValueSet/observation-vitalsignresult&system=http://loinc.org&code=8867-4
+GET /fhir/ValueSet/$validate-code?url=http://hl7.org/fhir/ValueSet/observation-vitalsignresult&system=http://loinc.org&code=8867-4
 
-POST /ValueSet/$validate-code
+POST /fhir/ValueSet/$validate-code
 Content-Type: application/fhir+json
 
 {
@@ -213,6 +213,51 @@ Response:
   ]
 }
 ```
+
+### Which definitions decided the answer
+
+When several package versions are loaded, the same code can pass in one place and fail in another.
+With `_explain=true`, `$validate-code` adds an `explain` output parameter that names the definitions it
+used and where they came from. It works at every level the operation has:
+
+```bash
+GET /fhir/ValueSet/$validate-code?url=http://hl7.org/fhir/ValueSet/administrative-gender&code=male&_explain=true
+```
+
+In a POST, send `{"name": "_explain", "valueBoolean": true}`.
+
+```json
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "result", "valueBoolean": true},
+    {"name": "explain", "part": [
+      {"name": "type", "valueCode": "ValueSet"},
+      {"name": "url", "valueUri": "http://hl7.org/fhir/ValueSet/administrative-gender"},
+      {"name": "version", "valueString": "4.0.1"},
+      {"name": "source", "valueString": "hl7.fhir.r4.core#4.0.1"},
+      {"name": "method", "valueCode": "compose"},
+      {"name": "codeSystem", "part": [
+        {"name": "type", "valueCode": "CodeSystem"},
+        {"name": "url", "valueUri": "http://hl7.org/fhir/administrative-gender"},
+        {"name": "version", "valueString": "4.0.1"},
+        {"name": "source", "valueString": "hl7.fhir.r4.core#4.0.1"}
+      ]}
+    ]}
+  ]
+}
+```
+
+| Part | Meaning |
+|---|---|
+| `type` | `ValueSet` or `CodeSystem`: the kind of definition that decided the result |
+| `url`, `version` | The definition's canonical URL and version, when it has them |
+| `source` | Where the definition came from: the package as `name#version`, or `stored` for a resource read by id (`ValueSet/{id}/$validate-code`) |
+| `method` | ValueSet only: `expansion` when the definition carries an expansion, `compose` otherwise |
+| `codeSystem` | ValueSet only: the same parts for the code system, from the `system` parameter or inferred from the value set. When no definition of it is loaded, the parts are `url` and `source` with the value `not loaded`: the code was checked against the value set's listing alone |
+
+The **Terminology** page of the [web console](/server-rs/console/) asks for `_explain` when it checks a
+code and shows these definitions under the result.
 
 ## Error Handling
 
@@ -265,40 +310,40 @@ If terminology is disabled in configuration:
 
 ```bash
 # All vital sign observations
-GET /Observation?code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+GET /fhir/Observation?code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
 
 # Heart rate observations (LOINC 8867-4) and children
-GET /Observation?code:below=http://loinc.org|8867-4
+GET /fhir/Observation?code:below=http://loinc.org|8867-4
 ```
 
 ### Search for Diabetes Conditions
 
 ```bash
 # All diabetes and subtypes
-GET /Condition?code:below=http://snomed.info/sct|73211009
+GET /fhir/Condition?code:below=http://snomed.info/sct|73211009
 
 # Only Type 2 diabetes specifically
-GET /Condition?code=http://snomed.info/sct|44054006
+GET /fhir/Condition?code=http://snomed.info/sct|44054006
 ```
 
 ### Exclude Specific Codes
 
 ```bash
 # Observations that are NOT in the vitals ValueSet
-GET /Observation?code:not-in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+GET /fhir/Observation?code:not-in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
 
 # Conditions that are NOT diabetes-related
-GET /Condition?code:not-in=http://example.org/ValueSet/diabetes-all
+GET /fhir/Condition?code:not-in=http://example.org/ValueSet/diabetes-all
 ```
 
 ### Combined with Other Parameters
 
 ```bash
 # Final vital sign observations from January 2024
-GET /Observation?status=final&code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult&date=ge2024-01-01&date=lt2024-02-01
+GET /fhir/Observation?status=final&code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult&date=ge2024-01-01&date=lt2024-02-01
 
 # Active diabetes conditions for a specific patient
-GET /Condition?patient=Patient/123&clinical-status=active&code:below=http://snomed.info/sct|73211009
+GET /fhir/Condition?patient=Patient/123&clinical-status=active&code:below=http://snomed.info/sct|73211009
 ```
 
 ## Troubleshooting

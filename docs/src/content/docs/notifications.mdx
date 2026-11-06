@@ -64,7 +64,7 @@ HTTP callbacks for server-to-server integration.
 Register a webhook subscription:
 
 ```bash
-POST /Subscription
+POST /fhir/Subscription
 Authorization: Bearer <token>
 Content-Type: application/fhir+json
 
@@ -162,7 +162,7 @@ OctoFHIR sends heartbeat notifications to verify webhook endpoints:
 Check subscription status:
 
 ```bash
-GET /Subscription/my-sub/$status
+GET /fhir/Subscription/my-sub/$status
 Authorization: Bearer <token>
 ```
 
@@ -202,7 +202,7 @@ Subscribe to predefined topics:
 Get notification stream for current user:
 
 ```bash
-GET /Patient/$events?_since=2026-01-01T00:00:00Z
+GET /fhir/Patient/$events?_since=2026-01-01T00:00:00Z
 Authorization: Bearer <token>
 ```
 
@@ -213,7 +213,7 @@ Returns SSE stream of Patient events.
 Query historical notifications:
 
 ```bash
-GET /Observation/$events-history?_count=100&_since=2026-01-01
+GET /fhir/Observation/$events-history?_count=100&_since=2026-01-01
 Authorization: Bearer <token>
 ```
 
@@ -224,7 +224,7 @@ Returns Bundle of past notifications.
 Manually trigger a notification (admin only):
 
 ```bash
-POST /Patient/123/$notify
+POST /fhir/Patient/123/$notify
 Authorization: Bearer <admin-token>
 
 {
@@ -446,7 +446,7 @@ retention_days = 30
 ```javascript
 // Monitor vital signs in real-time
 const eventSource = new EventSource(
-  'http://localhost:8888/Observation/$events?code=85354-9,8867-4&token=' + token
+  'http://localhost:8888/fhir/Observation/$events?code=85354-9,8867-4&token=' + token
 );
 
 eventSource.addEventListener('observation-created', (event) => {

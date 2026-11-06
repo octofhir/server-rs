@@ -1,176 +1,294 @@
 ---
-title: Bulk Data Export
-description: Export large datasets using the FHIR Bulk Data Access ($export) API
+title: Bulk Data
+description: Export data with $export and accept data from other systems with $bulk-submit (FHIR Bulk Data Access IG)
 ---
 
-OctoFHIR implements the [FHIR Bulk Data Access IG](http://hl7.org/fhir/uv/bulkdata/) for exporting large datasets in NDJSON format. This is useful for analytics, data warehousing, and system migrations.
+OctoFHIR implements the [FHIR Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) in both
+directions:
 
-## Overview
+- `$export` writes resources to NDJSON files that a client downloads.
+- `$bulk-submit` and `$bulk-submit-status` let a data provider hand this server a manifest; the
+  server fetches the files, validates each resource and stores it.
 
-Bulk export follows the FHIR Asynchronous Request Pattern:
+Both run as background jobs and follow the FHIR asynchronous request pattern. All paths below
+are under the FHIR base, `/fhir`.
 
-1. Client initiates export with `$export` operation
-2. Server returns `202 Accepted` with status URL
-3. Client polls status endpoint until complete
-4. Client downloads NDJSON files from manifest
+## Choosing the IG version
 
-## Export Levels
+`bulk_export.spec_version` selects which version of the IG `$export` follows. STU 4 removes parts
+of STU 3, so one endpoint cannot be exact for both.
 
-### System Export
+```toml
+[bulk_export]
+spec_version = "stu3"   # "stu3" (3.0.0, the default) or "stu4" (4.0.0-ballot)
+```
 
-Export all resources on the server:
+| | `stu3` | `stu4` |
+|---|---|---|
+| Kick-off | GET and POST | POST only; GET is 405 |
+| Repeated values | repeated or comma-delimited | repeated; a comma is 400 |
+| `includeAssociatedData` in POST | `code` (a Coding is accepted too) | `Coding` |
+| Manifest messages | `error` | `outcome`, with `countSeverity` |
+| `request` in the manifest | present | absent |
+| `manifestType`, `outputFormat`, `fileSize` in the manifest | absent | present |
 
-```bash
-GET /$export
-Prefer: respond-async
+STU 3 is the published version. STU 4 is a ballot, not normative. `$bulk-submit` exists only in
+STU 4, but it works with either setting, and its status manifest always has the STU 4 shape.
+
+## Export
+
+### Kick-off
+
+Export is available at three levels:
+
+```http
+GET /fhir/$export
+GET /fhir/Patient/$export
+GET /fhir/Group/{id}/$export
+```
+
+Every level takes the same parameters, in the query of a GET or as a `Parameters` body of a POST.
+A `stu4` server accepts only the POST.
+
+```http
+GET /fhir/Patient/$export?_type=Patient,Observation&_since=2026-01-01T00:00:00Z
+Authorization: Bearer {token}
 Accept: application/fhir+json
-```
-
-### Patient Export
-
-Export all patient compartment data:
-
-```bash
-GET /Patient/$export
 Prefer: respond-async
-Accept: application/fhir+json
 ```
 
-### Group Export
-
-Export data for members of a specific group:
-
-```bash
-GET /Group/{id}/$export
+```http
+POST /fhir/Group/cohort-1/$export
+Authorization: Bearer {token}
+Accept: application/fhir+json
+Content-Type: application/fhir+json
 Prefer: respond-async
-Accept: application/fhir+json
-```
 
-## Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `_outputFormat` | string | Must be `application/fhir+ndjson` (default) |
-| `_since` | instant | Only resources updated since this timestamp |
-| `_type` | string | Comma-separated list of resource types to export |
-| `_typeFilter` | string | FHIR search queries per type |
-
-### Examples
-
-Export only Patient and Observation resources:
-
-```bash
-GET /$export?_type=Patient,Observation
-```
-
-Export resources modified after a specific date:
-
-```bash
-GET /$export?_since=2024-01-01T00:00:00Z
-```
-
-Export with type-specific filters:
-
-```bash
-GET /$export?_type=Observation&_typeFilter=Observation?code=8867-4
-```
-
-## Response Flow
-
-### 1. Initiate Export
-
-```bash
-GET /$export?_type=Patient,Observation
-Prefer: respond-async
-Accept: application/fhir+json
-```
-
-**Response: 202 Accepted**
-
-```
-HTTP/1.1 202 Accepted
-Content-Location: http://server/fhir/_async-status/550e8400-e29b-41d4-a716-446655440000
-```
-
-### 2. Check Status
-
-Poll the status URL until the export completes:
-
-```bash
-GET /_async-status/550e8400-e29b-41d4-a716-446655440000
-```
-
-**Response (In Progress): 202 Accepted**
-
-```json
 {
-  "status": "in_progress",
-  "progress": 0.45,
-  "message": "Exporting Observation resources..."
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "_type", "valueString": "Patient"},
+    {"name": "_type", "valueString": "Observation"},
+    {"name": "_typeFilter", "valueString": "Observation?status=final"},
+    {"name": "patient", "valueReference": {"reference": "Patient/123"}},
+    {"name": "includeAssociatedData", "valueCoding": {"code": "LatestProvenanceResources"}},
+    {"name": "allowPartialManifests", "valueBoolean": true}
+  ]
 }
 ```
 
-**Response (Complete): 200 OK**
+The server answers `202 Accepted` with the status URL in `Content-Location`:
+
+```http
+HTTP/1.1 202 Accepted
+Content-Location: https://fhir.example.org/fhir/_async-status/550e8400-e29b-41d4-a716-446655440000
+```
+
+The caller's search grants decide what is exported. Without `_type`, the export covers every
+standard resource type the token may search. A `_type` value the token may not search is an error.
+If no type is left, the request is 403.
+
+### Parameters
+
+| Parameter | Value | Behaviour |
+|---|---|---|
+| `_outputFormat` | `application/fhir+ndjson`, `application/ndjson` or `ndjson` | NDJSON is the only format; anything else is 400. One value. |
+| `_since` | instant | Resources updated after this time. With system level exports it also fills `deleted`. One value. |
+| `_until` | instant | Resources updated before this time. Must be later than `_since`. One value. |
+| `_type` | resource types | Limits the export. A type the server does not know, or a non-standard type, is 400. At Patient and Group level a type outside the Patient compartment is 400. |
+| `_typeFilter` | `Type?criteria` | Search criteria per type. Repeats for one type are OR. See below. |
+| `_elements` | `element` or `Type.element` | Root elements to keep. See below. |
+| `patient` | Patient reference | Limits a Patient or Group export to these patients. An absent patient, or one who is not a member of the Group, is 400. At system level the parameter is 400. |
+| `includeAssociatedData` | `LatestProvenanceResources`, `RelevantProvenanceResources` | Adds Provenance of the exported resources. When both are given, Relevant wins. Other values are 400. Needs a search grant on Provenance. |
+| `organizeOutputBy` | `Patient` | Output files of per-patient blocks. Other values are 400. One value. |
+| `allowPartialManifests` | boolean | Manifest pages, available while the job runs. One value. |
+
+Any other parameter is 400. `_since` and `_until` compare with `_lastUpdated`, and a resource
+changed after the job started is left out, so the export stays consistent with `transactionTime`.
+
+**`_typeFilter`.** The type must be one of the exported types, and the criteria must use search
+parameters known for that type (or `_has`). Parameters that shape a search response are refused:
+`_sort`, `_count`, `_offset`, `_total`, `_summary`, `_elements`, `_format`, `_include` and
+`_revinclude`.
+
+```http
+GET /fhir/$export?_type=Observation&_typeFilter=Observation%3Fcode%3D8867-4
+```
+
+**`_elements`.** Only root elements are allowed, so `Patient.name` is valid and
+`Patient.name.family` is not. `Patient.name` applies to Patient, and `name` applies to every type
+that has it. The server always keeps `resourceType`, `id`, `meta` and the elements the type
+requires, and adds the `SUBSETTED` tag to each resource.
+
+**Provenance.** A Patient or Group export that includes Provenance alongside other types follows
+the exported resources: it writes the Provenance that targets them, as
+`RelevantProvenanceResources` does, rather than searching Provenance on its own.
+
+### Prefer: handling=lenient
+
+Unsupported input is refused by default. With `Prefer: handling=lenient` the job drops it and
+continues, and reports each item as a warning OperationOutcome in the `error` (or `outcome`) file
+of the manifest. This covers unknown parameters, unknown types, types outside the compartment,
+`_elements`, `includeAssociatedData` and `organizeOutputBy` values the server does not support,
+`patient` at system level, and absent patients. A request that leaves no patient to export is still
+400.
+
+```http
+Prefer: respond-async, handling=lenient
+```
+
+### Polling
+
+| Status | When | Headers |
+|---|---|---|
+| `202 Accepted` | The job is queued or running | `X-Progress` (`Processing: 40% complete`), `Retry-After: 10` |
+| `429 Too Many Requests` | Polled again within `bulk_export.min_poll_interval_ms` | `Retry-After` |
+| `200 OK` | Complete; the body is the manifest (`application/json`) | `Expires`, `Cache-Control: no-store` |
+| `500` | The job failed; the body is an OperationOutcome (`application/fhir+json`) | |
+| `404` | The job was deleted, expired or belongs to another caller | |
+
+The 429 check applies to running jobs and counts per job. `min_poll_interval_ms = 0` turns it off.
+
+```http
+GET /fhir/_async-status/550e8400-e29b-41d4-a716-446655440000
+Authorization: Bearer {token}
+```
+
+To cancel a job, or to say the files are no longer needed, send `DELETE` to the same URL. The
+server answers 202, removes the output files, and every later request to the URL is 404 with an
+OperationOutcome.
+
+```http
+DELETE /fhir/_async-status/550e8400-e29b-41d4-a716-446655440000
+```
+
+#### Prefer: separate-export-status
+
+With `Prefer: respond-async, separate-export-status` on the kick-off, the server confirms with
+`Preference-Applied: respond-async, separate-export-status`. From then on the status URL and manifest
+pages answer `200 OK`, and the state of the job moves to the `X-Export-Status` header, for example
+`X-Export-Status: 202 Accepted`. HTTP status codes then describe the poll, not the job. A 429 is
+still a 429.
+
+### Manifest
+
+`requiresAccessToken` is `true` when the export was started with a token. Files are then read with
+a token of the same caller. Take file URLs from the manifest: file names carry a prefix of the job
+attempt, and only a type with at least one resource gets a file.
+
+**STU 3:**
 
 ```json
 {
-  "transactionTime": "2024-01-15T14:30:00Z",
-  "request": "http://server/fhir/$export?_type=Patient,Observation",
+  "transactionTime": "2026-11-06T10:15:00.123456+00:00",
+  "request": "https://fhir.example.org/fhir/$export?_type=Patient,Observation",
   "requiresAccessToken": true,
   "output": [
-    {
-      "type": "Patient",
-      "url": "http://server/fhir/_bulk-files/550e8400.../Patient.ndjson",
-      "count": 1500
-    },
-    {
-      "type": "Observation",
-      "url": "http://server/fhir/_bulk-files/550e8400.../Observation.ndjson",
-      "count": 45000
-    }
+    {"type": "Observation", "url": "https://fhir.example.org/fhir/_bulk-files/550e8400-.../...-Observation.ndjson", "count": 45000},
+    {"type": "Patient", "url": "https://fhir.example.org/fhir/_bulk-files/550e8400-.../...-Patient.ndjson", "count": 1500}
   ],
   "error": []
 }
 ```
 
-### 3. Download Files
+**STU 4:**
 
-Download each NDJSON file from the manifest:
+```json
+{
+  "manifestType": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/BulkDataManifest",
+  "transactionTime": "2026-11-06T10:15:00.123456+00:00",
+  "requiresAccessToken": true,
+  "outputFormat": "application/fhir+ndjson",
+  "output": [
+    {"type": "Patient", "url": "https://fhir.example.org/fhir/_bulk-files/550e8400-.../...-Patient.ndjson", "count": 1500, "fileSize": 812345}
+  ],
+  "outcome": [
+    {
+      "type": "OperationOutcome",
+      "url": "https://fhir.example.org/fhir/_bulk-files/550e8400-.../...-outcome.ndjson",
+      "count": 1,
+      "fileSize": 143,
+      "countSeverity": [{"code": "warning", "count": 1}]
+    }
+  ]
+}
+```
 
-```bash
-GET /_bulk-files/550e8400.../Patient.ndjson
+With `organizeOutputBy=Patient`, both versions add `"outputOrganizedBy": "Patient"` and the items of
+`output` have no `type`. `deleted` appears only when there is something to list.
+
+### Manifest pages
+
+With `allowPartialManifests=true` the files spread over numbered pages of at most
+`bulk_export.max_files_per_manifest` output files, and a client can start downloading before the job
+ends.
+
+- While the job runs, the status URL answers 202 with the first page as soon as it exists.
+- A page that has a successor carries a `link`:
+
+  ```json
+  {"link": [{"relation": "next", "url": "https://fhir.example.org/fhir/_async-status/550e8400-.../manifest/2"}]}
+  ```
+
+- `GET /fhir/_async-status/{id}/manifest/{page}` reads a later page. The last page of a running job
+  is 202, because it may still gain a `next` link; every other page is 200.
+- A published page only ever changes by gaining its `next` link. `deleted` and the message files are
+  on the last page.
+- If a job is interrupted after publishing a page, it fails rather than rewrite what a client may
+  already hold. Run the export again.
+
+### Deleted resources
+
+An export with `_since` lists resources deleted since then in `deleted`, as NDJSON files of
+transaction Bundles with one `DELETE` entry each:
+
+```json
+{"resourceType": "Bundle", "type": "transaction", "entry": [{"request": {"method": "DELETE", "url": "Patient/123"}}]}
+```
+
+History keeps no search values for a deleted resource, so `deleted` is written only where the server
+can tell that the deletion matches the request: at system level, without `organizeOutputBy`, for
+types with no `_typeFilter`, and when the caller's grant is not filtered. A resource written again
+after its deletion is in `output` and not here.
+
+### Output files
+
+Files hold one JSON document per line and are served as `application/fhir+ndjson`:
+
+```http
+GET /fhir/_bulk-files/{job}/{file}
 Authorization: Bearer {token}
 ```
 
-`Accept: application/fhir+ndjson` (or `application/ndjson`) is accepted on file URLs, as is
-`application/fhir+json` or `*/*`.
+Only the caller that started the job can read them. With `server.compression = true` the server
+gzips a file for a client that asks for it.
 
-**Response:**
+Each resource type gets its own files, and a new file starts after
+`bulk_export.max_resources_per_file` resources. A type with more resources has several items in
+`output`.
 
-```
-{"resourceType":"Patient","id":"1","name":[{"family":"Smith"}]}
-{"resourceType":"Patient","id":"2","name":[{"family":"Jones"}]}
-{"resourceType":"Patient","id":"3","name":[{"family":"Williams"}]}
-```
+`organizeOutputBy=Patient` writes blocks instead. A block is a `Parameters` header, then the Patient,
+then what references that Patient:
 
-### 4. Cancel Export (Optional)
-
-To cancel an in-progress export:
-
-```bash
-DELETE /_async-status/550e8400-e29b-41d4-a716-446655440000
+```json
+{"resourceType": "Parameters", "parameter": [{"name": "header", "valueReference": {"reference": "Patient/123"}}]}
+{"resourceType": "Patient", "id": "123"}
+{"resourceType": "Observation", "id": "obs-1", "subject": {"reference": "Patient/123"}}
 ```
 
-**Response: 202 Accepted** for exports. Sending `DELETE` for a finished export tells the
-server the files are no longer needed; it then removes the job and its output.
+A block stays in one file, so a file can pass the limit: the next file starts between blocks. A
+resource that references several exported patients is in each of their blocks. Resources that
+reference no exported Patient directly are left out, and the message file says how many. Types
+outside the Patient compartment are left out too, and those named in `_type` are reported. The caller
+needs a search grant on Patient.
 
-### 5. List Your Jobs
+### Jobs of a caller
 
-The FHIR async pattern only defines per-job URLs. To find jobs started elsewhere (another
-browser, a script, the REST console), list your own unexpired jobs, newest first:
+The asynchronous pattern only defines per-job URLs. To find jobs started elsewhere, list the unexpired
+jobs of the caller, newest first:
 
-```bash
-GET /_async-status
+```http
+GET /fhir/_async-status
 Authorization: Bearer {token}
 ```
 
@@ -184,139 +302,251 @@ Authorization: Bearer {token}
       "requestType": "bulk_export",
       "requestMethod": "GET",
       "requestUrl": "https://fhir.example.org/fhir/Patient/$export?_type=Observation",
-      "createdAt": "2026-10-31T18:55:42Z",
-      "expiresAt": "2026-11-01T18:55:42Z"
+      "createdAt": "2026-10-31T18:55:42+00:00",
+      "expiresAt": "2026-11-01T18:55:42+00:00"
     }
   ]
 }
 ```
 
-A job is listed only to the caller that started it, with the same check as
-`GET /_async-status/{id}`. The web console's **Bulk data** page is built on this list.
+The **Bulk data** page of the [web console](/server-rs/console/) is built on this list.
 
-## Configuration
-
-Configure bulk export in `octofhir.toml`:
+### Export configuration
 
 ```toml
 [bulk_export]
-# Enable/disable bulk export (default: true)
+enabled = true
+spec_version = "stu3"
+export_path = "./exports"          # where files are written
+retention_hours = 24               # files older than this are removed
+max_resources_per_file = 100000    # a new file starts after this many resources
+max_files_per_manifest = 100       # output files per manifest page
+batch_size = 1000                  # rows per database read
+min_poll_interval_ms = 1000        # 0 turns the 429 check off
+```
+
+### Incremental exports
+
+Keep the `transactionTime` of each manifest and pass it as `_since` to the next export:
+
+```http
+GET /fhir/$export?_type=Patient&_since=2026-11-06T10:15:00.123456Z
+```
+
+### Not supported
+
+- `includeAssociatedData` values other than the two Provenance codes.
+- `organizeOutputBy` with anything but `Patient`.
+- `_minimumFileSize` and `_maximumFileSize`.
+- Group export of a Group with `actual=false` or characteristic cohorts, and the Bulk Cohort API.
+- Capability URLs: a protected server always sets `requiresAccessToken=true`.
+- 429 on a second export from one client: export jobs queue.
+
+## Bulk submit
+
+`$bulk-submit` is the other direction. A data provider prepares a manifest in the shape `$export`
+produces and gives this server its URL. The server fetches the manifest and its files, validates each
+resource as a normal write would, and stores it. These operations are defined in STU 4 of the IG, at
+maturity level 2.
+
+### Configuration
+
+Submitters are agreed out of band. With no entries in `bulk_submit.submitters`, every submission is
+refused.
+
+```toml
+[bulk_submit]
 enabled = true
 
-# Directory for export files (default: "./exports")
-export_path = "./exports"
-
-# Maximum concurrent export jobs (default: 5)
-max_concurrent_jobs = 5
-
-# File retention before cleanup, in hours (default: 24)
-retention_hours = 24
-
-# Split files after this many resources (default: 100000)
-max_resources_per_file = 100000
-
-# Database query batch size (default: 1000)
-batch_size = 1000
-
-# Default resource types if _type not specified (empty = all types)
-default_resource_types = []
+[[bulk_submit.submitters]]
+system = "https://example.org/submitters"
+value = "provider-a"
+client_id = "provider-a-backend"        # optional: only this client may act as the submitter
+provider_client_id = "octofhir-at-a"    # optional: this server's client id at the provider
+provider_scope = "system/*.read"        # optional: scope requested from the provider
 ```
 
-## NDJSON Format
+| Key | Meaning |
+|---|---|
+| `system`, `value` | Must match the `submitter` identifier of a request, or the request is 403. |
+| `client_id` | The OAuth client allowed to act as this submitter. Without it, any client with the right grant may. A submission always stays with the client that opened it. |
+| `provider_client_id` | This server's client id at the provider's authorization server. Needed for `oauthMetadataUrl`. |
+| `provider_scope` | Scope this server requests from the provider. Default `system/*.read`. |
 
-Each output file contains one JSON resource per line (Newline Delimited JSON):
+Download and batch limits come from `[bulk_import]`: `max_source_bytes`, `max_line_bytes`,
+`max_sources`, `max_errors`, `batch_size`, `max_batch_bytes` and `max_parallel_resources`. Manifest and
+file URLs pass through the [outbound policy](/server-rs/configuration/#outbound-requests)
+(`server.allow_private_outbound`, `server.outbound_allowlist`), as `$import` sources do.
+
+### Authorization
+
+A token with the scope `system/bulk-submit` may run both operations and writes without per-resource
+grants: types are known only once a manifest is read. Add the scope to the client's `scopes` and
+request it at the token endpoint. See
+[SMART Backend Services](/server-rs/authentication/#smart-backend-services).
+
+A token without that scope but with some write permission may also submit, and each resource is then
+checked against its own grants. Any other token is 403.
+
+### Submitting a manifest
+
+```http
+POST /fhir/$bulk-submit
+Authorization: Bearer {token}
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "submitter", "valueIdentifier": {"system": "https://example.org/submitters", "value": "provider-a"}},
+    {"name": "submissionId", "valueString": "batch-2026-11"},
+    {"name": "manifestUrl", "valueUrl": "https://provider.example.org/exports/42/manifest.json"},
+    {"name": "fhirBaseUrl", "valueUrl": "https://provider.example.org/fhir"}
+  ]
+}
+```
+
+The answer is `200 OK` with an informational OperationOutcome. The work runs in a background job, one
+per manifest.
+
+| Parameter | Behaviour |
+|---|---|
+| `submitter` | Identifier listed in `bulk_submit.submitters`. Required. |
+| `submissionId` | Unique per submitter. Several requests with the same id form one submission. Required. |
+| `submissionStatus` | Coding from `http://hl7.org/fhir/event-status`: `in-progress` (the default), `completed` or `stopped`. |
+| `manifestUrl` | Manifest to fetch. Unique within a submission; a repeat is 400. |
+| `fhirBaseUrl` | Base URL of the provider. Required with `manifestUrl`. References under it become local references. |
+| `replacesManifestUrl` | A manifest of this submission to take back. |
+| `outputFormat` | NDJSON only; anything else is 400. |
+| `fileRequestHeader` | Parts `headerName` and `headerValue`: a header sent when fetching the manifest and its files. Repeats. |
+| `oauthMetadataUrl` | Where to discover the provider's token endpoint. Repeats. See below. |
+| `fileEncryptionKey` | Refused with 400. |
+| `metadata`, `import` | Accepted and ignored; the outcome file carries a warning. Only use-case IGs define them. |
+
+At least one of `manifestUrl` and `submissionStatus` is required. The server follows `link` in a
+manifest, so a paged manifest is read as one.
+
+### Closing a submission
+
+A submission stays open until the provider closes it:
 
 ```json
-{"resourceType":"Patient","id":"1","name":[{"family":"Smith","given":["John"]}]}
-{"resourceType":"Patient","id":"2","name":[{"family":"Jones","given":["Jane"]}]}
+{"name": "submissionStatus", "valueCoding": {"system": "http://hl7.org/fhir/event-status", "code": "completed"}}
 ```
 
-### File Splitting
+- `completed` says no more manifests will come. Manifests still running finish.
+- `stopped` cancels the running manifests and takes back what the submission wrote: created resources
+  are deleted, and changed resources return to the version they had. A resource someone changed after
+  the submission stays as it is, with a warning in the outcome file.
 
-Large exports are automatically split into multiple files when `max_resources_per_file` is exceeded:
+After either, further `$bulk-submit` requests for that submission are 409.
 
-```
-Patient.ndjson       # First 100,000 patients
-Patient.1.ndjson     # Next 100,000 patients
-Patient.2.ndjson     # Remaining patients
-```
+### Replacing a manifest
 
-## Supported Resource Types
+`replacesManifestUrl` takes back what that manifest wrote, the way `stopped` does. With a `manifestUrl`
+in the same request, the new manifest then runs. Without one, the old manifest is simply discarded.
+An unknown URL is 400.
 
-By default, bulk export includes these common resource types:
+### Files that need credentials
 
-- **Clinical**: Patient, Observation, Condition, Procedure, DiagnosticReport
-- **Medications**: MedicationRequest, Medication
-- **Encounters**: Encounter, CarePlan, CareTeam
-- **Allergies/Immunizations**: AllergyIntolerance, Immunization
-- **Administrative**: Organization, Practitioner, PractitionerRole, Location
-- **Documents**: DocumentReference, Provenance
-
-Use the `_type` parameter to limit to specific types.
-
-## Error Handling
-
-### Export Errors
-
-If errors occur during export, they appear in the `error` array of the manifest:
+**`fileRequestHeader`** sends fixed headers, such as an API key. The values are removed from the job
+when it ends.
 
 ```json
 {
-  "output": [...],
-  "error": [
+  "name": "fileRequestHeader",
+  "part": [
+    {"name": "headerName", "valueString": "Authorization"},
+    {"name": "headerValue", "valueString": "Bearer provider-issued-token"}
+  ]
+}
+```
+
+**`oauthMetadataUrl`** makes this server a SMART Backend Services client of the provider. It needs
+`provider_client_id` on the submitter; without it the request is 400.
+
+1. The server reads each metadata document until one names a `token_endpoint`.
+2. It signs a client assertion with its own key (`auth.signing`) and asks for `provider_scope`.
+3. It sends the token with the manifest requests, and with the file requests when a manifest sets
+   `requiresAccessToken`. A token close to expiry is renewed.
+
+SMART Backend Services assertions use RS384 or ES384, so set `auth.signing.algorithm` to one of them.
+The provider registers this server's public keys, published at `/auth/jwks`.
+
+### What happens to the data
+
+- Each resource is validated like a normal write. A reference to a resource in another file of the same
+  manifest counts as present, so file order does not matter.
+- An invalid resource costs only itself. It is reported, and the rest is stored.
+- Resources keep the sender's ids and are written with `PUT`. A submission can therefore change a local
+  resource with the same id, and `stopped` restores it.
+- A file that cannot be downloaded is an error in the outcome file; the other files continue.
+- `deleted` files of a submitted manifest are not processed, and a warning says so.
+- Writes checkpoint, so an interrupted job resumes.
+
+### Status
+
+`$bulk-submit-status` starts a status request for a submission. The answer is 202 with
+`Content-Location`, like an export kick-off.
+
+```http
+POST /fhir/$bulk-submit-status
+Authorization: Bearer {token}
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "submitter", "valueIdentifier": {"system": "https://example.org/submitters", "value": "provider-a"}},
+    {"name": "submissionId", "valueString": "batch-2026-11"}
+  ]
+}
+```
+
+Polling that URL gives the status manifest. It is 202 with what is known so far, with `Retry-After: 10`
+and `X-Progress: 1 of 2 manifests`, until the submission is closed and every manifest is processed,
+then 200 with `Expires`. A submission never closed stays at 202. `Prefer: separate-export-status` and
+`min_poll_interval_ms` apply here as well.
+
+```json
+{
+  "manifestType": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/BulkSubmitStatusManifest",
+  "submissionId": "batch-2026-11",
+  "transactionTime": "2026-11-06T11:02:10.481+00:00",
+  "requiresAccessToken": true,
+  "outputFormat": "application/fhir+ndjson",
+  "output": [],
+  "outcome": [
     {
-      "type": "OperationOutcome",
-      "url": "http://server/fhir/_bulk-files/550e8400.../errors.ndjson"
+      "url": "https://fhir.example.org/fhir/_bulk-files/7c9e6679-.../...-outcome.ndjson",
+      "count": 2,
+      "fileSize": 640,
+      "countSeverity": [{"code": "error", "count": 1}, {"code": "information", "count": 1}],
+      "manifestUrl": "https://provider.example.org/exports/42/manifest.json"
     }
   ]
 }
 ```
 
-### Common Error Codes
+Each item is the outcome file of one manifest. A rejected resource is a line with its issues and the
+`operationoutcome-sourceResource` extension naming it under `fhirBaseUrl`. The last line of a file
+sums up the manifest: `Manifest ...: 1200 resources stored, 3 rejected`.
 
-| HTTP Status | Meaning |
-|-------------|---------|
-| 202 | Export accepted/in progress |
-| 200 | Export complete |
-| 400 | Invalid parameters |
-| 404 | Job not found |
-| 410 | Job cancelled |
-| 500 | Export failed |
+`DELETE` on the status URL ends that status request (202, then 404). The submission is not affected.
 
-## Best Practices
+### Not supported
 
-### For Large Exports
+- `fileEncryptionKey`.
+- 429 to delay a new submission.
 
-1. **Use `_type` parameter** to limit resource types
-2. **Use `_since` parameter** for incremental exports
-3. **Monitor progress** by polling status endpoint
-4. **Download files promptly** before retention expires
+## Conformance
 
-### For Incremental Exports
+The server is tested with the Inferno Bulk Data test kit (`scripts/inferno/run-bulk.ts`):
 
-Track the `transactionTime` from each export manifest and use it as the `_since` parameter for the next export:
+| Suite | Result |
+|---|---|
+| Bulk Data v2.0.0 export | 48 of 48 pass |
+| `$bulk-submit` consumer | 15 of 18 pass |
 
-```bash
-# First export
-GET /$export?_type=Patient
-# Returns transactionTime: 2024-01-15T14:30:00Z
-
-# Next incremental export
-GET /$export?_type=Patient&_since=2024-01-15T14:30:00Z
-```
-
-### Security Considerations
-
-- Export files require authentication to download
-- Files are automatically cleaned up after `retention_hours`
-- Consider network bandwidth for large exports
-- Use `_type` to avoid exporting sensitive data
-
-## Limitations
-
-Current implementation notes:
-
-- Only `application/fhir+ndjson` output format is supported
-- Group export requires the Group resource to exist
-- S3/cloud storage backend not yet implemented
-- Compression (gzip) not yet supported
+The three remaining `$bulk-submit` tests expect requests only during the kit's wait step, while the
+server fetches files right after submission.

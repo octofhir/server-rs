@@ -1,0 +1,73 @@
+---
+title: Notebooks
+description: Notebooks that mix Markdown with REST, SQL, GraphQL, FHIRPath, CQL and ViewDefinition cells, inputs and charts
+---
+
+A notebook keeps queries, their results and the notes about them in one document. Open the **Notebooks**
+page (`g n`) of the [web console](/server-rs/console/), create one, and add cells.
+
+## Cells
+
+| Cell | What it runs |
+|---|---|
+| `markdown` | Text, with `${name}` values filled in |
+| `rest` | A request to the server: method, URL, headers and body |
+| `sql` | SQL against the database |
+| `graphql` | A GraphQL query |
+| `fhirpath` | A FHIRPath expression |
+| `cql` | A CQL expression or library |
+| `sql-on-fhir` | A ViewDefinition |
+| `input` | A widget bound to a variable |
+| `chart` | A chart over a named table cell |
+| `pipeline` | Steps such as filter, select, groupBy and join over a table |
+
+Cells run on the server's own endpoints, under the signed-in user's access.
+
+## Variables and dependencies
+
+Give a cell a name, and its output becomes a variable. Refer to it, or to a notebook variable, as `${name}`
+or `${name.path}` in any cell. The notebook builds a dependency graph from these references: **Run all** runs
+cells in dependency order, and changing a value marks the cells that depend on it as stale.
+
+## Storage
+
+A notebook is a `Notebook` resource, defined by the `octofhir.notebooks` package and served at
+`/fhir/Notebook`. Cell bodies are open content that the resource definition does not model, so API clients
+write it with `X-Skip-Validation: true`, as the console does. `validation.allow_skip_validation` must be on.
+
+```http
+PUT /fhir/Notebook/{id}
+X-Skip-Validation: true
+Content-Type: application/fhir+json
+```
+
+## Import and export
+
+The console imports and exports notebooks from the list page and the editor. The same conversions are
+available over HTTP:
+
+```http
+POST /api/notebooks/import?format=fhirnb
+GET /api/notebooks/{id}/export?format=markdown
+```
+
+| Format | Import | Export |
+|---|---|---|
+| `fhirnb` (the default) | yes | yes |
+| `ipynb` (Jupyter) | yes | yes |
+| `bundle` (FHIR Bundle) | yes | yes |
+| `markdown` | no | yes |
+| `html` | no | yes |
+
+Import converts a document and returns the Notebook; it does not store it.
+
+## Running without the console
+
+```http
+POST /api/notebooks/{id}/run
+Authorization: Bearer {token}
+```
+
+The server runs the whole notebook in dependency order, with the caller's token, and returns it with fresh
+outputs. It does not save the result. `pipeline`, `chart` and `input` cells are not executed this way, and
+keep what they hold.

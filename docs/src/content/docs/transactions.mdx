@@ -20,7 +20,7 @@ FHIR defines two types of Bundle operations:
 ### Basic Transaction
 
 ```json
-POST /
+POST /fhir
 Content-Type: application/fhir+json
 
 {
@@ -254,7 +254,7 @@ If the current version doesn't match, the transaction fails with a 409 Conflict.
 Batch operations are processed independently:
 
 ```json
-POST /
+POST /fhir
 Content-Type: application/fhir+json
 
 {

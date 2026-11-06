@@ -36,10 +36,6 @@ console page. Left, from the library side: XML input for CDA maps, WASM build, L
 
 | # | Item | Notes |
 |---|---|---|
-| 3.1 | Minimal `$expunge`: one instance and its history, dry-run, admin scope only | later: `_cascade=delete` |
-| 3.2 | Bulk Data STU3 additions: `_until`, POST kick-off with Parameters, `organizeOutputBy=Patient`, `allowPartialManifests` | over the existing `$export` |
-| 3.3 | Explain in `$validate-code` and the Terminology workbench: which CodeSystem / ValueSet version and package was used | first step to 5.2 |
-| 3.4 | Docs page "no `$reindex` needed": functional indexes, index advisor | positioning |
 | 3.5 | Run the Inferno Subscriptions test kit and publish the result | `$events`, `$status`, heartbeat exist |
 | 3.6 | FHIRPath 3.0 STU (2026-07-28) against fhirpath-rs, close the gaps | in fhirpath-rs |
 
@@ -47,14 +43,11 @@ console page. Left, from the library side: XML input for CDA maps, WASM build, L
 
 | # | Item | Effort | Notes |
 |---|---|---|---|
-| 4.1 | Keyset pagination and paged POST `_search` (next links over 2048 chars) | S–M | replaces deep `_offset` |
-| 4.2 | Bulk Data STU4 and `$bulk-submit` | M | CMS-0057-F, 2027-01-01 |
-| 4.3 | MCP endpoint in the server: every tool call through SMART scopes and policies, AuditEvent, Provenance tag per the AI Transparency IG | M | not a CRUD wrapper |
-| 4.4 | `Patient/$summary` (IPS 2.0.1, EU PS) | M | over `$everything` / `$graph` |
+| 4.4 | `Patient/$summary` for EU PS, and other profiles through `profile` | S | IPS 2.0.1 is done |
 | 4.5 | Conformance evidence: Inferno US Core and Subscriptions in CI, full CapabilityStatement | M–L | Aligned Networks |
 | 4.6 | R6 readiness: additional resources, new CapabilityStatement codes, `resource` search parameter type | M | with fhirschema and canonical-manager |
 | 4.7 | UDAP / FAST Security STU2 (DCR, B2B, tiered OAuth) | L | TEFCA |
-| 4.8 | `$evaluate-measure` on cql-rs | L | unblocked: cql-rs 0.2 reads `valueset`, `include`, `codesystem`, `code`, `concept`, `define function`; the CQL service loads includes from stored Libraries |
+| 4.8 | `$evaluate-measure`: continuous variable scoring, resource-based populations, data-requirements | M | proportion, ratio and cohort with stratifiers are done, patient-based |
 
 ## 5. Standalone tools (new repos next to server-rs)
 

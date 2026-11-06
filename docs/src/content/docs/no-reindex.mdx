@@ -1,0 +1,129 @@
+---
+title: No reindexing
+description: Why OctoFHIR has no $reindex operation, what happens when a SearchParameter is added, and how the index advisor helps
+---
+
+OctoFHIR has no `$reindex` operation, and adding a SearchParameter never rewrites stored data. There is
+no second copy of search values to bring up to date.
+
+## Search reads the stored resource
+
+A resource is stored once, as JSON in the `resource` column of its table. When a request comes in, the
+search builder turns each parameter into a predicate over that JSON. String, date, number, quantity and
+reference searches are in-place predicates on the resource; there are no side tables that hold
+extracted values.
+
+The one derived value is the `ucum` column, which holds the canonical form of each UCUM quantity for
+unit-aware search. It is written with the resource and covers every UCUM quantity in it, whichever
+SearchParameters exist, so a new parameter does not need it refilled.
+
+Two kinds of PostgreSQL index make those predicates fast:
+
+| Index | Where it comes from | What it serves |
+|---|---|---|
+| Functional index | Built for each entry of `search.indexed_params`, on the same expression the search predicate uses, so the planner can use it | The listed parameter |
+| Whole-document GIN | `idx_{table}_gin` on `resource`, on every resource table unless `storage.postgres.document_gin_resource_types` narrows it | Searches that run as JSON containment, such as identifiers and simple codes |
+
+Because PostgreSQL maintains these indexes on every write, they are always in step with the data. A
+functional index is derived from the row itself, and nothing in the server can fall behind.
+
+## Adding a SearchParameter
+
+Create the resource, and search with it:
+
+```http
+POST /fhir/SearchParameter
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "SearchParameter",
+  "url": "http://example.org/SearchParameter/patient-contact-family",
+  "name": "contact-family",
+  "status": "active",
+  "code": "contact-family",
+  "base": ["Patient"],
+  "type": "string",
+  "expression": "Patient.contact.name.family"
+}
+```
+
+```http
+GET /fhir/Patient?contact-family=Smith
+```
+
+The new parameter goes into the search registry at once, and it matches resources that were stored
+before it existed: the predicate reads their JSON at query time. Creating the parameter changes no
+other stored resource. See
+[Custom Search Parameters](/server-rs/search-parameters/#custom-search-parameters) for the details.
+
+Loading an Implementation Guide works the same way: its SearchParameters become usable without touching
+existing data.
+
+## Making a parameter fast
+
+A new parameter is correct straight away. Without an index of its own, a search on it is evaluated row by
+row unless it runs as containment. Whether that matters depends on the workload. To give it an index, add it
+to `search.indexed_params`:
+
+```toml
+[search]
+indexed_params = ["Patient.birthdate", "Patient.name", "Observation.date"]
+```
+
+Each entry is `ResourceType.code`. This list replaces the default set. The server creates the indexes at
+startup with `CREATE INDEX IF NOT EXISTS`; an unknown parameter or a missing table is skipped. It never
+creates an index at runtime.
+
+This is an ordinary PostgreSQL index build: it reads the table, and the rows do not change. The startup
+build is not `CONCURRENTLY`, so on a large table that already holds data it locks the table while it
+runs. Plan that restart.
+
+`search.ucum_indexed_params` adds indexes over canonical UCUM values in the same way. Unit-aware matching
+works without them.
+
+## The index advisor
+
+The advisor looks at one resource table and suggests what to do about its indexes. It is read-only: it
+returns candidate SQL and never runs DDL.
+
+In the [web console](/server-rs/console/), open **Database**, pick a FHIR table and use **Index advice**.
+**Open in SQL** puts a suggested `CREATE INDEX` into the SQL console without running it. The same advice
+is available over HTTP:
+
+```http
+GET /api/db-console/index-advisor?resourceType=Observation&limit=20
+```
+
+```http
+POST /api/db-console/index-advisor/analyze
+Content-Type: application/json
+
+{
+  "resourceType": "Observation",
+  "queries": ["/fhir/Observation?subject=Patient/123&date=ge2026-01-01"]
+}
+```
+
+Both need the DB console to be enabled, and its `required_role` if one is set. The GET reports on the table
+and on SQL seen in `pg_stat_statements`, when that extension is available. The POST also reads the search
+parameters in the request URLs you give it.
+
+Each suggestion has a `priority`, a `reason` and a `tradeoff`, and `createStatement` when there is DDL to
+run:
+
+| Advice | When |
+|---|---|
+| An index on `updated_at` and `id` for active rows, with a `CREATE INDEX CONCURRENTLY` statement | The table has no such index |
+| Review an unused index | An index larger than 10 MiB has 0 recorded scans. The advisor never drops anything. |
+| Vacuum first | Dead rows are above 20% of the live estimate, which can distort the advice |
+| Per search parameter (POST only) | A parameter appears in the URLs: the advice depends on its type. The reason says what kind of index would help, with no statement to run. To index the parameter itself, use `search.indexed_params`. |
+
+See [Search Indexing](/server-rs/search-indexing/) for the index each parameter type gets. Validate a
+candidate with `EXPLAIN` before applying it. The Explain panel of the **Requests** page shows
+the SQL and plan behind a search.
+
+## A different thing: PostgreSQL REINDEX
+
+The **Database** page offers table maintenance, which includes PostgreSQL's `REINDEX`. That rebuilds an
+existing index, for example after bloat. It is about the physical index and has nothing to do with search
+parameters or resources.

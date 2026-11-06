@@ -1,0 +1,136 @@
+---
+title: CQL
+description: Evaluate Clinical Quality Language expressions and libraries with $cql and the CQL console
+---
+
+The `$cql` operation evaluates [CQL](https://cql.hl7.org/) against the server's data, as an expression or
+as a whole library. It is registered when `cql.enabled` is on.
+
+```toml
+[cql]
+enabled = true
+max_retrieve_size = 10000     # resources per retrieve
+cache_capacity = 1000         # compiled libraries kept in memory
+compile_timeout_ms = 5000
+evaluation_timeout_ms = 30000
+```
+
+Retrieves run as searches of the caller, under the caller's grants.
+
+## $cql
+
+```http
+POST /fhir/$cql
+POST /fhir/{type}/$cql
+POST /fhir/{type}/{id}/$cql
+```
+
+| Parameter | Meaning |
+|---|---|
+| `expression` | One CQL expression |
+| `library` | Full CQL source. Every `define` is evaluated, and `library` wins over `expression`. |
+| `context` | The context type, such as `Patient` |
+| `contextValue` | The context resource, inline. Without `context`, its `resourceType` gives the type. |
+| `validate` | `true` parses the source and reports problems, without touching data |
+| any other name | A CQL parameter, as `valueString`, `valueInteger`, `valueBoolean`, `valueDecimal`, `valueDate`, `valueDateTime` or `resource` |
+
+At instance level the resource is the context. At type level the type is the default context type.
+
+### An expression
+
+```http
+POST /fhir/$cql
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [{"name": "expression", "valueString": "1 + 1"}]
+}
+```
+
+```json
+{
+  "resourceType": "Parameters",
+  "id": "cql",
+  "parameter": [
+    {"name": "expression", "valueString": "1 + 1"},
+    {"name": "return", "valueString": "2"}
+  ]
+}
+```
+
+`return` holds the result serialized as JSON.
+
+### A library
+
+```http
+POST /fhir/Patient/123/$cql
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [{
+    "name": "library",
+    "valueString": "library Example version '1.0.0'\ndefine Sum: 1 + 1\ndefine Greeting: 'hello'"
+  }]
+}
+```
+
+The response has one `part` per `define`, in source order, each with the value serialized as JSON:
+
+```json
+{
+  "resourceType": "Parameters",
+  "id": "cql",
+  "parameter": [{
+    "name": "result",
+    "part": [
+      {"name": "Sum", "valueString": "2"},
+      {"name": "Greeting", "valueString": "\"hello\""}
+    ]
+  }]
+}
+```
+
+### Validation
+
+With `validate` set to `true` the response has one `issue` per problem, with the parts `severity`,
+`message`, and `line` and `column` when known. An empty `parameter` list means the source is valid.
+
+Errors in the source or in evaluation are 400, with the diagnostic in the OperationOutcome.
+
+## CQL console
+
+The **CQL** page (`g q`) of the [web console](/server-rs/console/) is built on `$cql`.
+
+- It treats a source with `library` or `define` as a library and evaluates every define. Anything else is
+  a single expression.
+- It validates as you type, so errors show before you run.
+- The **context** tab takes a resource as JSON, with samples to start from, and the page shows the context
+  type it found. The **params** tab takes CQL parameters.
+- A palette lists functions to insert.
+
+## Measures
+
+`$evaluate-measure` scores a `Measure` whose logic is a CQL `Library`:
+
+```http
+GET /fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31&subject=Patient/123
+```
+
+| Parameter | Meaning |
+|---|---|
+| `periodStart`, `periodEnd` | Required. Passed to the library as the `Measurement Period` parameter. A date covers the whole day |
+| `subject` | `Patient/id` for an individual report, `Group/id` for its members. Without it, every Patient the token can read |
+| `reportType` | `subject-list` adds a contained `List` of subjects per population. Otherwise the report is individual or a summary |
+| `measure` | The Measure's canonical URL, at `Measure/$evaluate-measure` |
+
+A population criterion names a `define` of the library: `true`, or a list with something in it,
+puts the subject in that population. Measures are read as patient-based.
+
+Proportion, ratio and cohort scoring are supported, with `denominator-exclusion`,
+`denominator-exception` and `numerator-exclusion`. `group.stratifier` produces one stratum per value
+of its define. Continuous variable scoring is refused.
+
+The library is compiled once for the run and all data is read under the caller's grants. The result
+is a `MeasureReport`, which is not stored.

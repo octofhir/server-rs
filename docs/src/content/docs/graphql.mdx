@@ -23,7 +23,7 @@ OctoFHIR provides a GraphQL API following the [GraphQL for FHIR](https://hl7.org
 2. **Get an access token**
 
    ```bash
-   TOKEN=$(curl -s -X POST http://localhost:8888/oauth/token \
+   TOKEN=$(curl -s -X POST http://localhost:8888/auth/token \
      -d "grant_type=password&username=admin&password=admin123" \
      | jq -r '.access_token')
    ```

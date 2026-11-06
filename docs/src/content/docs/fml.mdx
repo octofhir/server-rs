@@ -1,0 +1,122 @@
+---
+title: FHIR Mapping Language
+description: Run StructureMaps with $transform, convert between FHIR versions with $convert, extract from QuestionnaireResponses with $extract, and write maps in the FML console
+---
+
+OctoFHIR runs [FHIR Mapping Language](https://build.fhir.org/ig/HL7/mapping-language-ig/) maps on the
+[fml-rs](https://github.com/octofhir/fml-rs) engine. The operations are on by default.
+
+```toml
+[fml]
+enabled = true
+debug_role = "admin"      # role a user needs for debug=true
+timeout_ms = 30000        # a transform running longer is cancelled
+max_rules = 20000000      # rules one transform may run
+max_trace_events = 10000  # trace events kept with debug=true
+map_folders = []          # folders of .fml maps and StructureMap / ConceptMap JSON
+```
+
+A map or ConceptMap is looked up in the server's own resources, then the installed packages, then
+`map_folders`. Stored StructureMaps are checked when they are validated; problems are warnings.
+
+## $transform
+
+```http
+POST /fhir/StructureMap/$transform
+POST /fhir/StructureMap/{id}/$transform
+```
+
+Run a map written in FML over a resource:
+
+```http
+POST /fhir/StructureMap/$transform
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "srcMap", "valueString": "/// url = 'http://example.org/StructureMap/PatientToBasic'\n/// name = 'PatientToBasic'\n\nuses \"http://hl7.org/fhir/StructureDefinition/Patient\" alias Patient as source\nuses \"http://hl7.org/fhir/StructureDefinition/Basic\" alias Basic as target\n\ngroup Main(source src : Patient, target tgt : Basic) {\n  src.id as v -> tgt.id = v \"id\";\n}\n"},
+    {"name": "content", "resource": {"resourceType": "Patient", "id": "example"}}
+  ]
+}
+```
+
+The map is the instance, or one of `source`, `sourceMap` and `srcMap`.
+
+| Parameter | Meaning |
+|---|---|
+| `source` | Canonical URL of the map |
+| `sourceMap` | A StructureMap resource |
+| `srcMap` | FML text. Repeats: the first is the map to run, the others are available to it. |
+| `supportingMap` | Canonical URL of another map to import from. Repeats. |
+| `content` | The input: a resource, or a Binary holding JSON (a logical model, another FHIR version) |
+| `model` | StructureDefinitions and ConceptMaps for this run only, alone or in a Bundle, as a resource or as JSON text. Repeats. |
+| `debug` | In the query or the body: return the trace instead of the result |
+
+The result is the target resource. A target the server's FHIR version does not define, such as a logical
+model or another release, comes back as a Binary. FML that does not compile is 422, with each problem at
+its line and column.
+
+`debug=true` returns a `Parameters` with the trace. The trace holds every value the map reads and writes,
+so only a user with the role in `fml.debug_role` may ask for it.
+
+## $convert
+
+`$convert` converts a resource between FHIR versions with the HL7 cross-version maps. The input is in the
+version of `Content-Type`, the output in the version of `Accept`; either defaults to the server's own.
+
+```http
+POST /fhir/$convert
+Content-Type: application/fhir+json; fhirVersion=4.0
+Accept: application/fhir+json; fhirVersion=5.0
+
+{"resourceType": "Patient", "id": "example", "gender": "male"}
+```
+
+The resource is the body, or the `input` parameter of a `Parameters`. The versions are `1.0`, `3.0`,
+`4.0`, `4.3`, `5.0` and `6.0`; an unknown version is 406.
+
+The map for a type is `http://hl7.org/fhir/uv/xver/StructureMap/{Type}{from}to{to}`, for example
+`Patient4to5`. No package publishes these maps, so point `fml.map_folders` at a checkout of
+[HL7/fhir-cross-version](https://github.com/HL7/fhir-cross-version):
+
+```toml
+[fml]
+map_folders = ["../fhir-cross-version/input"]
+```
+
+Without a map for the type the request is 422. The response is the converted resource with
+`Content-Type: application/fhir+json; fhirVersion=...`. Values the maps could not carry over are listed as
+warnings in an OperationOutcome in the `X-Conversion-Outcome` header.
+
+## $extract
+
+`QuestionnaireResponse/$extract` is the StructureMap-based form of SDC extraction. The Questionnaire names
+its map with the `sdc-questionnaire-targetStructureMap` extension, and the map runs over the response.
+
+```http
+POST /fhir/QuestionnaireResponse/{id}/$extract
+```
+
+At type level, pass the response in `questionnaire-response`. `questionnaire` overrides the Questionnaire
+the response names, and `debug` works as for `$transform`. The result is what the map produces, usually a
+transaction Bundle. Definition-based and observation-based extraction are not implemented: a Questionnaire
+without a target map is 422.
+
+## FML console
+
+The **FML** page (`g k`) of the [web console](/server-rs/console/) is an editor for maps.
+
+- Write a map or open a stored one. It is checked as you type, with syntax, compile and type problems at
+  their place in the source.
+- Run it over a resource with `$transform`, with models of its own: logical models and ConceptMaps for
+  this run only.
+- Run it over a CDA document, read into the CDA model. See [C-CDA](/server-rs/ccda/).
+- Replay the debug trace against the source and the input. Without the debug role the map runs without a
+  trace.
+- Format the map, **Save** it as a StructureMap, and **Share** a link. The map, the input and the models
+  travel in the URL fragment, so nothing is stored on the server.
+
+The editor works through `POST /api/fml/check`, `/api/fml/format`, `/api/fml/compile` (FML to a
+StructureMap in the server's release) and `/api/fml/print` (a StructureMap to FML), each with a `source`
+field except `print`, which takes the StructureMap. None of them reads or writes data.

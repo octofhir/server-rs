@@ -316,6 +316,75 @@ lsp_enabled = true
 enabled = true
 ```
 
+See [SQL on FHIR](/server-rs/sql-on-fhir/).
+
+### Bulk Data
+
+```toml
+[bulk_export]
+spec_version = "stu3"     # stu3 | stu4
+min_poll_interval_ms = 1000
+
+[bulk_submit]
+enabled = true
+
+[[bulk_submit.submitters]]
+system = "https://example.org/submitters"
+value = "provider-a"
+client_id = "provider-a-backend"     # optional: only this client may act as the submitter
+provider_client_id = "octofhir-at-a" # optional: this server's client id at the provider, for oauthMetadataUrl
+provider_scope = "system/*.read"     # scope requested from the provider (this is the default)
+```
+
+See [Bulk Data](/server-rs/bulk-export/) for every key.
+
+### MCP
+
+```toml
+[mcp]
+enabled = true        # serve POST /mcp
+allow_writes = false  # offer write_resource, recorded as AI asserted
+```
+
+See [MCP](/server-rs/mcp/).
+
+### Conformance claims
+
+Installing a package claims nothing in the CapabilityStatement. Name the IG CapabilityStatements
+this deployment has been tested against:
+
+```toml
+[capability]
+instantiates = ["http://hl7.org/fhir/us/core/CapabilityStatement/us-core-server"]
+```
+
+Each one goes into `CapabilityStatement.instantiates`, and its `supportedProfile` lists join those
+of the matching resources. The statement has to be in a loaded package; one that is not found is
+logged and left out.
+
+### FHIR Mapping Language
+
+```toml
+[fml]
+enabled = true
+debug_role = "admin"
+timeout_ms = 30000
+map_folders = []          # maps no package publishes, such as the HL7 cross-version maps
+```
+
+See [FHIR Mapping Language](/server-rs/fml/).
+
+### CQL
+
+```toml
+[cql]
+enabled = true
+max_retrieve_size = 10000
+evaluation_timeout_ms = 30000
+```
+
+See [CQL](/server-rs/cql/).
+
 ### Terminology
 
 ```toml

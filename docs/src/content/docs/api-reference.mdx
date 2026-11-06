@@ -5,8 +5,8 @@ description: Complete FHIR R4 REST API reference
 
 ## Base Configuration
 
-- **Base URL**: `http://localhost:8080` (configurable)
-- **FHIR Version**: R4 (4.0.1)
+- **Base URL**: `http://localhost:8888/fhir` (host and port are configurable)
+- **FHIR Version**: R4 by default; R4B, R5 and R6 through `[fhir] version`
 
 ### Content Types
 
@@ -29,7 +29,7 @@ OctoFHIR supports all standard FHIR R4 resource types. Common resources include:
 ### Metadata (CapabilityStatement)
 
 ```bash
-GET /metadata
+GET /fhir/metadata
 ```
 
 Returns the server's CapabilityStatement describing supported operations.
@@ -37,7 +37,7 @@ Returns the server's CapabilityStatement describing supported operations.
 ### Create
 
 ```bash
-POST /{resourceType}
+POST /fhir/{resourceType}
 Content-Type: application/fhir+json
 
 {resource body}
@@ -48,7 +48,7 @@ Content-Type: application/fhir+json
 ### Read
 
 ```bash
-GET /{resourceType}/{id}
+GET /fhir/{resourceType}/{id}
 ```
 
 **Response**: `200 OK` with resource body
@@ -56,7 +56,7 @@ GET /{resourceType}/{id}
 ### Update
 
 ```bash
-PUT /{resourceType}/{id}
+PUT /fhir/{resourceType}/{id}
 Content-Type: application/fhir+json
 If-Match: W/"{versionId}"  # Optional, for conditional update
 
@@ -68,7 +68,7 @@ If-Match: W/"{versionId}"  # Optional, for conditional update
 ### Delete
 
 ```bash
-DELETE /{resourceType}/{id}
+DELETE /fhir/{resourceType}/{id}
 ```
 
 **Response**: `204 No Content`
@@ -76,8 +76,8 @@ DELETE /{resourceType}/{id}
 ### Search
 
 ```bash
-GET /{resourceType}?{parameters}
-POST /{resourceType}/_search
+GET /fhir/{resourceType}?{parameters}
+POST /fhir/{resourceType}/_search
 Content-Type: application/x-www-form-urlencoded
 
 {parameters}
@@ -92,19 +92,19 @@ For index behavior and query planning guidance, see [Search Indexing](./search-i
 
 ```bash
 # Instance history
-GET /{resourceType}/{id}/_history
+GET /fhir/{resourceType}/{id}/_history
 
 # Type history
-GET /{resourceType}/_history
+GET /fhir/{resourceType}/_history
 
 # System history
-GET /_history
+GET /fhir/_history
 ```
 
 ### Version Read
 
 ```bash
-GET /{resourceType}/{id}/_history/{versionId}
+GET /fhir/{resourceType}/{id}/_history/{versionId}
 ```
 
 ## Bundle Operations
@@ -112,7 +112,7 @@ GET /{resourceType}/{id}/_history/{versionId}
 ### Transaction
 
 ```bash
-POST /
+POST /fhir
 Content-Type: application/fhir+json
 
 {
@@ -127,7 +127,7 @@ All-or-nothing execution. See [Transactions](/server-rs/transactions/) for detai
 ### Batch
 
 ```bash
-POST /
+POST /fhir
 Content-Type: application/fhir+json
 
 {
@@ -144,8 +144,8 @@ Independent execution of each entry.
 ### $validate
 
 ```bash
-POST /{resourceType}/$validate
-POST /{resourceType}/{id}/$validate
+POST /fhir/{resourceType}/$validate
+POST /fhir/{resourceType}/{id}/$validate
 ```
 
 Validate a resource against profiles.
@@ -153,8 +153,8 @@ Validate a resource against profiles.
 ### $expand (ValueSet)
 
 ```bash
-GET /ValueSet/$expand?url={valuesetUrl}
-POST /ValueSet/$expand
+GET /fhir/ValueSet/$expand?url={valuesetUrl}
+POST /fhir/ValueSet/$expand
 ```
 
 Expand a ValueSet. See [Terminology](/server-rs/terminology/) for details.
@@ -162,17 +162,73 @@ Expand a ValueSet. See [Terminology](/server-rs/terminology/) for details.
 ### $validate-code (ValueSet)
 
 ```bash
-GET /ValueSet/$validate-code?url={valuesetUrl}&code={code}&system={system}
-POST /ValueSet/$validate-code
+GET /fhir/ValueSet/$validate-code?url={valuesetUrl}&code={code}&system={system}
+POST /fhir/ValueSet/$validate-code
 ```
 
 ### $everything (Patient)
 
 ```bash
-GET /Patient/{id}/$everything
+GET /fhir/Patient/{id}/$everything
 ```
 
 Returns a Bundle with all resources related to the patient.
+
+### $summary (Patient)
+
+```bash
+GET /fhir/Patient/{id}/$summary
+GET /fhir/Patient/$summary?identifier={identifier}
+```
+
+An International Patient Summary document. See [Patient Summary](/server-rs/patient-summary/).
+
+### $expunge
+
+```http
+POST /fhir/{type}/{id}/$expunge
+Authorization: Bearer {token}
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [{"name": "dryRun", "valueBoolean": true}]
+}
+```
+
+Permanently removes one resource: its live row and every stored version. A normal `DELETE` keeps
+history; `$expunge` is for data that must not stay, such as a record created for the wrong person.
+It works on one instance and does not follow references.
+
+**Who may call it.** Only administrators: a user with the role `admin` or `superuser`, or a token
+holding a `system/*` scope with delete permission and no filter, such as `system/*.cruds`. Anyone else
+gets 403. On a server with `auth.policy.anonymous_access` enabled, a call without credentials is
+allowed too.
+
+**`dryRun`.** With `dryRun` set to `true`, in the body or the query, nothing is removed and the
+response says what would go. A `GET` is always a dry run. A `POST` without `dryRun` removes the
+resource.
+
+The response is a `Parameters` resource:
+
+```json
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "dryRun", "valueBoolean": false},
+    {"name": "live", "valueBoolean": true},
+    {"name": "versions", "valueInteger": 3}
+  ]
+}
+```
+
+| Parameter | Meaning |
+|---|---|
+| `dryRun` | Whether this call only looked |
+| `live` | Whether the resource had a live row; `false` for one that was already deleted |
+| `versions` | Stored versions, removed or about to be, counting the live one |
+
+A resource with nothing stored is 404, so a second `$expunge` of the same id is 404.
 
 ## Search Parameters
 
@@ -207,6 +263,7 @@ Returns a Bundle with all resources related to the patient.
 |-----------|-------------|
 | `_count` | Number of results per page |
 | `_offset` | Pagination offset |
+| `_cursor` | Position of a keyset page, taken from a `next` link |
 | `_sort` | Sort by parameter(s) |
 | `_elements` | Return only specified elements |
 | `_summary` | Return summary (`true`, `false`, `text`, `data`, `count`) |
@@ -275,40 +332,41 @@ All errors return an OperationOutcome:
 ### Health Check
 
 ```bash
-GET /health
-GET /health/ready
-GET /health/live
-```
-
-### Cache Management
-
-```bash
-GET /admin/cache/stats
-POST /admin/cache/clear
+GET /healthz   # the process is up
+GET /readyz    # the database and packages are ready
 ```
 
 ### Configuration
 
 ```bash
 GET /admin/config
+POST /admin/config/$reload
 GET /admin/config/{category}
+GET /admin/config/{category}/{key}
 PUT /admin/config/{category}/{key}
+DELETE /admin/config/{category}/{key}
 ```
 
 ### Feature Flags
 
 ```bash
 GET /admin/features
-GET /admin/features/{flag}
-PUT /admin/features/{flag}
+GET /admin/features/{name}
+PUT /admin/features/{name}
+POST /admin/features/{name}/$evaluate
 ```
 
 ### Database
 
+The DB console API needs `[db_console]` enabled, and its `required_role` if one is set.
+
 ```bash
-GET /admin/db/stats
-GET /admin/indexes/suggestions
+GET /api/db-console/active-queries
+GET /api/db-console/index-advisor?resourceType=Patient
+POST /api/db-console/index-advisor/analyze
 ```
+
+See [the index advisor](/server-rs/no-reindex/#the-index-advisor).
 
 ## Pagination
 
@@ -329,6 +387,10 @@ Search results include pagination links:
   "entry": [...]
 }
 ```
+
+Follow these links instead of building paging URLs. Sorting by `_id` or `_lastUpdated`, and a listing
+with no criteria, page by `_cursor` and have no `last` link. See
+[Keyset pagination](/server-rs/search-parameters/#keyset-pagination).
 
 ## Rate Limiting
 

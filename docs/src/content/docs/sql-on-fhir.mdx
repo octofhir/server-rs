@@ -1,0 +1,189 @@
+---
+title: SQL on FHIR
+description: Flatten FHIR resources into tables with ViewDefinitions and query them with SQL through $viewdefinition-run, $sql-run and $sql-export
+---
+
+SQL on FHIR turns FHIR resources into tables. A `ViewDefinition` declares the columns of one table, and
+a `SQLQuery` Library runs SQL over several views. Views over the server's data run as SQL under the same
+authorization as search.
+
+## Enable it
+
+```toml
+[sql_on_fhir]
+enabled = true
+```
+
+The default is `false`, and the operations below then answer with an error. The server installs the SQL
+on FHIR package when the feature is on.
+
+## A view
+
+Store a ViewDefinition like any resource, or send it inline:
+
+```http
+POST /fhir/ViewDefinition
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "ViewDefinition",
+  "status": "active",
+  "url": "http://example.org/ViewDefinition/patient",
+  "name": "patient",
+  "resource": "Patient",
+  "select": [{
+    "column": [
+      {"name": "id", "path": "getResourceKey()", "type": "id"},
+      {"name": "family", "path": "name.family.first()", "type": "string"},
+      {"name": "active", "path": "active", "type": "boolean"}
+    ]
+  }]
+}
+```
+
+## Run a view
+
+`$viewdefinition-run` returns the rows themselves in the format's media type:
+
+```http
+POST /fhir/ViewDefinition/{id}/$viewdefinition-run
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "_format", "valueCode": "csv"},
+    {"name": "_limit", "valueInteger": 100}
+  ]
+}
+```
+
+It also works at system and type level, where the view is named by exactly one of `viewReference` and
+`viewResource`.
+
+| Parameter | Meaning |
+|---|---|
+| `viewReference`, `viewResource` | The view, at system and type level |
+| `resource` | Inline resources to read instead of the server's data |
+| `patient`, `group`, `_since` | Limit the server's data before projection. Not valid with `resource`. |
+| `_limit` | Maximum rows |
+| `_format` | `ndjson` (the default), `json`, `csv`, `parquet` or `fhir` (a `Parameters` with one `row` per result row) |
+| `header` | CSV headers, default `true` |
+
+`_format` wins over `Accept`. `source`, an external data source, is not supported.
+
+## Query with SQL
+
+`$sql-run` runs a ViewDefinition, a `SQLQuery` or a `SQLView`. Its subject is exactly one of
+`subjectCanonical`, `subjectReference` and `subjectResource`.
+
+A SQLQuery is a `Library` of type `sql-query` from the code system
+`http://hl7.org/fhir/uv/sql-on-fhir/CodeSystem/LibraryTypesCodes`. Its SQL is in `content`, base64
+encoded, as `application/sql`. Each `depends-on` entry in `relatedArtifact` gives a dependency, and its
+`label` is the table name in the SQL. Declared `parameter`s are bound as `:name`.
+
+```json
+{
+  "resourceType": "Library",
+  "url": "http://example.org/Library/ActivePatients",
+  "status": "active",
+  "type": {"coding": [{
+    "system": "http://hl7.org/fhir/uv/sql-on-fhir/CodeSystem/LibraryTypesCodes",
+    "code": "sql-query"
+  }]},
+  "relatedArtifact": [
+    {"type": "depends-on", "label": "patient", "resource": "http://example.org/ViewDefinition/patient"}
+  ],
+  "parameter": [{"name": "family", "use": "in", "type": "string", "min": 1}],
+  "content": [{
+    "contentType": "application/sql",
+    "data": "U0VMRUNUIGlkIEZST00gcGF0aWVudCBXSEVSRSBhY3RpdmUgQU5EIGZhbWlseSA9IDpmYW1pbHk="
+  }]
+}
+```
+
+The `data` above is `SELECT id FROM patient WHERE active AND family = :family`.
+
+```http
+POST /fhir/$sql-run
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "subjectCanonical", "valueCanonical": "http://example.org/Library/ActivePatients"},
+    {"name": "parameters", "resource": {
+      "resourceType": "Parameters",
+      "parameter": [{"name": "family", "valueString": "Smith"}]
+    }},
+    {"name": "_format", "valueCode": "csv"}
+  ]
+}
+```
+
+| Parameter | Meaning |
+|---|---|
+| `subjectCanonical`, `subjectReference`, `subjectResource` | The subject |
+| `parameters` | A `Parameters` resource with the values to bind, for a SQL subject |
+| `context` | Artifacts supplied inline, matched by canonical URL. They win over the server's own, which win over installed packages. |
+| `patient`, `group`, `_since`, `_limit`, `_format`, `header` | As in `$viewdefinition-run` |
+| `resource` | Inline data for a ViewDefinition subject. A SQL subject reads its dependencies, so with one this is 400. |
+
+A dependency can be a ViewDefinition (a table over the caller's authorized data), a SQLView (a CTE), a
+ValueSet or a ConceptMap (a relation with the columns of "Terminology in SQL"). When terminology is
+involved, the `x-sof-terminology` response header records what each dependency resolved to.
+
+### The sandbox
+
+SQL subjects run in a read-only transaction with a 30 second statement timeout, under the database role
+`octofhir_sof_query`, which has no privileges on any table. The query can read its dependencies and
+nothing else, and the server checks its functions and relations first. The server's database user must be
+able to create and use that role, or SQL subjects are refused.
+
+### Errors
+
+| Status | Meaning |
+|---|---|
+| 400 | Invalid or conflicting input |
+| 404 | A subject or dependency that cannot be found or resolves to more than one version |
+| 422 | An artifact that does not conform, terminology whose content cannot be determined, or SQL that cannot run |
+
+## Export
+
+`$sql-export` runs several subjects, in any mixture, as one asynchronous job. All of them read one
+snapshot, so two outputs of a job join without skew.
+
+```http
+POST /fhir/$sql-export
+Content-Type: application/fhir+json
+Prefer: respond-async
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "subject", "part": [
+      {"name": "name", "valueString": "active"},
+      {"name": "subjectCanonical", "valueCanonical": "http://example.org/Library/ActivePatients"}
+    ]},
+    {"name": "_format", "valueCode": "parquet"}
+  ]
+}
+```
+
+`Prefer: respond-async` is required. `_format` is `ndjson` (the default), `csv`, `json` or `parquet`, and
+files split after `bulk_export.max_resources_per_file` rows. The kick-off does every check a job can fail
+early, so a missing column is a 422 here rather than a failed job.
+
+The status URL answers 202 while the job runs, then 303 to `{status url}/result`, which returns the
+manifest as `Parameters` (`output` with a `name` and `location` per subject) or the failure. `DELETE` on
+the status URL cancels the job.
+
+## In the console
+
+The **Views** page (`g v`) authors ViewDefinitions and SQLQuery and SQLView Libraries and runs either
+through `$sql-run`. The SQL editor completes and checks against the query's dependencies and its `:name`
+parameters, and applies the same sandbox check as the server. Each dependency shows what it resolved to: a
+view's columns, or for a ValueSet or ConceptMap its version, size and where its content came from.
+
+The page uses `$sql-describe`, a console operation that takes the subject of a `$sql-run` and returns its
+columns and dependencies without reading data.

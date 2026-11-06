@@ -1,0 +1,81 @@
+---
+title: C-CDA
+description: Convert C-CDA documents to FHIR document Bundles and back with $ccda-to-fhir and $fhir-to-ccda
+---
+
+`$ccda-to-fhir` and `$fhir-to-ccda` convert C-CDA documents to FHIR document Bundles and back, using the
+FML maps of [ccda-fhir](https://github.com/octofhir/ccda-fhir): C-CDA and FHIR R4 with US Core 6.1.0. They
+are registered when `fml.enabled` is on, which is the default.
+
+The API stays JSON. A CDA document travels as a `Binary` with `contentType: application/xml` and the XML
+in `data`, base64 encoded. The largest document accepted is 32 MiB.
+
+## C-CDA to FHIR
+
+```http
+POST /fhir/$ccda-to-fhir
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [{
+    "name": "document",
+    "resource": {
+      "resourceType": "Binary",
+      "contentType": "application/xml",
+      "data": "PENsaW5pY2FsRG9jdW1lbnQgeG1sbnM9InVybjpobDctb3JnOnYzIj4uLi4="
+    }
+  }]
+}
+```
+
+The Binary can also be the request body. The response is a `Parameters` resource:
+
+```json
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "return", "resource": {"resourceType": "Bundle", "type": "document"}},
+    {"name": "outcome", "resource": {"resourceType": "OperationOutcome"}}
+  ]
+}
+```
+
+`return` is the document Bundle. `outcome` lists what the conversion could not carry over: elements outside
+the CDA model, templates the maps do not know and codes without a translation, with the XML line.
+
+The operation only converts. To store the result, post the Bundle or its resources yourself.
+
+## FHIR to C-CDA
+
+```http
+POST /fhir/$fhir-to-ccda
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [{"name": "resource", "resource": {"resourceType": "Bundle", "type": "document"}}]
+}
+```
+
+The input is a document Bundle or a Composition, as the `resource` parameter or as the request body. In the
+response, `return` is a `Binary` that holds the CDA document, and `outcome` is as above.
+
+## What is converted
+
+The header and the sections for allergies, problems, medications, immunizations, results, vital signs,
+procedures, encounters, social history, notes, goals and plan of treatment, functional and mental status,
+family history, medical equipment, admission and discharge diagnoses, and health concerns, in both
+directions. The [ccda-fhir README](https://github.com/octofhir/ccda-fhir) has the mapping table and the
+measured results over its corpus of 506 documents.
+
+`$convert` is not involved: it converts between FHIR versions. See
+[FHIR Mapping Language](/server-rs/fml/#convert).
+
+## In the console
+
+The **FML** page has a CDA input. Load a document and run a map over it: the document is read into the CDA
+model, and the map runs with the converter's definitions and maps. The debug trace points at the line of
+each element in the XML.
+
+The page uses `POST /api/fml/cda-run` with `{"source": "...", "xml": "...", "debug": true}`.

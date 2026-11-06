@@ -9,20 +9,18 @@ For indexing behavior and performance-oriented query design, see [Search Indexin
 
 ## How Search Is Accelerated
 
-You can use FHIR search normally; OctoFHIR chooses the fast path under the hood.
+You can use FHIR search normally; each parameter becomes a predicate over the stored resource JSON, and
+PostgreSQL indexes speed it up. There are no side tables of extracted values.
 
-| Search Pattern | Fast Path |
+| Search Pattern | How it runs |
 |---|---|
-| `reference` params (`subject`, `patient`, etc.) | Denormalized `search_idx_reference` table |
-| `_include`, `_revinclude`, chained search | `search_idx_reference` lookups |
-| `date` params (including precision/ranges) | Denormalized `search_idx_date` table |
-| `string:exact` | JSONB containment (`@>`) via GIN index on `resource` |
-| Default `string` / `string:contains` | JSON traversal + `LIKE`/`ILIKE` path filters |
+| `reference` params (`subject`, `patient`, etc.) | Overlap on the references in the JSON; a functional GIN index when the parameter is in `search.indexed_params` |
+| `date` params (including precision and ranges) | Range overlap, with a functional GiST index when listed |
+| `string` params | Match on the extracted text, with a functional trigram GIN index when listed |
+| `token` params | JSON containment, on an index of the element when listed, or on the whole-document GIN index |
+| `_include`, `_revinclude`, chained search | Follow the references in the JSON |
 
-:::note
-There is no separate `search_idx_string` table in the current design.  
-String search works directly on resource JSON with specialized SQL paths.
-:::
+A parameter that is not listed still works. See [Search Indexing](./search-indexing) for the full table.
 
 ### Practical Tips
 
@@ -37,13 +35,13 @@ Search for resources using query parameters:
 
 ```bash
 # Search for patients by family name
-GET /Patient?family=Smith
+GET /fhir/Patient?family=Smith
 
 # Search with multiple parameters (AND logic)
-GET /Patient?family=Smith&gender=female
+GET /fhir/Patient?family=Smith&gender=female
 
 # Search with multiple values (OR logic)
-GET /Patient?family=Smith,Johnson
+GET /fhir/Patient?family=Smith,Johnson
 ```
 
 ## String Modifiers
@@ -54,7 +52,7 @@ String search parameters support the following modifiers:
 
 ```bash
 # Matches "Smith", "Smithson", "Smithfield"
-GET /Patient?family=Smith
+GET /fhir/Patient?family=Smith
 ```
 
 ### :exact
@@ -63,7 +61,7 @@ Case-sensitive exact match:
 
 ```bash
 # Matches only "Smith" (not "smith" or "SMITH")
-GET /Patient?family:exact=Smith
+GET /fhir/Patient?family:exact=Smith
 ```
 
 ### :contains
@@ -72,7 +70,7 @@ Substring match anywhere in the value:
 
 ```bash
 # Matches "Smith", "Blacksmith", "Smithson"
-GET /Patient?family:contains=mit
+GET /fhir/Patient?family:contains=mit
 ```
 
 ### :missing
@@ -81,10 +79,10 @@ Find resources where the element is present or absent:
 
 ```bash
 # Patients without an identifier
-GET /Patient?identifier:missing=true
+GET /fhir/Patient?identifier:missing=true
 
 # Patients with at least one identifier
-GET /Patient?identifier:missing=false
+GET /fhir/Patient?identifier:missing=false
 ```
 
 ## Token Modifiers
@@ -95,23 +93,19 @@ Token search parameters (for codes, identifiers, etc.) support:
 
 ```bash
 # Search by system and code
-GET /Patient?identifier=http://hospital.org/mrn|MRN-001
+GET /fhir/Patient?identifier=http://hospital.org/mrn|MRN-001
 
 # Search by code only (any system)
-GET /Patient?identifier=MRN-001
+GET /fhir/Patient?identifier=MRN-001
 
 # Search by system only (any code)
-GET /Patient?identifier=http://hospital.org/mrn|
+GET /fhir/Patient?identifier=http://hospital.org/mrn|
 ```
 
 ### :text
 
-Search by display text rather than code:
-
-```bash
-# Find observations where code display contains "blood pressure"
-GET /Observation?code:text=blood pressure
-```
+`:text` on a token or string parameter is refused with an error. The server has no index path for it and does
+not fall back to walking the JSON. Use `:contains` on a string parameter, or search by code.
 
 ### :not
 
@@ -119,7 +113,7 @@ Exclude resources with matching codes:
 
 ```bash
 # Patients that are NOT male
-GET /Patient?gender:not=male
+GET /fhir/Patient?gender:not=male
 ```
 
 ### :of-type
@@ -128,7 +122,7 @@ For Identifier searches, match by identifier type:
 
 ```bash
 # Find patients by MRN type identifier
-GET /Patient?identifier:of-type=http://terminology.hl7.org/CodeSystem/v2-0203|MR
+GET /fhir/Patient?identifier:of-type=http://terminology.hl7.org/CodeSystem/v2-0203|MR
 ```
 
 ## Date Prefixes
@@ -153,10 +147,10 @@ Combine prefixes to search within ranges:
 
 ```bash
 # Patients born in the 1980s
-GET /Patient?birthdate=ge1980-01-01&birthdate=lt1990-01-01
+GET /fhir/Patient?birthdate=ge1980-01-01&birthdate=lt1990-01-01
 
 # Observations from January 2024
-GET /Observation?date=ge2024-01-01&date=lt2024-02-01
+GET /fhir/Observation?date=ge2024-01-01&date=lt2024-02-01
 ```
 
 ### Date Precision
@@ -165,13 +159,13 @@ Dates match at their precision level:
 
 ```bash
 # Matches any date in 1980
-GET /Patient?birthdate=1980
+GET /fhir/Patient?birthdate=1980
 
 # Matches any date in January 1980
-GET /Patient?birthdate=1980-01
+GET /fhir/Patient?birthdate=1980-01
 
 # Matches exactly January 15, 1980
-GET /Patient?birthdate=1980-01-15
+GET /fhir/Patient?birthdate=1980-01-15
 ```
 
 ## Include and RevInclude
@@ -182,10 +176,10 @@ Include referenced resources in the response:
 
 ```bash
 # Search observations and include referenced Patient
-GET /Observation?code=8867-4&_include=Observation:subject
+GET /fhir/Observation?code=8867-4&_include=Observation:subject
 
 # Include multiple reference types
-GET /Observation?_include=Observation:subject&_include=Observation:performer
+GET /fhir/Observation?_include=Observation:subject&_include=Observation:performer
 ```
 
 ### _revinclude
@@ -194,10 +188,10 @@ Include resources that reference the search results:
 
 ```bash
 # Search patients and include their observations
-GET /Patient?_revinclude=Observation:subject
+GET /fhir/Patient?_revinclude=Observation:subject
 
 # Include multiple reverse references
-GET /Patient?_revinclude=Observation:subject&_revinclude=Condition:subject
+GET /fhir/Patient?_revinclude=Observation:subject&_revinclude=Condition:subject
 ```
 
 ### :iterate
@@ -206,7 +200,7 @@ For recursive includes (follow reference chains):
 
 ```bash
 # Include subject and the subject's organization
-GET /Observation?_include=Observation:subject&_include:iterate=Patient:organization
+GET /fhir/Observation?_include=Observation:subject&_include:iterate=Patient:organization
 ```
 
 ## Result Filtering
@@ -217,7 +211,7 @@ Return only specific elements:
 
 ```bash
 # Return only id, name, and birthDate
-GET /Patient?_elements=id,name,birthDate
+GET /fhir/Patient?_elements=id,name,birthDate
 ```
 
 Resources returned with `_elements` are tagged with `SUBSETTED` in their meta.
@@ -236,10 +230,10 @@ Return summarized resources:
 
 ```bash
 # Get summary view
-GET /Patient?_summary=true
+GET /fhir/Patient?_summary=true
 
 # Get just the count
-GET /Patient?_summary=count
+GET /fhir/Patient?_summary=count
 ```
 
 ## Pagination
@@ -250,25 +244,61 @@ Limit the number of results:
 
 ```bash
 # Return first 10 results
-GET /Patient?_count=10
+GET /fhir/Patient?_count=10
 ```
 
 ### Page Navigation
 
-Use the `link` elements in the Bundle response:
+Use the `link` elements in the Bundle response rather than building paging URLs:
 
 ```json
 {
   "resourceType": "Bundle",
   "type": "searchset",
-  "total": 100,
   "link": [
-    {"relation": "self", "url": "..."},
-    {"relation": "next", "url": "...?_page=2"},
-    {"relation": "previous", "url": "...?_page=0"}
+    {"relation": "self", "url": "https://fhir.example.org/fhir/Patient?_count=10&name=smith"},
+    {"relation": "first", "url": "https://fhir.example.org/fhir/Patient?_count=10&_offset=0&name=smith"},
+    {"relation": "next", "url": "https://fhir.example.org/fhir/Patient?_count=10&_offset=10&name=smith"}
   ]
 }
 ```
+
+### Keyset pagination
+
+A search pages in one of two ways. Keyset pages continue from the last row of the page before instead
+of counting rows to skip.
+
+| Search | Next page |
+|---|---|
+| Sorted by exactly one of `_id`, `-_id`, `_lastUpdated`, `-_lastUpdated` | `_cursor` |
+| A listing: no search criteria and no `_sort` (`_count`, `_include`, `_summary` and the like are fine) | `_cursor`, in `_id` order |
+| Any other search | `_offset` |
+
+```http
+GET /fhir/Patient?_sort=-_lastUpdated&_count=50
+```
+
+The `next` link of the response carries the cursor:
+
+```json
+{"relation": "next", "url": "https://fhir.example.org/fhir/Patient?_sort=-_lastUpdated&_count=50&_cursor=..."}
+```
+
+- `_cursor` comes from a `next` link and is opaque: do not parse or build one. A cursor is valid only
+  with the search that produced it. On a search that cannot seek, `_cursor` is rejected.
+- Keyset pages have no `last` link, since a seek has no way there. `self` repeats the cursor of the page
+  and `first` starts over. A page reached by cursor has no `previous` link.
+- A listing with `_offset` keeps paging by offset.
+- `_id` order seeks on the primary key, so a page costs the same at any depth. Resource tables have no
+  index on the last update time by default; for `_lastUpdated` order on a large table, see what the
+  [index advisor](/server-rs/no-reindex/#the-index-advisor) suggests.
+
+### Long searches
+
+`POST /fhir/{type}/_search` can carry more criteria than fit in a URL. When a paging link would be
+longer than 2048 characters, the links carry a `_page` token instead of the criteria, next to `_count`
+and `_offset` or `_cursor`. The server keeps the query for 30 minutes after the last page was read.
+An expired token is 410: run the search again.
 
 ## Sorting
 
@@ -278,13 +308,13 @@ Sort results by one or more parameters:
 
 ```bash
 # Sort by birthDate ascending
-GET /Patient?_sort=birthdate
+GET /fhir/Patient?_sort=birthdate
 
 # Sort by birthDate descending
-GET /Patient?_sort=-birthdate
+GET /fhir/Patient?_sort=-birthdate
 
 # Sort by multiple fields
-GET /Patient?_sort=family,-birthdate
+GET /fhir/Patient?_sort=family,-birthdate
 ```
 
 ## Composite Search Parameters
@@ -293,7 +323,7 @@ Search using composite parameters that combine multiple values:
 
 ```bash
 # Search by code AND value (composite parameter)
-GET /Observation?code-value-quantity=http://loinc.org|8867-4$gt60
+GET /fhir/Observation?code-value-quantity=http://loinc.org|8867-4$gt60
 ```
 
 ## Chained Search
@@ -302,10 +332,10 @@ Search by properties of referenced resources:
 
 ```bash
 # Observations for patients named "Smith"
-GET /Observation?subject:Patient.family=Smith
+GET /fhir/Observation?subject:Patient.family=Smith
 
 # Observations for patients born after 1980
-GET /Observation?subject:Patient.birthdate=gt1980-01-01
+GET /fhir/Observation?subject:Patient.birthdate=gt1980-01-01
 ```
 
 ## Common Search Parameters
@@ -328,7 +358,7 @@ These parameters work on all resource types:
 ```bash
 # Active female patients named Smith, born in the 1980s,
 # sorted by birthdate, returning only id and name
-GET /Patient?family=Smith&gender=female&active=true&birthdate=ge1980-01-01&birthdate=lt1990-01-01&_sort=birthdate&_elements=id,name
+GET /fhir/Patient?family=Smith&gender=female&active=true&birthdate=ge1980-01-01&birthdate=lt1990-01-01&_sort=birthdate&_elements=id,name
 ```
 
 ### Observation Search with Includes
@@ -336,17 +366,17 @@ GET /Patient?family=Smith&gender=female&active=true&birthdate=ge1980-01-01&birth
 ```bash
 # Final observations with heart rate code,
 # include the patient, return first 20
-GET /Observation?status=final&code=http://loinc.org|8867-4&_include=Observation:subject&_count=20
+GET /fhir/Observation?status=final&code=http://loinc.org|8867-4&_include=Observation:subject&_count=20
 ```
 
 ### Find Missing Data
 
 ```bash
 # Patients without phone numbers
-GET /Patient?telecom:missing=true
+GET /fhir/Patient?telecom:missing=true
 
 # Observations without values
-GET /Observation?value-quantity:missing=true
+GET /fhir/Observation?value-quantity:missing=true
 ```
 
 ## Custom Search Parameters

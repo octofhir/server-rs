@@ -226,13 +226,13 @@ Most search parameters work identically. Key differences:
 Both support chained searches with identical syntax:
 
 ```
-GET /Observation?subject:Patient.name=John
+GET /fhir/Observation?subject:Patient.name=John
 ```
 
 ### Reverse Chaining
 
 ```
-GET /Patient?_has:Observation:subject:code=1234-5
+GET /fhir/Patient?_has:Observation:subject:code=1234-5
 ```
 
 ---
@@ -272,10 +272,10 @@ Both servers handle date precision, but behavior may differ slightly:
 
 ```bash
 # Search for birthdate in 1990 (any day)
-GET /Patient?birthdate=1990
+GET /fhir/Patient?birthdate=1990
 
 # Search for exact date
-GET /Patient?birthdate=1990-01-15
+GET /fhir/Patient?birthdate=1990-01-15
 ```
 
 ### 3. Bundle Transaction Order
