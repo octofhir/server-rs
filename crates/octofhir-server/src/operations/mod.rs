@@ -48,6 +48,7 @@ pub mod ccda;
 pub mod context;
 pub mod cql;
 pub mod db_console_api;
+pub mod data_requirements;
 pub mod definition;
 pub mod evaluate_measure;
 pub mod everything;
@@ -80,6 +81,7 @@ pub use bulk::{
 pub use context::OperationContext;
 pub use cql::CqlOperation;
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
+pub use data_requirements::DataRequirementsOperation;
 pub use evaluate_measure::EvaluateMeasureOperation;
 pub use everything::EverythingOperation;
 pub use fhirpath::FhirPathOperation;
@@ -308,6 +310,10 @@ pub fn register_core_operations_all(
         handlers.insert(
             "evaluate-measure".to_string(),
             Arc::new(EvaluateMeasureOperation::new()),
+        );
+        handlers.insert(
+            "data-requirements".to_string(),
+            Arc::new(DataRequirementsOperation),
         );
         tracing::info!("CQL operations registered");
     } else {

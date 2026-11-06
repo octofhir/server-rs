@@ -1145,6 +1145,9 @@ async fn build_app_with_runtime(
                     parameters: vec![],
                     affects_state: false,
                 });
+                for definition in crate::operations::data_requirements::definitions() {
+                    registry.register(definition);
+                }
                 tracing::info!("Registered $evaluate-measure operation");
             }
 
@@ -1243,6 +1246,9 @@ async fn build_app_with_runtime(
                     parameters: vec![],
                     affects_state: false,
                 });
+                for definition in crate::operations::data_requirements::definitions() {
+                    registry.register(definition);
+                }
             }
 
             // Register $import operation

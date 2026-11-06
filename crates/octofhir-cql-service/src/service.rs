@@ -4,6 +4,7 @@ use crate::config::CqlConfig;
 use crate::data_provider::FhirServerDataProvider;
 use crate::error::{CqlError, CqlResult};
 use crate::library_cache::LibraryCache;
+use crate::requirements::module_definition;
 use crate::terminology_provider::CqlTerminologyProvider;
 use indexmap::IndexMap;
 use octofhir_cql::{CompiledLibrary as CqlLibrary, parse};
@@ -304,6 +305,34 @@ define Result:
             .get_or_compile(url, version.unwrap_or("latest"), &self.storage)
             .await?;
         Ok(library.cql_source.clone())
+    }
+
+    /// The `module-definition` Library of a CQL source: what it retrieves and depends on.
+    pub async fn data_requirements(&self, cql_source: &str) -> CqlResult<Value> {
+        let includes = self.included_sources(cql_source).await?;
+        let mut dependencies = Vec::with_capacity(includes.len());
+        for (name, version) in includes.keys() {
+            let library = self.stored_library(name, version.as_deref()).await?;
+            dependencies.extend(library["url"].as_str().map(|url| {
+                match library["version"].as_str() {
+                    Some(version) => format!("{url}|{version}"),
+                    None => url.to_owned(),
+                }
+            }));
+        }
+        let cql_source = cql_source.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let load = |name: &str, version: Option<&str>| {
+                includes
+                    .get(&(name.to_owned(), version.map(str::to_owned)))
+                    .cloned()
+            };
+            let library = CqlLibrary::compile_with(&cql_source, &load)
+                .map_err(|e| CqlError::ParseError(e.to_string()))?;
+            module_definition(&library, &dependencies)
+        })
+        .await
+        .map_err(|error| CqlError::EvaluationError(error.to_string()))?
     }
 
     /// Evaluate one library for many subjects, compiling it once: the shape of a measure
