@@ -8,34 +8,42 @@ import {
   EmptyState,
   notify,
   SegmentedRadioGroup,
+  Select,
   StatusBadge,
   type StatusTone,
+  Switch,
+  TextArea,
   TextInput,
 } from "@octofhir/ui-kit";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { Download, PackageOpen, Plus, Trash2, X } from "lucide-react";
+import { ChevronRight, Download, PackageOpen, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useResourceTypesCategorized } from "@/shared/api/hooks";
 import { sameOriginPath } from "@/shared/api/fhirClient";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
+  type AssociatedData,
   cancelJob,
   downloadFile,
   type ExportLevel,
+  exportParameters,
   exportPath,
   fetchJobStatus,
+  fetchManifestPage,
   type ImportInput,
   type JobState,
   type JobStatus,
   listJobs,
+  type OutputFile,
   type ServerJob,
   startExport,
   startImport,
 } from "../lib/api";
 import classes from "./BulkDataPage.module.css";
 import { FileImport } from "./FileImport";
+import { SubmitForm } from "./SubmitForm";
 
 dayjs.extend(relativeTime);
 
@@ -47,11 +55,14 @@ const JOBS_KEY = ["bulk-data", "jobs"] as const;
 const KIND_LABELS: Record<string, string> = {
   bulk_export: "Export",
   bulk_import: "Import",
+  bulk_submit: "Submit",
+  bulk_submit_revert: "Take back",
+  bulk_submit_status: "Submit status",
   viewdefinition_export: "View export",
 };
 
-/** Request types whose result is a Bulk Data manifest with output files. */
-const MANIFEST_TYPES = new Set(["bulk_export", "viewdefinition_export"]);
+/** Request types whose status URL returns a Bulk Data manifest with files. */
+const MANIFEST_TYPES = new Set(["bulk_export", "viewdefinition_export", "bulk_submit_status"]);
 
 const STATE_VIEW: Record<JobState, { label: string; tone: StatusTone }> = {
   queued: { label: "Queued", tone: "neutral" },
@@ -88,7 +99,7 @@ interface JobRow {
 function listedStatus(job: ServerJob): JobStatus {
   const state: JobState =
     job.status === "in_progress" ? "in-progress" : job.status === "queued" ? "queued" : job.status;
-  return { state, progress: job.progress, output: [], errors: [], message: job.errorMessage ?? undefined };
+  return { state, progress: job.progress, output: [], errors: [], deleted: [], message: job.errorMessage ?? undefined };
 }
 
 function requestLabel(job: ServerJob): string {
@@ -151,6 +162,20 @@ const COLUMNS: DataTableColumn<JobRow>[] = [
   },
 ];
 
+const ASSOCIATED_DATA: { value: AssociatedData | "default"; label: string }[] = [
+  { value: "default", label: "Server default" },
+  { value: "LatestProvenanceResources", label: "Latest Provenance" },
+  { value: "RelevantProvenanceResources", label: "All Provenance" },
+];
+
+/** Comma- or newline-separated input as a list. */
+function list(text: string): string[] {
+  return text
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function ExportForm() {
   const { data: catalog } = useResourceTypesCategorized();
   const typeNames = useMemo(() => (catalog?.types ?? []).map((type) => type.name).sort(), [catalog]);
@@ -158,11 +183,33 @@ function ExportForm() {
   const [groupId, setGroupId] = useState("");
   const [types, setTypes] = useState<string[]>([]);
   const [since, setSince] = useState<Date | null>(null);
+  const [until, setUntil] = useState<Date | null>(null);
+  const [typeFilters, setTypeFilters] = useState("");
+  const [elements, setElements] = useState("");
+  const [patients, setPatients] = useState("");
+  const [associatedData, setAssociatedData] = useState<AssociatedData>("");
+  const [organizeByPatient, setOrganizeByPatient] = useState(false);
+  const [partialManifests, setPartialManifests] = useState(false);
   const [pending, setPending] = useState(false);
 
-  const request = { level, groupId: groupId.trim(), types, since };
-  // Shown and remembered decoded (`_type=Patient,Observation`), sent encoded.
-  const path = decodeURIComponent(exportPath(request));
+  const request = {
+    level,
+    groupId: groupId.trim(),
+    types,
+    since,
+    until,
+    // A comma can be part of a search value, so filters go one per line.
+    typeFilters: typeFilters
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+    elements: list(elements),
+    patients: list(patients),
+    associatedData,
+    organizeByPatient,
+    partialManifests,
+  };
+  const parameterCount = exportParameters(request).length;
   const blocked = level === "group" && !request.groupId;
   const queryClient = useQueryClient();
 
@@ -206,14 +253,66 @@ function ExportForm() {
             onChange={setTypes}
           />
         </div>
+      </div>
+      <div className={classes.fields}>
+        <span className={classes.fieldLabel}>Changed</span>
         <div className={classes.since}>
           <DatePicker aria-label="Changed since" withTime value={since} onChange={setSince} />
         </div>
-        <Button variant="filled" loading={pending} disabled={blocked} onClick={() => void submit()}>
+        <span className={classes.fieldLabel}>to</span>
+        <div className={classes.since}>
+          <DatePicker aria-label="Changed until" withTime value={until} onChange={setUntil} />
+        </div>
+        {level !== "system" && (
+          <TextInput
+            aria-label="Patient ids"
+            placeholder="Patient ids, comma-separated"
+            value={patients}
+            onChange={setPatients}
+            className={classes.urlInput}
+          />
+        )}
+      </div>
+      <div className={classes.fields}>
+        <TextInput
+          aria-label="Elements"
+          placeholder="Elements: id, Patient.gender"
+          value={elements}
+          onChange={setElements}
+          className={classes.urlInput}
+        />
+        <div className={classes.importType}>
+          <Select
+            aria-label="Provenance"
+            value={associatedData || "default"}
+            onChange={(value) => setAssociatedData(value === "default" ? "" : ((value ?? "") as AssociatedData))}
+            data={ASSOCIATED_DATA}
+          />
+        </div>
+      </div>
+      <TextArea
+        aria-label="Type filters"
+        placeholder="Type filters, one per line: Observation?status=final"
+        rows={2}
+        value={typeFilters}
+        onChange={setTypeFilters}
+      />
+      <div className={classes.fields}>
+        <Switch label="Organize by Patient" checked={organizeByPatient} onChange={setOrganizeByPatient} />
+        <Switch label="Partial manifests" checked={partialManifests} onChange={setPartialManifests} />
+        <code className={classes.preview}>
+          POST {decodeURIComponent(exportPath(request))} · {parameterCount} parameters
+        </code>
+        <Button
+          className={classes.push}
+          variant="filled"
+          loading={pending}
+          disabled={blocked}
+          onClick={() => void submit()}
+        >
           Start export
         </Button>
       </div>
-      <code className={classes.preview}>GET {path}</code>
     </div>
   );
 }
@@ -297,55 +396,100 @@ function ImportForm() {
   );
 }
 
-function JobDetail({ job, onClose }: { job: JobRow; onClose: () => void }) {
-  const status = job.status;
-  const download = (file: { type: string; url: string }) =>
-    downloadFile(file).catch((error: unknown) =>
+function FileList({ files, onDownload }: { files: OutputFile[]; onDownload: (file: OutputFile) => void }) {
+  return (
+    <ul className={classes.files}>
+      {files.map((file) => (
+        <li key={file.url} className={classes.file}>
+          <span className={classes.fileType}>{file.type || "Patient blocks"}</span>
+          <span className={classes.muted}>{file.count != null ? `${file.count.toLocaleString()} resources` : ""}</span>
+          {file.manifestUrl && <span className={classes.mono}>{file.manifestUrl}</span>}
+          <Button className={classes.push} size="xs" variant="outline" onClick={() => onDownload(file)}>
+            <Button.Icon side="left">
+              <Download size={13} />
+            </Button.Icon>
+            NDJSON
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function JobDetail({ job, onClose, onCancel }: { job: JobRow; onClose: () => void; onCancel: () => void }) {
+  // Pages after the first come from `link`; the first page is the status itself.
+  const [pages, setPages] = useState<JobStatus[]>([]);
+  const [loadingPage, setLoadingPage] = useState(false);
+  const first = job.status;
+  const status = pages.at(-1) ?? first;
+  const pageNumber = pages.length + 1;
+  const paged = pageNumber > 1 || status?.next != null;
+
+  const download = (file: OutputFile) =>
+    void downloadFile(file).catch((error: unknown) =>
       notify({ theme: "danger", title: `Could not download ${file.type}`, content: errorText(error) })
     );
+  const openNext = async () => {
+    if (!status?.next) return;
+    setLoadingPage(true);
+    try {
+      const page = await fetchManifestPage(status.next);
+      setPages((loaded) => [...loaded, page]);
+    } catch (error) {
+      notify({ theme: "danger", title: "Could not load the next page", content: errorText(error) });
+    } finally {
+      setLoadingPage(false);
+    }
+  };
 
   return (
     <section className={classes.panel} aria-label="Job details">
       <header className={classes.panelHeader}>
-        <h2 className={classes.panelTitle}>{job.kind === "export" ? "Export" : "Import"}</h2>
+        <h2 className={classes.panelTitle}>{KIND_LABELS[job.kind] ?? job.kind}</h2>
         <code className={classes.mono}>{job.id}</code>
-        <ActionIcon className={classes.push} variant="subtle" aria-label="Close details" onClick={onClose}>
+        <div className={classes.push} />
+        {isRunning(first) && (
+          <Button size="xs" variant="outline" onClick={onCancel}>
+            Cancel job
+          </Button>
+        )}
+        <ActionIcon variant="subtle" aria-label="Close details" onClick={onClose}>
           <X size={14} />
         </ActionIcon>
       </header>
       {status?.message && <p className={classes.error}>{status.message}</p>}
-      {status?.state === "completed" && status.output.length === 0 && (
+      {status?.state === "completed" && status.output.length === 0 && status.errors.length === 0 && (
         <p className={classes.muted}>The job finished without output files.</p>
       )}
-      {isRunning(status) && <p className={classes.muted}>Files appear here when the job completes.</p>}
-      {(status?.output.length ?? 0) > 0 && (
-        <ul className={classes.files}>
-          {status?.output.map((file) => (
-            <li key={file.url} className={classes.file}>
-              <span className={classes.fileType}>{file.type}</span>
-              <span className={classes.muted}>{file.count != null ? `${file.count.toLocaleString()} resources` : ""}</span>
-              <Button className={classes.push} size="xs" variant="outline" onClick={() => void download(file)}>
-                <Button.Icon side="left">
-                  <Download size={13} />
-                </Button.Icon>
-                NDJSON
-              </Button>
-            </li>
-          ))}
-        </ul>
+      {isRunning(status) && (status?.output.length ?? 0) === 0 && (
+        <p className={classes.muted}>Files appear here when they are ready.</p>
+      )}
+      {paged && (
+        <div className={classes.fields}>
+          <Button size="xs" variant="subtle" disabled={pages.length === 0} onClick={() => setPages((p) => p.slice(0, -1))}>
+            Previous page
+          </Button>
+          <span className={classes.muted}>Manifest page {pageNumber}</span>
+          <Button size="xs" variant="subtle" disabled={!status?.next} loading={loadingPage} onClick={() => void openNext()}>
+            Next page
+            <Button.Icon side="right">
+              <ChevronRight size={13} />
+            </Button.Icon>
+          </Button>
+        </div>
+      )}
+      {(status?.output.length ?? 0) > 0 && <FileList files={status?.output ?? []} onDownload={download} />}
+      {(status?.deleted.length ?? 0) > 0 && (
+        <>
+          <h3 className={classes.panelTitle}>Deleted</h3>
+          <FileList files={status?.deleted ?? []} onDownload={download} />
+        </>
       )}
       {(status?.errors.length ?? 0) > 0 && (
-        <ul className={classes.files}>
-          {status?.errors.map((file) => (
-            <li key={file.url} className={classes.file}>
-              <span className={classes.fileType}>OperationOutcome</span>
-              <span className={classes.error}>{file.count ?? ""} issues</span>
-              <Button className={classes.push} size="xs" variant="outline" onClick={() => void download(file)}>
-                Errors
-              </Button>
-            </li>
-          ))}
-        </ul>
+        <>
+          <h3 className={classes.panelTitle}>Messages</h3>
+          <FileList files={status?.errors ?? []} onDownload={download} />
+        </>
       )}
     </section>
   );
@@ -353,7 +497,7 @@ function JobDetail({ job, onClose }: { job: JobRow; onClose: () => void }) {
 
 export function BulkDataPage() {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"export" | "import">("export");
+  const [mode, setMode] = useState<"export" | "import" | "submit">("export");
   const [importSource, setImportSource] = useState<"file" | "urls">("file");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -368,13 +512,20 @@ export function BulkDataPage() {
   const jobs = list.data ?? [];
 
   // Finished exports carry their file manifest in `_async-status/{id}`; it never changes.
+  // A submission status job is done at once, but its manifest changes until the
+  // submission closes, so that one is re-read like a running job.
   const manifestJobs = jobs.filter((job) => job.status === "completed" && MANIFEST_TYPES.has(job.requestType));
   const manifests = useQueries({
-    queries: manifestJobs.map((job) => ({
-      queryKey: ["bulk-data", "manifest", job.jobId],
-      queryFn: () => fetchJobStatus(job.jobId),
-      staleTime: Number.POSITIVE_INFINITY,
-    })),
+    queries: manifestJobs.map((job) => {
+      const live = job.requestType === "bulk_submit_status";
+      return {
+        queryKey: ["bulk-data", "manifest", job.jobId],
+        queryFn: () => fetchJobStatus(job.jobId),
+        staleTime: live ? POLL_MS : Number.POSITIVE_INFINITY,
+        refetchInterval: (query: { state: { data?: JobStatus } }) =>
+          live && query.state.data?.state !== "completed" ? POLL_MS * 2 : false as const,
+      };
+    }),
   });
   const manifestById = new Map(manifestJobs.map((job, index) => [job.jobId, manifests[index]?.data]));
 
@@ -400,7 +551,7 @@ export function BulkDataPage() {
   return (
     <WorkspacePageLayout
       title="Bulk data"
-      description="Export resources as NDJSON, or import them from a file or from URLs."
+      description="Export resources as NDJSON, import them from a file or from URLs, or receive a submission."
       className="page-enter"
     >
       <section className={classes.panel} aria-label="New job">
@@ -408,16 +559,17 @@ export function BulkDataPage() {
           <SegmentedRadioGroup
             aria-label="Job type"
             value={mode}
-            onChange={(value) => setMode(value === "import" ? "import" : "export")}
+            onChange={(value) => setMode(value as "export" | "import" | "submit")}
             options={[
               { value: "export", label: "Export" },
               { value: "import", label: "Import" },
+              { value: "submit", label: "Submit" },
             ]}
           />
         </header>
-        {mode === "export" ? (
-          <ExportForm />
-        ) : (
+        {mode === "export" && <ExportForm />}
+        {mode === "submit" && <SubmitForm />}
+        {mode === "import" && (
           <>
             <SegmentedRadioGroup
               aria-label="Import from"
@@ -485,7 +637,14 @@ export function BulkDataPage() {
         />
       </section>
 
-      {selected && <JobDetail job={selected} onClose={() => setSelectedId(null)} />}
+      {selected && (
+        <JobDetail
+          key={selected.id}
+          job={selected}
+          onClose={() => setSelectedId(null)}
+          onCancel={() => void remove(selected)}
+        />
+      )}
     </WorkspacePageLayout>
   );
 }

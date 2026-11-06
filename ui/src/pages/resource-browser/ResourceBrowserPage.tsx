@@ -373,6 +373,16 @@ export function ResourceBrowserPage() {
           iconStart: <Send size={14} />,
           action: () => navigate(`/console?${new URLSearchParams({ url: `/fhir/${address}` }).toString()}`),
         },
+        ...(selectedType === "Patient"
+          ? [
+              {
+                text: "Patient summary",
+                iconStart: <FileText size={14} />,
+                action: () =>
+                  navigate(`/console?${new URLSearchParams({ url: `/fhir/${address}/$summary` }).toString()}`),
+              },
+            ]
+          : []),
       ],
       [
         { text: "Copy reference", iconStart: <Copy size={14} />, action: () => copyText(address, "reference") },

@@ -1,7 +1,7 @@
 import { Button, DataTable, type DataTableColumn, TextInput, useDebouncedValue } from "@octofhir/ui-kit";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { type CanonicalHit, type ExpansionConcept, expandValueSet, parameterValue, validateCode } from "../lib/api";
+import { type CanonicalHit, explainLines, type ExpansionConcept, expandValueSet, parameterValue, validateCode } from "../lib/api";
 import { OutcomeNote, ResultLine } from "./OutcomeNote";
 import classes from "./Terminology.module.css";
 
@@ -140,6 +140,12 @@ export function ValueSetPanel({ hit, resource }: { hit: CanonicalHit; resource?:
             detail={String(parameterValue(check.data, "display") ?? parameterValue(check.data, "message") ?? "")}
           />
         )}
+        {check.data &&
+          explainLines(check.data).map((line) => (
+            <p key={line} className={classes.muted}>
+              {line}
+            </p>
+          ))}
       </section>
     </>
   );

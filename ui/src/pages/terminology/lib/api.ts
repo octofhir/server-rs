@@ -78,7 +78,12 @@ export class TerminologyError extends Error {
   }
 }
 
-type ParameterValue = { valueUri: string } | { valueCode: string } | { valueString: string } | { valueInteger: number };
+type ParameterValue =
+  | { valueUri: string }
+  | { valueCode: string }
+  | { valueString: string }
+  | { valueInteger: number }
+  | { valueBoolean: boolean };
 
 export interface Parameter {
   name: string;
@@ -153,7 +158,31 @@ export function validateCode(url: string, system: string, code: string): Promise
     url: { valueUri: url },
     system: system.trim() ? { valueUri: system.trim() } : undefined,
     code: { valueCode: code.trim() },
+    _explain: { valueBoolean: true },
   });
+}
+
+/** What `_explain` reports about a definition, as one line. */
+function explainedDefinition(parts: Parameter[]) {
+  const value = (name: string) => {
+    const part = parts.find((item) => item.name === name);
+    return part?.valueUri ?? part?.valueString ?? part?.valueCode;
+  };
+  const version = value("version");
+  return `${value("url") ?? value("type")}${version ? `|${version}` : ""} · ${value("source")}`;
+}
+
+/** Which definitions decided a `$validate-code` result. */
+export function explainLines(result: Parameters): string[] {
+  const explain = result.parameter?.find((parameter) => parameter.name === "explain");
+  const parts = explain?.part ?? [];
+  if (parts.length === 0) return [];
+  const lines = [explainedDefinition(parts)];
+  const method = parts.find((part) => part.name === "method")?.valueCode;
+  if (method) lines[0] += ` · by ${method}`;
+  const codeSystem = parts.find((part) => part.name === "codeSystem");
+  if (codeSystem?.part) lines.push(explainedDefinition(codeSystem.part));
+  return lines;
 }
 
 export function lookupCode(system: string, code: string): Promise<Parameters> {

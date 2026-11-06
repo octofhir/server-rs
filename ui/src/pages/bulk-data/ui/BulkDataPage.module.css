@@ -49,6 +49,11 @@
 	width: 210px;
 }
 
+.fieldLabel {
+	font-size: 12px;
+	color: var(--octo-text-muted);
+}
+
 .groupInput {
 	width: 200px;
 }
