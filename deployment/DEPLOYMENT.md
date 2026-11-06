@@ -125,9 +125,6 @@ docker compose logs postgres
 docker exec octofhir-postgres psql -U postgres -d octofhir -c "SELECT version();"
 ```
 
-An existing PostgreSQL 16 volume cannot be read by PostgreSQL 18. Move the data with `pg_dump` and
-`pg_restore`, as described in the deployment guide on the docs site.
-
 ### 4. (Optional) Enable Redis for Caching
 
 If you plan to run multiple OctoFHIR instances, enable Redis:
