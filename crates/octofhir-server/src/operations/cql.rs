@@ -46,7 +46,7 @@ use crate::server::AppState;
 /// Map a CQL service error onto an operation error, preserving the real
 /// diagnostic message. Parse / evaluation / invalid-input failures are client
 /// errors (400); infrastructure failures (timeout, storage) are 500s.
-fn map_cql_error(err: octofhir_cql_service::CqlError) -> OperationError {
+pub(super) fn map_cql_error(err: octofhir_cql_service::CqlError) -> OperationError {
     use octofhir_cql_service::CqlError;
     let message = err.to_string();
     match err {
@@ -81,6 +81,24 @@ impl octofhir_cql_service::data_provider::ResourceSearch for ScopedCqlSearch {
             .await
             .map_err(|error| octofhir_cql_service::CqlError::ResourceAccess(Box::new(error)))
     }
+}
+
+/// The CQL service reading data as this caller.
+pub(super) fn scoped_service(
+    state: &AppState,
+    context: &crate::operations::OperationContext,
+    service: &octofhir_cql_service::CqlService,
+) -> octofhir_cql_service::CqlService {
+    service.with_data_provider(Arc::new(
+        octofhir_cql_service::data_provider::FhirServerDataProvider::with_search(
+            Arc::new(ScopedCqlSearch {
+                state: state.clone(),
+                context: context.clone(),
+            }),
+            state.fhirpath_engine.clone(),
+            state.config.cql.max_retrieve_size,
+        ),
+    ))
 }
 
 /// Handler for the `$cql` operation.
@@ -330,16 +348,7 @@ impl CqlOperation {
             return Ok(self.build_validate_response(issues));
         }
 
-        let cql_service = cql_service.with_data_provider(Arc::new(
-            octofhir_cql_service::data_provider::FhirServerDataProvider::with_search(
-                Arc::new(ScopedCqlSearch {
-                    state: state.clone(),
-                    context: context.clone(),
-                }),
-                state.fhirpath_engine.clone(),
-                state.config.cql.max_retrieve_size,
-            ),
-        ));
+        let cql_service = scoped_service(state, context, cql_service);
 
         let parameters = self.extract_parameters(params);
 

@@ -1020,6 +1020,57 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
         .map(|_| ())
 }
 
+/// Permanently removes one resource: its live row, if any, and every stored version.
+/// Returns whether a live row exists and how many versions there are; with
+/// `dry_run` nothing is removed.
+pub async fn expunge(
+    pool: &PgPool,
+    resource_type: &str,
+    id: &str,
+    dry_run: bool,
+) -> Result<(bool, u64), StorageError> {
+    let table = SchemaManager::table_name(resource_type);
+    let failed = |e: sqlx_core::Error| {
+        if e.to_string().contains("does not exist") {
+            StorageError::not_found(resource_type, id)
+        } else {
+            StorageError::internal(format!("Failed to expunge resource: {e}"))
+        }
+    };
+    let mut tx = pool.begin().await.map_err(failed)?;
+    let live: i64 = query_scalar(AssertSqlSafe(format!(
+        r#"SELECT COUNT(*) FROM "{table}" WHERE id = $1"#
+    )))
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(failed)?;
+    let historic: i64 = query_scalar(AssertSqlSafe(format!(
+        r#"SELECT COUNT(*) FROM "{table}_history" WHERE id = $1"#
+    )))
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(failed)?;
+    if !dry_run {
+        // In this order: the history trigger copies what leaves the live table.
+        query(AssertSqlSafe(format!(r#"DELETE FROM "{table}" WHERE id = $1"#)))
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(failed)?;
+        query(AssertSqlSafe(format!(
+            r#"DELETE FROM "{table}_history" WHERE id = $1"#
+        )))
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(failed)?;
+    }
+    tx.commit().await.map_err(failed)?;
+    Ok((live > 0, (live + historic) as u64))
+}
+
 /// Same single DELETE statement, returning the live body it removed so event
 /// consumers see the previous state. None = nothing was live (idempotent).
 pub async fn delete_returning_previous(

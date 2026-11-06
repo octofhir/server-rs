@@ -61,6 +61,23 @@ pub struct ValidateCodeParams {
     /// Abstract codes are used for grouping and normally cannot be selected
     #[serde(default)]
     pub abstract_allowed: Option<bool>,
+
+    /// If true, the response says which definitions decided the answer
+    #[serde(default, rename = "_explain")]
+    pub explain: Option<bool>,
+}
+
+/// A definition's identity in an `_explain` output.
+fn definition_parts(resource_type: &str, definition: &Value, source: &str) -> Vec<Value> {
+    let mut parts = vec![json!({"name": "type", "valueCode": resource_type})];
+    if let Some(url) = definition.get("url").and_then(Value::as_str) {
+        parts.push(json!({"name": "url", "valueUri": url}));
+    }
+    if let Some(version) = definition.get("version").and_then(Value::as_str) {
+        parts.push(json!({"name": "version", "valueString": version}));
+    }
+    parts.push(json!({"name": "source", "valueString": source}));
+    parts
 }
 
 /// Result of code validation.
@@ -185,6 +202,12 @@ impl ValidateCodeOperation {
                         "abstractAllowed" | "abstract" => {
                             validate_params.abstract_allowed =
                                 param.get("valueBoolean").and_then(|v| v.as_bool());
+                        }
+                        "_explain" => {
+                            validate_params.explain = param
+                                .get("valueBoolean")
+                                .and_then(|v| v.as_bool())
+                                .or_else(|| param.get("valueString").map(|v| v == "true"));
                         }
                         _ => {}
                     }
@@ -669,6 +692,15 @@ impl ValidateCodeOperation {
 
     /// Load a CodeSystem by URL from canonical manager.
     async fn load_code_system_by_url(&self, url: &str) -> Result<Value, OperationError> {
+        Ok(self.find_canonical("CodeSystem", url).await?.0)
+    }
+
+    /// The definition at a canonical URL in the loaded packages, with its package.
+    async fn find_canonical(
+        &self,
+        resource_type: &str,
+        url: &str,
+    ) -> Result<(Value, String), OperationError> {
         let manager = get_manager()
             .ok_or_else(|| OperationError::Internal("Canonical manager not available".into()))?;
 
@@ -676,22 +708,25 @@ impl ValidateCodeOperation {
         let search_result = manager
             .search()
             .await
-            .resource_type("CodeSystem")
+            .resource_type(resource_type)
             .canonical_pattern(&format!("^{}$", escaped_url))
             .limit(10)
             .execute()
             .await
             .map_err(|e| {
-                OperationError::Internal(format!("Failed to search for CodeSystem: {}", e))
+                OperationError::Internal(format!("Failed to search for {resource_type}: {e}"))
             })?;
 
         search_result
             .resources
             .into_iter()
             .find(|r| r.resource.content.get("url").and_then(|v| v.as_str()) == Some(url))
-            .map(|r| r.resource.content)
+            .map(|r| {
+                let package = format!("{}#{}", r.index.package_name, r.index.package_version);
+                (r.resource.content, package)
+            })
             .ok_or_else(|| {
-                OperationError::NotFound(format!("CodeSystem with url '{}' not found", url))
+                OperationError::NotFound(format!("{resource_type} with url '{url}' not found"))
             })
     }
 
@@ -744,30 +779,85 @@ impl ValidateCodeOperation {
 
     /// Load a ValueSet by URL from canonical manager.
     async fn load_value_set_by_url(&self, url: &str) -> Result<Value, OperationError> {
-        let manager = get_manager()
-            .ok_or_else(|| OperationError::Internal("Canonical manager not available".into()))?;
+        Ok(self.find_canonical("ValueSet", url).await?.0)
+    }
 
-        let escaped_url = regex::escape(url);
-        let search_result = manager
-            .search()
-            .await
-            .resource_type("ValueSet")
-            .canonical_pattern(&format!("^{}$", escaped_url))
-            .limit(10)
-            .execute()
-            .await
-            .map_err(|e| {
-                OperationError::Internal(format!("Failed to search for ValueSet: {}", e))
-            })?;
+    /// `_explain`: which definitions decided a result and where they came from. Answers
+    /// "why does this code pass here and fail there" when packages carry several versions.
+    async fn explanation(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        url: Option<&str>,
+        id: Option<&str>,
+        system: Option<&str>,
+    ) -> Result<Value, OperationError> {
+        let (definition, source) = match (id, url) {
+            (Some(id), _) if resource_type == "ValueSet" => (
+                self.load_value_set_by_id(state, id).await?,
+                "stored".to_owned(),
+            ),
+            (Some(id), _) => (
+                self.load_code_system_by_id(state, id).await?,
+                "stored".to_owned(),
+            ),
+            (None, Some(url)) => self.find_canonical(resource_type, url).await?,
+            (None, None) => {
+                return Err(OperationError::InvalidParameters(
+                    "_explain requires a definition".into(),
+                ));
+            }
+        };
+        let mut parts = definition_parts(resource_type, &definition, &source);
+        if resource_type == "ValueSet" {
+            let method = if definition.get("expansion").is_some() {
+                "expansion"
+            } else {
+                "compose"
+            };
+            parts.push(json!({"name": "method", "valueCode": method}));
+            let system = system
+                .map(str::to_owned)
+                .or_else(|| self.infer_system_from_valueset(&definition));
+            if let Some(system) = system {
+                let part = match self.find_canonical("CodeSystem", &system).await {
+                    Ok((code_system, package)) => json!({
+                        "name": "codeSystem",
+                        "part": definition_parts("CodeSystem", &code_system, &package),
+                    }),
+                    // A system with no loaded definition is checked by its listing alone.
+                    Err(_) => json!({"name": "codeSystem", "part": [
+                        {"name": "url", "valueUri": system},
+                        {"name": "source", "valueString": "not loaded"},
+                    ]}),
+                };
+                parts.push(part);
+            }
+        }
+        Ok(json!({"name": "explain", "part": parts}))
+    }
 
-        search_result
-            .resources
-            .into_iter()
-            .find(|r| r.resource.content.get("url").and_then(|v| v.as_str()) == Some(url))
-            .map(|r| r.resource.content)
-            .ok_or_else(|| {
-                OperationError::NotFound(format!("ValueSet with url '{}' not found", url))
-            })
+    /// Adds the `_explain` output when the request asked for it.
+    async fn explained(
+        &self,
+        state: &AppState,
+        result: Value,
+        request: &ValidateCodeParams,
+        resource_type: &str,
+        id: Option<&str>,
+        system: Option<&str>,
+    ) -> Result<Value, OperationError> {
+        if request.explain != Some(true) {
+            return Ok(result);
+        }
+        let explanation = self
+            .explanation(state, resource_type, request.url.as_deref(), id, system)
+            .await?;
+        let mut result = result;
+        if let Some(parameters) = result["parameter"].as_array_mut() {
+            parameters.push(explanation);
+        }
+        Ok(result)
     }
 
     /// Load a ValueSet by ID from storage.
@@ -913,30 +1003,43 @@ impl OperationHandler for ValidateCodeOperation {
         // Otherwise try CodeSystem first
         if system.is_some() || infer_system {
             // ValueSet validation
-            self.validate_value_set(
+            let result = self
+                .validate_value_set(
+                    state,
+                    url,
+                    None,
+                    &code,
+                    system.as_deref(),
+                    display.as_deref(),
+                    infer_system,
+                    abstract_allowed,
+                )
+                .await?
+                .to_parameters();
+            self.explained(
                 state,
-                url,
+                result,
+                &validate_params,
+                "ValueSet",
                 None,
-                &code,
                 system.as_deref(),
-                display.as_deref(),
-                infer_system,
-                abstract_allowed,
             )
             .await
-            .map(|r| r.to_parameters())
         } else {
             // Try CodeSystem validation
-            self.validate_code_system(
-                state,
-                url,
-                None,
-                &code,
-                display.as_deref(),
-                abstract_allowed,
-            )
-            .await
-            .map(|r| r.to_parameters())
+            let result = self
+                .validate_code_system(
+                    state,
+                    url,
+                    None,
+                    &code,
+                    display.as_deref(),
+                    abstract_allowed,
+                )
+                .await?
+                .to_parameters();
+            self.explained(state, result, &validate_params, "CodeSystem", None, None)
+                .await
         }
     }
 
@@ -981,16 +1084,19 @@ impl OperationHandler for ValidateCodeOperation {
                             .into(),
                     ));
                 }
-                self.validate_code_system(
-                    state,
-                    url,
-                    None,
-                    &code,
-                    display.as_deref(),
-                    abstract_allowed,
-                )
-                .await
-                .map(|r| r.to_parameters())
+                let result = self
+                    .validate_code_system(
+                        state,
+                        url,
+                        None,
+                        &code,
+                        display.as_deref(),
+                        abstract_allowed,
+                    )
+                    .await?
+                    .to_parameters();
+                self.explained(state, result, &validate_params, "CodeSystem", None, None)
+                    .await
             }
             "ValueSet" => {
                 if url.is_none() {
@@ -999,18 +1105,28 @@ impl OperationHandler for ValidateCodeOperation {
                             .into(),
                     ));
                 }
-                self.validate_value_set(
+                let result = self
+                    .validate_value_set(
+                        state,
+                        url,
+                        None,
+                        &code,
+                        system.as_deref(),
+                        display.as_deref(),
+                        infer_system,
+                        abstract_allowed,
+                    )
+                    .await?
+                    .to_parameters();
+                self.explained(
                     state,
-                    url,
+                    result,
+                    &validate_params,
+                    "ValueSet",
                     None,
-                    &code,
                     system.as_deref(),
-                    display.as_deref(),
-                    infer_system,
-                    abstract_allowed,
                 )
                 .await
-                .map(|r| r.to_parameters())
             }
             _ => Err(OperationError::NotSupported(format!(
                 "$validate-code is only supported on CodeSystem and ValueSet, not {}",
@@ -1053,30 +1169,52 @@ impl OperationHandler for ValidateCodeOperation {
         let abstract_allowed = validate_params.abstract_allowed.unwrap_or(false);
 
         match resource_type {
-            "CodeSystem" => self
-                .validate_code_system(
+            "CodeSystem" => {
+                let result = self
+                    .validate_code_system(
+                        state,
+                        None,
+                        Some(id),
+                        &code,
+                        display.as_deref(),
+                        abstract_allowed,
+                    )
+                    .await?
+                    .to_parameters();
+                self.explained(
                     state,
-                    None,
+                    result,
+                    &validate_params,
+                    "CodeSystem",
                     Some(id),
-                    &code,
-                    display.as_deref(),
-                    abstract_allowed,
+                    None,
                 )
                 .await
-                .map(|r| r.to_parameters()),
-            "ValueSet" => self
-                .validate_value_set(
+            }
+            "ValueSet" => {
+                let result = self
+                    .validate_value_set(
+                        state,
+                        None,
+                        Some(id),
+                        &code,
+                        system.as_deref(),
+                        display.as_deref(),
+                        infer_system,
+                        abstract_allowed,
+                    )
+                    .await?
+                    .to_parameters();
+                self.explained(
                     state,
-                    None,
+                    result,
+                    &validate_params,
+                    "ValueSet",
                     Some(id),
-                    &code,
                     system.as_deref(),
-                    display.as_deref(),
-                    infer_system,
-                    abstract_allowed,
                 )
                 .await
-                .map(|r| r.to_parameters()),
+            }
             _ => Err(OperationError::NotSupported(format!(
                 "$validate-code is only supported on CodeSystem and ValueSet, not {}",
                 resource_type
@@ -1088,6 +1226,22 @@ impl OperationHandler for ValidateCodeOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explain_is_requested_and_described() {
+        let parameters = json!({"resourceType":"Parameters","parameter":[
+            {"name":"_explain","valueBoolean":true}]});
+        let parsed = ValidateCodeOperation::extract_params(&parameters).unwrap();
+        assert_eq!(parsed.explain, Some(true));
+        let parts = definition_parts(
+            "ValueSet",
+            &json!({"url":"urn:vs","version":"1.2"}),
+            "hl7.fhir.r4.core#4.0.1",
+        );
+        assert_eq!(parts[1]["valueUri"], "urn:vs");
+        assert_eq!(parts[2]["valueString"], "1.2");
+        assert_eq!(parts[3]["valueString"], "hl7.fhir.r4.core#4.0.1");
+    }
 
     #[test]
     fn test_extract_params_from_query() {

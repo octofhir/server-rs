@@ -8,6 +8,7 @@ use crate::terminology_provider::CqlTerminologyProvider;
 use indexmap::IndexMap;
 use octofhir_cql::{CompiledLibrary as CqlLibrary, parse};
 use octofhir_cql_model::fhir::json::fhir_to_cql;
+use octofhir_cql_types::{CqlDateTime, CqlInterval, CqlType, CqlValue};
 use octofhir_storage::SearchParams;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -294,6 +295,86 @@ define Result:
         })??;
 
         Ok(results)
+    }
+
+    /// The CQL text of a stored Library.
+    pub async fn library_source(&self, url: &str, version: Option<&str>) -> CqlResult<String> {
+        let library = self
+            .library_cache
+            .get_or_compile(url, version.unwrap_or("latest"), &self.storage)
+            .await?;
+        Ok(library.cql_source.clone())
+    }
+
+    /// Evaluate one library for many subjects, compiling it once: the shape of a measure
+    /// population. `period` is the `Measurement Period` parameter as two instants.
+    pub async fn evaluate_subjects(
+        &self,
+        cql_source: &str,
+        context_type: &str,
+        subjects: Vec<Value>,
+        period: (&str, &str),
+    ) -> CqlResult<Vec<IndexMap<String, Value>>> {
+        let boundary = |value: &str| {
+            CqlDateTime::parse(value)
+                .map(|instant| Box::new(CqlValue::DateTime(instant)))
+                .ok_or_else(|| CqlError::InvalidParameter(format!("Invalid instant {value}")))
+        };
+        let measurement_period = CqlValue::Interval(CqlInterval {
+            point_type: CqlType::DateTime,
+            low: Some(boundary(period.0)?),
+            low_closed: true,
+            high: Some(boundary(period.1)?),
+            high_closed: true,
+        });
+        let includes = self.included_sources(cql_source).await?;
+        let timeout = Duration::from_millis(self.config.evaluation_timeout_ms);
+        let provider = self.data_provider.clone();
+        let terminology_provider = self.terminology_provider.clone();
+        let cql_source = cql_source.to_owned();
+        let context_type = context_type.to_owned();
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || -> CqlResult<Vec<IndexMap<String, Value>>> {
+            let _entered = runtime.enter();
+            let load = |name: &str, version: Option<&str>| {
+                includes
+                    .get(&(name.to_owned(), version.map(str::to_owned)))
+                    .cloned()
+            };
+            let library = CqlLibrary::compile_with(&cql_source, &load)
+                .map_err(|e| CqlError::ParseError(e.to_string()))?;
+            let mut results = Vec::with_capacity(subjects.len());
+            for subject in subjects {
+                let data_provider =
+                    Arc::new(provider.for_evaluation(std::time::Instant::now() + timeout));
+                let mut ctx = octofhir_cql_eval::EvaluationContextBuilder::new()
+                    .data_provider(data_provider.clone())
+                    .terminology_provider(terminology_provider.clone())
+                    .context(context_type.clone(), fhir_to_cql(&subject))
+                    .parameter("Measurement Period".to_owned(), measurement_period.clone())
+                    .build();
+                library.register(&mut ctx);
+                let result = library.evaluate(&mut ctx);
+                if let Some(error) = data_provider.take_error() {
+                    return Err(error);
+                }
+                let defines =
+                    result.map_err(|error| CqlError::EvaluationError(format!("{error:?}")))?;
+                results.push(
+                    defines
+                        .into_iter()
+                        .map(|(name, value)| {
+                            let json = super::data_provider::cql_value_to_json(&value)
+                                .unwrap_or(Value::Null);
+                            (name, json)
+                        })
+                        .collect(),
+                );
+            }
+            Ok(results)
+        })
+        .await
+        .map_err(|error| CqlError::EvaluationError(error.to_string()))?
     }
 
     pub async fn evaluate_library(

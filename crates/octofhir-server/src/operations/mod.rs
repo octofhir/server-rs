@@ -51,6 +51,7 @@ pub mod db_console_api;
 pub mod definition;
 pub mod evaluate_measure;
 pub mod everything;
+pub mod expunge;
 pub mod fhirpath;
 pub mod fml;
 pub mod graph;
@@ -64,6 +65,7 @@ pub mod registry;
 pub mod router;
 pub mod sof;
 pub mod sql;
+pub mod summary;
 pub mod terminology;
 pub mod validate;
 pub(crate) mod validation_reference;
@@ -299,7 +301,7 @@ pub fn register_core_operations_all(
     // $fhirpath operation
     handlers.insert("fhirpath".to_string(), Arc::new(FhirPathOperation::new()));
 
-    // CQL expression operation; measure evaluation retains an explicit 501 contract
+    // CQL expression operation and measure evaluation on it
     if cql_enabled {
         tracing::info!("Registering CQL operations (cql_enabled=true)");
         handlers.insert("cql".to_string(), Arc::new(CqlOperation::new()));
@@ -307,7 +309,7 @@ pub fn register_core_operations_all(
             "evaluate-measure".to_string(),
             Arc::new(EvaluateMeasureOperation::new()),
         );
-        tracing::info!("CQL expression operation registered; measure scoring is unavailable");
+        tracing::info!("CQL operations registered");
     } else {
         tracing::info!("CQL operations NOT registered (cql_enabled=false)");
     }
@@ -330,6 +332,12 @@ pub fn register_core_operations_all(
 
     // $graph operation
     handlers.insert("graph".to_string(), Arc::new(GraphOperation::new()));
+
+    // $expunge operation
+    handlers.insert("expunge".to_string(), Arc::new(expunge::ExpungeOperation));
+
+    // Patient/$summary (International Patient Summary)
+    handlers.insert("summary".to_string(), Arc::new(summary::SummaryOperation));
 
     // StructureMap/$transform, QuestionnaireResponse/$extract and $convert (FHIR Mapping Language)
     let fml_enabled = fml_config.enabled;
@@ -356,6 +364,43 @@ pub(crate) fn register_export_definitions(
     sof_enabled: bool,
     submit_enabled: bool,
 ) {
+    registry.register(OperationDefinition {
+        code: "expunge".into(),
+        url: "http://octofhir.org/OperationDefinition/expunge".into(),
+        kind: OperationKind::Operation,
+        system: false,
+        type_level: false,
+        instance: true,
+        resource: vec!["Resource".into()],
+        parameters: vec![],
+        affects_state: true,
+    });
+    registry.register(OperationDefinition {
+        code: "summary".into(),
+        url: "http://hl7.org/fhir/uv/ips/OperationDefinition/summary".into(),
+        kind: OperationKind::Operation,
+        system: false,
+        type_level: true,
+        instance: true,
+        resource: vec!["Patient".into()],
+        parameters: vec![],
+        affects_state: false,
+    });
+    if submit_enabled {
+        for (code, affects_state) in [("bulk-submit", true), ("bulk-submit-status", true)] {
+            registry.register(OperationDefinition {
+                code: code.into(),
+                url: format!("http://hl7.org/fhir/uv/bulkdata/OperationDefinition/{code}"),
+                kind: OperationKind::Operation,
+                system: true,
+                type_level: false,
+                instance: false,
+                resource: vec![],
+                parameters: vec![],
+                affects_state,
+            });
+        }
+    }
     if bulk_enabled {
         for (name, system, type_level, instance, resource) in [
             ("export", true, false, false, vec![]),
