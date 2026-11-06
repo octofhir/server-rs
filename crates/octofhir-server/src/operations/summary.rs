@@ -1,4 +1,5 @@
-//! `Patient/$summary`: an International Patient Summary document (IPS IG 2.0.1).
+//! `Patient/$summary`: a patient summary document, by default an International Patient
+//! Summary (IPS IG 2.0.1), or the HL7 Europe Patient Summary through the `profile` parameter.
 //!
 //! The document is built on request from the patient's current data. The IG leaves what
 //! is relevant to the implementer beyond current allergies, medications and problems; the
@@ -59,7 +60,7 @@ struct Section {
     title: &'static str,
     code: &'static str,
     display: &'static str,
-    /// The IPS Composition requires this section even with nothing to say.
+    /// Every Composition profile requires this section even with nothing to say.
     required: bool,
     queries: &'static [SectionQuery],
 }
@@ -67,6 +68,14 @@ struct Section {
 const ACTIVE_CONDITION: &[(&str, &str)] = &[("clinical-status", "active,recurrence,relapse")];
 const PAST_CONDITION: &[(&str, &str)] = &[("clinical-status", "inactive,remission,resolved")];
 const ACTIVE: &[(&str, &str)] = &[("status", "active")];
+/// The pregnancy status code and the `pregnancies-summary-uv-ips` value set.
+const PREGNANCY: &[(&str, &str)] = &[(
+    "code",
+    "http://loinc.org|82810-3,http://loinc.org|11636-8,http://loinc.org|11637-6,\
+http://loinc.org|11638-4,http://loinc.org|11639-2,http://loinc.org|11640-0,\
+http://loinc.org|11612-9,http://loinc.org|11613-7,http://loinc.org|11614-5,\
+http://loinc.org|33065-4",
+)];
 
 const SECTIONS: &[Section] = &[
     Section {
@@ -182,7 +191,102 @@ const SECTIONS: &[Section] = &[
         required: false,
         queries: &[query("Consent", ACTIVE, None)],
     },
+    Section {
+        title: "Functional Status",
+        code: "47420-5",
+        display: "Functional status assessment note",
+        required: false,
+        queries: &[query(
+            "ClinicalImpression",
+            &[("status", "completed")],
+            Some("-date"),
+        )],
+    },
+    Section {
+        title: "History of Pregnancy",
+        code: "10162-6",
+        display: "History of pregnancies Narrative",
+        required: false,
+        queries: &[query("Observation", PREGNANCY, Some("-date"))],
+    },
 ];
+
+const TRAVEL: &[Section] = &[Section {
+    title: "Travel History",
+    code: "10182-4",
+    display: "History of Travel Note",
+    required: false,
+    queries: &[query(
+        "Observation",
+        &[("code", "http://loinc.org|94651-7")],
+        Some("-date"),
+    )],
+}];
+
+/// A Composition profile the document can be built for.
+struct SummaryProfile {
+    composition: &'static str,
+    bundle: &'static str,
+    title: &'static str,
+    /// Sections of [`SECTIONS`] that this profile requires on top of the common ones.
+    also_required: &'static [&'static str],
+    /// Sections only this profile has.
+    extra: &'static [Section],
+}
+
+const IPS: SummaryProfile = SummaryProfile {
+    composition: "http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips",
+    bundle: "http://hl7.org/fhir/uv/ips/StructureDefinition/Bundle-uv-ips",
+    title: "International Patient Summary",
+    also_required: &[],
+    extra: &[],
+};
+
+const EPS: SummaryProfile = SummaryProfile {
+    composition: "http://hl7.eu/fhir/eps/StructureDefinition/composition-eu-eps",
+    bundle: "http://hl7.eu/fhir/eps/StructureDefinition/bundle-eu-eps",
+    title: "Patient Summary",
+    also_required: &["47519-4", "46264-8"],
+    extra: TRAVEL,
+};
+
+impl SummaryProfile {
+    fn sections(&self) -> impl Iterator<Item = &'static Section> + use<> {
+        SECTIONS.iter().chain(self.extra)
+    }
+
+    fn requires(&self, section: &Section) -> bool {
+        section.required || self.also_required.contains(&section.code)
+    }
+
+    /// The profile named by the `profile` parameter, a canonical with an optional version.
+    fn requested(params: &Value) -> Result<&'static Self, OperationError> {
+        let Some(canonical) = parameter(params, "profile") else {
+            return Ok(&IPS);
+        };
+        let url = canonical.split('|').next().unwrap_or(canonical);
+        [&IPS, &EPS]
+            .into_iter()
+            .find(|profile| profile.composition == url || profile.bundle == url)
+            .ok_or_else(|| {
+                OperationError::NotSupported(format!(
+                    "$summary cannot build {url}; it builds {} and {}",
+                    IPS.composition, EPS.composition
+                ))
+            })
+    }
+}
+
+/// The first value of an input parameter, as read from a query string or a `Parameters` body.
+fn parameter<'a>(params: &'a Value, name: &str) -> Option<&'a str> {
+    let found = params["parameter"]
+        .as_array()?
+        .iter()
+        .find(|parameter| parameter["name"] == name)?;
+    ["valueCanonical", "valueUri", "valueString"]
+        .into_iter()
+        .find_map(|key| found[key].as_str())
+}
 
 pub struct SummaryOperation;
 
@@ -348,8 +452,11 @@ impl SummaryOperation {
         state: &AppState,
         context: &OperationContext,
         patient: StoredResource,
+        profile: &SummaryProfile,
     ) -> Result<Value, OperationError> {
-        let queries = SECTIONS.iter().flat_map(|section| section.queries.iter());
+        let queries = profile
+            .sections()
+            .flat_map(|section| section.queries.iter());
         let results =
             try_join_all(queries.map(|section| run_query(state, context, &patient.id, section)))
                 .await?;
@@ -358,12 +465,12 @@ impl SummaryOperation {
         let mut known: HashSet<String> = HashSet::from([format!("Patient/{}", patient.id)]);
         let mut resources: Vec<StoredResource> = Vec::new();
         let mut sections = Vec::new();
-        for section in SECTIONS {
+        for section in profile.sections() {
             let mut entries = Vec::new();
             for _ in section.queries {
                 entries.extend(results.next().unwrap_or_default());
             }
-            if entries.is_empty() && !section.required {
+            if entries.is_empty() && !profile.requires(section) {
                 continue;
             }
             sections.push(section_json(section, &entries));
@@ -404,13 +511,14 @@ impl SummaryOperation {
             json!({"fullUrl": format!("urn:uuid:{composition}"), "resource": {
                 "resourceType": "Composition",
                 "id": composition.to_string(),
+                "meta": {"profile": [profile.composition]},
                 "status": "final",
                 "type": {"coding": [{"system": LOINC, "code": "60591-5",
                     "display": "Patient summary Document"}]},
                 "subject": {"reference": format!("Patient/{}", patient.id)},
                 "date": now,
                 "author": [{"reference": format!("urn:uuid:{device}")}],
-                "title": "International Patient Summary",
+                "title": profile.title,
                 "section": sections,
             }}),
             json!({"fullUrl": format!("{fhir_base}/Patient/{}", patient.id),
@@ -457,21 +565,16 @@ impl OperationHandler for SummaryOperation {
         _resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
-        let identifier = params["parameter"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|parameter| parameter["name"] == "identifier")
-            .and_then(|parameter| parameter["valueString"].as_str())
-            .ok_or_else(|| {
-                OperationError::InvalidParameters("$summary requires an identifier here".into())
-            })?;
+        let profile = SummaryProfile::requested(params)?;
+        let identifier = parameter(params, "identifier").ok_or_else(|| {
+            OperationError::InvalidParameters("$summary requires an identifier here".into())
+        })?;
         let search = SearchParams::new()
             .with_count(2)
             .with_param("identifier", identifier);
         let mut matches = context.search(state, "Patient", &search).await?.entries;
         match (matches.pop(), matches.is_empty()) {
-            (Some(patient), true) => self.build(state, context, patient).await,
+            (Some(patient), true) => self.build(state, context, patient, profile).await,
             (None, _) => Err(OperationError::NotFound(format!(
                 "No Patient has the identifier {identifier}"
             ))),
@@ -487,13 +590,14 @@ impl OperationHandler for SummaryOperation {
         context: &OperationContext,
         _resource_type: &str,
         id: &str,
-        _params: &Value,
+        params: &Value,
     ) -> Result<Value, OperationError> {
+        let profile = SummaryProfile::requested(params)?;
         let patient = context
             .read(state, "Patient", id)
             .await?
             .ok_or_else(|| OperationError::NotFound(format!("Patient/{id} not found")))?;
-        self.build(state, context, patient).await
+        self.build(state, context, patient, profile).await
     }
 }
 
@@ -509,6 +613,36 @@ mod tests {
             .map(|section| section.code)
             .collect();
         assert_eq!(required, ["11450-4", "48765-2", "10160-0"]);
+    }
+
+    #[test]
+    fn the_europe_profile_requires_more_and_adds_travel() {
+        let required: Vec<_> = EPS
+            .sections()
+            .filter(|section| EPS.requires(section))
+            .map(|section| section.code)
+            .collect();
+        assert_eq!(
+            required,
+            ["11450-4", "48765-2", "10160-0", "47519-4", "46264-8"]
+        );
+        assert!(EPS.sections().any(|section| section.code == "10182-4"));
+        assert!(!IPS.sections().any(|section| section.code == "10182-4"));
+    }
+
+    #[test]
+    fn the_profile_parameter_selects_or_is_refused() {
+        let with = |value: &str| json!({"parameter":[{"name":"profile","valueCanonical":value}]});
+        let chosen = |params: &Value| SummaryProfile::requested(params).map(|p| p.title);
+        assert_eq!(chosen(&json!({})).unwrap(), IPS.title);
+        assert_eq!(chosen(&with(EPS.composition)).unwrap(), EPS.title);
+        assert_eq!(chosen(&with(EPS.bundle)).unwrap(), EPS.title);
+        let versioned = format!("{}|1.0.0-ballot", EPS.composition);
+        assert_eq!(chosen(&with(&versioned)).unwrap(), EPS.title);
+        assert!(matches!(
+            chosen(&with("http://example.org/other")),
+            Err(OperationError::NotSupported(_))
+        ));
     }
 
     #[test]
