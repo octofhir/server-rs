@@ -27,7 +27,7 @@ use octofhir_sof::catalog::{
     RemoteFallback, compare_versions, provider_name, remote_origin, value_set_content,
 };
 use octofhir_sof::expansion::{
-    ExpansionError, Lookup, Resolved, TerminologySource, split_canonical,
+    ExpansionError, Lookup, Resolved, TerminologySource, dated_by, split_canonical,
 };
 use octofhir_sof::plan::{
     ArtifactSource, ContextArtifacts, PlanError, TerminologyContent, matches_canonical,
@@ -79,6 +79,50 @@ impl TerminologySource for ServerTerminology<'_> {
             other => other,
         };
         lookup.map_err(|error| ExpansionError::Source(Box::new(error)))
+    }
+
+    /// The latest version dated by `date`, among the `context` artifact and the versions the
+    /// server stores, then the package. A package holds one version.
+    async fn find_as_of(
+        &self,
+        resource_type: &str,
+        url: &str,
+        date: &str,
+    ) -> Result<Lookup, ExpansionError> {
+        if let Some(found) = self.inline.find(Some(resource_type), url, None)
+            && dated_by(&found, date)
+        {
+            return Ok(Lookup::Found(Resolved {
+                resource: found,
+                origin: "context".into(),
+            }));
+        }
+        let source = |error| ExpansionError::Source(Box::new(error));
+        let mut matching = stored_all(
+            self.state,
+            self.context,
+            resource_type,
+            url,
+            None,
+            MAX_VERSIONS,
+        )
+        .await
+        .map_err(source)?;
+        matching.retain(|resource| dated_by(resource, date));
+        matching.sort_by(compare_versions);
+        if let Some(latest) = matching.last() {
+            return Ok(found_stored(resource_type, latest));
+        }
+        Ok(
+            match packaged(resource_type, url, None).await.map_err(source)? {
+                Lookup::Found(resolved) if !dated_by(&resolved.resource, date) => {
+                    Lookup::Ambiguous(format!(
+                        "{url} is only available in a version later than the locked date {date}"
+                    ))
+                }
+                other => other,
+            },
+        )
     }
 }
 

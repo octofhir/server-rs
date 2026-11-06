@@ -170,6 +170,13 @@ Content-Type: application/fhir+json
 `$expand`, `$lookup`, `$validate-code`, `$subsumes`, `$translate` and `$closure`. Value sets,
 code systems and concept maps are resolved from installed packages.
 
+A value set whose definition can be computed here takes `compose.lockedDate` into account: what is
+not tied to a version comes in the latest version dated by then, and a version named outright has to
+be dated by then too. A code system with `caseSensitive = false` matches codes in any case, and the
+supplements named by the `valueset-supplement` extension add their properties and designations. What
+cannot be determined, such as a supplement that is not found, fails the expansion rather than giving
+a wrong one.
+
 ### Expansion Parameters
 
 | Parameter | Type | Description |

@@ -4559,9 +4559,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-sof"
-version = "0.3.4"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e40124047d5aa5611af64fade336f14c6366b05bf9e2df4d2b1eb446b37e91ab"
+checksum = "bcfde663c44c2de8cec3ab4b45eeb3db742d7443783bc6672a9f0c981d4ced7e"
 dependencies = [
  "arrow-array",
  "arrow-schema",

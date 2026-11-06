@@ -826,6 +826,46 @@ define "Gender": Patient.gender
     );
 }
 
+/// `compose.lockedDate` picks the version of a code system stored in two.
+async fn locked_value_set(client: &Client, base: &str) {
+    let url = "http://example.org/CodeSystem/locked";
+    for (id, version, date, code) in [
+        ("locked-1", "1", "2020-01-01", "old"),
+        ("locked-2", "2", "2024-06-01", "new"),
+    ] {
+        put(
+            client,
+            base,
+            json!({"resourceType":"CodeSystem","id":id,"url":url,"version":version,"date":date,
+                "status":"active","content":"complete","concept":[{"code":code}]}),
+        )
+        .await;
+    }
+    let codes = |expansion: &Value| -> Vec<String> {
+        expansion["expansion"]["contains"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["code"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    for (id, locked, expected) in [
+        ("locked-then", json!("2021-01-01"), "old"),
+        ("locked-now", json!("2025-01-01"), "new"),
+    ] {
+        put(
+            client,
+            base,
+            json!({"resourceType":"ValueSet","id":id,"status":"active",
+                "url":format!("http://example.org/ValueSet/{id}"),
+                "compose":{"lockedDate":locked,"include":[{"system":url}]}}),
+        )
+        .await;
+        let expansion = get(client, &format!("{base}/fhir/ValueSet/{id}/$expand")).await;
+        assert_eq!(codes(&expansion), [expected], "{expansion}");
+    }
+}
+
 /// Every JSON answer of the API is the FHIR media type, unless plain JSON was asked for.
 async fn media_types(client: &Client, base: &str) {
     for path in ["metadata", "Patient?_count=1", "Patient/no-such-patient"] {
@@ -990,6 +1030,7 @@ async fn paging_summary_and_agents() {
     mcp(&client, &base).await;
     measure(&client, &base).await;
     media_types(&client, &base).await;
+    locked_value_set(&client, &base).await;
     embedded_chains(&client, &base).await;
     delete_history(&client, &base).await;
 }
