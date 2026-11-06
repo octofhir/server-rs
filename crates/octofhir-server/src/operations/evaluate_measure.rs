@@ -9,7 +9,7 @@
 //! goes through it and the group's `aggregateMethod` turns the values into the score. A ratio
 //! can observe its numerator and denominator, and then divides the two aggregates.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -624,11 +624,47 @@ fn contained_lists(prefix: &str, used: &[&str], tally: &Tally, now: &str) -> Vec
         .collect()
 }
 
+/// References to what the populations of a subject hold, for `evaluatedResource`.
+fn evaluated_resources(
+    groups: &[(Group<'_>, Scoring, bool)],
+    defines: Option<&IndexMap<String, Value>>,
+) -> Vec<Value> {
+    let Some(defines) = defines else {
+        return Vec::new();
+    };
+    let found: BTreeSet<String> = groups
+        .iter()
+        .flat_map(|(group, ..)| {
+            group
+                .criteria
+                .iter()
+                .filter(|(code, _)| **code != OBSERVATION)
+        })
+        .filter_map(|(_, name)| defines.get(*name)?.as_array())
+        .flatten()
+        .filter_map(|item| {
+            Some(format!(
+                "{}/{}",
+                item["resourceType"].as_str()?,
+                item["id"].as_str()?
+            ))
+        })
+        .collect();
+    found
+        .into_iter()
+        .map(|reference| json!({"reference": reference}))
+        .collect()
+}
+
 /// What a request asks for.
 struct Request {
     period: (String, String),
     report_type: Option<String>,
     subject: Option<String>,
+    /// The patients of a `subjectGroup`, in place of `subject`.
+    members: Option<Vec<String>>,
+    reporter: Option<String>,
+    location: Option<String>,
 }
 
 fn parameter<'a>(params: &'a Value, name: &str) -> Option<&'a Value> {
@@ -674,6 +710,9 @@ impl Request {
             ),
             report_type: text_parameter(params, "reportType").map(str::to_owned),
             subject: text_parameter(params, "subject").map(str::to_owned),
+            members: None,
+            reporter: text_parameter(params, "reporter").map(str::to_owned),
+            location: text_parameter(params, "location").map(str::to_owned),
         })
     }
 }
@@ -825,9 +864,13 @@ impl EvaluateMeasureOperation {
             }
         }
 
-        let (subjects, individual) = self
-            .subjects(state, context, request.subject.as_deref())
-            .await?;
+        let (subjects, individual) = match &request.members {
+            Some(members) => (read_patients(state, context, members).await?, false),
+            None => {
+                self.subjects(state, context, request.subject.as_deref())
+                    .await?
+            }
+        };
         let references: Vec<String> = subjects
             .iter()
             .map(|patient| format!("Patient/{}", patient.id))
@@ -928,7 +971,18 @@ impl EvaluateMeasureOperation {
             "period": {"start": request.period.0, "end": request.period.1},
             "group": report_groups,
         });
+        if let Some(reporter) = &request.reporter {
+            report["reporter"] = json!({"reference": reporter});
+        }
+        // MeasureReport has no location before R5.
+        if let (Some(location), "measureScoreQuantity") = (&request.location, score_element) {
+            report["location"] = json!({"reference": location});
+        }
         if individual {
+            let resources = evaluated_resources(&groups, evaluated.iter().flatten().next());
+            if !resources.is_empty() {
+                report["evaluatedResource"] = json!(resources);
+            }
             report["subject"] = json!({"reference": references.first()});
         } else if let Some(subject) = &request.subject {
             report["subject"] = json!({"reference": subject});
@@ -1011,6 +1065,39 @@ impl EvaluateOperation {
         }
     }
 
+    /// The patients of a `subjectGroup`: a Group sent with the request, not stored here.
+    fn subject_group(
+        state: &AppState,
+        params: &Value,
+    ) -> Result<Option<Vec<String>>, OperationError> {
+        let Some(parameter) = parameter(params, "subjectGroup") else {
+            return Ok(None);
+        };
+        if text_parameter(params, "subject").is_some() {
+            return Err(OperationError::InvalidParameters(
+                "subject and subjectGroup cannot go together".into(),
+            ));
+        }
+        let members = super::group::active_members(
+            &parameter["resource"],
+            &state.fhir_base_url(),
+            OffsetDateTime::now_utc(),
+        )?;
+        members
+            .into_iter()
+            .map(|member| {
+                if member.resource_type == "Patient" {
+                    Ok(member.id)
+                } else {
+                    Err(OperationError::NotSupported(
+                        "A subjectGroup lists Patients, not other Groups".into(),
+                    ))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
     async fn bundle(
         state: &AppState,
         context: &OperationContext,
@@ -1049,7 +1136,7 @@ impl OperationHandler for EvaluateOperation {
         _resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
-        for name in ["subjectGroup", "reporterResource", "manifest"] {
+        for name in ["reporterResource", "manifest"] {
             if parameter(params, name).is_some() {
                 return Err(OperationError::NotSupported(format!(
                     "The {name} parameter is not supported"
@@ -1078,18 +1165,26 @@ impl OperationHandler for EvaluateOperation {
         }
 
         let mut request = Request::parse(params)?;
-        let group = request
-            .subject
-            .as_deref()
-            .is_some_and(|subject| subject.contains("Group/"));
+        request.members = Self::subject_group(state, params)?;
+        let group = request.members.is_some()
+            || request
+                .subject
+                .as_deref()
+                .is_some_and(|subject| subject.contains("Group/"));
         let report_type = Self::report_type(params, group)?;
         request.report_type = Some(report_type.to_owned());
 
         let mut bundles = Vec::new();
         if report_type == "individual" {
-            let (subjects, _) = EvaluateMeasureOperation
-                .subjects(state, context, request.subject.as_deref())
-                .await?;
+            let subjects = match request.members.take() {
+                Some(members) => read_patients(state, context, &members).await?,
+                None => {
+                    EvaluateMeasureOperation
+                        .subjects(state, context, request.subject.as_deref())
+                        .await?
+                        .0
+                }
+            };
             for subject in subjects {
                 request.subject = Some(format!("Patient/{}", subject.id));
                 bundles.push(Self::bundle(state, context, &measures, &request).await?);
@@ -1198,6 +1293,37 @@ mod tests {
     fn the_aggregate_method_is_an_element_from_r5() {
         let population = json!({"aggregateMethod": {"coding": [{"code": "median"}]}});
         assert_eq!(Aggregate::of(&population).unwrap(), Aggregate::Median);
+    }
+
+    #[test]
+    fn evaluated_resources_are_what_the_populations_hold() {
+        let source = json!({"population": [
+            {"code": {"coding": [{"code": "initial-population"}]}, "criteria": {"expression": "IP"}},
+            {"code": {"coding": [{"code": "numerator"}]}, "criteria": {"expression": "N"}},
+        ]});
+        let groups = [(Group::parse(0, &source).unwrap(), Scoring::Cohort, false)];
+        let defines = IndexMap::from([
+            (
+                "IP".to_owned(),
+                json!([{"resourceType": "Encounter", "id": "1"}]),
+            ),
+            (
+                "N".to_owned(),
+                json!([{"resourceType": "Encounter", "id": "1"},
+                    {"resourceType": "Condition", "id": "2"}]),
+            ),
+            (
+                "Other".to_owned(),
+                json!([{"resourceType": "Basic", "id": "3"}]),
+            ),
+        ]);
+        assert_eq!(
+            evaluated_resources(&groups, Some(&defines)),
+            [
+                json!({"reference": "Condition/2"}),
+                json!({"reference": "Encounter/1"})
+            ]
+        );
     }
 
     #[test]

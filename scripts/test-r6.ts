@@ -162,6 +162,29 @@ check("individual report", report.type, "individual");
 check("numerator", report.group[0].population[2].count, 1);
 check("score", report.group[0].measureScoreQuantity?.value, 1);
 
+const [, bySubjectGroup] = await call("POST", "/Measure/$evaluate", {
+  resourceType: "Parameters",
+  parameter: [
+    { name: "measureUrl", valueCanonical: `${canonical}/Measure` },
+    { name: "periodStart", valueDate: "2026" },
+    { name: "periodEnd", valueDate: "2026" },
+    {
+      name: "subjectGroup",
+      resource: {
+        resourceType: "Group",
+        type: "person",
+        membership: "enumerated",
+        member: [{ entity: { reference: `Patient/${patient.id}` } }],
+      },
+    },
+    { name: "reporter", valueString: "Organization/reporting" },
+  ],
+});
+const summary = bySubjectGroup.parameter?.[0]?.resource?.entry?.[0]?.resource;
+check("subjectGroup gives a summary", summary?.type, "summary");
+check("subjectGroup counts its member", summary?.group?.[0]?.population?.[0]?.count, 1);
+check("reporter is carried", summary?.reporter?.reference, "Organization/reporting");
+
 // $purge
 const [, observation] = await call("POST", "/Observation", {
   resourceType: "Observation",
@@ -179,6 +202,11 @@ const [, linked] = await call("POST", "/Patient", {
   resourceType: "Patient",
   link: [{ other: { reference: `Patient/${patient.id}` }, type: "replaced-by" }],
 });
+check(
+  "enumerated Group has members",
+  (await call("GET", `/Group/${group.id}/$everything`))[0],
+  200,
+);
 const [, dry] = await call("GET", `/Patient/${patient.id}/$purge`);
 check("dry run counts", dry.issue[0].diagnostics.startsWith("Would remove"), true);
 check("dry run removes nothing", (await call("GET", `/Patient/${patient.id}`))[0], 200);

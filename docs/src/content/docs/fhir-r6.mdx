@@ -98,8 +98,10 @@ Content-Type: application/fhir+json
 | `summary` | One Bundle, with a report per measure. The default otherwise |
 | `subject-list` | One Bundle, with a subject list report per measure |
 
-`subject` is a Patient or a Group. The Bundles hold the MeasureReports only, without the evaluated
-resources. `subjectGroup`, `reporterResource` and `manifest` are refused.
+`subject` is a Patient or a Group, and `subjectGroup` a Group of Patients sent with the request.
+`reporter` and `location` go into the reports. An individual report lists what its populations hold
+in `evaluatedResource`; the Bundles hold the MeasureReports only, not those resources.
+`reporterResource` and `manifest` are refused.
 
 ## Measures from R5 on
 
