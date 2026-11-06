@@ -72,6 +72,7 @@ pub mod terminology;
 pub mod validate;
 pub(crate) mod validation_reference;
 mod validation_write;
+pub mod versions;
 
 // Re-export main types for convenience
 pub use bulk::{
@@ -347,6 +348,12 @@ pub fn register_core_operations_all(
 
     // Patient/$purge and Group/$purge (the definitions come with the R6 package)
     handlers.insert("purge".to_string(), Arc::new(purge::PurgeOperation));
+
+    // $versions
+    handlers.insert(
+        "versions".to_string(),
+        Arc::new(versions::VersionsOperation),
+    );
 
     // Patient/$summary (International Patient Summary)
     handlers.insert("summary".to_string(), Arc::new(summary::SummaryOperation));

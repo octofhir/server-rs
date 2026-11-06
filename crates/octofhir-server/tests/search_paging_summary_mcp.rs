@@ -868,6 +868,10 @@ async fn locked_value_set(client: &Client, base: &str) {
 
 /// Every JSON answer of the API is the FHIR media type, unless plain JSON was asked for.
 async fn media_types(client: &Client, base: &str) {
+    let versions = get(client, &format!("{base}/fhir/$versions")).await;
+    assert_eq!(versions["parameter"][0]["valueCode"], "4.0", "{versions}");
+    assert_eq!(versions["parameter"][1]["name"], "default", "{versions}");
+
     for path in ["metadata", "Patient?_count=1", "Patient/no-such-patient"] {
         let answer = client
             .get(format!("{base}/fhir/{path}"))
