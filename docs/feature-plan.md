@@ -37,17 +37,14 @@ console page. Left, from the library side: XML input for CDA maps, WASM build, L
 | # | Item | Notes |
 |---|---|---|
 | 3.5 | Run the Inferno Subscriptions test kit and publish the result | `$events`, `$status`, heartbeat exist |
-| 3.6 | FHIRPath 3.0 STU (2026-07-28) against fhirpath-rs, close the gaps | in fhirpath-rs |
 
 ## 4. Server features (larger)
 
 | # | Item | Effort | Notes |
 |---|---|---|---|
-| 4.4 | `Patient/$summary` for EU PS, and other profiles through `profile` | S | IPS 2.0.1 is done |
 | 4.5 | Conformance evidence: Inferno US Core and Subscriptions in CI, full CapabilityStatement | M–L | Aligned Networks |
-| 4.6 | R6 readiness: additional resources, new CapabilityStatement codes, `resource` search parameter type | M | with fhirschema and canonical-manager |
 | 4.7 | UDAP / FAST Security STU2 (DCR, B2B, tiered OAuth) | L | TEFCA |
-| 4.8 | `$evaluate-measure`: continuous variable scoring, resource-based populations, data-requirements | M | proportion, ratio and cohort with stratifiers are done, patient-based |
+| 4.8 | Ratio measures with observations; `where` conditions as filters in `$data-requirements` | S | scoring of all four types and instance-level `$data-requirements` are done |
 
 ## 5. Standalone tools (new repos next to server-rs)
 
