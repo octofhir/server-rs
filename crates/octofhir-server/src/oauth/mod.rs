@@ -20,6 +20,7 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
+use octofhir_auth::federation::{ClientJwksCache, JwksCacheConfig};
 use octofhir_auth::http::introspect::{IntrospectionState, introspect_handler};
 use octofhir_auth::http::revoke::{RevocationState, revoke_handler};
 use octofhir_auth::oauth::service::{AuthorizationConfig, AuthorizationService};
@@ -33,9 +34,9 @@ use octofhir_auth::{
     userinfo_handler,
 };
 use octofhir_auth_postgres::{
-    ArcAuthorizeSessionStorage, ArcClientStorage, ArcConsentStorage, ArcLaunchContextStorage,
-    ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage, ArcUserStorage,
-    PostgresSsoSessionStorage,
+    ArcAuthorizeSessionStorage, ArcClientStorage, ArcConsentStorage, ArcJtiStorage,
+    ArcLaunchContextStorage, ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage,
+    ArcUserStorage, PostgresSsoSessionStorage,
 };
 use time::Duration;
 use url::Url;
@@ -107,7 +108,14 @@ impl OAuthState {
         )
         .with_user_storage(user_storage.clone())
         .with_cookie_config(config.auth.cookie.clone())
-        .with_fhir_storage(app_state.storage.clone());
+        .with_fhir_storage(app_state.storage.clone())
+        // private_key_jwt, the client authentication of SMART Backend Services.
+        .with_token_endpoint_url(format!(
+            "{}/auth/token",
+            config.base_url().trim_end_matches('/')
+        ))
+        .with_jwks_cache(Arc::new(ClientJwksCache::new(JwksCacheConfig::default())))
+        .with_jti_storage(Arc::new(ArcJtiStorage::new(db_pool.clone())));
 
         let revocation_state =
             RevocationState::new(token_state.token_service(), client_storage.clone());

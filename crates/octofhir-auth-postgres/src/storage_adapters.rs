@@ -6,6 +6,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use sqlx_core::query::query;
+use sqlx_core::query_scalar::query_scalar;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -14,7 +16,7 @@ use octofhir_auth::oauth::session::{AuthorizationSession, LaunchContext};
 use octofhir_auth::smart::launch::StoredLaunchContext;
 use octofhir_auth::storage::{
     AuthorizeSessionStorage as AuthorizeSessionStorageTrait, BasicAuthStorage,
-    ClientStorage as ClientStorageTrait, ConsentStorage as ConsentStorageTrait,
+    ClientStorage as ClientStorageTrait, ConsentStorage as ConsentStorageTrait, JtiStorage,
     LaunchContextStorage as LaunchContextStorageTrait,
     RefreshTokenStorage as RefreshTokenStorageTrait,
     RevokedTokenStorage as RevokedTokenStorageTrait, SessionStorage as SessionStorageTrait, User,
@@ -135,6 +137,57 @@ impl RevokedTokenStorageTrait for ArcRevokedTokenStorage {
             .cleanup_expired()
             .await
             .map_err(|e| AuthError::storage(e.to_string()))
+    }
+}
+
+// =============================================================================
+// Arc-Owning Client Assertion JTI Storage
+// =============================================================================
+
+/// Remembers client assertion `jti` values until the assertions expire.
+pub struct ArcJtiStorage {
+    pool: Arc<PgPool>,
+}
+
+impl ArcJtiStorage {
+    /// Create a new Arc-owning JTI storage.
+    #[must_use]
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl JtiStorage for ArcJtiStorage {
+    async fn mark_used(&self, jti: &str, expires_at: OffsetDateTime) -> AuthResult<bool> {
+        // Assertions live for minutes, so expired rows go with each new one.
+        let inserted = query(
+            "WITH expired AS (DELETE FROM oauth_assertion_jti WHERE expires_at < NOW()) \
+             INSERT INTO oauth_assertion_jti (jti, expires_at) VALUES ($1, $2) \
+             ON CONFLICT (jti) DO NOTHING",
+        )
+        .bind(jti)
+        .bind(expires_at)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| AuthError::storage(e.to_string()))?;
+        Ok(inserted.rows_affected() == 1)
+    }
+
+    async fn is_used(&self, jti: &str) -> AuthResult<bool> {
+        query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_assertion_jti WHERE jti = $1 AND expires_at >= NOW())")
+            .bind(jti)
+            .fetch_one(self.pool.as_ref())
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn cleanup_expired(&self) -> AuthResult<u64> {
+        let deleted = query("DELETE FROM oauth_assertion_jti WHERE expires_at < NOW()")
+            .execute(self.pool.as_ref())
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+        Ok(deleted.rows_affected())
     }
 }
 

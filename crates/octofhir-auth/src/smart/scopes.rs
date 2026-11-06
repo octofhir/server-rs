@@ -413,6 +413,14 @@ impl FromStr for Permissions {
     /// Returns `ScopeError::InvalidPermission` for unknown characters.
     /// Returns `ScopeError::InvalidPermissionOrder` if characters are out of order.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // SMART v1 suffixes, as SMART v2 maps them. They are still what clients of the
+        // Bulk Data IG STU 1 and 2 ask for.
+        let s = match s {
+            "read" => "rs",
+            "write" => "cud",
+            "*" => "cruds",
+            other => other,
+        };
         let mut perms = Self::default();
         let mut last_order: Option<u8> = None;
 
@@ -770,6 +778,10 @@ impl fmt::Display for SmartScope {
 // Smart Scopes Collection
 // ============================================================================
 
+/// Operation scope of the Bulk Data Access IG (Bulk Submit, Privacy and Security
+/// Considerations). It names no resource type, so it has no `.permissions` part.
+pub const BULK_SUBMIT_SCOPE: &str = "system/bulk-submit";
+
 /// A collection of parsed SMART scopes.
 ///
 /// This struct represents the full set of scopes granted to a client,
@@ -799,6 +811,9 @@ pub struct SmartScopes {
 
     /// Request refresh token valid only during online session.
     pub online_access: bool,
+
+    /// `system/bulk-submit`: run `$bulk-submit`, `$bulk-submit-status` and read their files.
+    pub bulk_submit: bool,
 }
 
 impl SmartScopes {
@@ -830,6 +845,7 @@ impl SmartScopes {
                 "fhirUser" => scopes.fhir_user = true,
                 "offline_access" => scopes.offline_access = true,
                 "online_access" => scopes.online_access = true,
+                BULK_SUBMIT_SCOPE => scopes.bulk_submit = true,
                 s => {
                     // Try to parse as resource scope
                     if let Ok(resource_scope) = SmartScope::parse(s) {
@@ -891,6 +907,7 @@ impl SmartScopes {
             && !self.fhir_user
             && !self.offline_access
             && !self.online_access
+            && !self.bulk_submit
     }
 
     /// Returns the context selection requirements for standalone launch.
@@ -1103,6 +1120,14 @@ impl SmartScopes {
             }
         }
 
+        if requested.bulk_submit {
+            if self.bulk_submit {
+                result.bulk_submit = true;
+            } else {
+                return Err(ScopeError::ScopeNotPermitted(BULK_SUBMIT_SCOPE.to_string()));
+            }
+        }
+
         if requested.online_access {
             if self.online_access {
                 result.online_access = true;
@@ -1202,6 +1227,7 @@ impl SmartScopes {
         result.fhir_user = self.fhir_user && other.fhir_user;
         result.offline_access = self.offline_access && other.offline_access;
         result.online_access = self.online_access && other.online_access;
+        result.bulk_submit = self.bulk_submit && other.bulk_submit;
 
         result
     }
@@ -1228,6 +1254,9 @@ impl fmt::Display for SmartScopes {
         }
         if self.offline_access {
             parts.push("offline_access".to_string());
+        }
+        if self.bulk_submit {
+            parts.push(BULK_SUBMIT_SCOPE.to_string());
         }
         if self.online_access {
             parts.push("online_access".to_string());
@@ -1271,6 +1300,28 @@ mod tests {
     // -------------------------------------------------------------------------
     // Permissions Tests
     // -------------------------------------------------------------------------
+
+    #[test]
+    fn smart_v1_suffixes_map_to_v2_permissions() {
+        let read = SmartScope::parse("system/*.read").unwrap();
+        assert!(read.permissions.read && read.permissions.search && !read.permissions.can_write());
+        let write = SmartScope::parse("system/Patient.write").unwrap();
+        assert!(write.permissions.create && write.permissions.update && write.permissions.delete);
+        assert!(!write.permissions.read);
+        let all = SmartScope::parse("patient/*.*").unwrap();
+        assert!(all.permissions.read && all.permissions.search && all.permissions.can_write());
+    }
+
+    #[test]
+    fn bulk_submit_is_an_operation_scope_that_round_trips() {
+        let scopes = SmartScopes::parse("system/bulk-submit system/Patient.r").unwrap();
+        assert!(scopes.bulk_submit);
+        assert_eq!(scopes.resource_scopes.len(), 1, "it grants no resource access");
+        assert!(scopes.to_string().contains(BULK_SUBMIT_SCOPE));
+        assert!(!SmartScopes::parse("system/*.cruds").unwrap().bulk_submit);
+        assert!(!SmartScopes::parse("").unwrap().bulk_submit);
+        assert!(!SmartScopes::parse(BULK_SUBMIT_SCOPE).unwrap().is_empty());
+    }
 
     #[test]
     fn test_parse_permissions() {

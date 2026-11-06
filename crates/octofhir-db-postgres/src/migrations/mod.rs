@@ -16,16 +16,28 @@ use crate::error::Result;
 /// Each migration is a tuple of (version, description, sql_path)
 macro_rules! embedded_migrations {
     () => {
-        &[(
-            20241213000001i64,
-            "consolidated_schema",
-            concat!(
-                include_str!("../../migrations/20241213000001_consolidated_schema.sql"),
-                include_str!("../../sql/resource_write_gate.sql"),
-                include_str!("../../sql/resource_write_metadata.sql"),
-                include_str!("../../sql/resource_history.sql"),
+        &[
+            (
+                20241213000001i64,
+                "consolidated_schema",
+                concat!(
+                    include_str!("../../migrations/20241213000001_consolidated_schema.sql"),
+                    include_str!("../../sql/resource_write_gate.sql"),
+                    include_str!("../../sql/resource_write_metadata.sql"),
+                    include_str!("../../sql/resource_history.sql"),
+                ),
             ),
-        )]
+            (
+                20261105000001i64,
+                "bulk_submissions",
+                include_str!("../../migrations/20261105000001_bulk_submissions.sql"),
+            ),
+            (
+                20261106000001i64,
+                "client_assertion_jti",
+                include_str!("../../migrations/20261106000001_client_assertion_jti.sql"),
+            ),
+        ]
     };
 }
 

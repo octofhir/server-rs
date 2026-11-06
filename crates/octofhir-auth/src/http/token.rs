@@ -48,7 +48,7 @@ use uuid::Uuid;
 use crate::config::CookieConfig;
 use crate::error::AuthError;
 use crate::federation::ClientJwksCache;
-use crate::oauth::client_assertion::ClientAssertionConfig;
+use crate::oauth::client_assertion::{ClientAssertionConfig, extract_client_id_unverified};
 use crate::oauth::token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};
 use crate::storage::session::SessionStorage;
 use crate::storage::{
@@ -312,14 +312,18 @@ fn extract_client_auth(headers: &HeaderMap, request: &TokenRequest) -> ClientAut
         };
     }
 
-    // Try client assertion (JWT)
+    // Try client assertion (JWT). SMART Backend Services sends no `client_id`: the
+    // client is the assertion's `iss`, which authentication then verifies.
     if let (Some(assertion_type), Some(assertion)) = (
         request.client_assertion_type.as_ref(),
         request.client_assertion.as_ref(),
-    ) && let Some(client_id) = request.client_id.as_ref()
+    ) && let Some(client_id) = request
+        .client_id
+        .clone()
+        .or_else(|| extract_client_id_unverified(assertion).ok())
     {
         return ClientAuth::Assertion {
-            client_id: client_id.clone(),
+            client_id,
             assertion_type: assertion_type.clone(),
             assertion: assertion.clone(),
         };
@@ -810,6 +814,23 @@ fn token_error_response(error: AuthError) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backend_services_clients_are_named_by_their_assertion() {
+        // SMART Backend Services requests carry no client_id.
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"iss":"backend-client","sub":"backend-client"}"#);
+        let request: TokenRequest = serde_json::from_value(serde_json::json!({
+            "grant_type": "client_credentials",
+            "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            "client_assertion": format!("e30.{claims}.c2ln"),
+        }))
+        .unwrap();
+        match extract_client_auth(&HeaderMap::new(), &request) {
+            ClientAuth::Assertion { client_id, .. } => assert_eq!(client_id, "backend-client"),
+            _ => panic!("expected assertion authentication"),
+        }
+    }
 
     #[test]
     fn test_extract_basic_auth() {

@@ -117,13 +117,38 @@ pub struct Client {
 
     /// Inline JWKS for backend service clients using private_key_jwt authentication.
     /// The keys in this set are the client's public keys used to verify JWT assertions.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "jwks_text_or_object"
+    )]
     pub jwks: Option<JwkSet>,
 
     /// JWKS URI for fetching the client's public keys dynamically.
     /// Used when the client rotates keys and provides them via a URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jwks_uri: Option<String>,
+}
+
+/// `Client.jwks` is a string in the resource (FHIR has no JSON object type); programmatic
+/// clients hold it as the object itself.
+fn jwks_text_or_object<'de, D>(deserializer: D) -> Result<Option<JwkSet>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Jwks {
+        Text(String),
+        Set(JwkSet),
+    }
+    match Option::<Jwks>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Jwks::Set(set)) => Ok(Some(set)),
+        Some(Jwks::Text(text)) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
 }
 
 impl Client {
@@ -457,6 +482,21 @@ mod tests {
         let client = make_valid_public_client();
         assert!(client.is_redirect_uri_allowed("https://example.com/callback"));
         assert!(!client.is_redirect_uri_allowed("https://evil.com/callback"));
+    }
+
+    #[test]
+    fn jwks_is_read_from_the_resource_string_and_from_an_object() {
+        let set = serde_json::json!({"keys": [{"kty":"EC","crv":"P-384","kid":"a",
+            "x":"AAAA","y":"AAAA","alg":"ES384"}]});
+        let client = |jwks: serde_json::Value| {
+            serde_json::from_value::<Client>(serde_json::json!({
+                "clientId":"c","name":"n","grantTypes":["client_credentials"],
+                "redirectUris":[],"scopes":[],"confidential":true,"active":true,"jwks":jwks
+            }))
+            .unwrap()
+        };
+        assert_eq!(client(set.clone()).jwks.unwrap().keys.len(), 1);
+        assert_eq!(client(set.to_string().into()).jwks.unwrap().keys.len(), 1);
     }
 
     #[test]
