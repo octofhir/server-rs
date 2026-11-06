@@ -428,6 +428,10 @@ pub async fn build_capability_statement(
             // Custom types (AccessPolicy, App, Client, etc.) are excluded to pass
             // FHIR validation against the ResourceType value set.
             octofhir_api::is_standard_fhir_resource(rt)
+                // The subscriptions backport supplies this type on R4, where the
+                // value set does not have it.
+                && !(*rt == "SubscriptionTopic"
+                    && fhir_version == octofhir_core::fhir::FhirVersion::R4)
         })
         .map(|s| s.as_str())
         .collect();
@@ -480,6 +484,12 @@ pub async fn build_capability_statement(
     body["version"] = json!(env!("CARGO_PKG_VERSION"));
     body["url"] = json!(format!("{}/fhir/metadata", base_url.trim_end_matches('/')));
     apply_capability_operations(&mut body, operations, handlers, graphql_enabled);
+    if handlers.get("export").is_some_and(|export| {
+        export.supports_level(crate::operations::handler::OperationLevel::System, None)
+    }) {
+        body["instantiates"] =
+            json!(["http://hl7.org/fhir/uv/bulkdata/CapabilityStatement/bulk-data"]);
+    }
 
     // Add implementation section
     body["implementation"] = json!({
@@ -638,6 +648,84 @@ fn sql_on_fhir_operation(code: &str, definition: String) -> Value {
             "documentation": "Submitters are configured in bulk_submit.submitters. Files are fetched from manifestUrl, validated resource by resource, and stored under their ids. oauthMetadataUrl and fileEncryptionKey are not supported; use fileRequestHeader. Files listed in deleted are not processed.",
         }),
         _ => json!({"name": code, "definition": definition}),
+    }
+}
+
+/// Adds the configured conformance claims: each CapabilityStatement goes into
+/// `instantiates`, and its supported profiles join the matching resources.
+pub async fn apply_declared_conformance(body: &mut Value, declared: &[String]) {
+    for canonical in declared {
+        let url = canonical.split('|').next().unwrap_or(canonical);
+        let Some(statement) = find_capability_statement(url).await else {
+            tracing::warn!(
+                canonical,
+                "Declared CapabilityStatement is not in a loaded package"
+            );
+            continue;
+        };
+        merge_declared_capability(body, canonical, &statement);
+    }
+}
+
+async fn find_capability_statement(url: &str) -> Option<Value> {
+    let manager = crate::canonical::get_manager()?;
+    manager
+        .search()
+        .await
+        .resource_type("CapabilityStatement")
+        .canonical_pattern(&format!("^{}$", regex::escape(url)))
+        .limit(5)
+        .execute()
+        .await
+        .ok()?
+        .resources
+        .into_iter()
+        .map(|found| found.resource.content)
+        .find(|statement| statement["url"] == url)
+}
+
+fn merge_declared_capability(body: &mut Value, canonical: &str, statement: &Value) {
+    match body["instantiates"].as_array_mut() {
+        Some(list) => list.push(json!(canonical)),
+        None => body["instantiates"] = json!([canonical]),
+    }
+    let declared: HashMap<&str, &Value> = statement["rest"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|rest| rest["resource"].as_array().into_iter().flatten())
+        .filter_map(|resource| {
+            Some((
+                resource["type"].as_str()?,
+                resource.get("supportedProfile")?,
+            ))
+        })
+        .collect();
+    let resources = body["rest"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .flat_map(|rest| rest["resource"].as_array_mut().into_iter().flatten());
+    for resource in resources {
+        let Some(profiles) = resource["type"]
+            .as_str()
+            .and_then(|name| declared.get(name))
+            .and_then(|profiles| profiles.as_array())
+        else {
+            continue;
+        };
+        let target = resource
+            .as_object_mut()
+            .expect("a resource entry is an object")
+            .entry("supportedProfile")
+            .or_insert_with(|| json!([]));
+        if let Some(target) = target.as_array_mut() {
+            for profile in profiles {
+                if !target.contains(profile) {
+                    target.push(profile.clone());
+                }
+            }
+        }
     }
 }
 
@@ -10247,6 +10335,29 @@ async fn reconcile_app_operations(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn declared_capabilities_add_the_claim_and_their_profiles() {
+        let mut body = json!({"rest":[{"resource":[
+            {"type":"Patient"},
+            {"type":"Observation","supportedProfile":["urn:existing"]},
+            {"type":"Group"}
+        ]}]});
+        let declared = json!({"rest":[{"resource":[
+            {"type":"Patient","supportedProfile":["urn:patient"]},
+            {"type":"Observation","supportedProfile":["urn:existing","urn:vitals"]},
+            {"type":"Device","supportedProfile":["urn:unsupported"]}
+        ]}]});
+        merge_declared_capability(&mut body, "urn:statement|1.0", &declared);
+        assert_eq!(body["instantiates"], json!(["urn:statement|1.0"]));
+        let resources = &body["rest"][0]["resource"];
+        assert_eq!(resources[0]["supportedProfile"], json!(["urn:patient"]));
+        assert_eq!(
+            resources[1]["supportedProfile"],
+            json!(["urn:existing", "urn:vitals"])
+        );
+        assert!(resources[2].get("supportedProfile").is_none());
+    }
 
     #[tokio::test]
     async fn capability_fhir_version_matches_the_selected_model_release() {

@@ -1603,6 +1603,8 @@ async fn build_app_with_runtime(
         graphql_state.is_some(),
     )
     .await?;
+    handlers::apply_declared_conformance(&mut capability_statement, &cfg.capability.instantiates)
+        .await;
 
     // Add SMART on FHIR security extensions (oauth-uris) to CapabilityStatement
     if let Ok(base_url) = url::Url::parse(&cfg.base_url())

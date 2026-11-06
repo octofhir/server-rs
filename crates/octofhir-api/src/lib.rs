@@ -1,6 +1,6 @@
 #[cfg(feature = "http")]
 use axum::response::{IntoResponse, Response};
-use http::{header, HeaderMap, HeaderValue, StatusCode};
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use std::sync::Arc;
@@ -1969,6 +1969,8 @@ pub struct CapabilityStatement {
     #[serde(rename = "fhirVersion")]
     pub fhir_version: String, // e.g., "4.3.0" (R4B)
     pub format: Vec<String>, // e.g., ["application/fhir+json"]
+    #[serde(rename = "patchFormat", skip_serializing_if = "Option::is_none")]
+    pub patch_format: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub rest: Vec<CapabilityStatementRest>,
 }
@@ -1982,6 +1984,7 @@ impl CapabilityStatement {
             kind: Some("instance".to_string()),
             fhir_version: "4.3.0".to_string(),
             format: vec!["application/fhir+json".to_string()],
+            patch_format: None,
             rest: vec![CapabilityStatementRest::server_minimal()],
         }
     }
@@ -1996,8 +1999,6 @@ pub struct CapabilityStatementRest {
     pub resource: Option<Vec<CapabilityStatementRestResource>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation: Option<Vec<CapabilityStatementRestOperation>>,
-    #[serde(rename = "patchFormat", skip_serializing_if = "Option::is_none")]
-    pub patch_format: Option<Vec<String>>,
 }
 
 impl CapabilityStatementRest {
@@ -2007,7 +2008,6 @@ impl CapabilityStatementRest {
             interaction: Vec::new(),
             resource: Some(vec![]),
             operation: None,
-            patch_format: None,
         }
     }
 }
@@ -2181,11 +2181,13 @@ mod capability_statement_tests {
         assert_eq!(j["resourceType"], "CapabilityStatement");
         assert_eq!(j["fhirVersion"], "4.3.0");
         // format contains application/fhir+json
-        assert!(j["format"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v == "application/fhir+json"));
+        assert!(
+            j["format"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "application/fhir+json")
+        );
         // rest[0].mode == server
         assert_eq!(j["rest"][0]["mode"], "server");
         // resource type and interactions
@@ -2329,12 +2331,12 @@ impl CapabilityStatementBuilder {
             kind: self.kind,
             fhir_version: self.fhir_version,
             format: self.formats,
+            patch_format,
             rest: vec![CapabilityStatementRest {
                 mode: "server".to_string(),
                 interaction: self.interactions,
                 resource: Some(self.resources),
                 operation: operations,
-                patch_format,
             }],
         };
         // Ensure formats has at least application/fhir+json
@@ -2392,17 +2394,19 @@ mod capability_statement_builder_tests {
         assert!(rest.interaction.iter().any(|i| i.code == "transaction"));
         assert!(rest.interaction.iter().any(|i| i.code == "batch"));
         assert_eq!(
-            rest.patch_format.as_ref().unwrap(),
+            cs.patch_format.as_ref().unwrap(),
             &vec!["application/json-patch+json".to_string()]
         );
         let resources = rest.resource.as_ref().unwrap();
         assert_eq!(resources.len(), 2);
         assert_eq!(resources[0].type_, "Patient");
         assert!(resources[0].interaction.iter().any(|i| i.code == "read"));
-        assert!(resources[0]
-            .interaction
-            .iter()
-            .any(|i| i.code == "search-type"));
+        assert!(
+            resources[0]
+                .interaction
+                .iter()
+                .any(|i| i.code == "search-type")
+        );
         assert!(resources[0].search_param.iter().any(|p| p.name == "_id"));
         assert_eq!(resources[1].type_, "Observation");
         assert!(resources[1].interaction.iter().any(|i| i.code == "read"));
@@ -2589,9 +2593,11 @@ mod search_param_docs_tests {
         let params = common_search_params();
         assert!(params.iter().any(|p| p.name == "_id"
             && p.documentation.as_deref() == Some("Logical id of the resource (Resource.id)")));
-        assert!(params
-            .iter()
-            .any(|p| p.name == "_lastUpdated" && p.type_ == "date"));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "_lastUpdated" && p.type_ == "date")
+        );
     }
 
     #[test]
