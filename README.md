@@ -128,8 +128,6 @@ supply storage through its existing traits.
 
 Run `bash scripts/check-library-deps.sh` to exercise these independent consumers
 and check that transport/database dependencies stay out of their minimal graphs.
-See [dependency release notes](docs/DEPENDENCY_RELEASE_2026-11-04.txt) for scope
-and compatibility constraints.
 
 ## Conformance
 

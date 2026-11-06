@@ -1,21 +1,23 @@
 ---
 title: Performance Tuning
-description: Query caching, index optimization, and performance best practices
+description: Index optimization, the query cache, and performance best practices
 ---
 
-OctoFHIR includes built-in performance optimizations including query caching, an index advisor, and configurable tuning options.
+OctoFHIR includes an index advisor and configurable tuning options.
 
-For the current query/index execution model, see [Search Indexing](./search-indexing).
+For the current query/index execution model, see [Search Indexing](/server-rs/search-indexing/).
 
 ## Query Caching
 
 ### Overview
 
-OctoFHIR caches prepared query templates for repeated searches:
+The server has a cache for prepared query templates, but search does not use it yet. Each search
+builds its SQL from scratch, because renderers can embed values in the SQL and a key based on query
+structure does not prove that a template fits.
 
 - **Cache key**: based on parameter structure (resource type, parameters, modifiers), not values
-- **Cache hit**: skip building the SQL, bind the new values
-- **Eviction**: least recently used at capacity; an entry also expires after an hour
+- **Eviction**: TTL cleanup. An entry goes stale after an hour; at capacity an insert removes stale
+  entries with a 1% chance, and above 1.5 times the capacity on every insert
 
 ### Configuration
 
@@ -40,7 +42,7 @@ In most setups, you do **not** need to handcraft indexes on day one. A resource 
 4. Functional indexes for the parameters in `search.indexed_params`, built at startup.
 
 There are no side tables of search values, and `updated_at` has no index by default. See
-[Search Indexing](./search-indexing) for what each parameter type gets.
+[Search Indexing](/server-rs/search-indexing/) for what each parameter type gets.
 
 ### Index Advice
 
@@ -51,7 +53,7 @@ available, and from request URLs you give it. It is read-only.
 GET /api/db-console/index-advisor?resourceType=Patient
 ```
 
-See [the index advisor](./no-reindex#the-index-advisor) for the request and what it suggests. In the
+See [the index advisor](/server-rs/no-reindex/#the-index-advisor) for the request and what it suggests. In the
 [web console](/server-rs/console/) it is **Index advice** on the **Database** page.
 
 ### Optional Custom Indexes
@@ -63,7 +65,7 @@ matches the predicate the search generates.
 ### Analyzing Query Performance
 
 - The **Explain** panel of the **Requests** page shows the SQL and plan behind a search.
-- `allow_debug_search_plan` turns on [debug plans](./search-indexing#debug-plans) over HTTP.
+- `allow_debug_search_plan` turns on [debug plans](/server-rs/search-indexing/#debug-plans) over HTTP.
 - `pg_stat_statements` in PostgreSQL gives the slowest statements, and the SQL console can query it.
 
 ## Connection Pooling
@@ -201,16 +203,12 @@ Enable distributed tracing:
 ```toml
 [otel]
 enabled = true
-endpoint = "http://jaeger:4317"
-service_name = "octofhir"
+endpoint = "http://jaeger:4318"
 ```
 
 Spans include:
 - `http.request` - Full request lifecycle
-- `search.execute` - Search execution
-- `search.cache_lookup` - Cache operations
-- `terminology.expand` - ValueSet expansion
-- `transaction.execute` - Transaction processing
+- `fhir.*` - One per REST interaction, such as `fhir.read`, `fhir.search`, `fhir.create`, `fhir.update`, `fhir.bundle`
 
 ## Benchmarking
 
@@ -248,23 +246,12 @@ Run:
 k6 run loadtest.js
 ```
 
-### Expected Performance
-
-| Operation | Target | Notes |
-|-----------|--------|-------|
-| Simple search | < 50ms | Indexed parameter |
-| Complex search | < 200ms | Multiple parameters |
-| _include search | < 500ms | Depends on included count |
-| Transaction (10 entries) | < 100ms | |
-| ValueSet expansion | < 100ms | Cached |
-| ValueSet expansion | < 2s | Uncached, large |
-
 ## Troubleshooting
 
 ### Slow Queries
 
 1. Look at the plan of the search, in the **Explain** panel of the **Requests** page or with a
-   [debug plan](./search-indexing#debug-plans).
+   [debug plan](/server-rs/search-indexing/#debug-plans).
 
 2. Check whether the parameter is in `search.indexed_params`, and ask the index advisor:
    ```bash
@@ -275,13 +262,7 @@ k6 run loadtest.js
 
 ### High Memory Usage
 
-1. Reduce cache sizes:
-   ```toml
-   [search]
-   cache_capacity = 500
-   ```
-
-2. Check for large result sets: lower `search.max_count` and `search.include_limits`.
+1. Check for large result sets: lower `search.max_count` and `search.include_limits`.
 
 ### Connection Pool Exhaustion
 

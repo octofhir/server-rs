@@ -6,13 +6,18 @@ Integration tests verify end-to-end functionality with a real PostgreSQL databas
 
 ## Test Files
 
+`crates/octofhir-server/tests/` holds about 30 test files, one per area. Some of them:
+
 ```
 crates/octofhir-server/tests/
 ├── integration_search.rs       # Search parameter tests
 ├── integration_transactions.rs # Transaction tests
 ├── terminology_integration.rs  # Terminology service tests
-├── config_reload.rs           # Configuration hot-reload tests
-└── crud_and_search.rs         # Basic CRUD operations
+├── config_reload.rs            # Configuration hot-reload tests
+├── crud_and_search.rs          # Basic CRUD operations
+├── bulk_data.rs                # Bulk Data operations
+├── sql_on_fhir.rs              # SQL on FHIR operations
+└── udap.rs                     # UDAP registration and tokens
 ```
 
 ## Testcontainers Setup
@@ -21,10 +26,9 @@ crates/octofhir-server/tests/
 
 ```toml
 [dev-dependencies]
-testcontainers = "0.15"
-testcontainers-modules = { version = "0.3", features = ["postgres"] }
-tokio = { version = "1", features = ["full", "test-util"] }
-reqwest = { version = "0.11", features = ["json"] }
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
+reqwest = { workspace = true }
 ```
 
 ### Basic Test Structure

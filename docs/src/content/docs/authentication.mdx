@@ -80,7 +80,7 @@ STU 1 and 2 still ask for them.
 
 ### Identity Scopes
 
-- `openid` - Enable OpenID Connect (required for `/userinfo`)
+- `openid` - Enable OpenID Connect (required for `/auth/userinfo`)
 - `fhirUser` - Include FHIR resource reference in token/userinfo
 
 ## Configuration
@@ -89,7 +89,6 @@ All auth settings are in `octofhir.toml` under `[auth]`:
 
 ```toml
 [auth]
-enabled = true
 issuer = "http://localhost:8888"
 
 [auth.oauth]
@@ -106,14 +105,11 @@ supported_scopes = ["openid", "fhirUser", "patient/*.cruds", "..."]
 
 [auth.signing]
 algorithm = "RS384"          # RS256, RS384, or ES384
-key_rotation_days = 90
 ```
 
 See `octofhir.toml` for the full configuration reference including:
 
 - `[auth.policy]` - Access policy engine settings
-- `[auth.federation]` - External IdP integration
-- `[auth.rate_limiting]` - Request rate limits
 - `[auth.audit]` - Audit logging options
 
 ## Example: Authorization Code Flow

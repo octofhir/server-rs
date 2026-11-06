@@ -4,8 +4,7 @@ Status: 2026-11-05. Only work still to do; everything here is decided and meant 
 implemented; order is by priority within each section. Finished work is in git history. Sources: the feature research
 (`reports/Ресерч фич OctoFHIR — ноябрь 2026.md`), the FML research
 (`reports/Ресерч FML и конвертера версий — ноябрь 2026.md`) and
-[`sql-on-fhir-plan.md`](sql-on-fhir-plan.md). This file replaces the priorities of
-[`competitive/roadmap.md`](competitive/roadmap.md), which predates these decisions.
+[`sql-on-fhir-plan.md`](sql-on-fhir-plan.md).
 
 Ground rules that apply to every item:
 
@@ -41,7 +40,7 @@ console page (CDA input with the trace on the XML). Left, from the library side:
 |---|---|---|---|
 | 4.5 | Conformance evidence: Inferno US Core and Subscriptions run locally (`just inferno-*`) before releases, results published; full CapabilityStatement | M | not in CI: long runs on the org's public runners |
 | 4.7 | UDAP Tiered OAuth (`udap_to`), CRL distribution points and OCSP | M | TEFCA; registration, JWT authentication and B2B are done |
-| 4.8 | Measures: `subjectGroup` and `evaluatedResource` in `$evaluate`, supplemental data, composite scoring | S–M | scoring of all four types, ratios with observations and `$data-requirements` with `where` filters are done |
+| 4.8 | Measures: supplemental data, composite scoring | S | scoring of all four types, ratios with observations, `subjectGroup`, `evaluatedResource` and `$data-requirements` with `where` filters are done |
 
 ## 5. Standalone tools (new repos next to server-rs)
 

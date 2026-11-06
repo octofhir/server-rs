@@ -1,180 +1,92 @@
 ---
 title: Auth Module Architecture
-description: Comprehensive architectural documentation for OctoFHIR's authentication and authorization system
+description: How OctoFHIR's authentication and authorization code is organized
 ---
 
-# OctoFHIR Auth Module Architecture
+The auth code lives in two crates. `octofhir-auth` holds the logic and the storage traits.
+`octofhir-auth-postgres` implements those traits on PostgreSQL. `octofhir-server` mounts the HTTP
+routes and the middleware.
 
-## Executive Summary
+For how to use it, see [Authentication](/server-rs/authentication/).
 
-This document presents a comprehensive architectural plan for the OctoFHIR Auth module—a production-grade authentication, authorization, and access control system designed for a modern FHIR R4/R5 server in Rust. The architecture supports:
-
-- **Built-in OAuth 2.0 Server** with authorization code, client credentials, and refresh token flows
-- **External Identity Provider Federation** via OpenID Connect
-- **Full SMART on FHIR Compliance** (STU 2.2) including App Launch and Backend Services
-- **Custom FHIR Resources** for auth configuration via internal Implementation Guide
-- **AccessPolicy Engine** with pattern matching and scriptable policies (QuickJS)
-
----
-
-## Table of Contents
-
-1. [Design Principles](#1-design-principles)
-2. [High-Level Architecture](#2-high-level-architecture)
-3. [Component Deep Dives](#3-component-deep-dives)
-   - 3.1 [OAuth 2.0 Authorization Server](#31-oauth-20-authorization-server)
-   - 3.2 [Token Service](#32-token-service)
-   - 3.3 [Identity Provider Federation](#33-identity-provider-federation)
-   - 3.4 [SMART on FHIR Module](#34-smart-on-fhir-module)
-   - 3.5 [AccessPolicy Engine](#35-accesspolicy-engine)
-   - 3.6 [Audit Service](#36-audit-service)
-4. [Custom FHIR Resources (IG)](#4-custom-fhir-resources-ig)
-5. [Data Models](#5-data-models)
-6. [API Endpoints](#6-api-endpoints)
-7. [Security Considerations](#7-security-considerations)
-8. [Integration Points](#8-integration-points)
-9. [Configuration](#9-configuration)
-10. [Implementation Roadmap](#10-implementation-roadmap)
-
----
-
-## 1. Design Principles
-
-### 1.1 Core Tenets
-
-| Principle | Description |
-|-----------|-------------|
-| **Zero Trust** | Every request is authenticated and authorized; no implicit trust |
-| **Defense in Depth** | Multiple security layers (transport, token, policy, audit) |
-| **Standards Compliance** | Full FHIR R4/R5, OAuth 2.0, OpenID Connect, SMART on FHIR STU 2.2 |
-| **Extensibility** | Plugin architecture for custom policies and identity providers |
-| **Performance** | Sub-millisecond policy evaluation; async-first design |
-| **Persistence** | No in-memory-only state; all auth data in PostgreSQL |
-
-### 1.2 Architectural Constraints
-
-- **No In-Memory Storage**: All session state, tokens, and policies stored in PostgreSQL
-- **Horizontal Scalability**: Stateless request handling; shared database state
-- **Hot Reload**: Policy and configuration changes without server restart
-- **Audit Everything**: Security-relevant events logged as FHIR AuditEvent resources
-- **Alpine Linux Compatible**: All components must work with musl libc
-
----
-
-## 2. High-Level Architecture
+## Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              OctoFHIR Server                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   Axum      │  │  Content    │  │   Auth      │  │    FHIR Resource    │ │
-│  │  Router     │──│ Negotiation │──│ Middleware  │──│     Handlers        │ │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘ │
-│         │                                │                     │            │
-│         ▼                                ▼                     ▼            │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                         Auth Module (octofhir-auth)                     ││
-│  ├─────────────────────────────────────────────────────────────────────────┤│
-│  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐               ││
-│  │  │ OAuth 2.0     │  │  SMART on     │  │   Identity    │               ││
-│  │  │ Server        │  │  FHIR         │  │   Federation  │               ││
-│  │  │               │  │               │  │               │               ││
-│  │  │ • /authorize  │  │ • Scopes      │  │ • OIDC Client │               ││
-│  │  │ • /token      │  │ • Launch Ctx  │  │ • JWKS Cache  │               ││
-│  │  │ • /revoke     │  │ • Discovery   │  │ • User Sync   │               ││
-│  │  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘               ││
-│  │          │                  │                  │                        ││
-│  │          ▼                  ▼                  ▼                        ││
-│  │  ┌─────────────────────────────────────────────────────────────────┐   ││
-│  │  │                     Token Service                                │   ││
-│  │  │  • JWT Generation (RS256/RS384/ES384)                           │   ││
-│  │  │  • Token Validation & Introspection                             │   ││
-│  │  │  • Refresh Token Management                                      │   ││
-│  │  │  • PKCE Verification                                             │   ││
-│  │  └─────────────────────────┬───────────────────────────────────────┘   ││
-│  │                            │                                            ││
-│  │                            ▼                                            ││
-│  │  ┌─────────────────────────────────────────────────────────────────┐   ││
-│  │  │                   AccessPolicy Engine                            │   ││
-│  │  │  ┌─────────────┐  ┌─────────────────────────┐                   │   ││
-│  │  │  │  Pattern    │  │  QuickJS (rquickjs)     │                   │   ││
-│  │  │  │  Matcher    │  │  JavaScript Runtime     │                   │   ││
-│  │  │  └─────────────┘  └─────────────────────────┘                   │   ││
-│  │  └─────────────────────────┬───────────────────────────────────────┘   ││
-│  │                            │                                            ││
-│  │                            ▼                                            ││
-│  │  ┌─────────────────────────────────────────────────────────────────┐   ││
-│  │  │                     Audit Service                                │   ││
-│  │  │  • AuditEvent Generation (FHIR R4)                              │   ││
-│  │  │  • Security Event Logging                                        │   ││
-│  │  │  • Compliance Reporting                                          │   ││
-│  │  └─────────────────────────────────────────────────────────────────┘   ││
-│  └─────────────────────────────────────────────────────────────────────────┘│
-│                                      │                                      │
-│                                      ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                     PostgreSQL (octofhir_auth Schema)                   ││
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐           ││
-│  │  │ Client  │ │ Session │ │  Token  │ │ Access  │ │  Audit  │           ││
-│  │  │         │ │         │ │         │ │ Policy  │ │  Event  │           ││
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘           ││
-│  └─────────────────────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       octofhir-server                        │
+│   Axum router → auth middleware → FHIR handlers              │
+└──────────────┬───────────────────────────────────────────────┘
+               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                        octofhir-auth                         │
+│  OAuth 2.0 server    SMART on FHIR    UDAP                   │
+│  Token service       AccessPolicy engine (matcher, QuickJS)  │
+└──────────────┬───────────────────────────────────────────────┘
+               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    octofhir-auth-postgres                    │
+│  Clients, users, roles, sessions, tokens, policies           │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-For the complete architectural details including component deep dives, data models, API endpoints, security considerations, and implementation roadmap, please refer to the [original architecture document](/docs/AUTH_ARCHITECTURE.md) in the repository.
+## Modules
 
-## Key Features
+| Module (`octofhir-auth`) | Purpose |
+|--------------------------|---------|
+| `config` | The `[auth]` configuration |
+| `oauth` | Authorization, client authentication, PKCE, sessions |
+| `http` | Handlers for the `/auth/*` endpoints |
+| `token` | JWT signing and validation, introspection, revocation |
+| `smart` | SMART scopes, launch context, discovery |
+| `policy` | AccessPolicy engine, policy cache and reload |
+| `federation` | External identity provider types, client JWKS cache |
+| `udap` | UDAP registration, see [UDAP](/server-rs/udap/) |
+| `middleware`, `extractors` | Axum extractors such as `BearerAuth` and `AdminAuth` |
+| `audit` | Security audit events |
+| `storage` | Storage traits |
 
-### OAuth 2.0 Authorization Server
+## OAuth 2.0
 
-- **Authorization Code Flow** with PKCE (RFC 6749, RFC 7636)
-- **Client Credentials Flow** for backend services (RFC 6749)
-- **Refresh Token Flow** for token renewal (RFC 6749)
+- Authorization code flow with PKCE
+- Client credentials flow for backend services
+- Refresh token flow
+- Password grant, for clients that list it, such as the built-in `octofhir-ui` client
 - Token introspection (RFC 7662) and revocation (RFC 7009)
 
-### SMART on FHIR Compliance
+## SMART on FHIR
 
-- Full SMART v2 scope support (`patient/*.rs`, `user/*.cruds`, `system/*.rs`)
-- EHR launch and standalone launch patterns
-- Patient and encounter context propagation
-- OpenID Connect integration for identity
+- SMART v2 scopes (`patient/*.rs`, `user/*.cruds`, `system/*.rs`), and v1 suffixes
+- EHR launch and standalone launch
+- Patient and encounter context
+- OpenID Connect
 
-### Token Service
+## Tokens
 
-- JWT generation with RS256, RS384, and ES384 algorithms
-- Configurable token lifetimes
-- PKCE (Proof Key for Code Exchange) support
-- Token validation and introspection
+- JWT with RS256, RS384 and ES384
+- Lifetimes from `[auth.oauth]`
+- See [JWT Key Persistence](/server-rs/jwt-key-persistence/) for signing keys
 
-### AccessPolicy Engine
+## AccessPolicy Engine
 
-- Pattern-based access control matching
-- Scriptable policies using QuickJS
-- Resource-level and field-level filtering
-- Sub-millisecond policy evaluation
+A request first passes the SMART scope check. Matching `AccessPolicy` resources are then evaluated in
+priority order. A policy uses the `allow` or `deny` engine, or a QuickJS script. Policies are kept in a
+cache that reloads when an `AccessPolicy` changes. See [Access Policies](/server-rs/access-policies/).
 
-### Identity Provider Federation
+## External Identity Providers
 
-- OpenID Connect client for external IdPs
-- JWKS caching for efficient key validation
-- User provisioning and synchronization
-- Configurable user attribute mapping
+`IdentityProvider` resources can be created and managed through `/IdentityProvider`, and the
+`federation` module has an OIDC client. No login route of the server uses them yet.
 
-### Audit and Compliance
+## Audit
 
-- FHIR AuditEvent generation for all security-relevant events
-- Comprehensive security event logging
-- Compliance reporting capabilities
+Security-relevant events are written as FHIR `AuditEvent` resources.
 
 ## Configuration
 
-All authentication and authorization settings are configured in [`octofhir.toml`](../../octofhir.toml) under the `[auth]` section:
+Settings are in `octofhir.toml` under `[auth]`:
 
 ```toml
 [auth]
-enabled = true
 issuer = "http://localhost:8888"
 
 [auth.oauth]
@@ -184,7 +96,6 @@ grant_types = ["authorization_code", "client_credentials", "refresh_token"]
 
 [auth.signing]
 algorithm = "RS384"
-key_rotation_days = 90
 
 [auth.smart]
 launch_ehr_enabled = true
@@ -193,22 +104,14 @@ public_clients_allowed = true
 openid_enabled = true
 
 [auth.policy]
-engine = "quickjs"
-policy_reload_interval = "60s"
-
-[auth.federation]
-# External IdP configuration
-[[auth.federation.providers]]
-id = "keycloak"
-name = "Keycloak SSO"
-issuer = "https://keycloak.example.com/realms/myrealm"
+quickjs_enabled = true
 ```
 
-See [Authentication](./authentication) for user-facing documentation and [JWT Key Persistence](./jwt-key-persistence) for production deployment guidance.
+See [Configuration](/server-rs/configuration/) for the rest.
 
 ## Related Documentation
 
-- [Authentication Guide](./authentication) - End-user authentication documentation
-- [JWT Key Persistence](./jwt-key-persistence) - Production key management
-- [API Reference](./api-reference) - FHIR API endpoints
-- [Development Guide](./development) - Contributing to OctoFHIR
+- [Authentication Guide](/server-rs/authentication/)
+- [JWT Key Persistence](/server-rs/jwt-key-persistence/)
+- [API Reference](/server-rs/api-reference/)
+- [Development Guide](/server-rs/development/)

@@ -2,13 +2,13 @@
 
 ## Overview
 
-The unified event system replaces multiple PostgreSQL LISTEN/NOTIFY listeners with a centralized application-level event bus. This provides:
+The unified event system is a centralized application-level event bus. This provides:
 
 - **Inter-module communication** - Modules communicate through events without direct dependencies
 - **Server as orchestrator** - `octofhir-server` connects modules via event bus
 - **Async hooks** - Non-blocking cache invalidation and reloads
 - **Redis pub/sub** - Multi-instance synchronization
-- **GraphQL subscriptions** - Real-time updates to clients
+- **FHIR subscriptions** - `SubscriptionHook` queues notifications for matching subscriptions
 - **Resilience** - Hook failures are isolated, don't affect other hooks or API
 
 ## Architecture
@@ -60,7 +60,9 @@ pub struct ResourceEvent {
     pub resource_type: String,
     pub resource_id: String,
     pub version_id: Option<i64>,
-    pub resource: Option<Value>,  // None for deletes
+    pub resource: Option<Arc<Value>>,  // None for deletes
+    pub previous_resource: Option<Arc<Value>>,  // Snapshot before an update or delete
+    pub remote: bool,  // Received from another instance; never published again
     pub timestamp: OffsetDateTime,
 }
 
@@ -70,6 +72,7 @@ pub struct AuthEvent {
     pub user_id: Option<String>,
     pub client_id: String,
     pub session_id: Option<String>,
+    pub token_jti: Option<String>,
     pub ip_address: Option<IpAddr>,
     pub reason: Option<String>,
     pub timestamp: OffsetDateTime,
@@ -536,45 +539,3 @@ cargo test -p octofhir-server --lib hooks
 # Events module tests
 cargo test -p octofhir-server --lib events
 ```
-
-## Benefits vs PostgreSQL LISTEN/NOTIFY
-
-| Aspect | PostgreSQL Listeners | Event System |
-|--------|---------------------|--------------|
-| Connections | 1 per listener | 0 (app-level) |
-| Extensibility | New listener = new code | New hook = one file |
-| Audit | Sync, blocks API | Async, fire-and-forget |
-| Multi-instance | Separate listeners | Unified Redis channel |
-| Testing | Requires PostgreSQL | Mock broadcaster |
-| Error handling | Complex reconnect | Isolated per hook |
-
-## Files Changed
-
-### Created
-
-| Path | Description |
-|------|-------------|
-| `octofhir-core/src/events/mod.rs` | Module exports |
-| `octofhir-core/src/events/types.rs` | Event types (ResourceEvent, AuthEvent) |
-| `octofhir-core/src/events/broadcaster.rs` | EventBroadcaster |
-| `octofhir-core/src/events/hooks.rs` | Hook traits |
-| `octofhir-core/src/events/registry.rs` | HookRegistry, HookDispatcher |
-| `octofhir-storage/src/evented.rs` | EventedStorage wrapper |
-| `octofhir-server/src/hooks/mod.rs` | Hook module |
-| `octofhir-server/src/hooks/policy.rs` | PolicyReloadHook |
-| `octofhir-server/src/hooks/gateway.rs` | GatewayReloadHook |
-| `octofhir-server/src/hooks/search.rs` | SearchParamHook |
-| `octofhir-server/src/hooks/graphql.rs` | GraphQLSubscriptionHook |
-| `octofhir-server/src/hooks/audit.rs` | AsyncAuditHook |
-| `octofhir-server/src/events/mod.rs` | Redis sync module |
-| `octofhir-server/src/events/redis.rs` | RedisEventSync |
-
-### Modified
-
-| Path | Changes |
-|------|---------|
-| `octofhir-core/src/lib.rs` | Added `pub mod events` |
-| `octofhir-storage/src/lib.rs` | Added `pub mod evented` |
-| `octofhir-server/src/lib.rs` | Added `pub mod events`, `pub mod hooks` |
-| `octofhir-server/src/server.rs` | Initialize event system, register hooks |
-| `octofhir-auth/src/http/logout.rs` | TokenRevokedCallback for JWT cache |

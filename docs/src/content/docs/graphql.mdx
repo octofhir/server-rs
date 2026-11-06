@@ -24,7 +24,8 @@ OctoFHIR provides a GraphQL API following the [GraphQL for FHIR](https://hl7.org
 
    ```bash
    TOKEN=$(curl -s -X POST http://localhost:8888/auth/token \
-     -d "grant_type=password&username=admin&password=admin123" \
+     -d "grant_type=password&client_id=octofhir-ui&username=admin&password=admin123" \
+     --data-urlencode "scope=openid user/*.cruds" \
      | jq -r '.access_token')
    ```
 
@@ -47,10 +48,10 @@ OctoFHIR provides a GraphQL API following the [GraphQL for FHIR](https://hl7.org
 |----------|--------|-------------|
 | `/$graphql` | POST | System-level GraphQL endpoint |
 | `/$graphql` | GET | Query via `query` URL parameter |
-| `/{Type}/{id}/$graphql` | POST | Instance-level (resource in context) |
+| `/fhir/{Type}/{id}/$graphql` | POST | Instance-level (resource in context) |
 
 <Aside type="note">
-The UI includes GraphiQL playground at `/$graphql` for interactive exploration.
+The web console has a GraphiQL playground at `/ui/graphql` for interactive exploration.
 </Aside>
 
 ---
@@ -256,57 +257,6 @@ mutation {
 
 ---
 
-## Subscriptions
-
-<Aside type="caution">
-Subscriptions require WebSocket support and are disabled by default.
-Enable with `subscriptions = true` in configuration.
-</Aside>
-
-### Configuration
-
-```toml
-[graphql]
-enabled = true
-subscriptions = true
-```
-
-### Available Subscriptions
-
-```graphql
-subscription {
-  # All resource changes
-  resourceChanged(resourceType: "Patient") {
-    eventType   # CREATED, UPDATED, DELETED
-    resourceType
-    resourceId
-    resource {
-      ... on Patient {
-        id
-        name { family }
-      }
-    }
-  }
-}
-```
-
-```graphql
-subscription {
-  # Specific event types
-  resourceCreated(resourceType: "Observation") {
-    resourceId
-    resource {
-      ... on Observation {
-        code { text }
-        valueQuantity { value unit }
-      }
-    }
-  }
-}
-```
-
----
-
 ## Search Parameters
 
 GraphQL uses the same search parameters as the REST API:
@@ -361,6 +311,14 @@ query {
 
 ---
 
+## Subscriptions
+
+GraphQL subscriptions are not available yet. The server publishes resource changes to a GraphQL
+event broadcaster, and the subscription fields (`resourceCreated`, `resourceUpdated`,
+`resourceDeleted`, `resourceChanged`) exist in the code, but the schema is built without them and
+there is no WebSocket endpoint. `graphql.subscriptions` has no effect for now. For real-time
+updates use [FHIR Subscriptions](/server-rs/subscriptions/).
+
 ## Configuration Reference
 
 ```toml
@@ -376,15 +334,6 @@ max_complexity = 500
 
 # Enable schema introspection (disable in production)
 introspection = true
-
-# Enable real-time subscriptions
-subscriptions = false
-
-# Allow batched queries
-batching = false
-
-# Maximum operations per batch
-max_batch_size = 10
 ```
 
 <Aside type="danger">
@@ -504,7 +453,7 @@ query {
 | **Data fetching** | Fixed response shape | Client specifies fields |
 | **Related data** | `_include`/`_revinclude` | Nested queries |
 | **Batch requests** | Transaction bundle | Multiple queries |
-| **Real-time** | Subscriptions (planned) | Subscriptions |
+| **Real-time** | [Subscriptions](/server-rs/subscriptions/) | Not available |
 | **Caching** | HTTP caching | Client-side |
 
 ### When to Use GraphQL
@@ -512,7 +461,6 @@ query {
 - **Complex data requirements** - Need data from multiple related resources
 - **Mobile/bandwidth-sensitive** - Request only needed fields
 - **Interactive applications** - Explore schema with introspection
-- **Real-time updates** - Use subscriptions
 
 ### When to Use REST
 

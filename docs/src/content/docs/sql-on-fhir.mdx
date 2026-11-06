@@ -178,6 +178,11 @@ The status URL answers 202 while the job runs, then 303 to `{status url}/result`
 manifest as `Parameters` (`output` with a `name` and `location` per subject) or the failure. `DELETE` on
 the status URL cancels the job.
 
+`$sql-export` is always there. `ViewDefinition/$export`, the export of SQL on FHIR 2.0, which 3.0 replaced,
+is on by default (`POST /fhir/ViewDefinition/$export` with a `viewDefinition` parameter, or
+`POST /fhir/ViewDefinition/{id}/$export`, both with `Prefer: respond-async`), and
+`sql_on_fhir.viewdefinition_export = false` turns it off.
+
 ## In the console
 
 The **Views** page (`g v`) authors ViewDefinitions and SQLQuery and SQLView Libraries and runs either

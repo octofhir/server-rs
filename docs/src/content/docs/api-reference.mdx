@@ -86,7 +86,7 @@ Content-Type: application/x-www-form-urlencoded
 **Response**: `200 OK` with Bundle of type `searchset`
 
 See [Search Parameters](/server-rs/search-parameters/) for detailed search documentation.
-For index behavior and query planning guidance, see [Search Indexing](./search-indexing).
+For index behavior and query planning guidance, see [Search Indexing](/server-rs/search-indexing/).
 
 ### History
 
@@ -105,7 +105,7 @@ DELETE /fhir/{resourceType}/{id}/_history
 DELETE /fhir/{resourceType}/{id}/_history/{versionId}
 ```
 
-Removing history needs an administrator. See [FHIR R6](/fhir-r6/#new-in-the-restful-api).
+Removing history needs an administrator. See [FHIR R6](/server-rs/fhir-r6/#new-in-the-restful-api).
 
 ### Version Read
 
@@ -236,7 +236,7 @@ The response is a `Parameters` resource:
 
 A resource with nothing stored is 404, so a second `$expunge` of the same id is 404.
 
-To remove a whole patient record on R6, see [`$purge`](/fhir-r6/#purge).
+To remove a whole patient record on R6, see [`$purge`](/server-rs/fhir-r6/#purge).
 
 ## Search Parameters
 
@@ -258,12 +258,13 @@ To remove a whole patient record on R6, see [`$purge`](/fhir-r6/#purge).
 | `:exact` | string | Case-sensitive exact match |
 | `:contains` | string | Substring match |
 | `:missing` | all | Element present/absent |
-| `:text` | token | Match display text |
 | `:not` | token | Exclude matching codes |
 | `:in` | token | Code in ValueSet |
 | `:not-in` | token | Code not in ValueSet |
 | `:below` | token | Code or descendants |
 | `:above` | token | Code or ancestors |
+
+`:text` on string and token parameters is refused with an error.
 
 ### Result Parameters
 
@@ -306,8 +307,8 @@ All errors return an OperationOutcome:
 | 401 | Unauthorized |
 | 403 | Forbidden |
 | 404 | Not Found |
-| 409 | Conflict (version mismatch) |
-| 412 | Precondition Failed |
+| 409 | Conflict (the resource already exists, or a concurrent write) |
+| 412 | Precondition Failed (version mismatch on `If-Match`) |
 | 422 | Unprocessable Entity |
 | 500 | Internal Server Error |
 
@@ -402,19 +403,17 @@ with no criteria, page by `_cursor` and have no `last` link. See
 
 ## Rate Limiting
 
-When rate limiting is enabled:
+The server has no rate limiting and sends no `X-RateLimit-*` headers.
 
-| Header | Description |
-|--------|-------------|
-| `X-RateLimit-Limit` | Requests allowed per window |
-| `X-RateLimit-Remaining` | Requests remaining |
-| `X-RateLimit-Reset` | Window reset timestamp |
-| `Retry-After` | Seconds until retry (when limited) |
+`Retry-After` appears only on bulk status polling: on `202` while a job runs, and on `429` when a
+client polls the same job faster than `bulk_export.min_poll_interval_ms` allows.
 
 ## CORS
 
-CORS is enabled by default for browser-based clients:
+CORS is on and has no configuration:
 
-- Allowed origins: Configurable
-- Allowed methods: GET, POST, PUT, DELETE, OPTIONS
-- Allowed headers: Content-Type, Authorization, Accept, X-Request-Id
+- Allowed origin: the request's `Origin` is reflected back, with `Access-Control-Allow-Credentials: true`
+- Allowed methods: GET, POST, PUT, PATCH, DELETE, OPTIONS
+- Allowed headers: Content-Type, Authorization, Accept, X-Request-Id, X-Skip-Validation
+- Exposed headers: Content-Type, X-Request-Id, Location
+- Preflight responses are cached for one hour

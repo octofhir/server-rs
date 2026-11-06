@@ -3,292 +3,119 @@ title: Application Platform
 head: []
 ---
 
-OctoFHIR provides an **Application Platform** for managing and extending FHIR server functionality through custom applications.
+Applications add HTTP endpoints to the server. An `App` resource describes the application and its
+backend. A `CustomOperation` resource describes one endpoint. The gateway routes requests that match
+no built-in route to these operations.
 
-## Overview
+`App` and `CustomOperation` are internal resources, served at the root rather than under `/fhir`.
 
-Applications in OctoFHIR are FHIR resources that define:
-- Custom operations and endpoints
-- Event-driven workflows
-- Integration with external systems
-- UI components and widgets
+## App
 
-## App Resource Structure
+```http
+POST /App
+Authorization: Bearer {admin token}
+Content-Type: application/json
 
-Apps are defined using a custom FHIR `App` resource type:
-
-```json
 {
   "resourceType": "App",
-  "id": "my-custom-app",
-  "name": "My Custom Application",
-  "description": "Example application for custom workflows",
+  "name": "Patient portal",
   "status": "active",
-  "version": "1.0.0",
+  "secret": "change-me",
+  "endpoint": {
+    "url": "https://portal.example.org/octofhir",
+    "timeout": 30
+  },
   "operations": [
     {
-      "name": "custom-operation",
-      "type": "read",
-      "resourceType": "Patient",
-      "handler": {
-        "type": "http",
-        "url": "https://my-service.example.com/handler"
-      }
-    }
-  ],
-  "subscriptions": [
-    {
-      "resourceType": "Observation",
-      "events": ["create", "update"],
-      "handler": {
-        "type": "webhook",
-        "url": "https://my-service.example.com/webhook"
-      }
+      "id": "summary",
+      "method": "GET",
+      "path": ["portal", "summary", ":id"],
+      "type": "app"
     }
   ]
 }
 ```
 
-## Custom Operations
+| Field | Meaning |
+|-------|---------|
+| `name` | Required |
+| `status` | `active`, `inactive` or `suspended` |
+| `secret` | Required, stored as a hash |
+| `endpoint` | The backend: `url`, and `timeout` in seconds |
+| `operations` | Inline operations |
+| `subscriptions` | Event subscriptions, see [below](#subscriptions) |
+| `resources` | Resources to provision, as a JSON string |
 
-Apps can define custom FHIR operations that extend the server's functionality:
+`status` decides whether an App is active. The inline operations of an App that is not `active` are
+not routed.
+
+Creating or updating an App reconciles what is derived from it: `CustomOperation` resources from
+`operations`, `AppSubscription` resources from `subscriptions`, and the provisioned `resources`.
+
+## CustomOperation
+
+A standalone operation:
+
+```http
+POST /CustomOperation
+Authorization: Bearer {admin token}
+Content-Type: application/json
+
+{
+  "resourceType": "CustomOperation",
+  "app": {"reference": "App/portal"},
+  "path": "/portal/patient-count",
+  "method": "GET",
+  "type": "sql",
+  "sql": "SELECT count(*) FROM patient",
+  "active": true
+}
+```
+
+`path` is absolute. A segment starting with `:` matches any value, as in `/users/:id`. A standalone
+operation has its own `active` field.
+
+Paths may not collide with another App's operations, and may not use the prefixes `/fhir`, `/oauth`,
+`/admin`, `/api`, `/ui`, `/healthz`, `/readyz`, `/metrics`, `/$graphql`, or the internal resource paths
+such as `/User` and `/App`.
 
 ### Operation Types
 
-- **`read`** - Custom read operations (e.g., computed views, aggregations)
-- **`write`** - Custom create/update operations with validation
-- **`search`** - Custom search implementations
-- **`execute`** - Named operations (e.g., `$custom-operation`)
+| Type | What it does | Configuration |
+|------|--------------|---------------|
+| `proxy` | Forwards the request to a URL | `proxy.url`, `proxy.timeout`, `proxy.headers` |
+| `sql` | Runs a read-only `SELECT` and returns rows as JSON | `sql` |
+| `fhirpath` | Evaluates an expression against the request body | `fhirpath` |
+| `handler` | Calls a Rust handler registered in the server's `HandlerRegistry` | `handler` |
+| `app` | Posts a structured request to the App's `endpoint` | `includeRawBody` |
+| `websocket` | Proxies a WebSocket to a backend, for inline operations | `websocket.url`, `websocket.subprotocols`, `websocket.forwardAuthInQuery` |
 
-### Handler Types
+Inline operations in `App.operations` use `app` by default. The server registers no `handler` of its
+own.
 
-1. **HTTP Handler** - Forward requests to external HTTP service
-2. **JavaScript Handler** - Execute JavaScript code in QuickJS sandbox
-3. **Internal Handler** - Built-in Rust implementation
+### The `app` Type
 
-Example HTTP handler operation:
+The gateway posts JSON to the App's endpoint, with `operationId`, `operationPath`, `method`, `auth`,
+`pathParams`, `queryParams` and `body`. The backend answers with `status`, `body`, and optionally
+`headers` and `fhirWrapper`, or with a plain response, which is passed through.
 
-```json
-{
-  "name": "risk-score",
-  "type": "execute",
-  "resourceType": "Patient",
-  "handler": {
-    "type": "http",
-    "url": "https://analytics.example.com/risk-score",
-    "method": "POST",
-    "headers": {
-      "X-API-Key": "secret-key"
-    }
-  }
-}
-```
+## Access
 
-Invoke the operation:
+An operation with `"public": true` needs no authentication. Any other operation needs one. `policy`
+narrows it further:
 
-```bash
-POST /Patient/123/$risk-score
-Authorization: Bearer <token>
+| Field | Meaning |
+|-------|---------|
+| `authType` | `forward` (default): the OAuth token. `app`: the App's secret in `X-App-Secret` |
+| `roles` | Required roles |
+| `scopes` | Required OAuth scopes |
+| `compartment` | `patient` or `practitioner` |
+| `script` | A policy script |
 
-{
-  "parameters": {
-    "algorithm": "framingham"
-  }
-}
-```
+## Subscriptions
 
-## Event Subscriptions
+`App.subscriptions` become `AppSubscription` resources with a `trigger` (`resourceType`, `event` of
+`create`, `update` or `delete`, optional `fhirpath`), and a `channel` or `notification`.
 
-Apps can subscribe to FHIR resource events for real-time workflows:
-
-### Supported Events
-
-- `create` - Resource created
-- `update` - Resource updated
-- `delete` - Resource deleted
-- `vread` - Resource version accessed
-
-### Subscription Handlers
-
-```json
-{
-  "resourceType": "Observation",
-  "events": ["create"],
-  "filter": {
-    "code": "85354-9",  // Blood pressure
-    "valueQuantity.value": { "gt": 140 }
-  },
-  "handler": {
-    "type": "webhook",
-    "url": "https://alerts.example.com/high-bp",
-    "retryPolicy": {
-      "maxRetries": 3,
-      "backoffSeconds": [10, 30, 60]
-    }
-  }
-}
-```
-
-## App Management API
-
-### Create App
-
-```bash
-POST /App
-Authorization: Bearer <admin-token>
-Content-Type: application/fhir+json
-
-{
-  "resourceType": "App",
-  "name": "My App",
-  ...
-}
-```
-
-### List Apps
-
-```bash
-GET /App?status=active
-Authorization: Bearer <admin-token>
-```
-
-### Update App
-
-```bash
-PUT /App/my-app
-Authorization: Bearer <admin-token>
-
-{
-  "resourceType": "App",
-  "id": "my-app",
-  "status": "inactive",
-  ...
-}
-```
-
-### Delete App
-
-```bash
-DELETE /App/my-app
-Authorization: Bearer <admin-token>
-```
-
-## App Status
-
-Apps can have the following statuses:
-
-- **`draft`** - Under development, not active
-- **`active`** - Deployed and processing requests
-- **`inactive`** - Temporarily disabled
-- **`retired`** - Permanently removed
-
-## Security & Permissions
-
-### App Authentication
-
-Apps can authenticate using:
-- **Client credentials** - OAuth 2.0 machine-to-machine
-- **Service accounts** - Dedicated user with system scopes
-- **API keys** - Simple token-based auth (for internal services)
-
-### Operation Authorization
-
-Operations inherit the user's access token and scopes. The app can:
-- **Pass-through auth** - Use the caller's token as-is
-- **Elevation** - Request additional scopes (requires consent)
-- **Service context** - Execute with app's own credentials
-
-### Audit Logging
-
-All app operations are logged to FHIR `AuditEvent` resources:
-
-```json
-{
-  "resourceType": "AuditEvent",
-  "action": "E",  // Execute
-  "recorded": "2026-01-03T14:00:00Z",
-  "outcome": "0",  // Success
-  "agent": [
-    {
-      "who": { "reference": "User/admin" }
-    },
-    {
-      "who": { "reference": "App/my-app" },
-      "requestor": false
-    }
-  ],
-  "entity": [
-    {
-      "what": { "reference": "Patient/123" },
-      "role": "4"  // Domain resource
-    }
-  ]
-}
-```
-
-## Best Practices
-
-1. **Version your apps** - Use semantic versioning and test changes
-2. **Handle failures gracefully** - Implement retry logic and error handling
-3. **Monitor performance** - Track operation latency and throughput
-4. **Validate inputs** - Don't trust external data
-5. **Use FHIR resources** - Store app configuration as FHIR resources when possible
-
-## Configuration
-
-App platform settings in `octofhir.toml`:
-
-```toml
-[apps]
-enabled = true
-max_operations_per_app = 100
-operation_timeout_seconds = 30
-webhook_timeout_seconds = 10
-webhook_max_retries = 3
-
-[apps.sandbox]
-enabled = true
-max_memory_mb = 128
-max_execution_ms = 5000
-```
-
-## Examples
-
-### Patient Portal Integration
-
-```json
-{
-  "resourceType": "App",
-  "name": "Patient Portal",
-  "operations": [
-    {
-      "name": "portal-dashboard",
-      "type": "read",
-      "resourceType": "Patient",
-      "handler": {
-        "type": "javascript",
-        "code": "function(patient) { return { summary: computeSummary(patient) } }"
-      }
-    }
-  ]
-}
-```
-
-### Clinical Decision Support
-
-```json
-{
-  "resourceType": "App",
-  "name": "Drug Interaction Checker",
-  "subscriptions": [
-    {
-      "resourceType": "MedicationRequest",
-      "events": ["create"],
-      "handler": {
-        "type": "http",
-        "url": "https://cds.example.com/check-interactions"
-      }
-    }
-  ]
-}
-```
+The server stores them but delivers nothing for them yet. For event delivery, use
+[Subscriptions](/server-rs/subscriptions/).

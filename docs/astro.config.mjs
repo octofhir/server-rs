@@ -57,7 +57,6 @@ export default defineConfig({
             { label: 'Search Parameters', link: 'search-parameters/' },
             { label: 'Search Indexing', link: 'search-indexing/' },
             { label: 'Search Architecture', link: 'search-architecture/' },
-            { label: 'Date Search', link: 'date-search/' },
             { label: 'No reindexing', link: 'no-reindex/' },
           ]
         },
@@ -91,13 +90,6 @@ export default defineConfig({
           ]
         },
         { label: 'Application Platform', link: 'applications/' },
-        {
-          label: 'Migration',
-          collapsed: true,
-          items: [
-            { label: 'From HAPI FHIR', link: 'migration/hapi/' },
-          ]
-        },
         { label: 'Development', link: 'development/' },
         { label: 'Deployment', link: 'deployment/' },
       ],

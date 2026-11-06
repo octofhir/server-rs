@@ -173,8 +173,10 @@ Available just commands:
 The repository includes GitHub Actions workflows for:
 
 - Running tests on PRs and main branch
-- Building and publishing Docker images on releases
+- Running performance benchmarks
 - Deploying documentation to GitHub Pages
+
+No workflow builds Docker images. Publishing is manual, with `just docker-release`.
 
 ### Manual Release
 
@@ -232,7 +234,7 @@ spec:
           periodSeconds: 30
         readinessProbe:
           httpGet:
-            path: /healthz
+            path: /readyz
             port: 8888
           initialDelaySeconds: 10
           periodSeconds: 5
@@ -255,3 +257,7 @@ spec:
   - port: 80
     targetPort: 8888
 ```
+
+`/healthz` says the process is up. `/readyz` also checks the database and the package manager. The Helm
+chart in `helm/octofhir` does not use `/readyz`: its liveness, readiness and startup probes all call
+`/healthz`.

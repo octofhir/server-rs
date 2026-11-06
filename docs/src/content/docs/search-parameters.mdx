@@ -5,7 +5,7 @@ description: Complete guide to FHIR search parameters, modifiers, and advanced s
 
 OctoFHIR supports comprehensive FHIR search capabilities including all standard modifiers, date prefixes, and advanced features like `_include` and `_revinclude`.
 
-For indexing behavior and performance-oriented query design, see [Search Indexing](./search-indexing).
+For indexing behavior and performance-oriented query design, see [Search Indexing](/server-rs/search-indexing/).
 
 ## How Search Is Accelerated
 
@@ -20,7 +20,7 @@ PostgreSQL indexes speed it up. There are no side tables of extracted values.
 | `token` params | JSON containment, on an index of the element when listed, or on the whole-document GIN index |
 | `_include`, `_revinclude`, chained search | Follow the references in the JSON |
 
-A parameter that is not listed still works. See [Search Indexing](./search-indexing) for the full table.
+A parameter that is not listed still works. See [Search Indexing](/server-rs/search-indexing/) for the full table.
 
 ### Practical Tips
 
@@ -171,7 +171,7 @@ GET /fhir/Patient?birthdate=1980-01-15
 ## Chaining into embedded resources
 
 `Bundle` parameters such as `composition` chain into the resource inside the entry, not through
-a reference: `Bundle?composition.subject=Patient/123`. See [FHIR R6](/fhir-r6/#the-resource-search-parameter-type).
+a reference: `Bundle?composition.subject=Patient/123`. See [FHIR R6](/server-rs/fhir-r6/#the-resource-search-parameter-type).
 
 ## Include and RevInclude
 
@@ -608,32 +608,22 @@ After deletion:
 
 ### Performance Characteristics
 
-OctoFHIR's search parameter architecture is designed for high-performance production workloads:
-
 **Lock-Free Reads:**
 - Search queries never block on registry access
-- Single atomic load (~1-5 nanoseconds)
-- Zero contention during concurrent searches
+- A writer publishes a new snapshot; readers keep the one they hold
 
 **Incremental Updates:**
 - SearchParameter CRUD operations update registry incrementally
 - No full registry reload needed
-- Update time: ~100-500 nanoseconds
 
 **Query Cache:**
-- Automatically cleared when parameters change
-- Prevents stale query results
-- Minimal performance impact
+- Cleared when parameters change
 
 ### Multi-Instance Deployments
 
-:::caution[Multi-Instance Behavior]
-When running multiple OctoFHIR instances:
-- SearchParameter created on Instance A is NOT automatically propagated to Instance B
-- Each instance loads parameters from the shared PostgreSQL database
-- Parameters become available on other instances when they reload from the database
-- Consider using package-based SearchParameters for multi-instance deployments
-:::
+With Redis enabled (`[redis] enabled = true`), a SearchParameter created on one instance reaches the others through Redis pub/sub. Each instance applies it to its registry.
+
+Without Redis there is no such sync. Other instances pick up the parameter at their next start.
 
 ### Best Practices
 
@@ -641,7 +631,6 @@ When running multiple OctoFHIR instances:
 2. **Test FHIRPath Expressions** - Validate expressions work correctly before deployment
 3. **Document Custom Parameters** - Add clear descriptions and examples
 4. **Version Your Parameters** - Include version in URL when making breaking changes
-5. **Use Packages for Production** - Package-based parameters ensure consistency across instances
 
 ### Limitations
 

@@ -43,17 +43,22 @@ read_timeout_ms = 15000   # Read timeout (15s)
 write_timeout_ms = 15000  # Write timeout (15s)
 body_limit_bytes = 1048576  # Max request body (1 MiB)
 
-# Outbound requests to client-chosen URLs (subscription rest-hooks, $import sources)
-allow_private_outbound = true   # default; set false on shared deployments
+# Outbound requests to client-chosen URLs (subscription rest-hooks, $import sources,
+# $bulk-submit file URLs)
+allow_private_outbound = true   # default; set false on shared or production deployments
 outbound_allowlist = []         # with false: private networks/hosts still reachable
 ```
 
 ### Outbound requests
 
-Subscription rest-hook endpoints and `$import` source URLs are chosen by API clients, so the
-server would call whatever they name, including its own network (loopback admin ports, other
-internal services, the cloud metadata endpoint at `169.254.169.254`). With
-`allow_private_outbound = false` the server only calls public addresses, plus what you list:
+API clients choose some of the URLs the server calls: subscription rest-hook endpoints, `$import`
+source URLs, and `$bulk-submit` file URLs with their manifests and OAuth metadata. The Grafana URL
+of a dashboard export follows the same policy.
+
+Private addresses are allowed by default, so that local setups work. The risk: a client with the
+right to start such a job can make the server call internal services and the cloud metadata
+endpoint at `169.254.169.254`. Shared or production deployments should set
+`allow_private_outbound = false`. The server then only calls public addresses, plus what you list:
 
 ```toml
 [server]
@@ -156,9 +161,6 @@ authorization_code_lifetime = "10m"
 access_token_lifetime = "1h"
 refresh_token_lifetime = "90d"
 
-# Security settings
-refresh_token_rotation = true
-
 # Allowed grant types
 grant_types = ["authorization_code", "client_credentials", "refresh_token"]
 ```
@@ -201,10 +203,6 @@ supported_scopes = [
 # Algorithm: RS256, RS384, or ES384
 algorithm = "RS384"
 
-# Key rotation
-key_rotation_days = 90
-keys_to_keep = 3
-
 # Optional: Fixed keys for token persistence across restarts
 # kid = "my-key-id"
 # private_key_pem = """-----BEGIN PRIVATE KEY-----..."""
@@ -219,24 +217,12 @@ Without fixed keys, tokens are invalidated on server restart. For production, co
 
 ```toml
 [auth.policy]
-default_deny = true       # Deny when no policy matches
 quickjs_enabled = true    # Enable JavaScript policy engine
 
 [auth.policy.quickjs]
 memory_limit_mb = 16
 max_stack_size_kb = 256
 timeout_ms = 100
-```
-
-### Rate Limiting
-
-```toml
-[auth.rate_limiting]
-token_requests_per_minute = 60
-token_requests_per_hour = 1000
-auth_requests_per_minute = 30
-max_failed_attempts = 5
-lockout_duration = "5m"
 ```
 
 ### Sessions & Cookies
@@ -253,19 +239,8 @@ path = "/"
 [auth.session]
 idle_timeout = "30m"
 absolute_timeout = "8h"
-max_concurrent_sessions = 10
 cookie_name = "octofhir_sso"
 cookie_secure = false     # Set true in production
-```
-
-### Identity Federation
-
-```toml
-[auth.federation]
-allow_external_idp = true
-auto_provision_users = false
-jwks_cache_ttl = "1h"
-jwks_refresh_on_failure = true
 ```
 
 ---
@@ -314,6 +289,7 @@ lsp_enabled = true
 ```toml
 [sql_on_fhir]
 enabled = true
+viewdefinition_export = true  # ViewDefinition/$export, the export of SQL on FHIR 2.0
 ```
 
 See [SQL on FHIR](/server-rs/sql-on-fhir/).
@@ -397,11 +373,11 @@ cache_ttl_secs = 3600
 
 ```toml
 [audit]
-enabled = false
+enabled = true
 log_fhir_operations = true
 log_auth_events = true
-log_read_operations = true
-log_search_operations = true
+log_read_operations = false
+log_search_operations = false
 exclude_resource_types = ["AuditEvent"]
 ```
 
@@ -501,6 +477,7 @@ OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD=secure-random-password
 [server]
 host = "0.0.0.0"
 port = 8888
+allow_private_outbound = false
 
 [storage.postgres]
 url = "postgres://user:pass@prod-db.example.com:5432/octofhir?sslmode=require"

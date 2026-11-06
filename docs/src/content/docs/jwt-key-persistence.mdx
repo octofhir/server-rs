@@ -17,9 +17,9 @@ OctoFHIR supports three JWT signing algorithms. Choose based on your requirement
 
 | Algorithm | Type | Key Size | Security | Verify Speed | SMART on FHIR | Recommendation |
 |-----------|------|----------|----------|--------------|---------------|----------------|
-| **RS384** | RSA | 3072-bit | 128 bits | 🚀 Fast | ✅ Preferred | **Recommended** |
-| **RS256** | RSA | 2048-bit | 112 bits | 🚀 Fast | ✅ Compatible | Good for compatibility |
-| **ES384** | ECDSA | P-384 | 192 bits | 🐢 Slow | ✅ Preferred | Smaller tokens, slower |
+| **RS384** | RSA | 3072-bit | 128 bits | Fast | Preferred | **Recommended** |
+| **RS256** | RSA | 2048-bit | 112 bits | Fast | Compatible | Good for compatibility |
+| **ES384** | ECDSA | P-384 | 192 bits | Slow | Preferred | Smaller tokens, slower |
 
 ### Why RS384 is Recommended
 
@@ -70,7 +70,7 @@ Keys are generated in PKCS#8 format (`-----BEGIN PRIVATE KEY-----`), which is re
 
 ### 3. Configure OctoFHIR
 
-You have three options for providing the keys:
+You have two options for providing the keys:
 
 #### Option A: Direct Configuration File
 
@@ -107,27 +107,6 @@ export OCTOFHIR__AUTH__SIGNING__KID="production-key-2024"
 cargo run
 ```
 
-#### Option C: Separate Configuration File
-
-Create a separate `jwt-keys.toml`:
-
-```toml
-[auth.signing]
-private_key_pem = """
------BEGIN PRIVATE KEY-----
-...
------END PRIVATE KEY-----
-"""
-
-public_key_pem = """
------BEGIN PUBLIC KEY-----
-...
------END PUBLIC KEY-----
-"""
-kid = "production-key-2024"
-```
-
-Then merge it with your main config using the config manager.
 
 ## Key Management Best Practices
 
@@ -148,16 +127,7 @@ Then merge it with your main config using the config manager.
 
 ### Key Rotation
 
-The configuration includes `key_rotation_days` and `keys_to_keep` settings for future automatic key rotation support:
-
-```toml
-[auth.signing]
-algorithm = "RS384"
-key_rotation_days = 90  # Rotate keys every 90 days
-keys_to_keep = 3        # Keep 3 old keys for validation
-```
-
-**Note**: Automatic rotation is planned for a future release. Currently, you must rotate keys manually.
+The server has no automatic key rotation. To rotate a key, set a new key pair and a new `kid`, then restart. Tokens signed with the old key stop being valid.
 
 ### Key ID (kid) Management
 
@@ -272,17 +242,6 @@ spec:
       value: "production-2024"
 ```
 
-## Migration from Auto-Generated Keys
-
-If you're migrating from auto-generated keys:
-
-1. **Generate and configure new keys** following the steps above
-2. **Deploy the new configuration** to your server
-3. **Users will need to re-authenticate** once (their old tokens will be invalid)
-4. **Future restarts** will maintain token validity
-
-To minimize disruption, deploy during a maintenance window.
-
 ## Verification
 
 After configuration, the server logs should show:
@@ -302,9 +261,9 @@ WARN octofhir_server::server: Generated new JWT signing key - tokens will be inv
 
 ## Related Documentation
 
-- [Authentication Guide](./authentication) - OAuth 2.0 and SMART on FHIR
-- [Auth Architecture](./auth-architecture) - Authentication system architecture
-- [Deployment Guide](./deployment) - Production deployment best practices
+- [Authentication Guide](/server-rs/authentication/) - OAuth 2.0 and SMART on FHIR
+- [Auth Architecture](/server-rs/auth-architecture/) - Authentication system architecture
+- [Deployment Guide](/server-rs/deployment/) - Production deployment best practices
 
 ## Further Reading
 

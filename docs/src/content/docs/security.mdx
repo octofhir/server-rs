@@ -69,8 +69,6 @@ issuer = "https://fhir.example.com"
 access_token_lifetime = "15m"
 # Longer refresh tokens for UX
 refresh_token_lifetime = "7d"
-# Rotate refresh tokens on each use
-refresh_token_rotation = true
 # Only allow needed grant types
 grant_types = ["authorization_code", "refresh_token"]
 ```
@@ -135,19 +133,26 @@ openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out private.pem
 
 Register OAuth clients for your applications:
 
+Clients are internal resources, served at the root rather than under `/fhir`:
+
 ```bash
-curl -X POST https://fhir.example.com/admin/clients \
+curl -X POST https://fhir.example.com/Client \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "client_id": "my-ehr-app",
-    "client_name": "My EHR Application",
-    "redirect_uris": ["https://app.example.com/callback"],
-    "grant_types": ["authorization_code", "refresh_token"],
-    "token_endpoint_auth_method": "client_secret_basic",
-    "scope": "openid fhirUser launch/patient patient/*.read"
+    "resourceType": "Client",
+    "clientId": "my-ehr-app",
+    "clientSecret": "change-me",
+    "name": "My EHR Application",
+    "redirectUris": ["https://app.example.com/callback"],
+    "grantTypes": ["authorization_code", "refresh_token"],
+    "scopes": ["openid", "fhirUser", "launch/patient", "patient/*.read"],
+    "confidential": true,
+    "active": true
   }'
 ```
+
+The server stores `clientSecret` as a hash.
 
 ### Confidential vs Public Clients
 
@@ -172,60 +177,64 @@ OctoFHIR uses a policy engine for fine-grained access control.
 
 ### Default Deny
 
-```toml
-[auth.policy]
-default_deny = true  # Deny if no policy matches
-```
+A request that no policy allows is denied. This cannot be configured.
 
 ### Example Policies
+
+Scripts see the request as the globals `user`, `client`, `scopes`, `request`, `resource` and
+`environment`, and return `allow()`, `deny(reason)` or `abstain()`. See
+[Access Policies](/server-rs/access-policies/).
 
 **Admin Full Access:**
 ```javascript
 // Policy: admin-full-access
-if (user.roles.includes('admin')) {
-  return { allow: true };
+if (hasRole('admin')) {
+  return allow();
 }
+return abstain();
 ```
 
 **Patient Compartment Access:**
 ```javascript
 // Policy: patient-compartment
-if (request.resourceType === 'Patient' && request.resourceId === user.patientId) {
-  return { allow: true };
+if (!isPatientUser()) {
+  return abstain();
 }
-if (request.resource?.subject?.reference === `Patient/${user.patientId}`) {
-  return { allow: true };
+if (request.resourceType === 'Patient' && request.resourceId === user.fhirUserId) {
+  return allow();
 }
-return { allow: false, reason: 'Access denied to this patient data' };
+if (inPatientCompartment()) {
+  return allow();
+}
+return deny('Access denied to this patient data');
 ```
 
 **Read-Only for Researchers:**
 ```javascript
 // Policy: researcher-readonly
-if (user.roles.includes('researcher') && request.method === 'GET') {
-  return { allow: true };
+if (hasRole('researcher') && request.method === 'GET') {
+  return allow();
 }
+return abstain();
 ```
 
 ---
 
-## Rate Limiting
+## Outbound Requests
 
-Protect against abuse and DoS:
+API clients choose some of the URLs the server calls: subscription rest-hook endpoints, `$import`
+source URLs and `$bulk-submit` file URLs.
+
+Private addresses are allowed by default, so that local setups work. The risk: a client with the
+right to start such a job can make the server call internal services and the cloud metadata
+endpoint. Shared or production deployments should set this:
 
 ```toml
-[auth.rate_limiting]
-# Token endpoint
-token_requests_per_minute = 30
-token_requests_per_hour = 500
-
-# Authorization endpoint
-auth_requests_per_minute = 20
-
-# Brute force protection
-max_failed_attempts = 5
-lockout_duration = "15m"
+[server]
+allow_private_outbound = false
 ```
+
+See [Outbound requests](/server-rs/configuration/#outbound-requests).
 
 ---
 
@@ -237,8 +246,6 @@ lockout_duration = "15m"
 idle_timeout = "15m"
 # Absolute timeout (max session length)
 absolute_timeout = "8h"
-# Limit concurrent sessions
-max_concurrent_sessions = 5
 
 [auth.cookie]
 secure = true           # HTTPS only
@@ -312,7 +319,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO octofhir_app;
 2. **Credentials** - Change all default passwords
 3. **JWT Keys** - Configure persistent signing keys
 4. **Cookies** - Set `secure = true` and `same_site = "strict"`
-5. **Rate Limiting** - Enable and tune rate limits
+5. **Outbound Requests** - Set `allow_private_outbound = false`
 6. **Audit Logging** - Enable audit trail
 7. **Validation** - Disable skip validation header
 8. **GraphQL** - Disable introspection

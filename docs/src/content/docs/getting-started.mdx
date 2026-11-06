@@ -70,7 +70,8 @@ OctoFHIR uses OAuth 2.0. Get an access token with the default admin credentials:
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8888/auth/token \
-  -d "grant_type=password&username=admin&password=admin123" \
+  -d "grant_type=password&client_id=octofhir-ui&username=admin&password=admin123" \
+  --data-urlencode "scope=openid user/*.cruds" \
   | jq -r '.access_token')
 
 echo $TOKEN

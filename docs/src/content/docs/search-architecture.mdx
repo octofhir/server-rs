@@ -5,7 +5,7 @@ description: Internal architecture of OctoFHIR's search system, including regist
 
 This document describes the internal architecture of OctoFHIR's search parameter system, including how search parameters are loaded, registered, and used during search operations.
 
-For a user-facing overview of query/index behavior, see [Search Indexing](./search-indexing).
+For a user-facing overview of query/index behavior, see [Search Indexing](/server-rs/search-indexing/).
 
 ## Architecture Overview
 
@@ -21,7 +21,7 @@ For a user-facing overview of query/index behavior, see [Search Indexing](./sear
 ┌───────────────────┐  ┌────────────────────┐
 │ Postprocess Hook  │  │  Search Handler    │
 │ - Validate FHIRPath│  │ - Parse Query      │
-│ - Upsert Registry │  │ - Get Config       │
+│ - Apply Registry  │  │ - Get Config       │
 │ - Clear Cache     │  │ - Execute Search   │
 └─────────┬─────────┘  └──────────┬─────────┘
           │                       │
@@ -32,9 +32,11 @@ For a user-facing overview of query/index behavior, see [Search Indexing](./sear
 │  │    SearchConfig (Lock-Free Reads)     │  │
 │  │  ┌─────────────────────────────────┐  │  │
 │  │  │  SearchParameterRegistry        │  │  │
-│  │  │  - by_resource (DashMap)        │  │  │
-│  │  │  - by_url (DashMap)             │  │  │
-│  │  │  - common (DashMap)             │  │  │
+│  │  │  ArcSwap<RegistryData>          │  │  │
+│  │  │  - by_url (HashMap)             │  │  │
+│  │  │  - by_resource (HashMap)        │  │  │
+│  │  │  - by_type (HashMap)            │  │  │
+│  │  │  - common (HashMap)             │  │  │
 │  │  └─────────────────────────────────┘  │  │
 │  │  ┌─────────────────────────────────┐  │  │
 │  │  │  QueryCache (Optional)          │  │  │
@@ -53,33 +55,49 @@ For a user-facing overview of query/index behavior, see [Search Indexing](./sear
 
 ### 1. SearchParameterRegistry
 
-Thread-safe registry using `DashMap` for lock-free concurrent access.
+The registry keeps all its indices in one immutable snapshot behind an `ArcSwap`. Readers load the snapshot without a lock. A writer takes a mutex, clones the data, rebuilds every index and publishes the new snapshot in one store.
 
 **Location:** `crates/octofhir-search/src/registry.rs`
 
 **Data Structures:**
 ```rust
 pub struct SearchParameterRegistry {
-    /// Parameters indexed by (resource_type, code)
-    by_resource: DashMap<(String, String), Arc<SearchParameter>>,
-    /// All parameters by canonical URL
-    by_url: DashMap<String, Arc<SearchParameter>>,
+    data: ArcSwap<RegistryData>,
+    writer: Mutex<()>,
+}
+
+struct RegistryData {
+    /// Definitions from packages, by canonical URL
+    declarations: HashMap<String, Arc<SearchParameter>>,
+    /// Committed runtime resources: id -> (version, definition or deletion)
+    resources: HashMap<String, (i64, Option<Arc<SearchParameter>>)>,
+    /// Effective definitions by canonical URL
+    by_url: HashMap<String, Arc<SearchParameter>>,
+    /// Runnable parameters by (resource_type, code)
+    by_resource: HashMap<(String, String), Arc<SearchParameter>>,
+    /// Runnable parameters by resource type
+    by_type: HashMap<String, Vec<Arc<SearchParameter>>>,
     /// Common parameters (base = "Resource" or "DomainResource")
-    common: DashMap<String, Arc<SearchParameter>>,
+    common: HashMap<String, Arc<SearchParameter>>,
+    /// Every declared (resource_type, code) pair
+    declared: HashSet<(String, String)>,
 }
 ```
 
 **Key Methods:**
-- `register(&self, param: SearchParameter)` - Register a new parameter
-- `upsert(&self, param: SearchParameter)` - Update or insert (alias for register)
-- `remove_by_url(&self, url: &str) -> bool` - Remove by canonical URL
-- `get(&self, resource_type: &str, code: &str) -> Option<Arc<SearchParameter>>` - Lookup parameter
+- `register(&self, param: SearchParameter)` - Add a package definition
+- `register_all(&self, params)` - Add a batch and publish one snapshot
+- `upsert(&self, param: SearchParameter)` - Alias for `register`
+- `apply_resource(&self, id: &str, version: i64, param: Option<SearchParameter>) -> bool` - Apply a committed runtime revision. `None` marks a deletion. A version that is not newer than the known one is ignored, so a delayed event cannot bring back an old definition.
+- `remove_by_url(&self, url: &str) -> bool` - Remove a package definition by canonical URL
+- `get(&self, resource_type: &str, code: &str) -> Option<Arc<SearchParameter>>` - Look up a parameter
 
-**Why DashMap?**
-- Lock-free concurrent HashMap
-- Multiple readers can access simultaneously
-- Writers don't block readers
-- O(1) lookup performance
+Runtime resources override package definitions. When a runtime resource is deleted, the package definition of the same URL comes back.
+
+**Why ArcSwap over HashMap?**
+- Readers never wait for a writer
+- All indices change together, so a reader never sees a half-updated registry
+- Writes are rare and pay for the rebuild
 
 ### 2. ReloadableSearchConfig
 
@@ -108,11 +126,14 @@ pub fn config(&self) -> Arc<SearchConfig> {
 
 **Reload Registry (Atomic Swap):**
 ```rust
-pub async fn reload_registry(&self, canonical_manager: &CanonicalManager)
-    -> Result<(), LoaderError>
-{
-    // 1. Load new registry (background, doesn't block readers)
-    let new_registry = Arc::new(load_search_parameters(canonical_manager).await?);
+#[cfg(feature = "canonical")]
+pub async fn reload_registry(
+    &self,
+    canonical_manager: &CanonicalManager,
+    resolver: Option<&dyn ElementTypeResolver>,
+) -> Result<(), LoaderError> {
+    // 1. Load new registry (doesn't block readers)
+    let new_registry = Arc::new(load_search_parameters(canonical_manager, resolver).await?);
 
     // 2. Create new config
     let current = self.inner.load_full();
@@ -135,6 +156,8 @@ pub async fn reload_registry(&self, canonical_manager: &CanonicalManager)
 }
 ```
 
+The `resolver` fills in element types from the FHIR schema.
+
 **Why Arc-Swap?**
 - **Zero lock contention** - Readers never wait for writers
 - **Atomic updates** - Pointer swap is atomic (single CPU instruction)
@@ -153,67 +176,99 @@ pub async fn reload_registry(&self, canonical_manager: &CanonicalManager)
 
 2. **Query Canonical Manager**
    - Load all SearchParameter resources from PostgreSQL
-   - High limit (10,000) to get all parameters in one query
+   - Read them in pages of 1,000 until the last page
 
-3. **Parse and Validate**
+3. **Parse**
    - Extract required fields (code, url, type, base)
-   - Parse FHIRPath expression
    - Build internal SearchParameter struct
+   - Resolve the element type from the schema, when a resolver is given
+   - Skip a resource that fails to parse
 
 4. **Register in Registry**
+   - All parsed parameters go in with one `register_all` call, which publishes one snapshot
    - Index by URL
    - Index by (resource_type, code) for each base
-   - Mark as common if base includes "Resource"
+   - Mark as common if base includes "Resource" or "DomainResource"
 
-**Performance:**
-- Initial load: ~100-200ms for ~1000 parameters
-- Incremental update: ~100-500 nanoseconds per parameter
+### 4. Applying Runtime Changes
 
-### 4. Postprocessing Hook
+A SearchParameter written through the REST API reaches the registry in two ways. Both call `apply_resource` with the committed version, so applying the same revision twice does nothing.
 
-**Location:** `crates/octofhir-server/src/handlers.rs`
+**Request path.** `postprocess_resource` in `crates/octofhir-server/src/handlers.rs` runs after a successful create or update. The delete handler does the same with `None`.
 
-Automatically called after successful create/update/delete operations.
-
-**Implementation:**
 ```rust
 async fn postprocess_resource(
     resource_type: &str,
-    _resource_id: &str,
+    resource_id: &str,
     payload: &Value,
-    state: &AppState,
+    state: &crate::server::AppState,
 ) -> Result<(), ApiError> {
+    if let Some(cache) = &state.resource_cache {
+        cache.invalidate(resource_type, resource_id).await;
+    }
+
     if resource_type == "SearchParameter" {
-        // 1. Validate FHIRPath expression syntax
         if let Some(expression) = payload.get("expression").and_then(|v| v.as_str()) {
             validate_fhirpath_expression(expression)?;
         }
 
-        // 2. Parse SearchParameter resource
         match octofhir_search::parse_search_parameter(payload) {
             Ok(param) => {
-                // 3. Get current config snapshot
                 let config = state.search_config.config();
+                let version = payload["meta"]["versionId"]
+                    .as_str()
+                    .and_then(|version| version.parse().ok())
+                    .ok_or_else(|| {
+                        ApiError::internal("Committed SearchParameter has no revision")
+                    })?;
+                config
+                    .registry
+                    .apply_resource(resource_id, version, Some(param));
 
-                // 4. Incrementally update registry (thread-safe)
-                config.registry.upsert(param);
-
-                // 5. Clear query cache to prevent stale results
                 if let Some(cache) = &config.cache {
                     cache.clear();
                 }
-
-                tracing::info!(
-                    code = payload.get("code").and_then(|v| v.as_str()),
-                    "Search parameter registered incrementally"
-                );
             }
             Err(e) => {
-                tracing::error!(error = %e, "Failed to parse SearchParameter");
+                // The resource is already saved, so the request does not fail.
+                tracing::error!(error = %e, "Failed to parse SearchParameter for incremental update");
             }
         }
     }
 
+    Ok(())
+}
+```
+
+**Event path.** `SearchParamHook` in `crates/octofhir-server/src/hooks/search.rs` handles the resource events for SearchParameter. It also receives events from other instances, see [Multi-Instance Behavior](#multi-instance-behavior).
+
+```rust
+async fn handle(&self, event: &ResourceEvent) -> Result<(), HookError> {
+    let config = self.search_config.config();
+    let version = event.version_id.ok_or_else(|| {
+        HookError::execution("SearchParameter event has no committed revision")
+    })?;
+    let parameter = match event.event_type {
+        ResourceEventType::Created | ResourceEventType::Updated => {
+            let resource = event
+                .resource
+                .as_ref()
+                .ok_or_else(|| HookError::execution("SearchParameter event has no snapshot"))?;
+            Some(
+                octofhir_search::parse_search_parameter(resource)
+                    .map_err(|error| HookError::execution(error.to_string()))?,
+            )
+        }
+        ResourceEventType::Deleted => None,
+    };
+    if config
+        .registry
+        .apply_resource(&event.resource_id, version, parameter)
+    {
+        if let Some(cache) = &config.cache {
+            cache.clear();
+        }
+    }
     Ok(())
 }
 ```
@@ -238,67 +293,10 @@ fn validate_fhirpath_expression(expression: &str) -> Result<(), ApiError> {
 ```
 
 **Validation Scope:**
-- ✅ Syntax correctness (parentheses, operators, function names)
-- ✅ Basic structure (paths, predicates, function calls)
-- ❌ Semantic correctness (doesn't check against resource schema)
-- ❌ Type checking (doesn't validate return types)
-
-## Performance Characteristics
-
-### Lock-Free Architecture
-
-**Traditional Approach (RwLock):**
-```
-┌─────────────────────────────────────────────┐
-│ RwLock<SearchConfig>                        │
-│                                             │
-│  Readers:  [Wait] [Wait] [Wait] [Wait]      │
-│  Writer:   [LOCK - BLOCKING ALL READERS]    │
-│                                             │
-│  Problem: All searches blocked during       │
-│           registry reload (1-2 seconds)     │
-└─────────────────────────────────────────────┘
-```
-
-**OctoFHIR Approach (Arc-Swap):**
-```
-┌─────────────────────────────────────────────┐
-│ ArcSwap<SearchConfig>                       │
-│                                             │
-│  Readers:  [Read Old] [Read Old] [Read New] │
-│  Writer:   [Create New] → [Atomic Swap]     │
-│                                             │
-│  Benefit: Zero blocking, seamless           │
-│           transition between configs        │
-└─────────────────────────────────────────────┘
-```
-
-### Performance Metrics
-
-| Operation | Time | Impact on Searches |
-|-----------|------|-------------------|
-| Registry lookup (read) | 1-5 ns | None (lock-free) |
-| Incremental update (upsert) | 100-500 ns | None (lock-free) |
-| Full registry reload | 100-200 ms | None (atomic swap) |
-| Query cache lookup | 10-50 ns | None (concurrent) |
-
-### Memory Usage
-
-**Per SearchParameter:**
-- SearchParameter struct: ~200 bytes
-- Arc overhead: 16 bytes
-- DashMap entry overhead: ~40 bytes
-- **Total: ~256 bytes per parameter**
-
-**Full Registry (1000 parameters):**
-- Parameters: ~256 KB
-- Three indices (by_resource, by_url, common): ~768 KB
-- **Total: ~1 MB**
-
-**Config Snapshot:**
-- `Arc<SearchConfig>`: 8 bytes (pointer)
-- Reference counting: atomic operations
-- **Zero copy on read**
+- Checked: syntax (parentheses, operators, function names)
+- Checked: basic structure (paths, predicates, function calls)
+- Not checked: semantics against the resource schema
+- Not checked: return types
 
 ## Concurrency Model
 
@@ -309,61 +307,57 @@ fn validate_fhirpath_expression(expression: &str) -> Result<(), ApiError> {
 let config = state.search_config.config();  // Arc<SearchConfig>
 let param = config.registry.get("Patient", "name");  // Option<Arc<SearchParameter>>
 
-// All operations are lock-free:
 // 1. config() - single atomic load
-// 2. registry.get() - DashMap concurrent read
-// 3. No blocking, no waiting
+// 2. registry.get() - load the current snapshot, then a HashMap lookup
 ```
 
 ### Write Operations (SearchParameter CRUD)
 
 ```rust
-// Incremental update (after POST/PUT SearchParameter)
+// Incremental update (after POST/PUT/DELETE SearchParameter)
 let config = state.search_config.config();
-config.registry.upsert(new_param);  // DashMap concurrent insert
+config.registry.apply_resource(id, version, Some(param));  // rebuild and publish one snapshot
 
-// Full reload (after package installation)
-state.search_config.reload_registry(&canonical_manager).await?;
-// 1. Loads new registry in background
-// 2. Swaps pointer atomically
-// 3. Old config stays alive until readers release it
+// Full reload
+state.search_config.reload_registry(&canonical_manager, resolver).await?;
+// 1. Loads a new registry
+// 2. Swaps the pointer atomically
+// 3. The old config stays alive until readers release it
 ```
 
 ### Thread Safety Guarantees
 
-1. **No Data Races** - All data structures are thread-safe
-2. **No Deadlocks** - No locks used in read path
-3. **No Starvation** - Readers never wait for writers
-4. **Eventual Consistency** - All readers eventually see updates
+1. **No locks in the read path** - Readers use two `ArcSwap` loads
+2. **Single writer** - Registry writers take a mutex; readers do not
+3. **Consistent snapshots** - A reader sees all indices from one generation
 
 ## Query Cache
 
 **Location:** `crates/octofhir-search/src/query_cache.rs`
 
-**Purpose:** Cache parsed search queries to avoid re-parsing identical queries.
+`QueryCache` stores SQL templates keyed by query structure: resource type, parameter names, modifiers and types, pagination and sort fields. Values are not part of the key.
+
+**The search path does not use it.** `execute_search_raw_with_terminology_options` receives the cache but always builds SQL from scratch. Renderers can embed values in the SQL, so a structural key does not prove that a template fits. The argument stays until templates can be identified safely.
 
 **Implementation:**
 ```rust
 pub struct QueryCache {
-    cache: Arc<DashMap<QueryCacheKey, QueryCacheEntry>>,
+    cache: DashMap<u64, CacheEntry>,
     capacity: usize,
-}
-
-struct QueryCacheKey {
-    resource_type: String,
-    query_string: String,
+    max_age_secs: u64,
+    enabled: bool,
+    stats: Arc<CacheStatistics>,
 }
 ```
 
-**Cache Invalidation:**
-- Cleared when SearchParameter is created/updated/deleted
-- Cleared when registry is reloaded
-- Prevents stale query results
+**Eviction:**
+- Entries go stale after one hour
+- When the cache is at capacity, an insert removes stale entries with a 1% chance
+- Above 1.5 times the capacity, every insert removes stale entries
 
-**Performance:**
-- Cache hit: ~10-50 nanoseconds
-- Cache miss: ~1-10 microseconds (parse + cache)
-- Hit rate: Typically 60-90% in production
+**Cache Invalidation:**
+- Cleared when a SearchParameter is created, updated or deleted
+- Cleared when the registry is reloaded
 
 ## Multi-Instance Behavior
 
@@ -388,41 +382,34 @@ Multiple OctoFHIR instances sharing the same PostgreSQL database:
 
 ### Current Behavior
 
-1. **SearchParameter Created on Instance A:**
-   - Stored in PostgreSQL (shared)
-   - Registered in Instance A's registry (local)
-   - Instance B and C don't know about it yet
+With Redis enabled (`[redis] enabled = true`), every instance publishes its resource events to the `octofhir:resource_events` channel and subscribes to the same channel. A received event goes to the local hooks, including `SearchParamHook`.
 
-2. **Instance B/C Eventually Receive Update:**
-   - When they reload from canonical manager
-   - Manual reload trigger
-   - Server restart
-
-### Recommendations
-
-**For Development/Single Instance:**
-- Use REST API to create SearchParameters
-- Changes are immediate on that instance
-
-**For Production/Multi-Instance:**
-- Use FHIR packages for SearchParameters
-- Install packages on all instances
-- Ensures consistency across cluster
-
-**Future Enhancement:**
 ```
 ┌──────────────┐         ┌──────────────┐
 │  Instance A  │ ◄─────► │    Redis     │
-│  POST /SP    │ Pub/Sub │ (Message Bus)│
+│  POST /SP    │ Pub/Sub │              │
 └──────────────┘         └──────┬───────┘
                                 │
                     ┌───────────┴───────────┐
                     │                       │
             ┌───────▼──────┐       ┌───────▼──────┐
             │  Instance B  │       │  Instance C  │
-            │  (Reload)    │       │  (Reload)    │
+            │ apply_resource│      │ apply_resource│
             └──────────────┘       └──────────────┘
 ```
+
+1. **SearchParameter Created on Instance A:**
+   - Stored in PostgreSQL (shared)
+   - Applied to Instance A's registry
+
+2. **Instance B and C:**
+   - Receive the event with the resource and its version
+   - Apply it to their registries with `apply_resource`
+   - Ignore it if they already know that version or a newer one
+
+Without Redis there is no such sync. The other instances pick up the change at their next start.
+
+The setup lives in `crates/octofhir-server/src/events/mod.rs` (`RedisPublishHook`), `events/redis.rs` (`RedisEventSync`) and `server.rs`.
 
 ## Configuration
 
@@ -432,7 +419,7 @@ Multiple OctoFHIR instances sharing the same PostgreSQL database:
 [search]
 default_count = 10      # Default result count
 max_count = 100         # Maximum allowed count
-cache_capacity = 1000   # Query cache size (0 = disabled)
+cache_capacity = 1000   # Query cache size
 ```
 
 **Environment Variables:**
@@ -452,7 +439,7 @@ let options = SearchOptions {
     cache_capacity: 1000,
 };
 
-let config = ReloadableSearchConfig::new(&canonical_manager, options).await?;
+let config = ReloadableSearchConfig::new(&canonical_manager, options, resolver).await?;
 ```
 
 ## Debugging and Monitoring
@@ -468,104 +455,52 @@ RUST_LOG=octofhir_search=debug cargo run
 **Log Examples:**
 ```
 DEBUG octofhir_search::loader: Loaded search parameter code=name bases=["Patient"]
-INFO  octofhir_search::loader: Loaded search parameters loaded=1247 skipped=3 total=1247
+INFO  octofhir_search::loader: Loaded search parameters from canonical manager loaded=1247 skipped=3 total=1247
 INFO  octofhir_server::handlers: Search parameter registered incrementally code="custom-field"
 DEBUG octofhir_search::reloadable: Cleared query cache after registry reload
 ```
 
 ### Metrics
 
-Track performance metrics:
+The server exports Prometheus metrics on `/metrics`. See [Metrics & dashboards](/server-rs/metrics/).
+
+In code:
 
 ```rust
 // Registry size
 let param_count = state.search_config.config().registry.len();
 
-// Cache statistics (if caching enabled)
+// Cache statistics (if caching is enabled)
 if let Some(stats) = state.search_config.cache_stats() {
     println!("Cache hits: {}", stats.hits);
     println!("Cache misses: {}", stats.misses);
-    println!("Hit rate: {:.2}%", stats.hit_rate() * 100.0);
+    println!("Hit ratio: {:.2}%", stats.hit_ratio * 100.0);
 }
 ```
 
 ### Common Issues
 
-**High memory usage:**
-- Check registry size: `registry.len()`
-- Review query cache capacity
-- Monitor for memory leaks in cache
-
 **Slow search queries:**
-- Enable query cache if disabled
+- Use the [index advisor](/server-rs/no-reindex/#the-index-advisor)
 - Check for complex FHIRPath expressions
 - Review database indices
 
 **Inconsistent results across instances:**
-- Verify all instances use same FHIR packages
-- Check canonical manager synchronization
-- Consider Redis pub/sub for real-time updates
+- Verify all instances use the same FHIR packages
+- Enable Redis so that SearchParameter changes reach every instance
 
 ## Best Practices
 
 ### For Developers
 
-1. **Use Lock-Free APIs** - Always call `config()` to get snapshot, never hold locks
-2. **Incremental Updates** - Prefer `upsert()` over full reload when possible
-3. **Clear Caches** - Always clear query cache after registry changes
-4. **Atomic Operations** - Use atomic swap for config updates
-
-### For Production
-
-1. **Package-Based Parameters** - Use FHIR packages for production SearchParameters
-2. **Monitor Cache Hit Rate** - Target >70% hit rate for optimal performance
-3. **Size Query Cache Appropriately** - 1000-5000 entries typical for production
-4. **Log Registry Changes** - Enable INFO logging to track parameter updates
+1. **Take a snapshot** - Call `config()` once per operation and use the returned `Arc`
+2. **Incremental updates** - Use `apply_resource` for runtime changes
+3. **Clear caches** - Clear the query cache after registry changes
 
 ### For Testing
 
-1. **Use Test Helpers** - `ReloadableSearchConfig::with_registry()` for unit tests
-2. **Mock Canonical Manager** - Avoid database dependencies in tests
-3. **Verify Thread Safety** - Test concurrent reads and writes
-4. **Check Memory Cleanup** - Ensure old configs are freed
-
-## Future Enhancements
-
-### Planned Features
-
-1. **Redis Pub/Sub Integration**
-   - Broadcast registry updates across instances
-   - Real-time synchronization in multi-instance deployments
-
-2. **Selective Cache Invalidation**
-   - Only clear cached queries affected by parameter change
-   - Preserve unrelated cached queries
-
-3. **Parameter Versioning**
-   - Support multiple versions of same parameter
-   - Gradual migration between versions
-
-4. **Performance Monitoring**
-   - Built-in metrics endpoint
-   - Prometheus integration
-   - Query performance tracking
-
-### Research Topics
-
-1. **Semantic FHIRPath Validation**
-   - Validate expressions against resource schemas
-   - Type checking at registration time
-   - Prevent runtime errors
-
-2. **Distributed Registry**
-   - Shared registry across all instances
-   - Consistent reads with local caching
-   - Eventually consistent writes
-
-3. **Parameter Optimization**
-   - Analyze query patterns
-   - Suggest missing indices
-   - Identify unused parameters
+1. **Use test helpers** - `ReloadableSearchConfig::with_registry()` for unit tests
+2. **Avoid the database** - Build the registry in the test
 
 ## References
 
@@ -573,4 +508,3 @@ if let Some(stats) = state.search_config.cache_stats() {
 - [SearchParameter Resource](https://www.hl7.org/fhir/searchparameter.html)
 - [FHIRPath Specification](http://hl7.org/fhirpath/)
 - [Arc-Swap Documentation](https://docs.rs/arc-swap/)
-- [DashMap Documentation](https://docs.rs/dashmap/)

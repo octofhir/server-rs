@@ -113,7 +113,7 @@ The **CQL** page (`g q`) of the [web console](/server-rs/console/) is built on `
 ## Measures
 
 `$evaluate-measure` scores a `Measure` whose logic is a CQL `Library`. On R6 there is also
-[`$evaluate`](/fhir-r6/#measureevaluate) for several measures at once:
+[`$evaluate`](/server-rs/fhir-r6/#measureevaluate) for several measures at once:
 
 ```http
 GET /fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31&subject=Patient/123

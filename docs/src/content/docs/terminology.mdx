@@ -7,20 +7,15 @@ OctoFHIR integrates with external terminology servers to provide ValueSet expans
 
 ## Configuration
 
-Enable terminology services in your `octofhir.toml`:
+Terminology services are always on. Set the external terminology server in your `octofhir.toml`:
 
 ```toml
 [terminology]
-enabled = true
 server_url = "https://tx.fhir.org/r4"
 cache_ttl_secs = 3600  # Cache expansions for 1 hour
 ```
 
-### Supported Terminology Servers
-
-- [tx.fhir.org](https://tx.fhir.org) - HL7 FHIR Terminology Server
-- [Ontoserver](https://ontoserver.csiro.au/) - CSIRO Terminology Server
-- Any FHIR R4 compatible terminology server
+Lookups try the installed FHIR packages first, then the external server. Any FHIR R4 compatible terminology server works. The default is `https://tx.fhir.org/r4`.
 
 ## ValueSet Search Modifiers
 
@@ -112,16 +107,16 @@ GET /fhir/Condition?code=http://hl7.org/fhir/sid/icd-10-cm|E11.9
 
 ## Performance Optimization
 
-### Automatic Optimization
+### Expansion Limit
 
-OctoFHIR automatically optimizes large ValueSet expansions:
+`:in`, `:not-in`, `:above` and `:below` expand the ValueSet or hierarchy first and put every code into the search query. `search.max_valueset_expansion` limits how many codes this may be:
 
-| Expansion Size | Strategy |
-|---------------|----------|
-| < 500 codes | SQL `IN` clause |
-| >= 500 codes | Temporary table with `JOIN` |
+```toml
+[search]
+max_valueset_expansion = 500  # default
+```
 
-The temporary table approach provides significant performance improvements for large ValueSets.
+A larger expansion is rejected with `ExpansionTooLarge`.
 
 ### Caching
 
@@ -133,18 +128,9 @@ cache_ttl_secs = 3600  # 1 hour
 ```
 
 Cache behavior:
-- First request expands the ValueSet (may take 1-2 seconds)
-- Subsequent requests use cached expansion (milliseconds)
-- Cache invalidates after TTL expires
-
-### Large ValueSets
-
-For very large ValueSets (>1000 codes), the server:
-
-1. Expands the ValueSet from the terminology server
-2. Bulk inserts codes into a temporary table
-3. Uses an efficient `JOIN` instead of large `IN` clause
-4. Automatically cleans up temporary data after 1 hour
+- The first request expands the ValueSet
+- Subsequent requests use the cached expansion
+- The cache entry expires after the TTL
 
 ## $expand Operation
 
@@ -296,21 +282,6 @@ When the terminology server is unavailable:
 }
 ```
 
-### Terminology Disabled
-
-If terminology is disabled in configuration:
-
-```json
-{
-  "resourceType": "OperationOutcome",
-  "issue": [{
-    "severity": "error",
-    "code": "not-supported",
-    "diagnostics": "Terminology services are disabled. Enable in configuration to use :in, :not-in, :below, :above modifiers."
-  }]
-}
-```
-
 ## Examples
 
 ### Search for Vital Signs
@@ -362,15 +333,10 @@ If ValueSet expansions are slow:
 1. Check terminology server latency
 2. Increase `cache_ttl_secs` for frequently used ValueSets
 3. Consider using a local terminology server
-4. Monitor for large ValueSets (>1000 codes)
 
-### Memory Usage
+### Rejected Searches
 
-Large ValueSet expansions are handled efficiently:
-
-- Codes are streamed to temporary tables
-- Temporary data is cleaned up automatically
-- No in-memory caching of expansion results (uses Redis/local cache)
+A search that fails with `ExpansionTooLarge` expands to more codes than `search.max_valueset_expansion` allows. Narrow the ValueSet or raise the limit.
 
 ### Debugging
 
@@ -381,7 +347,3 @@ Enable debug logging:
 level = "debug"
 ```
 
-Look for:
-- `terminology.expansion` - Expansion requests
-- `terminology.cache` - Cache hits/misses
-- `terminology.temp_table` - Temp table operations

@@ -38,8 +38,8 @@ TerminologyProvider), never as the way terminology reaches SQL.
 
 ## To do
 
-1. `$viewdefinition-export` still returns the v2 bulk-style manifest (not part of 3.0, which
-   replaces it with `$sql-export`); decide whether to keep it.
+Nothing open. `ViewDefinition/$export`, the export of 2.0 that 3.0 replaced with `$sql-export`,
+stays behind `sql_on_fhir.viewdefinition_export`.
 
 Later / explicitly not now: maintained materialized views (`$viewdefinition-materialize`) —
 only with our own incremental-by-`txid` design.

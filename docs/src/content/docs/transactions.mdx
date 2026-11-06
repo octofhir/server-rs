@@ -247,7 +247,7 @@ Use `If-Match` to ensure you're updating the expected version:
 }
 ```
 
-If the current version doesn't match, the transaction fails with a 409 Conflict.
+If the current version doesn't match, the transaction fails with 412 Precondition Failed.
 
 ## Batch Bundles
 
@@ -324,21 +324,17 @@ If any operation in a transaction fails, the entire transaction is rolled back:
 | 200 | Transaction/batch processed successfully |
 | 400 | Invalid Bundle structure |
 | 404 | Referenced resource not found |
-| 409 | Version conflict (If-Match failed) |
-| 412 | Precondition failed |
+| 409 | Write conflict |
+| 412 | Precondition failed (If-Match failed) |
 | 422 | Unprocessable (validation errors) |
 
 ## Processing Order
 
 Transactions are processed in the following order:
 
-1. DELETE operations
-2. POST operations
-3. PUT operations
-4. GET operations
-5. Reference resolution
-
-This ensures references can be resolved correctly.
+1. Assign IDs to POST entries and build the map of `urn:uuid` references
+2. Resolve references in all entries, before anything is written
+3. Execute entries in one database transaction, by verb: DELETE, POST, PUT, PATCH, GET, HEAD
 
 ## Performance Considerations
 

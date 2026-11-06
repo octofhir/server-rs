@@ -23,7 +23,7 @@ R6 has no terminology package of its own yet, so the server loads `hl7.terminolo
 | `delete-history` | `DELETE /fhir/{type}/{id}/_history` | Every version but the current one goes; 204 |
 | `delete-history-version` | `DELETE /fhir/{type}/{id}/_history/{vid}` | That version goes; 204. The current version gives 409, an unknown one 404 |
 
-Both need an administrator, like [`$expunge`](/api-reference/#expunge). For a deleted resource
+Both need an administrator, like [`$expunge`](/server-rs/api-reference/#expunge). For a deleted resource
 the record of the deletion stays as the current version. Both work on every FHIR version, and
 only R6 has codes to declare them in the CapabilityStatement.
 
