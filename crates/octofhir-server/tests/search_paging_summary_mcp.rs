@@ -3,6 +3,7 @@
 //!
 //! Requirements: Docker running (testcontainers).
 
+use base64::Engine as _;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -546,8 +547,115 @@ async fn data_requirements(client: &Client, base: &str) {
 }
 
 /// An Encounter-based measure: length of stay, excluding cancelled ones by a define.
+/// Needs the fixtures of the screening measure: Group/mg holds m1 (screened), m2 and m3 (male).
+async fn composites_and_supplemental_data(client: &Client, base: &str) {
+    let population = |code: &str, name: &str| {
+        json!({"code":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/measure-population","code":code}]},
+            "criteria":{"language":"text/cql-identifier","expression":name}})
+    };
+    let cql = r#"library Contact version '1.0'
+using FHIR version '4.0.1'
+parameter "Measurement Period" Interval<DateTime>
+context Patient
+define "Initial Population": true
+define "Denominator": true
+define "Numerator": Patient.gender = 'female'
+"#;
+    put(
+        client,
+        base,
+        json!({"resourceType":"Library","id":"contact","status":"active",
+        "url":"http://example.org/Library/contact","version":"1.0",
+        "type":{"coding":[{"code":"logic-library"}]},
+        "content":[{"contentType":"text/cql",
+            "data":base64::engine::general_purpose::STANDARD.encode(cql)}]}),
+    )
+    .await;
+    put(
+        client,
+        base,
+        json!({"resourceType":"Measure","id":"contact","status":"active",
+        "url":"http://example.org/Measure/contact","version":"1.0",
+        "library":["http://example.org/Library/contact"],
+        "scoring":{"coding":[{"code":"proportion"}]},
+        "group":[{"population":[
+            population("initial-population","Initial Population"),
+            population("denominator","Denominator"),
+            population("numerator","Numerator")]}]}),
+    )
+    .await;
+    let evaluate = |id: String, subject: &'static str| {
+        format!(
+            "{base}/fhir/Measure/{id}/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31&subject={subject}"
+        )
+    };
+
+    // Screening: m1 of m1 and m2. Contact: m1 and m2 of all three.
+    for (method, expected) in [
+        ("all-or-nothing", 1.0 / 3.0),
+        ("opportunity", 0.6),
+        ("linear", 0.5),
+        ("weighted", (0.5 * 3.0 + 2.0 / 3.0) / 4.0),
+    ] {
+        put(client, base, json!({"resourceType":"Measure","id":format!("care-{method}"),
+            "status":"active","url":format!("http://example.org/Measure/care-{method}"),
+            "scoring":{"coding":[{"code":"composite"}]},
+            "compositeScoring":{"coding":[{"code":method}]},
+            "relatedArtifact":[
+                {"type":"composed-of","resource":"http://example.org/Measure/screening",
+                 "extension":[{"url":"http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-weight","valueDecimal":3}]},
+                {"type":"composed-of","resource":"http://example.org/Measure/contact|1.0"}]}))
+        .await;
+        let report = get(client, &evaluate(format!("care-{method}"), "Group/mg")).await;
+        assert_eq!(report["resourceType"], "MeasureReport", "{report}");
+        let score = report["group"][0]["measureScore"]["value"].as_f64();
+        assert!(
+            score.is_some_and(|score| (score - expected).abs() < 1e-9),
+            "{method}: {report}"
+        );
+    }
+
+    put(
+        client,
+        base,
+        json!({"resourceType":"Measure","id":"contact-sde","status":"active",
+        "url":"http://example.org/Measure/contact-sde",
+        "library":["http://example.org/Library/screening"],
+        "scoring":{"coding":[{"code":"proportion"}]},
+        "supplementalData":[{"code":{"text":"Sex"},
+            "criteria":{"language":"text/cql-identifier","expression":"Gender"}}],
+        "group":[{"population":[
+            population("initial-population","Initial Population"),
+            population("denominator","Denominator"),
+            population("numerator","Numerator")]}]}),
+    )
+    .await;
+    let summary = get(client, &evaluate("contact-sde".to_owned(), "Group/mg")).await;
+    assert_eq!(
+        summary["extension"][0]["url"],
+        "http://hl7.org/fhir/5.0/StructureDefinition/extension-MeasureReport.supplementalData"
+    );
+    let reference = summary["extension"][0]["valueReference"]["reference"]
+        .as_str()
+        .unwrap();
+    let observation = summary["contained"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| format!("#{}", resource["id"].as_str().unwrap()) == reference)
+        .unwrap();
+    assert_eq!(observation["code"]["text"], "Sex");
+    // m3 is not in the initial population.
+    assert_eq!(
+        observation["component"],
+        json!([{"code":{"text":"female"},"valueInteger":2}])
+    );
+
+    let individual = get(client, &evaluate("contact-sde".to_owned(), "Patient/m1")).await;
+    assert_eq!(individual["contained"][0]["valueString"], "female");
+}
+
 async fn continuous_variable(client: &Client, base: &str) {
-    use base64::Engine as _;
     let cql = r#"library Stays version '1.0'
 using FHIR version '4.0.1'
 parameter "Measurement Period" Interval<DateTime>
@@ -672,7 +780,6 @@ define function "Stay"(E Encounter): difference in minutes between E.period.star
 }
 
 async fn measure(client: &Client, base: &str) {
-    use base64::Engine as _;
     let cql = r#"library Screening version '1.0'
 using FHIR version '4.0.1'
 parameter "Measurement Period" Interval<DateTime>
@@ -735,6 +842,7 @@ define "Gender": Patient.gender
     .await;
     continuous_variable(client, base).await;
     data_requirements(client, base).await;
+    composites_and_supplemental_data(client, base).await;
     let url = |extra: &str| {
         format!(
             "{base}/fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31{extra}"

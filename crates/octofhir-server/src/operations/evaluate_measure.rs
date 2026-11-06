@@ -8,6 +8,7 @@
 //! `measure-observation` names a CQL function: each member of the population it refers to
 //! goes through it and the group's `aggregateMethod` turns the values into the score. A ratio
 //! can observe its numerator and denominator, and then divides the two aggregates.
+//! [`composite`] combines other measures and [`supplemental`] reports `supplementalData`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -21,6 +22,10 @@ use octofhir_storage::{SearchConstraint, SearchParams, StoredResource};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 
+mod composite;
+mod supplemental;
+
+use self::supplemental::Supplemental;
 use super::cql::{map_cql_error, scoped_service};
 use super::handler::OperationLevel;
 use super::{OperationContext, OperationError, OperationHandler};
@@ -279,13 +284,17 @@ struct Tally {
 }
 
 impl Tally {
-    fn add(&mut self, (memberships, observed): Classified, subject: &str, group: &Group<'_>) {
+    fn count(&mut self, memberships: Memberships, subject: &str) {
         for (index, member) in memberships.into_iter().enumerate() {
             if member {
                 self.counts[index] += 1;
                 self.subjects[index].push(subject.to_owned());
             }
         }
+    }
+
+    fn add(&mut self, (memberships, observed): Classified, subject: &str, group: &Group<'_>) {
+        self.count(memberships, subject);
         for (slot, observation) in group.observations.iter().enumerate() {
             if observation.target.holds(&memberships) {
                 self.observations[slot].extend(observed[slot]);
@@ -773,7 +782,17 @@ async fn measure_by_url(
     context: &OperationContext,
     url: &str,
 ) -> Result<Value, OperationError> {
-    let search = SearchParams::new().with_count(1).with_param("url", url);
+    let (canonical, version) = url
+        .split_once('|')
+        .map_or((url, None), |(canonical, version)| {
+            (canonical, Some(version))
+        });
+    let mut search = SearchParams::new()
+        .with_count(1)
+        .with_param("url", canonical);
+    if let Some(version) = version {
+        search = search.with_param("version", version);
+    }
     context
         .search(state, "Measure", &search)
         .await?
@@ -782,6 +801,80 @@ async fn measure_by_url(
         .next()
         .map(|measure| measure.resource)
         .ok_or_else(|| OperationError::NotFound(format!("Measure {url} not found")))
+}
+
+/// Who a request evaluates.
+struct Population {
+    references: Vec<String>,
+    /// The Patient resources, a chunk for each compiled library.
+    chunks: Vec<Vec<Value>>,
+    /// A report about one person.
+    individual: bool,
+}
+
+/// The defines of each subject, in chunks.
+async fn evaluate_chunks(
+    service: &CqlService,
+    source: &str,
+    chunks: Vec<Vec<Value>>,
+    request: &Request,
+) -> Result<Vec<Vec<IndexMap<String, Value>>>, OperationError> {
+    let period = (request.period.0.as_str(), request.period.1.as_str());
+    stream::iter(chunks)
+        .map(|chunk| service.evaluate_subjects(source, "Patient", chunk, period))
+        .buffered(CHUNK_CONCURRENCY)
+        .try_collect()
+        .await
+        .map_err(map_cql_error)
+}
+
+/// R5 turned the score into a choice element, and added `location` and `supplementalData`.
+fn score_element(state: &AppState) -> &'static str {
+    match state.fhir_version.as_str() {
+        "R4" | "R4B" => "measureScore",
+        _ => "measureScoreQuantity",
+    }
+}
+
+/// The report around its groups.
+fn report(
+    state: &AppState,
+    measure: &Value,
+    request: &Request,
+    population: &Population,
+    groups: Vec<Value>,
+    now: &str,
+) -> Value {
+    let report_type = match (
+        population.individual,
+        request.report_type.as_deref() == Some("subject-list"),
+    ) {
+        (true, _) => "individual",
+        (false, true) => "subject-list",
+        (false, false) => "summary",
+    };
+    let mut report = json!({
+        "resourceType": "MeasureReport",
+        "status": "complete",
+        "type": report_type,
+        "measure": measure["url"].as_str().unwrap_or_default(),
+        "date": now,
+        "period": {"start": request.period.0, "end": request.period.1},
+        "group": groups,
+    });
+    if let Some(reporter) = &request.reporter {
+        report["reporter"] = json!({"reference": reporter});
+    }
+    // MeasureReport has no location before R5.
+    if let (Some(location), "measureScoreQuantity") = (&request.location, score_element(state)) {
+        report["location"] = json!({"reference": location});
+    }
+    if population.individual {
+        report["subject"] = json!({"reference": population.references.first()});
+    } else if let Some(subject) = &request.subject {
+        report["subject"] = json!({"reference": subject});
+    }
+    report
 }
 
 pub struct EvaluateMeasureOperation;
@@ -840,6 +933,11 @@ impl EvaluateMeasureOperation {
             .as_ref()
             .ok_or_else(|| OperationError::NotSupported("CQL service not enabled".into()))?;
         let service = scoped_service(state, context, service);
+        if let Some(method) = composite::Method::of(measure)? {
+            return self
+                .evaluate_composite(state, context, &service, measure, method, request)
+                .await;
+        }
         let groups = measure["group"]
             .as_array()
             .filter(|groups| !groups.is_empty())
@@ -864,45 +962,28 @@ impl EvaluateMeasureOperation {
             }
         }
 
-        let (subjects, individual) = match &request.members {
-            Some(members) => (read_patients(state, context, members).await?, false),
-            None => {
-                self.subjects(state, context, request.subject.as_deref())
-                    .await?
-            }
-        };
-        let references: Vec<String> = subjects
-            .iter()
-            .map(|patient| format!("Patient/{}", patient.id))
-            .collect();
-        let chunks: Vec<Vec<Value>> = subjects
-            .chunks(SUBJECT_CHUNK)
-            .map(|chunk| chunk.iter().map(|p| p.resource.clone()).collect())
-            .collect();
-        drop(subjects);
-        let period = (request.period.0.as_str(), request.period.1.as_str());
-        let evaluated: Vec<Vec<IndexMap<String, Value>>> = stream::iter(chunks)
-            .map(|chunk| service.evaluate_subjects(&source, "Patient", chunk, period))
-            .buffered(CHUNK_CONCURRENCY)
-            .try_collect()
-            .await
-            .map_err(map_cql_error)?;
+        let supplements = Supplemental::parse(measure)?;
+        let mut population = self.population(state, context, request).await?;
+        let chunks = std::mem::take(&mut population.chunks);
+        let evaluated = evaluate_chunks(&service, &source, chunks, request).await?;
+        let references = &population.references;
+        let individual = population.individual;
 
         let subject_list = request.report_type.as_deref() == Some("subject-list");
         let now = Utc::now().to_rfc3339();
         let mut contained = Vec::new();
         let mut report_groups = Vec::with_capacity(groups.len());
-        // R5 turned these two into choice elements.
-        let (score_element, value_element) = match state.fhir_version.as_str() {
-            "R4" | "R4B" => ("measureScore", "value"),
-            _ => ("measureScoreQuantity", "valueCodeableConcept"),
+        let score_element = score_element(state);
+        let value_element = match score_element {
+            "measureScore" => "value",
+            _ => "valueCodeableConcept",
         };
         for (index, (group, scoring, by_resource)) in groups.iter().enumerate() {
             let (scoring, by_resource) = (*scoring, *by_resource);
             let mut tally = Tally::default();
             let mut strata: Vec<BTreeMap<String, Tally>> =
                 vec![BTreeMap::new(); group.stratifiers.len()];
-            for (defines, subject) in evaluated.iter().flatten().zip(&references) {
+            for (defines, subject) in evaluated.iter().flatten().zip(references) {
                 let classified = if by_resource {
                     group.resource_members(scoring, defines)
                 } else {
@@ -957,38 +1038,119 @@ impl EvaluateMeasureOperation {
             report_groups.push(result);
         }
 
-        let report_type = match (individual, subject_list) {
-            (true, _) => "individual",
-            (false, true) => "subject-list",
-            (false, false) => "summary",
-        };
-        let mut report = json!({
-            "resourceType": "MeasureReport",
-            "status": "complete",
-            "type": report_type,
-            "measure": measure["url"].as_str().unwrap_or_default(),
-            "date": now,
-            "period": {"start": request.period.0, "end": request.period.1},
-            "group": report_groups,
-        });
-        if let Some(reporter) = &request.reporter {
-            report["reporter"] = json!({"reference": reporter});
-        }
-        // MeasureReport has no location before R5.
-        if let (Some(location), "measureScoreQuantity") = (&request.location, score_element) {
-            report["location"] = json!({"reference": location});
-        }
-        if individual {
+        let mut report = report(state, measure, request, &population, report_groups, &now);
+        let reported = if individual {
             let resources = evaluated_resources(&groups, evaluated.iter().flatten().next());
             if !resources.is_empty() {
                 report["evaluatedResource"] = json!(resources);
             }
-            report["subject"] = json!({"reference": references.first()});
-        } else if let Some(subject) = &request.subject {
-            report["subject"] = json!({"reference": subject});
-        }
+            match evaluated.iter().flatten().next() {
+                Some(defines) => supplemental::individual(&supplements, defines)?,
+                None => supplemental::Reported::default(),
+            }
+        } else {
+            let members = evaluated.iter().flatten().filter(|defines| {
+                groups
+                    .iter()
+                    .any(|(group, ..)| group.in_define("initial-population", defines))
+            });
+            supplemental::summary(&supplements, members)?
+        };
+        contained.extend_from_slice(&reported.contained);
+        reported.attach(&mut report, score_element != "measureScore");
         if !contained.is_empty() {
             report["contained"] = json!(contained);
+        }
+        Ok(report)
+    }
+
+    /// Who the request is about.
+    async fn population(
+        &self,
+        state: &AppState,
+        context: &OperationContext,
+        request: &Request,
+    ) -> Result<Population, OperationError> {
+        let (subjects, individual) = match &request.members {
+            Some(members) => (read_patients(state, context, members).await?, false),
+            None => {
+                self.subjects(state, context, request.subject.as_deref())
+                    .await?
+            }
+        };
+        Ok(Population {
+            references: subjects
+                .iter()
+                .map(|patient| format!("Patient/{}", patient.id))
+                .collect(),
+            chunks: subjects
+                .chunks(SUBJECT_CHUNK)
+                .map(|chunk| chunk.iter().map(|p| p.resource.clone()).collect())
+                .collect(),
+            individual,
+        })
+    }
+
+    /// A composite measure, from the populations of its components.
+    async fn evaluate_composite(
+        &self,
+        state: &AppState,
+        context: &OperationContext,
+        service: &CqlService,
+        measure: &Value,
+        method: composite::Method,
+        request: &Request,
+    ) -> Result<Value, OperationError> {
+        let references = composite::components(measure)?;
+        let population = self.population(state, context, request).await?;
+        let notation = composite::decreasing(measure, &Value::Null);
+        let mut components = Vec::with_capacity(references.len());
+        for reference in &references {
+            let component = measure_by_url(state, context, reference.canonical).await?;
+            let (index, group) = composite::component_group(&component, reference.group_id)?;
+            if Scoring::of(&component, group)? != Scoring::Proportion
+                || resource_based(&component, group)
+            {
+                return Err(OperationError::NotSupported(format!(
+                    "Component {} is not a subject-based proportion",
+                    reference.canonical
+                )));
+            }
+            let parsed = Group::parse(index, group)?;
+            let (_, source) = measure_library(service, &component).await?;
+            let evaluated =
+                evaluate_chunks(service, &source, population.chunks.clone(), request).await?;
+            components.push(composite::Component {
+                memberships: evaluated
+                    .iter()
+                    .flatten()
+                    .map(|defines| parsed.subject_member(Scoring::Proportion, defines).0)
+                    .collect(),
+                weight: reference.weight,
+                reversed: composite::decreasing(&component, group) != notation,
+            });
+        }
+
+        let outcome = composite::evaluate(method, &components, &population.references);
+        let now = Utc::now().to_rfc3339();
+        let subject_list = request.report_type.as_deref() == Some("subject-list");
+        let prefix = "group-0";
+        let list = subject_list.then_some(prefix);
+        let mut group = json!({});
+        if !outcome.used.is_empty() {
+            group["population"] = json!(outcome.tally.populations(
+                outcome.used,
+                list,
+                outcome.observations
+            ));
+        }
+        if let Some(score) = outcome.score {
+            group[score_element(state)] = json!({"value": score});
+        }
+        let mut report = report(state, measure, request, &population, vec![group], &now);
+        if subject_list && !outcome.used.is_empty() {
+            report["contained"] =
+                json!(contained_lists(prefix, outcome.used, &outcome.tally, &now));
         }
         Ok(report)
     }

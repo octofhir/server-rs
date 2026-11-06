@@ -143,6 +143,26 @@ A ratio can observe its numerator and denominator: two `measure-observation` pop
 at its population with the `cqfm-criteriaReference` extension and carrying an aggregate method. Excluded
 members are not observed, and the score is the numerator aggregate over the denominator aggregate.
 
+`Measure.supplementalData` names defines of the library. In an individual report a resource is
+referenced and any other value goes into a contained `Observation`. In a summary each element is one
+contained `Observation` with a component per value, counting the members of the initial population
+that had it. The references are in `MeasureReport.supplementalData`; R4 has no such element and uses
+the extension `http://hl7.org/fhir/5.0/StructureDefinition/extension-MeasureReport.supplementalData`.
+
+A composite Measure has `scoring` `composite`, a `compositeScoring`, and its components as `composed-of`
+entries of `relatedArtifact`. A component is a subject-based proportion measure; `cqfm-groupId` picks one
+of its groups and `cqfm-weight` gives its weight.
+
+| `compositeScoring` | Score |
+|---|---|
+| `all-or-nothing` | A proportion: a subject is in the numerator when in the numerator of every component whose denominator holds them |
+| `opportunity` | A proportion over cases: each component a subject is in counts as one |
+| `linear` | The average, over subjects, of the numerators reached out of the denominators entered |
+| `weighted` | The weighted average of the component scores; a component with no score is left out |
+
+A component whose `improvementNotation` differs from the composite's counts the other way: the absence
+from its numerator in the first three, one minus its score in `weighted`.
+
 The library is compiled once for the run and all data is read under the caller's grants. The result
 is a `MeasureReport`, which is not stored.
 

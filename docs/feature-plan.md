@@ -40,7 +40,6 @@ console page (CDA input with the trace on the XML). Left, from the library side:
 |---|---|---|---|
 | 4.5 | Conformance evidence: Inferno US Core and Subscriptions run locally (`just inferno-*`) before releases, results published; full CapabilityStatement | M | not in CI: long runs on the org's public runners |
 | 4.7 | UDAP Tiered OAuth (`udap_to`), CRL distribution points and OCSP | M | TEFCA; registration, JWT authentication and B2B are done |
-| 4.8 | Measures: supplemental data, composite scoring | S | scoring of all four types, ratios with observations, `subjectGroup`, `evaluatedResource` and `$data-requirements` with `where` filters are done |
 
 ## 5. Standalone tools (new repos next to server-rs)
 

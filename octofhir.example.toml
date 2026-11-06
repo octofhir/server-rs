@@ -124,9 +124,6 @@ enabled = false
 #   - Large ValueSets (≥500 codes): Optimized temp table strategy
 #
 [terminology]
-# Enable terminology service integration (default: true)
-enabled = true
-
 # Terminology server URL (default: https://tx.fhir.org/r4)
 # This is the public FHIR terminology server provided by HL7
 #
