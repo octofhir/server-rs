@@ -137,7 +137,11 @@ produces one stratum per value of its define.
 For continuous variable, the `measure-observation` criterion names a CQL function. It takes one member of
 the `measure-population`, or no argument in a subject-based measure, and returns a number or a Quantity.
 The `cqfm-aggregateMethod` extension on that population (`sum`, `average`, `median`, `minimum`, `maximum`,
-`count`) turns the values into `measureScore`. Ratio measures with observations are not supported.
+`count`) turns the values into `measureScore`.
+
+A ratio can observe its numerator and denominator: two `measure-observation` populations, each pointing
+at its population with the `cqfm-criteriaReference` extension and carrying an aggregate method. Excluded
+members are not observed, and the score is the numerator aggregate over the denominator aggregate.
 
 The library is compiled once for the run and all data is read under the caller's grants. The result
 is a `MeasureReport`, which is not stored.
@@ -160,6 +164,9 @@ GET /fhir/Library/screening/$data-requirements
 | `relatedArtifact` | `depends-on` entries for the Measure's library, included libraries, value sets and code systems |
 | `parameter` | The library's parameters, such as `Measurement Period` as `Period` |
 
-Filters come from the retrieve itself. A condition in a `where` clause, such as `O.status = 'final'`, is not
-turned into a filter. Both operations work on an instance; the system-level `Library` form with `target` is
+Filters come from the retrieve and from the `where` clause of a query over that one retrieve. There a
+conjunction of `=`, `~` or `in` against a string, code, list of strings or value set adds a `codeFilter`,
+and a comparison with an interval parameter, such as `E.period.start during "Measurement Period"`, a
+`dateFilter` naming the element. Anything else, such as `or` or `not`, leaves the retrieve as it is. Both
+operations work on an instance; the system-level `Library` form with `target` is
 not implemented.
