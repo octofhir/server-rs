@@ -128,6 +128,19 @@ pub struct Client {
     /// Used when the client rotates keys and provides them via a URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jwks_uri: Option<String>,
+
+    /// Set for an application registered through UDAP: it signs in with its certificate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udap: Option<UdapBinding>,
+}
+
+/// Who a UDAP registration belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UdapBinding {
+    /// The URI in the Subject Alternative Name of the application's certificate.
+    pub subject: String,
+    /// The trust community the application registered in.
+    pub community: String,
 }
 
 /// `Client.jwks` is a string in the resource (FHIR has no JSON object type); programmatic
@@ -175,8 +188,13 @@ impl Client {
             return Err(ClientValidationError::PublicClientCredentials);
         }
 
-        // Confidential clients must have a client secret
-        if self.confidential && self.client_secret.is_none() {
+        // Confidential clients must hold a secret or sign with a key
+        if self.confidential
+            && self.client_secret.is_none()
+            && self.jwks.is_none()
+            && self.jwks_uri.is_none()
+            && self.udap.is_none()
+        {
             return Err(ClientValidationError::MissingSecret);
         }
 
@@ -364,6 +382,7 @@ mod tests {
             allowed_origins: vec![],
             jwks: None,
             jwks_uri: None,
+            udap: None,
         }
     }
 
@@ -385,6 +404,7 @@ mod tests {
             allowed_origins: vec!["https://admin.example.com".to_string()],
             jwks: None,
             jwks_uri: None,
+            udap: None,
         }
     }
 

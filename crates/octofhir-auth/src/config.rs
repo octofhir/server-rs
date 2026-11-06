@@ -5,6 +5,7 @@
 //! policy engine configuration, and more.
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// Root authentication and authorization configuration.
@@ -56,6 +57,9 @@ pub struct AuthConfig {
 
     /// SSO session configuration.
     pub session: SessionConfig,
+
+    /// UDAP Security (FAST Security STU2).
+    pub udap: UdapConfig,
 }
 
 impl Default for AuthConfig {
@@ -71,6 +75,7 @@ impl Default for AuthConfig {
             audit: AuditConfig::default(),
             cookie: CookieConfig::default(),
             session: SessionConfig::default(),
+            udap: UdapConfig::default(),
         }
     }
 }
@@ -192,6 +197,62 @@ impl Default for SmartConfig {
             ],
         }
     }
+}
+
+/// UDAP Security: applications of a trust community register and sign in with a certificate.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UdapConfig {
+    /// Serve `.well-known/udap` and the registration endpoint, and accept these clients.
+    pub enabled: bool,
+
+    /// This server's certificate chain (PEM, leaf first). The leaf has to carry the FHIR base
+    /// URL as a URI Subject Alternative Name.
+    pub certificate: Option<PathBuf>,
+
+    /// The RSA private key of that certificate (PEM): the metadata is signed with RS256.
+    pub private_key: Option<PathBuf>,
+
+    /// The trust communities this server is in.
+    pub communities: Vec<UdapCommunityConfig>,
+
+    /// What a registration can be granted. Requests outside this list are dropped, so a
+    /// certificate from the community alone gives read access at most by default; what a
+    /// client can reach is still decided by access policies.
+    pub scopes: Vec<String>,
+}
+
+impl Default for UdapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            certificate: None,
+            private_key: None,
+            communities: Vec::new(),
+            scopes: vec![
+                "openid".to_string(),
+                "fhirUser".to_string(),
+                "offline_access".to_string(),
+                "patient/*.rs".to_string(),
+                "user/*.rs".to_string(),
+                "system/*.rs".to_string(),
+            ],
+        }
+    }
+}
+
+/// One trust community.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UdapCommunityConfig {
+    /// The URI the community goes by, as in the `community` query parameter.
+    pub uri: String,
+
+    /// Files with trust anchors (PEM).
+    pub anchors: Vec<PathBuf>,
+
+    /// Files with certificate revocation lists (PEM). An expired list fails validation.
+    #[serde(default)]
+    pub revocation_lists: Vec<PathBuf>,
 }
 
 /// Token signing configuration.

@@ -608,6 +608,7 @@ pub async fn bootstrap_default_ui_client<S: ClientStorage>(
         allowed_origins: vec![issuer.to_string(), "http://localhost:5173".to_string()],
         jwks: None,
         jwks_uri: None,
+        udap: None,
     };
 
     client_storage.create(&client).await?;
@@ -710,6 +711,7 @@ pub async fn bootstrap_backend_client<S: ClientStorage>(
         allowed_origins: vec![],
         jwks: None,
         jwks_uri: None,
+        udap: None,
     };
 
     client

@@ -166,6 +166,33 @@
         "max": "1",
         "type": [{ "code": "uri" }],
         "comment": "Either jwks or jwksUri should be provided for asymmetric client authentication, not both"
+      },
+      {
+        "id": "Client.udap",
+        "path": "Client.udap",
+        "short": "UDAP registration",
+        "definition": "Set for an application registered through UDAP, which signs in with its certificate.",
+        "min": 0,
+        "max": "1",
+        "type": [{"code": "BackboneElement"}]
+      },
+      {
+        "id": "Client.udap.subject",
+        "path": "Client.udap.subject",
+        "short": "Subject Alternative Name URI",
+        "definition": "The URI in the Subject Alternative Name of the application's certificate.",
+        "min": 1,
+        "max": "1",
+        "type": [{"code": "uri"}]
+      },
+      {
+        "id": "Client.udap.community",
+        "path": "Client.udap.community",
+        "short": "Trust community",
+        "definition": "The trust community the application registered in.",
+        "min": 1,
+        "max": "1",
+        "type": [{"code": "uri"}]
       }
     ]
   }

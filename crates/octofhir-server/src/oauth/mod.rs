@@ -23,10 +23,13 @@ use axum::{
 use octofhir_auth::federation::{ClientJwksCache, JwksCacheConfig};
 use octofhir_auth::http::introspect::{IntrospectionState, introspect_handler};
 use octofhir_auth::http::revoke::{RevocationState, revoke_handler};
+use octofhir_auth::http::udap::{UdapState, udap_metadata_handler, udap_register_handler};
 use octofhir_auth::oauth::service::{AuthorizationConfig, AuthorizationService};
 use octofhir_auth::oauth::token::TokenRequest;
 use octofhir_auth::token::jwt::JwtService;
 use octofhir_auth::token::service::TokenConfig;
+use octofhir_auth::udap::metadata::Endpoints;
+use octofhir_auth::udap::{Trust, UdapMetadata};
 use octofhir_auth::{
     AuthState, AuthorizeState, JwksState, LaunchState, LogoutState, SmartConfigState, TokenState,
     authorize_get, authorize_post, create_launch_handler, jwks_handler, logout_handler,
@@ -56,6 +59,8 @@ pub struct OAuthState {
     pub authorize_state: AuthorizeState,
     pub launch_state: LaunchState,
     pub audit_service: Arc<AuditService>,
+    /// Set when UDAP is enabled and its files could be read.
+    pub udap_state: Option<UdapState>,
 }
 
 /// Combined state for auditing token handler.
@@ -116,6 +121,17 @@ impl OAuthState {
         ))
         .with_jwks_cache(Arc::new(ClientJwksCache::new(JwksCacheConfig::default())))
         .with_jti_storage(Arc::new(ArcJtiStorage::new(db_pool.clone())));
+
+        let udap_state = udap_state(
+            config,
+            client_storage.clone(),
+            Arc::new(ArcJtiStorage::new(db_pool.clone())),
+            access_token_secs,
+        );
+        let token_state = match &udap_state {
+            Some(udap) => token_state.with_udap(udap.trust.clone()),
+            None => token_state,
+        };
 
         let revocation_state =
             RevocationState::new(token_state.token_service(), client_storage.clone());
@@ -191,7 +207,49 @@ impl OAuthState {
             authorize_state,
             launch_state,
             audit_service: app_state.audit_service.clone(),
+            udap_state,
         })
+    }
+}
+
+/// The UDAP endpoints. A misconfiguration leaves them off and says why: nothing here may
+/// weaken the rest of the server.
+fn udap_state(
+    config: &crate::config::AppConfig,
+    clients: Arc<ArcClientStorage>,
+    jti: Arc<ArcJtiStorage>,
+    access_token_lifetime: i64,
+) -> Option<UdapState> {
+    let udap = &config.auth.udap;
+    if !udap.enabled {
+        return None;
+    }
+    let base = config.base_url();
+    let base = base.trim_end_matches('/');
+    let registration_url = format!("{base}/auth/udap/register");
+    let built = Trust::from_config(udap).and_then(|trust| {
+        let endpoints = Endpoints {
+            base_url: format!("{base}/fhir"),
+            authorization: format!("{base}/auth/authorize"),
+            token: format!("{base}/auth/token"),
+            registration: registration_url.clone(),
+        };
+        Ok((trust, UdapMetadata::from_config(udap, endpoints)?))
+    });
+    match built {
+        Ok((trust, metadata)) => Some(UdapState {
+            trust: Arc::new(trust),
+            metadata: Arc::new(metadata),
+            clients,
+            jti,
+            registration_url,
+            scopes: udap.scopes.clone().into(),
+            access_token_lifetime,
+        }),
+        Err(error) => {
+            tracing::error!(%error, "UDAP stays off");
+            None
+        }
     }
 }
 
@@ -367,6 +425,14 @@ pub fn smart_config_route(state: SmartConfigState) -> Router {
             "/.well-known/openid-configuration",
             get(openid_configuration_handler),
         )
+        .with_state(state)
+}
+
+/// Creates the UDAP discovery document and registration endpoint.
+pub fn udap_route(state: UdapState) -> Router {
+    Router::new()
+        .route("/fhir/.well-known/udap", get(udap_metadata_handler))
+        .route("/auth/udap/register", post(udap_register_handler))
         .with_state(state)
 }
 

@@ -263,6 +263,7 @@ impl AuthContext {
             allowed_origins: vec![],
             jwks: None,
             jwks_uri: None,
+            udap: None,
         };
 
         Self {
@@ -319,6 +320,7 @@ mod tests {
             allowed_origins: vec![],
             jwks: None,
             jwks_uri: None,
+            udap: None,
         }
     }
 

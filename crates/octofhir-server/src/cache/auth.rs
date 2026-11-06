@@ -316,6 +316,7 @@ mod tests {
                 allowed_origins: vec![],
                 jwks: None,
                 jwks_uri: None,
+                udap: None,
             },
             user: Some(UserContext {
                 id: Uuid::new_v4().to_string(),

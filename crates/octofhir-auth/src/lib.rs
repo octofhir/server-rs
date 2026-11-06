@@ -45,6 +45,7 @@ pub mod smart;
 pub mod storage;
 pub mod token;
 pub mod types;
+pub mod udap;
 
 pub use app_secret::{
     generate_app_secret, hash_app_secret, hash_password, verify_app_secret, verify_password,

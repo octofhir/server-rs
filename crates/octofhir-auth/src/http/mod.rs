@@ -30,6 +30,7 @@ pub mod launch;
 pub mod logout;
 pub mod revoke;
 pub mod token;
+pub mod udap;
 pub mod userinfo;
 
 pub use admin::{

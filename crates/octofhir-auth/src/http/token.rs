@@ -77,6 +77,8 @@ pub struct TokenState {
     token_endpoint_url: Option<String>,
     /// FHIR storage for creating AuthSession resources (optional).
     fhir_storage: Option<Arc<dyn octofhir_storage::FhirStorage>>,
+    /// Trust communities, for clients registered through UDAP (optional).
+    udap: Option<Arc<crate::udap::Trust>>,
 }
 
 impl TokenState {
@@ -113,6 +115,7 @@ impl TokenState {
             jti_storage: None,
             jwks_cache: None,
             token_endpoint_url: None,
+            udap: None,
             fhir_storage: None,
         }
     }
@@ -136,6 +139,7 @@ impl TokenState {
             jti_storage: None,
             jwks_cache: None,
             token_endpoint_url: None,
+            udap: None,
         }
     }
 
@@ -167,6 +171,12 @@ impl TokenState {
     #[must_use]
     pub fn with_jwks_cache(mut self, jwks_cache: Arc<ClientJwksCache>) -> Self {
         self.jwks_cache = Some(jwks_cache);
+        self
+    }
+
+    /// Accepts clients registered through UDAP, with these trust communities.
+    pub fn with_udap(mut self, trust: Arc<crate::udap::Trust>) -> Self {
+        self.udap = Some(trust);
         self
     }
 
@@ -372,7 +382,10 @@ async fn authenticate_client(
             client_id,
             assertion_type,
             assertion,
-        } => authenticate_with_assertion(state, &client_id, &assertion_type, &assertion).await,
+        } => {
+            authenticate_with_assertion(state, &client_id, &assertion_type, &assertion, request)
+                .await
+        }
         ClientAuth::Public { client_id } => authenticate_public_client(state, &client_id).await,
         ClientAuth::None => Err(AuthError::invalid_client("No client credentials provided")),
     }
@@ -448,6 +461,7 @@ async fn authenticate_with_assertion(
     client_id: &str,
     assertion_type: &str,
     assertion: &str,
+    request: &TokenRequest,
 ) -> Result<Client, AuthError> {
     use crate::oauth::client_assertion::{
         ClientAssertionValidator, extract_algorithm, extract_key_id,
@@ -480,6 +494,34 @@ async fn authenticate_with_assertion(
 
     if !client.active {
         return Err(AuthError::invalid_client("Client is inactive"));
+    }
+
+    // An application registered through UDAP proves itself with its certificate.
+    if let Some(binding) = &client.udap {
+        let trust = state
+            .udap
+            .as_ref()
+            .ok_or_else(|| AuthError::invalid_client("UDAP is not enabled"))?;
+        let token = crate::udap::assertion::authenticate(
+            trust,
+            &client,
+            binding,
+            assertion,
+            token_endpoint,
+            request.udap.as_deref(),
+            &request.grant_type,
+        )?;
+        let jti_storage = state
+            .jti_storage
+            .as_ref()
+            .ok_or_else(|| AuthError::internal("JTI storage is required for UDAP"))?;
+        let expires_at = OffsetDateTime::from_unix_timestamp(token.exp)
+            .map_err(|_| AuthError::invalid_client("Invalid exp timestamp"))?;
+        if !jti_storage.mark_used(&token.jti, expires_at).await? {
+            return Err(AuthError::invalid_client("Assertion jti already used"));
+        }
+        info!(client_id = %client_id, "Client authenticated via UDAP");
+        return Ok(client);
     }
 
     // 4. Extract algorithm and key ID from JWT header
@@ -851,6 +893,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -882,6 +925,7 @@ mod tests {
             client_secret: Some("test-secret".to_string()),
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -913,6 +957,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,

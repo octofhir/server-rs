@@ -887,6 +887,7 @@ mod tests {
             allowed_origins: vec![],
             jwks: None,
             jwks_uri: None,
+            udap: None,
         }
     }
 

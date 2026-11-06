@@ -513,6 +513,7 @@ mod tests {
             allowed_origins: vec![],
             jwks: None,
             jwks_uri: None,
+            udap: None,
         }
     }
 
@@ -534,6 +535,7 @@ mod tests {
             allowed_origins: vec![],
             jwks: None,
             jwks_uri: None,
+            udap: None,
         }
     }
 
@@ -551,6 +553,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -579,6 +582,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -612,6 +616,7 @@ mod tests {
             client_secret: Some("secret123".to_string()),
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -639,6 +644,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -663,6 +669,7 @@ mod tests {
             client_secret: Some("wrong-secret".to_string()),
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -687,6 +694,7 @@ mod tests {
             client_secret: None, // No secret provided
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -711,6 +719,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,
@@ -735,6 +744,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,

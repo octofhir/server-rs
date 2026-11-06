@@ -2583,6 +2583,7 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
     let userinfo_router = crate::oauth::userinfo_route(auth_state.clone());
     let authorize_router = crate::oauth::authorize_route(oauth_state.authorize_state);
     let launch_router = crate::oauth::launch_route(oauth_state.launch_state);
+    let udap_router = oauth_state.udap_state.map(crate::oauth::udap_route);
 
     // Duplicate discovery routes under /fhir so that
     // /fhir/.well-known/smart-configuration works when Inferno uses /fhir as base URL
@@ -2592,14 +2593,20 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
         "OAuth routes enabled: /auth/token, /auth/logout, /auth/authorize, /auth/launch, /auth/userinfo, /auth/jwks, /.well-known/smart-configuration, /fhir/.well-known/smart-configuration"
     );
 
+    let router = Router::new()
+        .merge(oauth_router)
+        .merge(jwks_router)
+        .merge(smart_config_router)
+        .merge(userinfo_router)
+        .merge(authorize_router)
+        .merge(launch_router);
+    let router = match udap_router {
+        Some(udap) => router.merge(udap),
+        None => router,
+    };
+
     Some(
-        Router::new()
-            .merge(oauth_router)
-            .merge(jwks_router)
-            .merge(smart_config_router)
-            .merge(userinfo_router)
-            .merge(authorize_router)
-            .merge(launch_router)
+        router
             .nest("/fhir", fhir_discovery)
             // Apply CORS middleware to OAuth routes to allow cross-origin requests
             .layer(middleware::from_fn(app_middleware::dynamic_cors_middleware)),

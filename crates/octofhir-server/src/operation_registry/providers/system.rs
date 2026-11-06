@@ -92,6 +92,16 @@ impl OperationProvider for SystemOperationProvider {
             )
             .with_description("OpenID Connect configuration")
             .with_public(true),
+            OperationDefinition::new(
+                "system.udap-configuration",
+                "UDAP Configuration",
+                categories::SYSTEM,
+                vec!["GET".to_string()],
+                "/fhir/.well-known/udap",
+                modules::SERVER,
+            )
+            .with_description("UDAP server metadata")
+            .with_public(true),
             // Observability endpoints
             OperationDefinition::new(
                 "system.metrics",

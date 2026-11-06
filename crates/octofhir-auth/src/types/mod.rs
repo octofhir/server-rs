@@ -15,7 +15,7 @@ pub mod client;
 pub mod refresh_token;
 
 pub use app::AppRecord;
-pub use client::{Client, ClientValidationError, GrantType};
+pub use client::{Client, ClientValidationError, GrantType, UdapBinding};
 pub use refresh_token::RefreshToken;
 
 /// Entity type for Basic Auth (Client or App).

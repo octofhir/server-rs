@@ -163,6 +163,8 @@ flate2 = "1.1"
 tempfile = { workspace = true }
 
 [dev-dependencies]
+jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 aws-lc-rs = "1"
 pem = "4"
 wiremock = { workspace = true }

@@ -43,7 +43,7 @@ console page. Left, from the library side: XML input for CDA maps, WASM build, L
 | # | Item | Effort | Notes |
 |---|---|---|---|
 | 4.5 | Conformance evidence: Inferno US Core and Subscriptions in CI, full CapabilityStatement | M–L | Aligned Networks |
-| 4.7 | UDAP / FAST Security STU2 (DCR, B2B, tiered OAuth) | L | TEFCA |
+| 4.7 | UDAP Tiered OAuth (`udap_to`), CRL distribution points and OCSP | M | TEFCA; registration, JWT authentication and B2B are done |
 | 4.8 | Ratio measures with observations; `where` conditions as filters in `$data-requirements` | S | scoring of all four types and instance-level `$data-requirements` are done |
 
 ## 5. Standalone tools (new repos next to server-rs)

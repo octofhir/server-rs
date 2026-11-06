@@ -123,6 +123,7 @@ impl IntrospectionForm {
             client_secret: self.client_secret.clone(),
             client_assertion_type: None,
             client_assertion: None,
+            udap: None,
             refresh_token: None,
             scope: None,
             username: None,

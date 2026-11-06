@@ -32,6 +32,11 @@ base64 = "0.23"
 # Key generation and parsing (jsonwebtoken doesn't generate keys)
 aws-lc-rs = "1"
 pem = "4"
+
+# UDAP: certificate chains to community anchors, Subject Alternative Names
+rustls-pki-types = { version = "1", features = ["std"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["std", "aws-lc-rs"] }
+x509-parser = "0.18"
 rand = "0.10"
 
 # PKCE and token hashing
@@ -61,6 +66,8 @@ octofhir-storage = { path = "../octofhir-storage" }
 argon2 = { version = "0.5.3", features = ["std"] }
 
 [dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+tempfile = { workspace = true }
 criterion = { version = "0.8", features = ["async_tokio"] }
 
 [[bench]]

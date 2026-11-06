@@ -30,6 +30,16 @@ impl OperationProvider for AuthOperationProvider {
             .with_description("OAuth 2.0 token endpoint")
             .with_public(true),
             OperationDefinition::new(
+                "auth.udap-register",
+                "UDAP Registration",
+                categories::AUTH,
+                vec!["POST".to_string()],
+                "/auth/udap/register",
+                modules::AUTH,
+            )
+            .with_description("UDAP dynamic client registration")
+            .with_public(true),
+            OperationDefinition::new(
                 "auth.jwks",
                 "JWKS Endpoint",
                 categories::AUTH,

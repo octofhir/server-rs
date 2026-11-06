@@ -74,6 +74,10 @@ pub struct TokenRequest {
     #[serde(default)]
     pub client_assertion: Option<String>,
 
+    /// `1` on a UDAP request.
+    #[serde(default)]
+    pub udap: Option<String>,
+
     /// Refresh token (for refresh_token grant).
     #[serde(default)]
     pub refresh_token: Option<String>,
