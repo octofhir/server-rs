@@ -402,6 +402,7 @@ fn create_test_auth_context() -> AuthContext {
         allowed_origins: vec![],
         jwks: None,
         jwks_uri: None,
+        udap: None,
     };
 
     AuthContext {
@@ -1978,6 +1979,7 @@ fn create_restricted_auth_context(scope: &str) -> AuthContext {
         allowed_origins: vec![],
         jwks: None,
         jwks_uri: None,
+        udap: None,
     };
 
     AuthContext {
