@@ -65,7 +65,6 @@ issuer = "https://fhir.octofhir.com"
 authorization_code_lifetime = "10m"
 access_token_lifetime = "1h"
 refresh_token_lifetime = "90d"
-refresh_token_rotation = true
 grant_types = ["authorization_code", "client_credentials", "refresh_token"]
 
 [auth.smart]
@@ -92,7 +91,6 @@ supported_scopes = [
 
 [auth.signing]
 algorithm = "ES384"
-key_rotation_days = 90
 keys_to_keep = 3
 
 # IMPORTANT: Generate your own production keys!
@@ -114,26 +112,12 @@ kid = "production-key-2024"
 # """
 
 [auth.policy]
-default_deny = true
 quickjs_enabled = true
 
 [auth.policy.quickjs]
 memory_limit_mb = 16
 max_stack_size_kb = 256
 timeout_ms = 100
-
-[auth.federation]
-allow_external_idp = true
-auto_provision_users = false
-jwks_cache_ttl = "1h"
-jwks_refresh_on_failure = true
-
-[auth.rate_limiting]
-token_requests_per_minute = 60
-token_requests_per_hour = 1000
-auth_requests_per_minute = 30
-max_failed_attempts = 5
-lockout_duration = "15m"
 
 [auth.audit]
 log_successful_auth = true

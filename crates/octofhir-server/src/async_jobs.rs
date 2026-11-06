@@ -555,16 +555,13 @@ impl AsyncJobManager {
         &self,
         include_imports: bool,
     ) -> Result<Option<ClaimedJob>, AsyncJobError> {
-        // Recover only writes created by the native checkpoint protocol.
-        // Legacy import/batch jobs may have committed without a checkpoint and
-        // must never be blindly replayed.
+        // Recover only the job types that checkpoint their writes.
         query(
             "UPDATE async_jobs SET status = 'failed', completed_at = clock_timestamp(), \
                error_message = 'Execution was interrupted; automatic write replay is unavailable' \
                WHERE status = 'in_progress' AND expires_at > clock_timestamp() \
                AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()) \
-               AND NOT (request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status') \
-               OR (request_type = 'bulk_import' AND COALESCE(request_headers->>'write_protocol', '') = 'native-chunks-v1'))",
+               AND request_type NOT IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status', 'bulk_import')",
         )
         .execute(self.db_pool.as_ref())
         .await?;
@@ -574,8 +571,7 @@ impl AsyncJobManager {
              WHERE expires_at > clock_timestamp() AND request_headers->'authorization' IS NOT NULL \
              AND ($2 OR request_type NOT IN ('bulk_import', 'bulk_submit')) \
              AND (status = 'queued' OR (status = 'in_progress' \
-             AND (request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status') \
-             OR (request_type = 'bulk_import' AND COALESCE(request_headers->>'write_protocol', '') = 'native-chunks-v1')) \
+             AND request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status', 'bulk_import') \
              AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()))) \
              ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED) \
              UPDATE async_jobs j SET status = 'in_progress', execution_id = $1, \
@@ -614,8 +610,8 @@ impl AsyncJobManager {
                 "Server is shutting down".into(),
             ));
         }
-        let headers = serde_json::json!({"http":request.headers,"authorization":request.authorization,
-                "write_protocol": if request.request_type == "bulk_import" {Some("native-chunks-v1")} else {None}});
+        let headers =
+            serde_json::json!({"http":request.headers,"authorization":request.authorization});
         let ttl_hours = format!("{} hours", self.config.default_ttl_hours);
         let row = query(
             r#"
@@ -1369,19 +1365,6 @@ mod tests {
         assert!(
             events.try_recv().is_err(),
             "Recovered chunk must not duplicate events"
-        );
-
-        // Version markers are server-owned. An old job without the marker
-        // cannot be replayed, even when it contains similar request JSON.
-        let legacy_id = first.submit_job(request("bulk_import")).await.unwrap();
-        query("UPDATE async_jobs SET request_headers = request_headers - 'write_protocol' WHERE id = $1").bind(legacy_id).execute(pool.as_ref()).await.unwrap();
-        let legacy = first.claim_job().await.unwrap().unwrap();
-        assert_eq!(legacy.claim.job_id, legacy_id);
-        query("UPDATE async_jobs SET lease_expires_at = clock_timestamp() - INTERVAL '1 second' WHERE id = $1").bind(legacy_id).execute(pool.as_ref()).await.unwrap();
-        assert!(second.claim_job().await.unwrap().is_none());
-        assert_eq!(
-            second.get_job(legacy_id).await.unwrap().status,
-            AsyncJobStatus::Failed
         );
 
         // Cancellation wins over a native write that has not committed its

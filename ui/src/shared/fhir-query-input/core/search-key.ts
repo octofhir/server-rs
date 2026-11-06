@@ -23,7 +23,7 @@ export const SEARCH_MODIFIERS = new Set([
   "in",
   "not-in",
   "of-type",
-  "ofType",
+  "of-type",
   "identifier",
   "code-text",
   "text-advanced",

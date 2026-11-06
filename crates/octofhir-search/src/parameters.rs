@@ -77,7 +77,7 @@ impl SearchModifier {
             "below" => Some(Self::Below),
             "above" => Some(Self::Above),
             "identifier" => Some(Self::Identifier),
-            "ofType" => Some(Self::OfType),
+            "of-type" => Some(Self::OfType),
             "code-text" => Some(Self::CodeText),
             "text-advanced" => Some(Self::TextAdvanced),
             // Type modifier is handled separately during parsing
@@ -362,8 +362,6 @@ pub struct SearchParameter {
     pub param_type: SearchParameterType,
     /// FHIRPath expression for extracting values
     pub expression: Option<String>,
-    /// XPath expression (legacy, for reference)
-    pub xpath: Option<String>,
     /// Resource types this parameter applies to
     pub base: Vec<String>,
     /// Target resource types for reference parameters
@@ -420,7 +418,6 @@ impl SearchParameter {
             url: url.into(),
             param_type,
             expression: None,
-            xpath: None,
             base,
             target: Vec::new(),
             modifier: Vec::new(),

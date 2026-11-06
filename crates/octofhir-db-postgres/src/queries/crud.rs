@@ -1362,7 +1362,7 @@ pub async fn vread_raw(
 /// `_transaction` row is created). This is the hot path for Bundle imports —
 /// one txid is allocated once for the whole bundle and shared across all
 /// resource inserts. When `txid` is `None`, a new `_transaction` row is
-/// allocated via CTE (legacy single-resource behaviour).
+/// allocated via CTE.
 pub async fn create_with_tx(
     tx: &mut PgTransaction<'_>,
     resource: &Value,

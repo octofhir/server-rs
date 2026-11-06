@@ -152,7 +152,7 @@ export function AppDetailPage() {
 
 					<SectionPanel
 						title="Configuration"
-						description="Endpoint, timeout, API version, and legacy base path"
+						description="Endpoint, timeout and API version"
 						view="tinted"
 						padding="l"
 					>
@@ -200,16 +200,6 @@ export function AppDetailPage() {
 										</div>
 									),
 									value: app.apiVersion ?? 1,
-								},
-								{
-									id: "base-path",
-									label: (
-										<div className={classes.labelInline}>
-											<IconWorld width={14} height={14} color="var(--octo-text-secondary)" aria-hidden="true" />
-											Base Path
-										</div>
-									),
-									value: app.basePath || "None",
 								},
 							]}
 						/>

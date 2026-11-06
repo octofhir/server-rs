@@ -1615,7 +1615,7 @@ pub struct HistoryQueryParams {
     #[serde(rename = "_count")]
     pub count: Option<u32>,
     /// Number of entries to skip for pagination
-    #[serde(rename = "_offset", alias = "__offset")]
+    #[serde(rename = "_offset")]
     pub offset: Option<u32>,
     /// Total-count mode: `accurate` computes `Bundle.total`. Omitted by default
     /// so history does not scan the full current + history set on every request.
@@ -3879,7 +3879,6 @@ const SEARCH_HEADER_SQL_VALUE: &str = "sql";
 const SEARCH_HEADER_EXPLAIN_VALUE: &str = "explain";
 const SEARCH_HEADER_EXPLAIN_ANALYZE_VALUE: &str = "explain-analyze";
 const SEARCH_DEBUG_HEADER: &str = "x-octofhir-search-debug";
-const LEGACY_SEARCH_DEBUG_HEADER: &str = "x-octofhir-debug";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SearchDebugRequest {
@@ -3936,7 +3935,6 @@ fn query_search_debug_request(raw_q: &str) -> Option<SearchDebugRequest> {
 fn header_search_debug_request(headers: &HeaderMap) -> Option<SearchDebugRequest> {
     headers
         .get(SEARCH_DEBUG_HEADER)
-        .or_else(|| headers.get(LEGACY_SEARCH_DEBUG_HEADER))
         .and_then(|value| value.to_str().ok())
         .and_then(|value| {
             value
@@ -4531,12 +4529,7 @@ pub async fn load_gateway_operations(
             None => continue,
         };
 
-        // Build full path by combining app base path and operation path
-        let full_path = if let Some(base_path) = &app.base_path {
-            format!("{}{}", base_path, custom_op.path)
-        } else {
-            custom_op.path.clone()
-        };
+        let full_path = custom_op.path.clone();
 
         // Create operation ID from app name and operation ID
         let operation_id = format!(
@@ -10662,13 +10655,6 @@ mod tests {
         .unwrap();
         assert_eq!(standard.count, Some(10));
         assert_eq!(standard.offset, Some(25));
-
-        let legacy: HistoryQueryParams = serde_json::from_value(json!({
-            "_count": 10,
-            "__offset": 30
-        }))
-        .unwrap();
-        assert_eq!(legacy.offset, Some(30));
     }
 
     #[tokio::test]

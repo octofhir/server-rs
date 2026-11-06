@@ -182,7 +182,7 @@ export function AppsPage() {
                   </div>
                 ),
                 endpoint:
-                  app.endpoint?.url || app.basePath ? (
+                  app.endpoint?.url ? (
                     <Code className={classes.endpointCode}>{endpoint}</Code>
                   ) : (
                     <Text variant="caption-2" color="secondary">
@@ -368,7 +368,7 @@ function AppModal({
         endpointUrl: app.endpoint?.url ?? "",
         endpointTimeout: app.endpoint?.timeout ?? 30,
         secret: "",
-        status: app.status ?? (app.active ? "active" : "inactive"),
+        status: app.status ?? "inactive",
       }
     : APP_DEFAULTS;
 

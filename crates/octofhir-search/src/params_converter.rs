@@ -1080,8 +1080,7 @@ fn append_reference_debug_plan(
 /// - Repeated `&`-occurrences are AND'd by the caller emitting one ParsedParam
 ///   per occurrence.
 ///
-/// :of-type matches the spec spelling (Identifier modifier). The legacy
-/// camelCase `ofType` is also accepted.
+/// :of-type is the Identifier modifier.
 fn convert_to_parsed_param(key: &str, value_entry: &str) -> ParsedParam {
     // Parse name and modifier from key (e.g., "name:exact" -> name, Some(Exact))
     let (name, modifier) = if let Some((n, m)) = key.split_once(':') {
@@ -1096,7 +1095,7 @@ fn convert_to_parsed_param(key: &str, value_entry: &str) -> ParsedParam {
             "not" => Some(crate::parameters::SearchModifier::Not),
             "identifier" => Some(crate::parameters::SearchModifier::Identifier),
             "missing" => Some(crate::parameters::SearchModifier::Missing),
-            "of-type" | "ofType" => Some(crate::parameters::SearchModifier::OfType),
+            "of-type" => Some(crate::parameters::SearchModifier::OfType),
             "code-text" => Some(crate::parameters::SearchModifier::CodeText),
             "text-advanced" => Some(crate::parameters::SearchModifier::TextAdvanced),
             other if !other.is_empty() => {

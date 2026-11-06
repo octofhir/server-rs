@@ -286,7 +286,7 @@ pub enum NumberPredicate {
 /// Number SearchParameter occurrence.
 ///
 /// Clauses are OR-combined because they come from one comma-separated query
-/// occurrence. Runtime SQL still uses the legacy JSONB numeric cast path; this
+/// occurrence. Runtime SQL uses the JSONB numeric cast path; this
 /// IR node exists to make that fallback visible in debug output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NumberClause {

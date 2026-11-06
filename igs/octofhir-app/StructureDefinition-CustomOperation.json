@@ -38,7 +38,7 @@
         "id": "CustomOperation.path",
         "path": "CustomOperation.path",
         "short": "Relative URL path",
-        "definition": "Path relative to App.basePath (e.g., /users/:id)",
+        "definition": "Absolute path (e.g., /users/:id)",
         "comment": "Supports path parameters like :id, :resourceId",
         "min": 1,
         "max": "1",

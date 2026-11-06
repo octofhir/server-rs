@@ -57,7 +57,6 @@ data:
     [auth.oauth]
     access_token_lifetime = {{ .Values.config.auth.oauth.accessTokenLifetime | quote }}
     refresh_token_lifetime = {{ .Values.config.auth.oauth.refreshTokenLifetime | quote }}
-    refresh_token_rotation = {{ .Values.config.auth.oauth.refreshTokenRotation }}
     grant_types = [
     {{- range .Values.config.auth.oauth.grantTypes }}
       {{ . | quote }},
@@ -73,11 +72,9 @@ data:
 
     [auth.signing]
     algorithm = {{ .Values.config.auth.signing.algorithm | quote }}
-    key_rotation_days = {{ .Values.config.auth.signing.keyRotationDays }}
     keys_to_keep = {{ .Values.config.auth.signing.keysToKeep }}
 
     [auth.policy]
-    default_deny = {{ .Values.config.auth.policy.defaultDeny }}
     quickjs_enabled = {{ .Values.config.auth.policy.quickjsEnabled }}
 
     [redis]
@@ -95,6 +92,7 @@ data:
 
     [sql_on_fhir]
     enabled = {{ .Values.config.sqlOnFhir.enabled }}
+    viewdefinition_export = {{ .Values.config.sqlOnFhir.viewdefinitionExport }}
 
     [cql]
     enabled = {{ .Values.config.cql.enabled }}

@@ -43,12 +43,6 @@ pub struct AuthConfig {
     /// Policy engine configuration.
     pub policy: PolicyConfig,
 
-    /// External IdP federation configuration.
-    pub federation: FederationConfig,
-
-    /// Rate limiting configuration.
-    pub rate_limiting: RateLimitingConfig,
-
     /// Audit configuration.
     pub audit: AuditConfig,
 
@@ -70,8 +64,6 @@ impl Default for AuthConfig {
             smart: SmartConfig::default(),
             signing: SigningConfig::default(),
             policy: PolicyConfig::default(),
-            federation: FederationConfig::default(),
-            rate_limiting: RateLimitingConfig::default(),
             audit: AuditConfig::default(),
             cookie: CookieConfig::default(),
             session: SessionConfig::default(),
@@ -102,11 +94,6 @@ pub struct OAuthConfig {
     #[serde(with = "humantime_serde")]
     pub refresh_token_lifetime: Duration,
 
-    /// Rotate refresh tokens on use.
-    /// When enabled, a new refresh token is issued with each refresh.
-    /// This is recommended for security (detects token theft).
-    pub refresh_token_rotation: bool,
-
     /// Allowed OAuth 2.0 grant types.
     /// Supported: "authorization_code", "client_credentials", "refresh_token"
     pub grant_types: Vec<String>,
@@ -118,7 +105,6 @@ impl Default for OAuthConfig {
             authorization_code_lifetime: Duration::from_secs(600), // 10 minutes
             access_token_lifetime: Duration::from_secs(3600),      // 1 hour
             refresh_token_lifetime: Duration::from_secs(90 * 24 * 3600), // 90 days
-            refresh_token_rotation: true,
             grant_types: vec![
                 "authorization_code".to_string(),
                 "client_credentials".to_string(),
@@ -265,10 +251,6 @@ pub struct SigningConfig {
     /// Supported: "RS256", "RS384", "ES384"
     pub algorithm: String,
 
-    /// Key rotation period in days.
-    /// New keys are generated automatically after this period.
-    pub key_rotation_days: u32,
-
     /// Number of old keys to keep for validation.
     /// Allows tokens signed with old keys to remain valid until expiry.
     pub keys_to_keep: u32,
@@ -294,7 +276,6 @@ impl Default for SigningConfig {
     fn default() -> Self {
         Self {
             algorithm: "RS384".to_string(),
-            key_rotation_days: 90,
             keys_to_keep: 3,
             private_key_pem: None,
             public_key_pem: None,
@@ -309,10 +290,6 @@ impl Default for SigningConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PolicyConfig {
-    /// Default deny mode.
-    /// When enabled, access is denied unless a policy explicitly allows it.
-    pub default_deny: bool,
-
     /// Enable QuickJS scripting for policies.
     pub quickjs_enabled: bool,
 
@@ -331,7 +308,6 @@ pub struct PolicyConfig {
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
-            default_deny: true,
             quickjs_enabled: true,
             quickjs: QuickJsConfig::default(),
             anonymous_access: false,
@@ -366,75 +342,6 @@ impl Default for QuickJsConfig {
             max_stack_size_kb: 256,
             timeout_ms: 100,
             pool_size: num_cpus::get().max(1),
-        }
-    }
-}
-
-/// External identity provider federation configuration.
-///
-/// Controls how the auth module interacts with external OAuth/OIDC providers.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct FederationConfig {
-    /// Allow authentication via external identity providers.
-    pub allow_external_idp: bool,
-
-    /// Automatically provision users from external IdP claims.
-    /// When disabled, users must be pre-registered.
-    pub auto_provision_users: bool,
-
-    /// JWKS cache time-to-live.
-    /// How long to cache external IdP JWKS before refreshing.
-    #[serde(with = "humantime_serde")]
-    pub jwks_cache_ttl: Duration,
-
-    /// Refresh JWKS on validation failure.
-    /// When enabled, attempts to refresh JWKS if token validation fails.
-    pub jwks_refresh_on_failure: bool,
-}
-
-impl Default for FederationConfig {
-    fn default() -> Self {
-        Self {
-            allow_external_idp: true,
-            auto_provision_users: false,
-            jwks_cache_ttl: Duration::from_secs(3600), // 1 hour
-            jwks_refresh_on_failure: true,
-        }
-    }
-}
-
-/// Rate limiting configuration.
-///
-/// Controls rate limiting for authentication endpoints to prevent abuse.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct RateLimitingConfig {
-    /// Token requests per minute per client.
-    pub token_requests_per_minute: u32,
-
-    /// Token requests per hour per client.
-    pub token_requests_per_hour: u32,
-
-    /// Authorization requests per minute per IP.
-    pub auth_requests_per_minute: u32,
-
-    /// Maximum failed authentication attempts before lockout.
-    pub max_failed_attempts: u32,
-
-    /// Account lockout duration after max failed attempts.
-    #[serde(with = "humantime_serde")]
-    pub lockout_duration: Duration,
-}
-
-impl Default for RateLimitingConfig {
-    fn default() -> Self {
-        Self {
-            token_requests_per_minute: 60,
-            token_requests_per_hour: 1000,
-            auth_requests_per_minute: 30,
-            max_failed_attempts: 5,
-            lockout_duration: Duration::from_secs(300), // 5 minutes
         }
     }
 }
@@ -538,9 +445,6 @@ pub struct SessionConfig {
     #[serde(with = "humantime_serde")]
     pub absolute_timeout: std::time::Duration,
 
-    /// Maximum concurrent sessions per user
-    pub max_concurrent_sessions: u32,
-
     /// Session cookie name
     pub cookie_name: String,
 
@@ -556,7 +460,6 @@ impl Default for SessionConfig {
         Self {
             idle_timeout: std::time::Duration::from_secs(1800), // 30 minutes
             absolute_timeout: std::time::Duration::from_secs(28800), // 8 hours
-            max_concurrent_sessions: 10,
             cookie_name: "octofhir_sso".to_string(),
             cookie_secure: true,
             cookie_same_site: "Lax".to_string(),
@@ -725,13 +628,6 @@ impl AuthConfig {
             }
         }
 
-        // Validate rate limiting
-        if self.rate_limiting.max_failed_attempts == 0 {
-            return Err(ConfigError::InvalidValue(
-                "max_failed_attempts must be > 0".to_string(),
-            ));
-        }
-
         Ok(())
     }
 }
@@ -745,7 +641,6 @@ mod tests {
         let config = AuthConfig::default();
         assert!(config.cookie.enabled);
         assert_eq!(config.issuer, "http://localhost:8080");
-        assert!(config.oauth.refresh_token_rotation);
         assert_eq!(config.signing.algorithm, "RS384");
     }
 
@@ -841,14 +736,6 @@ mod tests {
     fn test_quickjs_default_pool_size() {
         let quickjs = QuickJsConfig::default();
         assert!(quickjs.pool_size >= 1);
-    }
-
-    #[test]
-    fn test_rate_limiting_defaults() {
-        let rate = RateLimitingConfig::default();
-        assert_eq!(rate.token_requests_per_minute, 60);
-        assert_eq!(rate.max_failed_attempts, 5);
-        assert_eq!(rate.lockout_duration, Duration::from_secs(300));
     }
 
     #[test]

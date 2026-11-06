@@ -54,26 +54,12 @@ pub struct App {
     /// Resources to provision (JSON-encoded).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<String>,
-
-    // --- Deprecated fields for backward compatibility ---
-    /// Deprecated: Use endpoint.url instead.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_path: Option<String>,
-
-    /// Deprecated: Use status instead.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active: Option<bool>,
 }
 
 impl App {
     /// Returns whether the app is active.
     pub fn is_active(&self) -> bool {
-        // Check new status field first
-        if self.status == AppStatus::Active {
-            return true;
-        }
-        // Fall back to deprecated `active` field
-        self.active.unwrap_or(false)
+        self.status == AppStatus::Active
     }
 }
 
@@ -162,7 +148,7 @@ pub struct CustomOperation {
     /// Reference to the App resource.
     pub app: Reference,
 
-    /// Path relative to App.basePath (e.g., "/users/:id").
+    /// Absolute path (e.g., "/users/:id").
     pub path: String,
 
     /// HTTP method (GET, POST, PUT, DELETE, PATCH).

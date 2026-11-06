@@ -1900,32 +1900,6 @@ fn build_reverse_inline_query(
     build_inline_query(source_type, condition, execution, raw)
 }
 
-/// Historical predicate retained for the ignored manual performance benchmark.
-/// Production raw and parsed searches share `build_reverse_inline_query`.
-#[cfg(test)]
-fn build_revinclude_sql(table: &str, ref_array: &str, raw: bool) -> String {
-    let resource = if raw {
-        "s.resource::text"
-    } else {
-        "s.resource"
-    };
-    // A matching regexp's second capture is necessarily the last path segment.
-    // CASE guarantees we only run the more expensive regexp for candidate IDs,
-    // while retaining its exact type/ID syntax and absolute-reference behavior.
-    // EXISTS cannot multiply source rows, so SELECT DISTINCT is unnecessary.
-    format!(
-        r#"SELECT {resource}, s.id, s.txid, s.created_at, s.updated_at
-           FROM "{table}" s
-           WHERE s.status != 'deleted'
-           AND EXISTS (
-             SELECT 1 FROM jsonb_array_elements({ref_array}) AS ref
-             WHERE CASE WHEN split_part(ref->>'reference', '/', -1) = ANY($2::text[])
-               THEN (regexp_match(ref->>'reference', '{REFERENCE_TYPE_ID_RE}'))[1] = $1
-               ELSE false END
-           )"#
-    )
-}
-
 #[cfg(test)]
 #[path = "search/revinclude_tests.rs"]
 mod revinclude_tests;

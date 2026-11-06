@@ -35,8 +35,7 @@
 //! {
 //!   "resourceType": "App",
 //!   "name": "External API",
-//!   "basePath": "/api/v1/external",
-//!   "active": true
+//!   "status": "active"
 //! }
 //!
 //! // Create a CustomOperation

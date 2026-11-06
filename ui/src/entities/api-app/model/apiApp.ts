@@ -63,8 +63,6 @@ export interface AppResource extends FhirResource {
 	operations?: InlineOperation[];
 	subscriptions?: InlineSubscription[];
 	resources?: string;
-	basePath?: string;
-	active?: boolean;
 	authentication?: {
 		type: string;
 		required: boolean;
@@ -113,7 +111,7 @@ const subscriptionEventColorById: Record<string, string> = {
 };
 
 export function getAppStatus(app: AppResource): AppStatus {
-	return app.status ?? (app.active ? "active" : "inactive");
+	return app.status ?? "inactive";
 }
 
 export function getAppStatusView(app: AppResource): AppStatusView {
@@ -165,6 +163,6 @@ export function formatAppOperationPath(path: PathSegment[] | string | undefined)
 }
 
 export function getAppEndpointDisplay(app: AppResource): string {
-	return app.endpoint?.url ?? app.basePath ?? "Not configured";
+	return app.endpoint?.url ?? "Not configured";
 }
 

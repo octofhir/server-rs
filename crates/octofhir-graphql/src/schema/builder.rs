@@ -30,7 +30,6 @@ use crate::subscriptions::{
 use crate::types::{create_all_resources_union, create_reference_type};
 
 /// The name of the custom JSON scalar type used for FHIR resources.
-/// Kept for backwards compatibility but no longer primary mechanism.
 pub const FHIR_RESOURCE_SCALAR: &str = "FhirResource";
 
 /// Internal resource types that should always be included in the GraphQL schema.

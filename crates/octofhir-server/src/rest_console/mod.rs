@@ -517,11 +517,7 @@ async fn load_gateway_custom_operations(
             None => continue,
         };
 
-        let full_path = if let Some(base_path) = &app.base_path {
-            format!("{}{}", base_path, custom_op.path)
-        } else {
-            custom_op.path.clone()
-        };
+        let full_path = custom_op.path.clone();
 
         let operation_id = format!(
             "gateway.{}.{}",
@@ -668,7 +664,7 @@ fn modifier_to_string(modifier: &SearchModifier) -> String {
         SearchModifier::Identifier => "identifier",
         SearchModifier::Type(_) => "type",
         SearchModifier::Missing => "missing",
-        SearchModifier::OfType => "ofType",
+        SearchModifier::OfType => "of-type",
         SearchModifier::CodeText => "code-text",
         SearchModifier::TextAdvanced => "text-advanced",
     }
@@ -1131,7 +1127,7 @@ mod tests {
     fn modifier_conversion_handles_all_variants() {
         assert_eq!(modifier_to_string(&SearchModifier::Exact), "exact");
         assert_eq!(modifier_to_string(&SearchModifier::Contains), "contains");
-        assert_eq!(modifier_to_string(&SearchModifier::OfType), "ofType");
+        assert_eq!(modifier_to_string(&SearchModifier::OfType), "of-type");
     }
 
     #[test]

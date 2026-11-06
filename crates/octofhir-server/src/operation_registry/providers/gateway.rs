@@ -119,12 +119,7 @@ impl GatewayOperationProvider {
                 }
             };
 
-            // Build full path by combining app base path and operation path
-            let full_path = if let Some(base_path) = &app.base_path {
-                format!("{}{}", base_path, custom_op.path)
-            } else {
-                custom_op.path.clone()
-            };
+            let full_path = custom_op.path.clone();
 
             // Create operation ID from app name and operation path
             let operation_id = format!(

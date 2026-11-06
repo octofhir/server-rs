@@ -34,14 +34,12 @@ RUN pnpm -C ui build
 # -----------------------------------------------------------------------------
 FROM rust:1.99-slim-bookworm AS rust-builder
 
-# Install build dependencies including JavaScriptCore for bot automation
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     g++ \
     pkg-config \
     libssl-dev \
     git \
-    # JSC dependencies for bot automation
-    libjavascriptcoregtk-4.1-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work/server-rs
@@ -83,14 +81,12 @@ RUN --mount=type=cache,id=cargo-registry-${TARGETPLATFORM},target=/usr/local/car
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 
-# Install runtime dependencies including JavaScriptCore for bot automation
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libstdc++6 \
     libssl3 \
     wget \
-    # JSC runtime for bot automation
-    libjavascriptcoregtk-4.1-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

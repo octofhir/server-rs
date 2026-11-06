@@ -134,38 +134,15 @@ impl GatewayRouter {
                 continue;
             }
 
-            // Extract app reference
-            let app_ref = operation.app.reference.as_ref().ok_or_else(|| {
-                GatewayError::InvalidConfig(format!(
+            if operation.app.reference.is_none() {
+                return Err(GatewayError::InvalidConfig(format!(
                     "CustomOperation {} has no app reference",
                     operation.id.as_deref().unwrap_or("unknown")
-                ))
-            })?;
-
-            // Extract app ID from reference (e.g., "App/123" -> "123")
-            let app_id = app_ref.split('/').next_back().ok_or_else(|| {
-                GatewayError::InvalidConfig(format!("Invalid app reference: {}", app_ref))
-            })?;
-
-            // Find the app
-            let app = app_map.get(app_id);
-
-            // Build full path (support both new and deprecated formats)
-            let full_path = if let Some(app) = app {
-                if let Some(base_path) = &app.base_path {
-                    // Deprecated: use App.base_path
-                    format!("{}{}", base_path, operation.path)
-                } else {
-                    // New: path is already absolute
-                    operation.path.clone()
-                }
-            } else {
-                // App not found, use path as-is
-                operation.path.clone()
-            };
+                )));
+            }
 
             // Create route key
-            let route_key = RouteKey::new(operation.method.clone(), full_path.clone());
+            let route_key = RouteKey::new(operation.method.clone(), operation.path.clone());
 
             debug!(
                 route_key = %route_key,

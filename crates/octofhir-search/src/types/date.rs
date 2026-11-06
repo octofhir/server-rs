@@ -1,7 +1,5 @@
 //! Date search parameter implementation.
 //!
-//! See `docs/architecture/date-search.md` for the design.
-//!
 //! Every FHIR date-shaped value is canonicalised to a half-open `[lower, upper)`
 //! UTC interval. Queries are issued in-place over the resource JSONB using a
 //! `tstzrange` expression so a GiST functional index covers every FHIR prefix:

@@ -114,7 +114,7 @@ pub fn resolve_composite_component_specs(
         .collect()
 }
 
-/// Stable lowercase SearchParameter type name for legacy component renderers.
+/// Stable lowercase SearchParameter type name.
 pub fn search_type_name(search_type: SearchParameterType) -> &'static str {
     match search_type {
         SearchParameterType::Number => "number",

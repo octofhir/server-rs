@@ -639,14 +639,7 @@ impl EverythingParams {
                 };
                 if !matches!(
                     name,
-                    "_count"
-                        | "_offset"
-                        | "__offset"
-                        | "_since"
-                        | "_type"
-                        | "_elements"
-                        | "start"
-                        | "end"
+                    "_count" | "_offset" | "_since" | "_type" | "_elements" | "start" | "end"
                 ) {
                     continue;
                 }
@@ -710,7 +703,7 @@ impl EverythingParams {
         if let Some(count) = params.get("_count") {
             result.count = Some(unsigned("_count", count)?);
         }
-        if let Some(offset) = params.get("_offset").or_else(|| params.get("__offset")) {
+        if let Some(offset) = params.get("_offset") {
             result.offset = Some(unsigned("_offset", offset)?);
         }
         if let Some(since) = params.get("_since") {

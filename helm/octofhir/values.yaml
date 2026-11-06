@@ -111,7 +111,6 @@ config:
     oauth:
       accessTokenLifetime: "1h"
       refreshTokenLifetime: "90d"
-      refreshTokenRotation: true
       grantTypes:
         - authorization_code
         - client_credentials
@@ -124,10 +123,8 @@ config:
       openidEnabled: true
     signing:
       algorithm: "RS256"
-      keyRotationDays: 90
       keysToKeep: 3
     policy:
-      defaultDeny: true
       quickjsEnabled: true
 
   redis:
@@ -143,6 +140,7 @@ config:
 
   sqlOnFhir:
     enabled: true
+    viewdefinitionExport: true
 
   cql:
     enabled: false

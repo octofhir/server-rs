@@ -197,11 +197,6 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
         param_type
     };
 
-    let _xpath = value
-        .get("xpath")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
     let base: Vec<String> = value
         .get("base")
         .and_then(|v| v.as_array())
@@ -301,9 +296,6 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
     if !components.is_empty() {
         param = param.with_components(components);
     }
-
-    // Note: xpath is rarely used and we skip it since there's no builder method
-    // If needed, it can be added later via a with_xpath() method
 
     Ok(param)
 }

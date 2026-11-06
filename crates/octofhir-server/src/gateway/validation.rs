@@ -244,8 +244,6 @@ mod tests {
             operations,
             subscriptions: Vec::new(),
             resources: None,
-            base_path: None,
-            active: None,
         }
     }
 
