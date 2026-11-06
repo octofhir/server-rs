@@ -136,9 +136,9 @@ async fn viewdefinition_run_over_server_data() {
         )
         .await;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let between = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let bob = create(
         &client,
         &fhir,

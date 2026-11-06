@@ -96,7 +96,7 @@ hostname = "0.4"
 json-patch = "4"
 
 octofhir-fhirpath = { version = "0.5.9", default-features = false }
-octofhir-fhirschema = { version = "0.3.40", default-features = false }
+octofhir-fhirschema = { version = "0.3.41", default-features = false }
 fhir-diff = { version = "0.1.2", default-features = false }
 
 octofhir-cql = { version = "0.2.5", default-features = false }
