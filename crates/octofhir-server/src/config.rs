@@ -1141,6 +1141,22 @@ pub struct BulkExportConfig {
     #[serde(default = "default_bulk_export_batch_size")]
     pub batch_size: usize,
 
+    /// Bulk Data Access IG version `$export` follows: "stu3" or "stu4".
+    /// Default: "stu3", the published version.
+    #[serde(default)]
+    pub spec_version: BulkSpecVersion,
+
+    /// Output files per manifest page when a client sets `allowPartialManifests`.
+    /// Default: 100
+    #[serde(default = "default_bulk_export_max_files_per_manifest")]
+    pub max_files_per_manifest: usize,
+
+    /// Shortest allowed gap between status polls of one job; faster polls get
+    /// 429 with `Retry-After`. 0 turns the check off.
+    /// Default: 1000
+    #[serde(default = "default_bulk_export_min_poll_interval_ms")]
+    pub min_poll_interval_ms: u64,
+
     /// Default resource types to export if _type parameter not specified
     /// If empty, exports all available resource types
     #[serde(default)]
@@ -1167,6 +1183,14 @@ fn default_bulk_export_max_resources_per_file() -> usize {
     100_000
 }
 
+fn default_bulk_export_max_files_per_manifest() -> usize {
+    100
+}
+
+fn default_bulk_export_min_poll_interval_ms() -> u64 {
+    1000
+}
+
 fn default_bulk_export_batch_size() -> usize {
     1000
 }
@@ -1180,6 +1204,9 @@ impl Default for BulkExportConfig {
             retention_hours: default_bulk_export_retention_hours(),
             max_resources_per_file: default_bulk_export_max_resources_per_file(),
             batch_size: default_bulk_export_batch_size(),
+            spec_version: BulkSpecVersion::default(),
+            max_files_per_manifest: default_bulk_export_max_files_per_manifest(),
+            min_poll_interval_ms: default_bulk_export_min_poll_interval_ms(),
             default_resource_types: Vec::new(),
         }
     }
@@ -1382,6 +1409,60 @@ fn default_prometheus_max_range_days() -> u64 {
 
 fn default_prometheus_max_points() -> u64 {
     2000
+}
+
+/// A Data Provider allowed to call `$bulk-submit`, agreed out of band as the IG
+/// requires: `submitter` SHALL match a system and code the Data Consumer specified.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BulkSubmitter {
+    /// `submitter.system`
+    pub system: String,
+    /// `submitter.value`
+    pub value: String,
+    /// OAuth client that may act as this submitter. Without it any client with
+    /// the required grant may; a submission always stays with the client that opened it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// This server's client id at the submitter's authorization server. With it the
+    /// server accepts `oauthMetadataUrl` and fetches files under SMART Backend Services,
+    /// signing with its own key (`auth.signing`, RS384 or ES384; public at `/auth/jwks`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_client_id: Option<String>,
+    /// Scope requested at the submitter's authorization server.
+    #[serde(default = "default_bulk_submitter_scope")]
+    pub provider_scope: String,
+}
+
+fn default_bulk_submitter_scope() -> String {
+    "system/*.read".into()
+}
+
+/// Bulk submit configuration ($bulk-submit, $bulk-submit-status).
+///
+/// Download and batch limits are shared with `bulk_import`; manifest and file URLs
+/// go through the same outbound policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkSubmitConfig {
+    /// Offer the operations. Default: true; with no `submitters` every request is refused.
+    #[serde(default = "default_bulk_submit_enabled")]
+    pub enabled: bool,
+
+    /// Data Providers this server accepts submissions from.
+    #[serde(default)]
+    pub submitters: Vec<BulkSubmitter>,
+}
+
+fn default_bulk_submit_enabled() -> bool {
+    true
+}
+
+impl Default for BulkSubmitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_bulk_submit_enabled(),
+            submitters: Vec::new(),
+        }
+    }
 }
 
 /// Bulk import configuration ($import operation)

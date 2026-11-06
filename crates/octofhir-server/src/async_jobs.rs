@@ -522,7 +522,7 @@ impl AsyncJobManager {
                 let import_permit = self.import_semaphore.clone().try_acquire_owned().ok();
                 match self.claim_job_matching(import_permit.is_some()).await {
                     Ok(Some(job)) => {
-                        let import_permit = if job.request_type == "bulk_import" {
+                        let import_permit = if matches!(job.request_type.as_str(), "bulk_import" | "bulk_submit") {
                             import_permit
                         } else {
                             None
@@ -562,7 +562,7 @@ impl AsyncJobManager {
                error_message = 'Execution was interrupted; automatic write replay is unavailable' \
                WHERE status = 'in_progress' AND expires_at > clock_timestamp() \
                AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()) \
-               AND NOT (request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction') \
+               AND NOT (request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status') \
                OR (request_type = 'bulk_import' AND COALESCE(request_headers->>'write_protocol', '') = 'native-chunks-v1'))",
         )
         .execute(self.db_pool.as_ref())
@@ -571,9 +571,9 @@ impl AsyncJobManager {
         let row = query(
             "WITH candidate AS (SELECT id FROM async_jobs \
              WHERE expires_at > clock_timestamp() AND request_headers->'authorization' IS NOT NULL \
-             AND ($2 OR request_type != 'bulk_import') \
+             AND ($2 OR request_type NOT IN ('bulk_import', 'bulk_submit')) \
              AND (status = 'queued' OR (status = 'in_progress' \
-             AND (request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction') \
+             AND (request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status') \
              OR (request_type = 'bulk_import' AND COALESCE(request_headers->>'write_protocol', '') = 'native-chunks-v1')) \
              AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()))) \
              ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED) \
@@ -711,8 +711,15 @@ impl AsyncJobManager {
                     }
                 }
                 Err(error) => {
-                    if let Err(error) = self.fail_job(job_id, error).await {
-                        tracing::error!(%job_id, %error, "Cannot fail asynchronous job");
+                    match self.fail_job(job_id, error).await {
+                        Ok(()) => {}
+                        // Cancelled meanwhile: its files went away under the running job.
+                        Err(AsyncJobError::InvalidStatusTransition { .. }) => {
+                            tracing::debug!(%job_id, "Asynchronous job failed after it ended");
+                        }
+                        Err(error) => {
+                            tracing::error!(%job_id, %error, "Cannot fail asynchronous job");
+                        }
                     }
                 }
             }
@@ -1084,7 +1091,7 @@ mod tests {
     async fn durable_claims_recover_exports_and_fence_previous_attempts() {
         use testcontainers::{ImageExt, runners::AsyncRunner};
         let postgres = testcontainers_modules::postgres::Postgres::default()
-            .with_tag("17-alpine")
+            .with_tag("18-alpine")
             .start()
             .await
             .unwrap();
@@ -1469,7 +1476,7 @@ mod tests {
         use octofhir_storage::FhirStorage;
         use testcontainers::{ImageExt, runners::AsyncRunner};
         let postgres = testcontainers_modules::postgres::Postgres::default()
-            .with_tag("17-alpine")
+            .with_tag("18-alpine")
             .start()
             .await
             .unwrap();
@@ -1609,7 +1616,7 @@ mod tests {
     async fn import_limit_preserves_other_job_progress_and_releases_on_cancellation() {
         use testcontainers::{ImageExt, runners::AsyncRunner};
         let postgres = testcontainers_modules::postgres::Postgres::default()
-            .with_tag("17-alpine")
+            .with_tag("18-alpine")
             .start()
             .await
             .unwrap();
@@ -1692,7 +1699,7 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use testcontainers::{ImageExt, runners::AsyncRunner};
         let postgres = testcontainers_modules::postgres::Postgres::default()
-            .with_tag("17-alpine")
+            .with_tag("18-alpine")
             .start()
             .await
             .unwrap();

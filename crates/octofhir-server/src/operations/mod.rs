@@ -71,8 +71,9 @@ mod validation_write;
 
 // Re-export main types for convenience
 pub use bulk::{
-    BulkExportJob, BulkExportLevel, BulkExportManifest, BulkExportStatus, ExportOperation,
-    ImportOperation, cleanup_expired_exports, execute_bulk_export, execute_bulk_import,
+    BulkExportJob, BulkExportLevel, BulkExportManifest, BulkExportStatus, BulkSubmitOperation,
+    BulkSubmitStatusOperation, ExportOperation, ImportOperation, cleanup_expired_exports,
+    execute_bulk_export, execute_bulk_import, execute_bulk_submit, execute_bulk_submit_revert,
 };
 pub use context::OperationContext;
 pub use cql::CqlOperation;
@@ -171,6 +172,7 @@ pub fn register_core_operations_full(
         sql_on_fhir_config,
         cql_enabled,
         crate::config::BulkImportConfig::default(),
+        crate::config::BulkSubmitConfig::default(),
         crate::config::FmlConfig::default(),
     )
 }
@@ -183,6 +185,7 @@ pub fn register_core_operations_all(
     sql_on_fhir_config: crate::config::SqlOnFhirConfig,
     cql_enabled: bool,
     bulk_import_config: crate::config::BulkImportConfig,
+    bulk_submit_config: crate::config::BulkSubmitConfig,
     fml_config: crate::config::FmlConfig,
 ) -> HashMap<String, DynOperationHandler> {
     let mut handlers: HashMap<String, DynOperationHandler> = HashMap::new();
@@ -315,6 +318,16 @@ pub fn register_core_operations_all(
         Arc::new(ImportOperation::new(bulk_import_config)),
     );
 
+    // $bulk-submit and $bulk-submit-status (Bulk Data Access IG, STU 4 ballot)
+    handlers.insert(
+        "bulk-submit".to_string(),
+        Arc::new(BulkSubmitOperation::new(bulk_submit_config.clone())),
+    );
+    handlers.insert(
+        "bulk-submit-status".to_string(),
+        Arc::new(BulkSubmitStatusOperation::new(bulk_submit_config)),
+    );
+
     // $graph operation
     handlers.insert("graph".to_string(), Arc::new(GraphOperation::new()));
 
@@ -341,6 +354,7 @@ pub(crate) fn register_export_definitions(
     registry: &mut OperationRegistry,
     bulk_enabled: bool,
     sof_enabled: bool,
+    submit_enabled: bool,
 ) {
     if bulk_enabled {
         for (name, system, type_level, instance, resource) in [

@@ -54,7 +54,11 @@ fn operation_response(code: &str, mut result: serde_json::Value) -> Result<Respo
 /// Render asynchronous operation kickoff with the polling location required by
 /// FHIR; the internal job envelope is not a clinical response resource.
 fn operation_body(code: &str, result: serde_json::Value) -> Result<Response, ApiError> {
-    if matches!(code, "export" | "import" | "sql-export") && result["status"] == "accepted" {
+    if matches!(
+        code,
+        "export" | "import" | "sql-export" | "bulk-submit-status"
+    ) && result["status"] == "accepted"
+    {
         let location = result["status_url"]
             .as_str()
             .ok_or_else(|| ApiError::internal("Async operation has no status location"))?;
@@ -72,6 +76,12 @@ fn operation_body(code: &str, result: serde_json::Value) -> Result<Response, Api
             axum::http::header::CACHE_CONTROL,
             axum::http::HeaderValue::from_static("no-store"),
         );
+        if result["separate_status"] == true {
+            headers.insert(
+                "Preference-Applied",
+                axum::http::HeaderValue::from_static("respond-async, separate-export-status"),
+            );
+        }
         // An operation may describe the accepted job itself ($sql-export's
         // Parameters); otherwise an informational outcome.
         let body = match result.get("body") {

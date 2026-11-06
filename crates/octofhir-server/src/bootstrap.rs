@@ -226,6 +226,50 @@ pub const EMBEDDED_SOF_RESOURCES: &[(&str, &str)] = &[
     ),
 ];
 
+/// OperationDefinitions of `$export` as Bulk Data Access IG 3.0.0 has them
+pub const EMBEDDED_BULK_STU3_RESOURCES: &[(&str, &str)] = &[
+    (
+        "OperationDefinition-export.json",
+        include_str!("../../../igs/octofhir-bulk/stu3/OperationDefinition-export.json"),
+    ),
+    (
+        "OperationDefinition-patient-export.json",
+        include_str!("../../../igs/octofhir-bulk/stu3/OperationDefinition-patient-export.json"),
+    ),
+    (
+        "OperationDefinition-group-export.json",
+        include_str!("../../../igs/octofhir-bulk/stu3/OperationDefinition-group-export.json"),
+    ),
+];
+
+/// OperationDefinitions of `$export` as Bulk Data Access IG 4.0.0-ballot has them
+pub const EMBEDDED_BULK_STU4_RESOURCES: &[(&str, &str)] = &[
+    (
+        "OperationDefinition-export.json",
+        include_str!("../../../igs/octofhir-bulk/stu4/OperationDefinition-export.json"),
+    ),
+    (
+        "OperationDefinition-patient-export.json",
+        include_str!("../../../igs/octofhir-bulk/stu4/OperationDefinition-patient-export.json"),
+    ),
+    (
+        "OperationDefinition-group-export.json",
+        include_str!("../../../igs/octofhir-bulk/stu4/OperationDefinition-group-export.json"),
+    ),
+];
+
+/// OperationDefinitions of `$bulk-submit`, which only exists since 4.0.0-ballot
+pub const EMBEDDED_BULK_SUBMIT_RESOURCES: &[(&str, &str)] = &[
+    (
+        "OperationDefinition-bulk-submit.json",
+        include_str!("../../../igs/octofhir-bulk/stu4/OperationDefinition-bulk-submit.json"),
+    ),
+    (
+        "OperationDefinition-bulk-submit-status.json",
+        include_str!("../../../igs/octofhir-bulk/stu4/OperationDefinition-bulk-submit-status.json"),
+    ),
+];
+
 /// Embedded octofhir-notifications IG resources
 /// Notification provider, template, and log resources
 pub const EMBEDDED_NOTIFICATIONS_RESOURCES: &[(&str, &str)] = &[

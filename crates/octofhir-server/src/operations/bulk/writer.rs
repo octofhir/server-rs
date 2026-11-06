@@ -41,6 +41,16 @@ pub struct NdjsonWriter {
     writers: std::collections::HashMap<String, TypeWriter>,
 }
 
+/// A finished output file.
+#[derive(Debug, Clone)]
+pub(crate) struct ClosedFile {
+    /// The name the file was written under: a resource type, or a section such as `outcome`.
+    pub key: String,
+    pub path: PathBuf,
+    pub count: usize,
+    pub bytes: u64,
+}
+
 /// Writer state for a specific resource type
 struct TypeWriter {
     /// Resource type name
@@ -55,6 +65,12 @@ struct TypeWriter {
 
     /// Total resources written across all files
     total_count: usize,
+
+    /// Bytes written to each file of `files`
+    sizes: Vec<u64>,
+
+    /// Files already handed out by [`NdjsonWriter::take_closed`]
+    reported: usize,
 
     /// Current buffered file writer
     writer: Option<BufWriter<File>>,
@@ -82,6 +98,8 @@ impl TypeWriter {
             file_index: 0,
             current_count: 0,
             total_count: 0,
+            sizes: Vec::new(),
+            reported: 0,
             writer: None,
             files: Vec::new(),
             max_per_file,
@@ -116,6 +134,7 @@ impl TypeWriter {
             let file_path = self.job_dir.join(&filename);
             let file = File::create(&file_path).await?;
             self.files.push((file_path, 0));
+            self.sizes.push(0);
             self.writer = Some(BufWriter::new(file));
         }
 
@@ -124,17 +143,40 @@ impl TypeWriter {
 
     /// Write a resource to the NDJSON file
     async fn write_resource(&mut self, resource: &Value) -> Result<(), NdjsonWriterError> {
-        let writer = self.get_writer().await?;
+        self.get_writer().await?;
+        self.append(resource).await
+    }
 
+    /// Write a line to the open file, past its limit if need be: a resource block
+    /// stays in one file.
+    async fn append(&mut self, resource: &Value) -> Result<(), NdjsonWriterError> {
         // Serialize to JSON and write as a single line
         let mut line = serde_json::to_vec(resource)?;
         line.push(b'\n');
-        writer.write_all(&line).await?;
+        self.writer
+            .as_mut()
+            .expect("opened output file")
+            .write_all(&line)
+            .await?;
 
         self.current_count += 1;
         self.total_count += 1;
         self.files.last_mut().expect("opened output file").1 += 1;
+        *self.sizes.last_mut().expect("opened output file") += line.len() as u64;
 
+        Ok(())
+    }
+
+    /// Write a resource already serialized as one line of JSON.
+    async fn write_raw(&mut self, json: &str) -> Result<(), NdjsonWriterError> {
+        let writer = self.get_writer().await?;
+        writer.write_all(json.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
+
+        self.current_count += 1;
+        self.total_count += 1;
+        self.files.last_mut().expect("opened output file").1 += 1;
+        *self.sizes.last_mut().expect("opened output file") += json.len() as u64 + 1;
         Ok(())
     }
 
@@ -144,6 +186,22 @@ impl TypeWriter {
             w.flush().await?;
         }
         Ok(())
+    }
+
+    /// Files that will not change any more and were not handed out yet.
+    fn take_closed(&mut self) -> Vec<ClosedFile> {
+        let open = usize::from(self.writer.is_some());
+        let end = self.files.len() - open;
+        let closed = (self.reported..end)
+            .map(|index| ClosedFile {
+                key: self.resource_type.clone(),
+                path: self.files[index].0.clone(),
+                count: self.files[index].1,
+                bytes: self.sizes[index],
+            })
+            .collect();
+        self.reported = end;
+        closed
     }
 
     /// Get list of generated files with their resource counts
@@ -182,6 +240,71 @@ impl NdjsonWriter {
         })
     }
 
+    fn type_writer(&mut self, key: &str) -> &mut TypeWriter {
+        let job_dir = self.job_dir();
+        let max_per_file = self.max_resources_per_file;
+        let file_prefix = self.file_prefix.clone();
+        self.writers
+            .entry(key.to_string())
+            .or_insert_with(|| TypeWriter::new(key, job_dir, max_per_file, file_prefix))
+    }
+
+    /// Write `lines` as one unit under `key`. A full file is rotated before the
+    /// unit starts, never inside it.
+    pub(crate) async fn write_block(
+        &mut self,
+        key: &str,
+        lines: &[Value],
+    ) -> Result<(), NdjsonWriterError> {
+        let writer = self.type_writer(key);
+        writer.get_writer().await?;
+        for line in lines {
+            writer.append(line).await?;
+        }
+        Ok(())
+    }
+
+    /// Close the open file under `key`; a later write starts a new one.
+    pub(crate) async fn close(&mut self, key: &str) -> Result<(), NdjsonWriterError> {
+        if let Some(writer) = self.writers.get_mut(key)
+            && writer.writer.is_some()
+        {
+            writer.finish().await?;
+            writer.file_index += 1;
+            writer.current_count = 0;
+        }
+        Ok(())
+    }
+
+    /// Write JSON text as it came from the database, without parsing it: the export of
+    /// a FHIR resource type holds no credentials, and nothing needs to change in it.
+    pub(crate) async fn write_raw(
+        &mut self,
+        resource_type: &str,
+        json: &str,
+    ) -> Result<(), NdjsonWriterError> {
+        self.type_writer(resource_type).write_raw(json).await
+    }
+
+    /// Close every open file.
+    pub(crate) async fn close_all(&mut self) -> Result<(), NdjsonWriterError> {
+        for writer in self.writers.values_mut() {
+            writer.finish().await?;
+        }
+        Ok(())
+    }
+
+    /// Files finished since the last call, flushed and safe to hand to a client.
+    pub(crate) fn take_closed(&mut self) -> Vec<ClosedFile> {
+        let mut closed: Vec<_> = self
+            .writers
+            .values_mut()
+            .flat_map(TypeWriter::take_closed)
+            .collect();
+        closed.sort_by(|left, right| left.path.cmp(&right.path));
+        closed
+    }
+
     /// Get the job directory path
     pub fn job_dir(&self) -> PathBuf {
         self.base_path.join(self.job_id.to_string())
@@ -202,15 +325,7 @@ impl NdjsonWriter {
                 "Invalid export resource type".into(),
             ));
         }
-        // Extract values before borrowing self.writers to avoid borrow conflict
-        let job_dir = self.job_dir();
-        let max_per_file = self.max_resources_per_file;
-        let file_prefix = self.file_prefix.clone();
-
-        let writer = self
-            .writers
-            .entry(resource_type.to_string())
-            .or_insert_with(|| TypeWriter::new(resource_type, job_dir, max_per_file, file_prefix));
+        let writer = self.type_writer(resource_type);
 
         // Exported files leave the server: credential hashes must not go with them.
         if crate::secrets::has_secrets(resource_type) {

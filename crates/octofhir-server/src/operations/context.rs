@@ -26,6 +26,10 @@ pub struct OperationContext {
     request_url: String,
     /// The request carried `Prefer: respond-async`.
     respond_async: bool,
+    /// The request carried `Prefer: handling=lenient`.
+    lenient: bool,
+    /// The request carried `Prefer: separate-export-status`.
+    separate_status: bool,
     /// The request was a GET.
     is_get: bool,
     /// The request's `Accept` header.
@@ -54,6 +58,15 @@ impl FromRequestParts<AppState> for OperationContext {
             .get::<axum::extract::OriginalUri>()
             .map(|original| &original.0)
             .unwrap_or(&parts.uri);
+        let prefers = |wanted: &str| {
+            parts
+                .headers
+                .get_all("prefer")
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .flat_map(|value| value.split(','))
+                .any(|part| part.trim().eq_ignore_ascii_case(wanted))
+        };
         Ok(Self {
             request_url: format!("{}{}", state.base_url.trim_end_matches('/'), uri),
             auth: parts
@@ -73,13 +86,9 @@ impl FromRequestParts<AppState> for OperationContext {
                 .map(|value| value.to_str().map(String::from))
                 .transpose()
                 .map_err(|_| ApiError::bad_request("Invalid If-Match header"))?,
-            respond_async: parts
-                .headers
-                .get_all("prefer")
-                .iter()
-                .filter_map(|value| value.to_str().ok())
-                .flat_map(|value| value.split(','))
-                .any(|part| part.trim().eq_ignore_ascii_case("respond-async")),
+            respond_async: prefers("respond-async"),
+            lenient: prefers("handling=lenient"),
+            separate_status: prefers("separate-export-status"),
             is_get: parts.method == axum::http::Method::GET,
             accept: parts
                 .headers
@@ -113,6 +122,8 @@ impl OperationContext {
             if_match: None,
             request_url: job.request_url,
             respond_async: false,
+            lenient: false,
+            separate_status: false,
             is_get: false,
             accept: None,
             content_type: None,
@@ -133,6 +144,18 @@ impl OperationContext {
     /// (`Prefer: respond-async`).
     pub(crate) fn respond_async(&self) -> bool {
         self.respond_async
+    }
+
+    /// Whether the client accepts unsupported input being ignored
+    /// (`Prefer: handling=lenient`) instead of an error.
+    pub(crate) fn lenient(&self) -> bool {
+        self.lenient
+    }
+
+    /// Whether status responses should report the job in `X-Export-Status`
+    /// (`Prefer: separate-export-status`).
+    pub(crate) fn separate_status(&self) -> bool {
+        self.separate_status
     }
 
     /// Whether the request was a GET.
@@ -251,18 +274,7 @@ impl OperationContext {
         resource_type: &str,
         params: &SearchParams,
     ) -> Result<SearchResult, OperationError> {
-        let cfg = state.search_config.config();
-        let result = octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
-            &state.read_db_pool,
-            resource_type,
-            params,
-            Some(&cfg.registry),
-            state.query_cache.as_deref(),
-            state.terminology_provider.as_ref(),
-            Self::raw_search_options(state),
-        )
-        .await
-        .map_err(crate::handlers::map_storage_error)?;
+        let result = self.query_raw(state, resource_type, params).await?;
         Ok(SearchResult {
             entries: result
                 .entries
@@ -272,6 +284,27 @@ impl OperationContext {
             total: result.total,
             has_more: result.has_more,
         })
+    }
+
+    async fn query_raw(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<octofhir_storage::RawSearchResult, OperationError> {
+        let cfg = state.search_config.config();
+        octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
+            &state.read_db_pool,
+            resource_type,
+            params,
+            Some(&cfg.registry),
+            state.query_cache.as_deref(),
+            state.terminology_provider.as_ref(),
+            Self::raw_search_options(state),
+        )
+        .await
+        .map_err(crate::handlers::map_storage_error)
+        .map_err(Into::into)
     }
 
     /// Fetch the authorized snapshot with grant predicates in SQL. The resource
@@ -662,6 +695,27 @@ impl OperationContext {
                     has_more: result.has_more,
                 })
             }
+        }
+    }
+
+    /// [`OperationContext::search`] keeping each resource as the JSON text the database
+    /// returned, for callers that pass it on without reading it.
+    pub async fn search_raw(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<octofhir_storage::RawSearchResult, OperationError> {
+        match self.plan_search(state, resource_type, params).await? {
+            SearchPlan::Direct(params) => self.query_raw(state, resource_type, &params).await,
+            SearchPlan::Snapshots(params, prepared) => Ok(prepared
+                .execute(
+                    state,
+                    &[resource_type],
+                    &params,
+                    Self::raw_search_options(state),
+                )
+                .await?),
         }
     }
 

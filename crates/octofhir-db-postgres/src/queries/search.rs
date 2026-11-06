@@ -953,7 +953,8 @@ async fn expand_constraint(
     match constraint {
         SearchConstraint::LinkedPatient { .. }
         | SearchConstraint::LinkedPatients { .. }
-        | SearchConstraint::AllPatients { .. } => {}
+        | SearchConstraint::AllPatients { .. }
+        | SearchConstraint::IdAfter(_) => {}
         SearchConstraint::And(parts) | SearchConstraint::Or(parts) => {
             for part in parts {
                 Box::pin(expand_constraint(

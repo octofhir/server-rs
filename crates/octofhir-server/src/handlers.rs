@@ -1,6 +1,7 @@
 use crate::bootstrap::ADMIN_ACCESS_POLICY_ID;
 use crate::gateway::{App, PathValidationError, validate_app_operations};
 use crate::mapping::{IdPolicy, validate_payload_structure};
+use crate::operations::bulk::submit::{SUBMIT_STATUS_JOB, job_response};
 use crate::patch::{apply_fhirpath_patch, apply_json_patch};
 use crate::server::SharedModelProvider;
 use axum::body::{Body, Bytes};
@@ -625,6 +626,16 @@ fn sql_on_fhir_operation(code: &str, definition: String) -> Value {
             "name": "$sql-export",
             "definition": definition,
             "documentation": "Formats: ndjson (default), json, csv (header) and parquet; files are split into parts past the configured rows per file. Every subject runs in one snapshot. Status: 202 while running, 303 to the result once finished; DELETE cancels. source is not supported.",
+        }),
+        "export" => json!({
+            "name": "export",
+            "definition": definition,
+            "documentation": "Output is NDJSON; each file holds one resource type, or Patient resource blocks with organizeOutputBy=Patient, up to bulk_export.max_resources_per_file resources. _type, _typeFilter, _since, _until, _elements, patient, includeAssociatedData (LatestProvenanceResources, RelevantProvenanceResources), organizeOutputBy (Patient) and allowPartialManifests are supported; an unsupported value is an error unless the request has Prefer: handling=lenient. Provenance follows the exported resources in Patient and Group exports. deleted is reported for system level exports with _since. A Group export with _since does not add older data of members who joined later. DELETE on the status URL cancels the job or removes its files.",
+        }),
+        "bulk-submit" => json!({
+            "name": "bulk-submit",
+            "definition": definition,
+            "documentation": "Submitters are configured in bulk_submit.submitters. Files are fetched from manifestUrl, validated resource by resource, and stored under their ids. oauthMetadataUrl and fileEncryptionKey are not supported; use fileRequestHeader. Files listed in deleted are not processed.",
         }),
         _ => json!({"name": code, "definition": definition}),
     }
@@ -1403,7 +1414,7 @@ fn rebase_internal_write_headers(state: &crate::server::AppState, response: &mut
     }
 }
 
-fn add_subsetted_tag(resource: &mut Value) {
+pub(crate) fn add_subsetted_tag(resource: &mut Value) {
     let Some(obj) = resource.as_object_mut() else {
         return;
     };
@@ -4991,6 +5002,36 @@ pub(crate) async fn execute_worker_write_chunk(
     Ok(result)
 }
 
+/// A worker chunk under `system/bulk-submit`, which covers its writes without naming
+/// resource types. The caller has validated each resource.
+pub(crate) async fn execute_trusted_write_chunk(
+    state: &crate::server::AppState,
+    entries: Vec<Value>,
+    step: crate::async_jobs::CheckpointStep,
+) -> Result<Value, ApiError> {
+    if let Some(result) = state.async_job_manager.restore_checkpoint(&step).await? {
+        return Ok(result["result"].clone());
+    }
+    for entry in &entries {
+        validate_bundle_entry_identity(entry)?;
+    }
+    let mut writes =
+        crate::write::PreparedTransactionWrites::prepare(state, HashMap::new()).await?;
+    let bundle = json!({"resourceType":"Bundle", "type":"transaction", "entry":entries});
+    let (_, Json(result)) = step
+        .scope(process_transaction(
+            state,
+            bundle,
+            false,
+            true,
+            &HashMap::new(),
+            &HashMap::new(),
+            &mut writes,
+        ))
+        .await?;
+    Ok(result)
+}
+
 /// Process a transaction bundle atomically - all entries succeed or all fail.
 ///
 /// Per FHIR R4 spec (http.html#transaction), uses pre-scan with pre-assigned IDs:
@@ -8221,12 +8262,58 @@ pub async fn async_job_status(
         return sql_export_status(&state, &job);
     }
 
+    // The IG: after a DELETE every request to the polling location gets 404.
+    if job.status == crate::async_jobs::AsyncJobStatus::Cancelled {
+        return Err(ApiError::not_found(
+            "The asynchronous request was cancelled",
+        ));
+    }
+
+    let running = matches!(
+        job.status,
+        crate::async_jobs::AsyncJobStatus::Queued | crate::async_jobs::AsyncJobStatus::InProgress
+    );
+    if (running || job.request_type == SUBMIT_STATUS_JOB)
+        && let Some(retry_after) = state
+            .bulk_poll_gate
+            .check(job_id, state.config.bulk_export.min_poll_interval_ms)
+    {
+        return too_many_polls(retry_after);
+    }
+
+    if job.request_type == SUBMIT_STATUS_JOB {
+        return crate::operations::bulk::submit::status_response(
+            &state,
+            &job,
+            context.auth().is_some(),
+        )
+        .await;
+    }
+
+    let separate = job
+        .request_body
+        .as_ref()
+        .is_some_and(|body| body["separate_status"] == true);
+
     if matches!(
         job.request_type.as_str(),
         "bulk_export" | "viewdefinition_export"
     ) && job.status == crate::async_jobs::AsyncJobStatus::Failed
     {
-        return Err(ApiError::internal("Bulk export failed"));
+        let error = ApiError::internal("Bulk export failed");
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/fhir+json"),
+        );
+        let outcome = serde_json::to_value(error.to_operation_outcome())
+            .map_err(|_| ApiError::internal("Bulk export failed"))?;
+        return Ok(job_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            headers,
+            outcome,
+            separate,
+        ));
     }
 
     // For bulk export jobs that are completed, return the manifest directly
@@ -8250,7 +8337,7 @@ pub async fn async_job_status(
             axum::http::header::CACHE_CONTROL,
             axum::http::HeaderValue::from_static("no-store"),
         );
-        return Ok((StatusCode::OK, headers, Json(result)).into_response());
+        return Ok(job_response(StatusCode::OK, headers, result, separate));
     }
 
     // Build response based on job status
@@ -8271,7 +8358,7 @@ pub async fn async_job_status(
         | crate::async_jobs::AsyncJobStatus::InProgress => StatusCode::ACCEPTED,
         crate::async_jobs::AsyncJobStatus::Completed => StatusCode::OK,
         crate::async_jobs::AsyncJobStatus::Failed => StatusCode::INTERNAL_SERVER_ERROR,
-        crate::async_jobs::AsyncJobStatus::Cancelled => StatusCode::GONE,
+        crate::async_jobs::AsyncJobStatus::Cancelled => StatusCode::NOT_FOUND,
     };
 
     // Add X-Progress header for in-progress jobs (FHIR Bulk Data spec)
@@ -8289,9 +8376,76 @@ pub async fn async_job_status(
         if let Ok(retry_value) = axum::http::HeaderValue::from_str("10") {
             headers.insert(axum::http::header::RETRY_AFTER, retry_value);
         }
+        // With partial manifests the body is what is available so far.
+        if job.request_type == "bulk_export"
+            && let Some(page) = crate::operations::bulk::manifest::read_page(
+                &state.config.bulk_export.export_path,
+                job.id,
+                1,
+            )
+            .await
+        {
+            return Ok(job_response(status_code, headers, page, separate));
+        }
     }
 
-    Ok((status_code, headers, Json(response)).into_response())
+    Ok(job_response(status_code, headers, response, separate))
+}
+
+fn too_many_polls(retry_after: u64) -> Result<Response, ApiError> {
+    let mut headers = HeaderMap::new();
+    if let Ok(value) = header::HeaderValue::from_str(&retry_after.to_string()) {
+        headers.insert(header::RETRY_AFTER, value);
+    }
+
+/// GET /_async-status/{job-id}/manifest/{page}
+///
+/// A manifest page after the first, reached through `link`. A job that failed answers
+/// with the error, as the IG allows; the last page of a running job is 202, since it
+/// may still gain a `next` link.
+pub async fn async_job_manifest_page(
+    Path((job_id, page)): Path<(uuid::Uuid, usize)>,
+    State(state): State<crate::server::AppState>,
+    context: crate::operations::OperationContext,
+) -> Result<Response, ApiError> {
+    use crate::async_jobs::AsyncJobStatus;
+    let job = state
+        .async_job_manager
+        .get_job(job_id)
+        .await
+        .map_err(|_| ApiError::not_found("Async job is unavailable"))?;
+    job.authorize_owner(context.auth(), state.config.auth.policy.anonymous_access)?;
+    match job.status {
+        AsyncJobStatus::Cancelled => {
+            return Err(ApiError::not_found(
+                "The asynchronous request was cancelled",
+            ));
+        }
+        AsyncJobStatus::Failed => return Err(ApiError::internal("Bulk export failed")),
+        _ => {}
+    }
+    let document = crate::operations::bulk::manifest::read_page(
+        &state.config.bulk_export.export_path,
+        job_id,
+        page,
+    )
+    .await
+    .ok_or_else(|| ApiError::not_found("Manifest page not found"))?;
+    let separate = job
+        .request_body
+        .as_ref()
+        .is_some_and(|body| body["separate_status"] == true);
+    let status = if job.status != AsyncJobStatus::Completed && document.get("link").is_none() {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::OK
+    };
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    Ok(job_response(status, headers, document, separate))
 }
 
 /// The status URL of a `$sql-export` job (SQL on FHIR, "Asynchronous
@@ -8515,8 +8669,11 @@ pub async fn async_job_cancel(
             _ => ApiError::Internal(format!("Failed to cancel job: {}", e)),
         })?;
 
-    if job.request_type == crate::operations::sof::SQL_EXPORT_JOB {
-        // Partial results go with the job.
+    if matches!(
+        job.request_type.as_str(),
+        "bulk_export" | "viewdefinition_export" | crate::operations::sof::SQL_EXPORT_JOB
+    ) {
+        // The client is done with the files, or never wanted them: they go with the job.
         let dir = std::path::PathBuf::from(&state.config.bulk_export.export_path)
             .join(job_id.to_string());
         let _ = tokio::fs::remove_dir_all(dir).await;
@@ -8524,7 +8681,10 @@ pub async fn async_job_cancel(
     Ok(
         if matches!(
             job.request_type.as_str(),
-            "bulk_export" | "viewdefinition_export" | crate::operations::sof::SQL_EXPORT_JOB
+            "bulk_export"
+                | "viewdefinition_export"
+                | crate::operations::sof::SQL_EXPORT_JOB
+                | SUBMIT_STATUS_JOB
         ) {
             StatusCode::ACCEPTED
         } else {
@@ -8590,27 +8750,36 @@ pub async fn bulk_export_file(
     job.authorize_owner(context.auth(), state.config.auth.policy.anonymous_access)?;
     let expected_url = format!("{}/_bulk-files/{uuid}/{filename}", state.fhir_base_url());
     let sql_export = job.request_type == crate::operations::sof::SQL_EXPORT_JOB;
-    let listed = job.result.as_ref().is_some_and(|result| {
-        sql_export
-            && crate::operations::sof::sql_export_locations(result).any(|url| url == expected_url)
-    });
-    if job.status != crate::async_jobs::AsyncJobStatus::Completed
-        || !listed
-            && !job.result.as_ref().is_some_and(|result| {
-                ["output", "error"].iter().any(|field| {
-                    result[*field].as_array().is_some_and(|files| {
-                        files.iter().any(|file| {
-                            file["url"].as_str().is_some_and(|url| {
-                                url == format!(
-                                    "{}/_bulk-files/{uuid}/{filename}",
-                                    state.fhir_base_url()
-                                )
-                            })
-                        })
-                    })
-                })
-            })
+    let bulk_path = &state.config.bulk_export.export_path;
+    // Files of a partial manifest can be fetched while the job still runs; outcome files
+    // of a submission are listed by the submission, not by the job.
+    let listed = if matches!(
+        job.request_type.as_str(),
+        crate::operations::bulk::submit::SUBMIT_JOB
+            | crate::operations::bulk::submit::SUBMIT_REVERT_JOB
+    ) {
+        crate::operations::bulk::submit::lists_outcome(&state, &expected_url).await
+    } else if job.status == crate::async_jobs::AsyncJobStatus::Cancelled
+        || job.status == crate::async_jobs::AsyncJobStatus::Failed
     {
+        false
+    } else if crate::operations::bulk::manifest::published_urls(bulk_path, uuid)
+        .await
+        .contains(&expected_url)
+    {
+        true
+    } else if job.status != crate::async_jobs::AsyncJobStatus::Completed {
+        false
+    } else {
+        job.result.as_ref().is_some_and(|result| {
+            if sql_export {
+                crate::operations::sof::sql_export_locations(result).any(|url| url == expected_url)
+            } else {
+                crate::operations::bulk::manifest::file_urls(result).any(|url| url == expected_url)
+            }
+        })
+    };
+    if !listed {
         return Err(ApiError::not_found("Export file is unavailable"));
     }
 
@@ -8626,10 +8795,11 @@ pub async fn bulk_export_file(
         )));
     }
 
-    // Read the file
-    let contents = fs::read(&file_path)
+    // Files can be far larger than memory should hold.
+    let file = fs::File::open(&file_path)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to read export file: {}", e)))?;
+    let contents = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
 
     // Build response with NDJSON content type
     let mut headers = HeaderMap::new();

@@ -1133,7 +1133,7 @@ async fn build_app_with_runtime(
                         .to_string(),
                     kind: crate::operations::OperationKind::Operation,
                     system: false,
-                    type_level: false,
+                    type_level: true,
                     instance: true,
                     resource: vec!["Measure".to_string()],
                     parameters: vec![],
@@ -1160,6 +1160,7 @@ async fn build_app_with_runtime(
                 &mut registry,
                 cfg.bulk_export.enabled,
                 cfg.sql_on_fhir.enabled,
+                cfg.bulk_submit.enabled,
             );
             Arc::new(registry)
         }
@@ -1230,7 +1231,7 @@ async fn build_app_with_runtime(
                         .to_string(),
                     kind: crate::operations::OperationKind::Operation,
                     system: false,
-                    type_level: false,
+                    type_level: true,
                     instance: true,
                     resource: vec!["Measure".to_string()],
                     parameters: vec![],
@@ -1255,6 +1256,7 @@ async fn build_app_with_runtime(
                 &mut registry,
                 cfg.bulk_export.enabled,
                 cfg.sql_on_fhir.enabled,
+                cfg.bulk_submit.enabled,
             );
             Arc::new(registry)
         }
@@ -1273,6 +1275,7 @@ async fn build_app_with_runtime(
             cfg.sql_on_fhir.clone(),
             cfg.cql.enabled,
             cfg.bulk_import.clone(),
+            cfg.bulk_submit.clone(),
             cfg.fml.clone(),
         ));
     tracing::info!(
@@ -1988,6 +1991,16 @@ async fn build_app_with_runtime(
                         let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
                         crate::operations::execute_bulk_import(state, job_id, body).await
                     }
+                    crate::operations::bulk::submit::SUBMIT_JOB => {
+                        let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+                        crate::operations::execute_bulk_submit(state, job_id, body).await
+                    }
+                    crate::operations::bulk::submit::SUBMIT_REVERT_JOB => {
+                        let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+                        crate::operations::execute_bulk_submit_revert(state, job_id, body).await
+                    }
+                    // Its manifest is built from the submission on every poll.
+                    crate::operations::bulk::submit::SUBMIT_STATUS_JOB => Ok(serde_json::json!({})),
                     _ => Err(format!("Unknown job type: {}", request_type)),
                 }
             })
@@ -2319,6 +2332,10 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         .route(
             "/_async-status/{job_id}/result",
             get(handlers::async_job_result),
+        )
+        .route(
+            "/_async-status/{job_id}/manifest/{page}",
+            get(handlers::async_job_manifest_page),
         )
         // Bulk export file serving (Bulk Data Access IG)
         .route(

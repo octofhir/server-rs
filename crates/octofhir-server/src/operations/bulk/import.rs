@@ -573,7 +573,7 @@ fn positive_parameter(params: &Value, name: &str, maximum: usize) -> Result<usiz
     Ok(number)
 }
 
-fn parse_source_url(value: &str) -> Result<reqwest::Url, String> {
+pub(super) fn parse_source_url(value: &str) -> Result<reqwest::Url, String> {
     let url = reqwest::Url::parse(value).map_err(|_| "Invalid import source URL")?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
@@ -588,7 +588,7 @@ fn parse_source_url(value: &str) -> Result<reqwest::Url, String> {
 
 /// HTTP client for import sources: only addresses `egress` allows, and redirects only within
 /// the source's origin.
-fn source_client(
+pub(super) fn source_client(
     timeout: std::time::Duration,
     egress: Arc<EgressPolicy>,
 ) -> Result<reqwest::Client, String> {
@@ -620,15 +620,20 @@ fn source_client(
 /// unnamed temporary file drops on cancellation; memory is bounded by one HTTP
 /// chunk and later one native transaction batch. A changed suffix or truncated
 /// source is rejected before any further write on recovery.
-async fn download_source(
+pub(super) async fn download_source(
     client: &reqwest::Client,
     url: &str,
     max_bytes: u64,
     egress: &EgressPolicy,
+    headers: &[(String, String)],
 ) -> Result<(tokio::fs::File, String), String> {
     let url = parse_source_url(url)?;
     egress.check_url(&url)?;
-    let mut response = client.get(url).send().await.map_err(|error| {
+    let mut request = client.get(url);
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    let mut response = request.send().await.map_err(|error| {
         if error.is_timeout() {
             "Import source request timed out".into()
         } else {
@@ -678,7 +683,7 @@ async fn download_source(
     Ok((file, hex::encode(digest.finalize())))
 }
 
-async fn read_source_line<R: tokio::io::AsyncBufRead + Unpin>(
+pub(super) async fn read_source_line<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
     maximum: usize,
 ) -> Result<Option<Vec<u8>>, String> {
@@ -743,8 +748,14 @@ pub async fn execute_bulk_import(
             .await
             .map_err(|error| error.to_string())?;
         tracing::info!(%job_id, resource_type = %input.resource_type, input_index = idx, "Downloading import source");
-        let (file, digest) =
-            download_source(&http_client, &input.url, config.max_source_bytes, &egress).await?;
+        let (file, digest) = download_source(
+            &http_client,
+            &input.url,
+            config.max_source_bytes,
+            &egress,
+            &[],
+        )
+        .await?;
         let attestation = crate::async_jobs::CheckpointStep::new(format!("import-source-{idx}"), &json!({"url":input.url,"type":input.resource_type,"sha256":digest,"batch_size":batch_size,"max_batch_bytes":config.max_batch_bytes,"skip_validation":skip_validation})).map_err(|error| error.to_string())?;
         if state
             .async_job_manager
@@ -916,6 +927,7 @@ mod tests {
             &format!("{}/same", source.uri()),
             1000,
             &EgressPolicy::permissive(),
+            &[],
         )
         .await
         .unwrap();
@@ -935,7 +947,8 @@ mod tests {
                 &client,
                 &format!("{}/data", source.uri()),
                 1,
-                &EgressPolicy::permissive()
+                &EgressPolicy::permissive(),
+                &[]
             )
             .await
             .is_err()
@@ -945,7 +958,8 @@ mod tests {
                 &client,
                 &format!("{}/other", source.uri()),
                 1000,
-                &EgressPolicy::permissive()
+                &EgressPolicy::permissive(),
+                &[]
             )
             .await
             .is_err()
@@ -956,7 +970,8 @@ mod tests {
                 &client,
                 &format!("{}/slow?secret=never-log", source.uri()),
                 1000,
-                &EgressPolicy::permissive()
+                &EgressPolicy::permissive(),
+                &[]
             )
             .await
             .unwrap_err()
@@ -980,7 +995,7 @@ mod tests {
             "http://169.254.169.254/latest/meta-data",
             "http://localhost:9/Patient.ndjson",
         ] {
-            let error = download_source(&client, url, 1000, &strict)
+            let error = download_source(&client, url, 1000, &strict, &[])
                 .await
                 .unwrap_err();
             assert!(error.contains("outbound_allowlist"), "{url}: {error}");

@@ -78,6 +78,52 @@ pub struct BulkExportParams {
     /// For group-level exports, the group ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
+
+    /// Only include resources updated before this time
+    #[serde(rename = "_until", default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<DateTime<Utc>>,
+
+    /// Root elements to keep: `element` or `Type.element`
+    #[serde(rename = "_elements", default, skip_serializing_if = "Vec::is_empty")]
+    pub elements: Vec<String>,
+
+    /// Limits a Patient or Group export to these Patient ids
+    #[serde(rename = "patient", default, skip_serializing_if = "Vec::is_empty")]
+    pub patients: Vec<String>,
+
+    /// Which Provenance resources travel with the export
+    #[serde(
+        rename = "includeAssociatedData",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub associated_data: Option<AssociatedData>,
+
+    /// Resource type the output files are organized by
+    #[serde(
+        rename = "organizeOutputBy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub organize_output_by: Option<String>,
+
+    /// Spread the files over manifest pages, published as they become ready
+    #[serde(rename = "allowPartialManifests", default)]
+    pub allow_partial_manifests: bool,
+
+    /// Input ignored under `Prefer: handling=lenient`, reported in the manifest
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignored: Vec<String>,
+}
+
+/// `includeAssociatedData` values this server supports. When both are asked for
+/// the IG selects the least restrictive one, so one value is all a job needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssociatedData {
+    /// The newest Provenance of each exported resource.
+    LatestProvenanceResources,
+    /// Every Provenance of each exported resource.
+    RelevantProvenanceResources,
 }
 
 impl Default for BulkExportParams {
@@ -88,6 +134,13 @@ impl Default for BulkExportParams {
             resource_types: None,
             type_filter: None,
             group_id: None,
+            until: None,
+            elements: Vec::new(),
+            patients: Vec::new(),
+            associated_data: None,
+            organize_output_by: None,
+            allow_partial_manifests: false,
+            ignored: Vec::new(),
         }
     }
 }

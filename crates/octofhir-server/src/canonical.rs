@@ -710,6 +710,37 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         }
     };
 
+    let bulk_fut = async {
+        if cfg.bulk_export.enabled {
+            let (version, resources) = match cfg.bulk_export.spec_version {
+                crate::config::BulkSpecVersion::Stu3 => {
+                    ("3.0.0", crate::bootstrap::EMBEDDED_BULK_STU3_RESOURCES)
+                }
+                crate::config::BulkSpecVersion::Stu4 => {
+                    ("4.0.0-ballot", crate::bootstrap::EMBEDDED_BULK_STU4_RESOURCES)
+                }
+            };
+            load_embedded_package(
+                &postgres_store,
+                "octofhir-bulk",
+                version,
+                fhir_version,
+                resources,
+            )
+            .await;
+        }
+        if cfg.bulk_submit.enabled {
+            load_embedded_package(
+                &postgres_store,
+                "octofhir-bulk-submit",
+                "4.0.0-ballot",
+                fhir_version,
+                crate::bootstrap::EMBEDDED_BULK_SUBMIT_RESOURCES,
+            )
+            .await;
+        }
+    };
+
     let _ = tokio::join!(
         auth_fut,
         app_fut,
@@ -718,7 +749,8 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         console_fut,
         notebooks_fut,
         sub_fut,
-        sof_fut
+        sof_fut,
+        bulk_fut
     );
     tracing::info!(
         elapsed_ms = embedded_start.elapsed().as_millis(),

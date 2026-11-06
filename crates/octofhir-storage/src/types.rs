@@ -434,6 +434,9 @@ pub struct SearchParams {
     /// Sort parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<Vec<SortParam>>,
+    /// Where the previous page ended, from the `next` link of a keyset-paged search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
     /// How to calculate the total count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total: Option<TotalMode>,
@@ -517,6 +520,10 @@ pub enum SearchConstraint {
         fhir_base_url: String,
         parameters: Vec<String>,
     },
+    /// Rows after this id: a seek for reading a whole result in `_id` order, whose
+    /// cost per page does not grow with the depth and which skips nothing when
+    /// earlier rows leave the result while it is read.
+    IdAfter(String),
 }
 
 impl SearchParams {
