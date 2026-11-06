@@ -785,6 +785,126 @@ define "Gender": Patient.gender
     );
 }
 
+/// A document Bundle is found by what is inside it. Before R6 these parameters are
+/// `reference` typed, and they chain into the entry all the same.
+async fn embedded_chains(client: &Client, base: &str) {
+    put(
+        client,
+        base,
+        json!({"resourceType": "Patient", "id": "bundled", "active": true}),
+    )
+    .await;
+    put(
+        client,
+        base,
+        json!({"resourceType": "Bundle", "id": "document", "type": "document",
+            "identifier": {"system": "urn:example", "value": "document"},
+            "timestamp": "2026-01-01T00:00:00Z",
+            "entry": [{"fullUrl": "urn:uuid:7a4b9f3e-2a31-4f1c-9e68-0a3c2c1d0001", "resource": {
+                "resourceType": "Composition", "id": "inside", "status": "final",
+                "type": {"text": "Discharge"}, "subject": {"reference": "Patient/bundled"},
+                "date": "2026-01-01", "author": [{"display": "A"}], "title": "Discharge"}}]}),
+    )
+    .await;
+    for (query, total) in [
+        ("composition._id=inside", 1),
+        ("composition._id=elsewhere", 0),
+        ("composition.subject=Patient/bundled", 1),
+        ("composition.subject=Patient/other", 0),
+        ("composition.subject:Patient.active=true", 1),
+    ] {
+        let bundle = get(client, &format!("{base}/fhir/Bundle?{query}")).await;
+        assert_eq!(bundle["total"], total, "{query}");
+    }
+}
+
+async fn delete(client: &Client, url: &str) -> StatusCode {
+    client.delete(url).send().await.unwrap().status()
+}
+
+async fn versions(client: &Client, url: &str) -> Vec<String> {
+    get(client, url).await["entry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            entry["resource"]["meta"]["versionId"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// `delete-history` and `delete-history-version` keep the current version, both for a
+/// type with a compartment and without one.
+async fn delete_history(client: &Client, base: &str) {
+    for (resource_type, body) in [
+        ("Patient", json!({"resourceType": "Patient", "id": "aged"})),
+        (
+            "Basic",
+            json!({"resourceType": "Basic", "id": "aged", "code": {"text": "a"}}),
+        ),
+    ] {
+        let url = format!("{base}/fhir/{resource_type}/aged");
+        for language in ["en", "de", "fr", "es"] {
+            let mut body = body.clone();
+            body["language"] = json!(language);
+            put(client, base, body).await;
+        }
+        let history = format!("{url}/_history");
+        let all = versions(client, &history).await;
+        assert_eq!(all.len(), 4, "{resource_type}");
+
+        assert_eq!(
+            delete(client, &format!("{history}/{}", all[0])).await,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            delete(client, &format!("{history}/{}", all[1])).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            delete(client, &format!("{history}/{}", all[1])).await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(versions(client, &history).await.len(), 3);
+        assert_eq!(delete(client, &history).await, StatusCode::NO_CONTENT);
+        assert_eq!(versions(client, &history).await, all[..1]);
+        assert_eq!(get(client, &url).await["language"], "es");
+    }
+    // A deleted resource keeps the record of its deletion.
+    let url = format!("{base}/fhir/Basic/aged");
+    assert!(delete(client, &url).await.is_success());
+    let before = client
+        .get(format!("{url}/_history"))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(before["entry"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        delete(client, &format!("{url}/_history")).await,
+        StatusCode::NO_CONTENT
+    );
+    let after = client
+        .get(format!("{url}/_history"))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(after["entry"].as_array().unwrap().len(), 1);
+    assert_eq!(after["entry"][0]["request"]["method"], "DELETE");
+    assert_eq!(
+        delete(client, &format!("{base}/fhir/Patient/aged/Observation")).await,
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+}
+
 #[tokio::test]
 async fn paging_summary_and_agents() {
     let postgres = Postgres::default()
@@ -804,4 +924,6 @@ async fn paging_summary_and_agents() {
     explain(&client, &base).await;
     mcp(&client, &base).await;
     measure(&client, &base).await;
+    embedded_chains(&client, &base).await;
+    delete_history(&client, &base).await;
 }
