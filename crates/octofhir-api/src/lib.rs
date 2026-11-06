@@ -2036,6 +2036,9 @@ pub struct CapabilityStatementRestResource {
     pub search_param: Vec<SearchParam>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// R6: the definition of an additional resource.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub definition: Option<String>,
     #[serde(
         rename = "supportedProfile",
         skip_serializing_if = "Vec::is_empty",
@@ -2065,6 +2068,7 @@ impl CapabilityStatementRestResource {
             interaction: Vec::new(),
             search_param: Vec::new(),
             profile: None,
+            definition: None,
             supported_profile: Vec::new(),
             versioning: None,
             read_history: None,
@@ -2093,6 +2097,11 @@ impl CapabilityStatementRestResource {
 
     pub fn with_profile(mut self, profile: Option<String>) -> Self {
         self.profile = profile;
+        self
+    }
+
+    pub fn with_definition(mut self, definition: Option<String>) -> Self {
+        self.definition = definition;
         self
     }
 
@@ -2437,7 +2446,7 @@ pub fn common_search_params() -> Vec<SearchParam> {
 /// Non-standard types (AccessPolicy, App, Client, etc.) should be excluded
 /// from the CapabilityStatement rest.resource to pass FHIR validation.
 pub fn is_standard_fhir_resource(name: &str) -> bool {
-    // Standard FHIR R4/R4B resource types (from the ResourceType value set)
+    // Standard FHIR resource types (from the ResourceType value set)
     matches!(
         name,
         "Account"
@@ -2581,6 +2590,32 @@ pub fn is_standard_fhir_resource(name: &str) -> bool {
             | "ValueSet"
             | "VerificationResult"
             | "VisionPrescription"
+            // Added by R5 and R6.
+            | "ActorDefinition"
+            | "ArtifactAssessment"
+            | "BiologicallyDerivedProductDispense"
+            | "ConditionDefinition"
+            | "DeviceAlert"
+            | "DeviceAssociation"
+            | "DeviceDispense"
+            | "DeviceUsage"
+            | "EncounterHistory"
+            | "FormularyItem"
+            | "GenomicStudy"
+            | "ImagingSelection"
+            | "InventoryItem"
+            | "InventoryReport"
+            | "NutritionIntake"
+            | "Permission"
+            | "RequestOrchestration"
+            | "Requirements"
+            | "SubstanceNucleicAcid"
+            | "SubstancePolymer"
+            | "SubstanceProtein"
+            | "SubstanceReferenceInformation"
+            | "SubstanceSourceMaterial"
+            | "TestPlan"
+            | "Transport"
     )
 }
 

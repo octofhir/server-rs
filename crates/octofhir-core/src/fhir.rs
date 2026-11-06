@@ -31,7 +31,8 @@ impl FhirVersion {
             Self::R4 => "4.0.1",
             Self::R4B => "4.3.0",
             Self::R5 => "5.0.0",
-            Self::R6 => "6.0.0",
+            // R6 is not published yet; this is the newest package in the registry.
+            Self::R6 => "6.0.0-snapshot1",
         }
     }
 }
@@ -50,7 +51,7 @@ impl FromStr for FhirVersion {
             "4.0.1" | "4.0" | "R4" => Ok(FhirVersion::R4),
             "4.3.0" | "4.3" | "R4B" => Ok(FhirVersion::R4B),
             "5.0.0" | "5.0" | "R5" => Ok(FhirVersion::R5),
-            "6.0.0" | "6.0" | "R6" => Ok(FhirVersion::R6),
+            "6.0.0-SNAPSHOT1" | "6.0.0" | "6.0" | "R6" => Ok(FhirVersion::R6),
             _ => Err(CoreError::invalid_resource_type(format!(
                 "Unknown FHIR version: {s}",
             ))),
@@ -196,12 +197,17 @@ mod tests {
     }
 
     #[test]
+    fn r6_answers_to_its_final_version_too() {
+        assert_eq!(FhirVersion::from_str("6.0.0").unwrap(), FhirVersion::R6);
+    }
+
+    #[test]
     fn fhir_version_aliases_share_canonical_metadata_and_cache_keys() {
         for (release, name, version, minor) in [
             (FhirVersion::R4, "R4", "4.0.1", "4.0"),
             (FhirVersion::R4B, "R4B", "4.3.0", "4.3"),
             (FhirVersion::R5, "R5", "5.0.0", "5.0"),
-            (FhirVersion::R6, "R6", "6.0.0", "6.0"),
+            (FhirVersion::R6, "R6", "6.0.0-snapshot1", "6.0"),
         ] {
             assert_eq!(release.release_name(), name);
             for alias in [

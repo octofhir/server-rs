@@ -595,7 +595,7 @@ const ALL_MODIFIERS: &[SearchModifier] = &[
 /// Whether the FHIR version is R5 or later.
 fn is_r5_or_later(fhir_version: &str) -> bool {
     let v = fhir_version.to_ascii_uppercase();
-    matches!(v.as_str(), "R5" | "R6" | "5.0.0" | "6.0.0")
+    matches!(v.as_str(), "R5" | "R6" | "5.0.0") || v.starts_with("6.0")
 }
 
 /// Return modifier suggestions for a search parameter, respecting FHIR version.
@@ -686,6 +686,7 @@ fn format_param_type(param_type: &SearchParameterType) -> String {
         SearchParameterType::Quantity => "quantity",
         SearchParameterType::Uri => "uri",
         SearchParameterType::Special => "special",
+        SearchParameterType::Resource => "resource",
     }
     .to_string()
 }

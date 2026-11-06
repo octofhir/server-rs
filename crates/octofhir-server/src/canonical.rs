@@ -1075,6 +1075,12 @@ async fn fetch_metadata_with_retry(
     }
 }
 
+/// R6 has no terminology package yet, so it reuses the one published for R5: code systems and
+/// value sets, nothing tied to the resource model.
+fn shared_terminology(package: &str, desired: FhirVersion) -> bool {
+    desired == FhirVersion::R6 && package == default_terminology_for(desired).0
+}
+
 async fn preflight_validate_all(
     client: &octofhir_canonical_core::registry::RegistryClient,
     roots: &[(String, String)],
@@ -1093,7 +1099,7 @@ async fn preflight_validate_all(
             .await
             .map_err(|e| format!("failed to fetch package metadata for {key}: {e}"))?;
         let pkg_ver = map_metadata_version(&meta.fhir_version);
-        if pkg_ver != desired {
+        if pkg_ver != desired && !shared_terminology(&name, desired) {
             // Use improved error formatting for better user experience
             let error_msg = format_version_mismatch_error(
                 &name,
@@ -1219,7 +1225,10 @@ fn default_core_for(v: FhirVersion) -> (String, String) {
         FhirVersion::R4 => ("hl7.fhir.r4.core".to_string(), "4.0.1".to_string()),
         FhirVersion::R4B => ("hl7.fhir.r4b.core".to_string(), "4.3.0".to_string()),
         FhirVersion::R5 => ("hl7.fhir.r5.core".to_string(), "5.0.0".to_string()),
-        FhirVersion::R6 => ("hl7.fhir.r6.core".to_string(), "6.0.0".to_string()),
+        FhirVersion::R6 => (
+            "hl7.fhir.r6.core".to_string(),
+            octofhir_core::fhir::FhirVersion::R6.version().to_string(),
+        ),
     }
 }
 

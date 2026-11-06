@@ -382,6 +382,30 @@ pub async fn metadata(
     (StatusCode::OK, Json(response))
 }
 
+/// Interactions of every release, then the codes only R6 has. `delete-conditional-multiple`
+/// is left out: conditional delete takes one match.
+const R6_INTERACTIONS: [&str; 15] = [
+    "read",
+    "vread",
+    "search-type",
+    "create",
+    "update",
+    "patch",
+    "delete",
+    "history-instance",
+    "history-type",
+    "create-conditional",
+    "update-conditional",
+    "patch-conditional",
+    "delete-conditional-single",
+    "delete-history",
+    "delete-history-version",
+];
+const BASE_INTERACTIONS: usize = 9;
+
+/// Canonical of the SQL on FHIR additional resource.
+const VIEW_DEFINITION_URL: &str = "http://hl7.org/fhir/StructureDefinition/ViewDefinition";
+
 /// Build the CapabilityStatement at server startup.
 ///
 /// This function is called once during initialization and the result is cached in AppState.
@@ -444,23 +468,16 @@ pub async fn build_capability_statement(
     {
         standard_resource_types.push("ViewDefinition");
     }
+    let interactions = if fhir_version == octofhir_core::fhir::FhirVersion::R6 {
+        &R6_INTERACTIONS[..]
+    } else {
+        &R6_INTERACTIONS[..BASE_INTERACTIONS]
+    };
     for rt in &standard_resource_types {
         let mapped = capability_search_params(search_registry, rt);
 
         let resource = octofhir_api::CapabilityStatementRestResource::new(*rt)
-            .with_interactions(
-                &[
-                    "read",
-                    "vread",
-                    "search-type",
-                    "create",
-                    "update",
-                    "patch",
-                    "delete",
-                    "history-instance",
-                    "history-type",
-                ][..],
-            )
+            .with_interactions(interactions)
             .with_versioning("versioned-update")
             .with_read_history(true)
             .with_update_create(true)
@@ -471,7 +488,11 @@ pub async fn build_capability_statement(
             .with_search_params(mapped)
             .with_profile(Some(format!(
                 "http://hl7.org/fhir/StructureDefinition/{rt}"
-            )));
+            )))
+            .with_definition(
+                (fhir_version == octofhir_core::fhir::FhirVersion::R6 && *rt == "ViewDefinition")
+                    .then(|| VIEW_DEFINITION_URL.to_owned()),
+            );
         builder = builder.add_resource_struct(resource);
     }
 
@@ -7734,6 +7755,7 @@ fn conditional_reference_candidate_predicates(
                             octofhir_search::SearchParameterType::Reference
                                 | octofhir_search::SearchParameterType::Composite
                                 | octofhir_search::SearchParameterType::Special
+                                | octofhir_search::SearchParameterType::Resource
                         ) && parameter.expression.as_deref().is_some_and(|expression| {
                             conditional_reference_invariant_expression(expression)
                                 && expression.split('|').all(|branch| {
@@ -10375,7 +10397,7 @@ mod tests {
             (FhirVersion::R4, "4.0.1"),
             (FhirVersion::R4B, "4.3.0"),
             (FhirVersion::R5, "5.0.0"),
-            (FhirVersion::R6, "6.0.0"),
+            (FhirVersion::R6, "6.0.0-snapshot1"),
         ] {
             let metadata = build_capability_statement(
                 release,
