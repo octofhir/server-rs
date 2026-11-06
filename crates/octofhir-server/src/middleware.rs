@@ -588,6 +588,7 @@ pub async fn trace_metrics_middleware(req: Request<Body>, next: Next) -> Respons
     let method_str = method.to_string();
     let path_str = uri.path().to_string();
     let start = Instant::now();
+    let plain_json = asks_plain_json(req.headers());
 
     metrics::increment_active_connections();
 
@@ -631,8 +632,38 @@ pub async fn trace_metrics_middleware(req: Request<Body>, next: Next) -> Respons
             .headers_mut()
             .insert(HeaderName::from_static("x-request-id"), header_value);
     }
+    if !plain_json {
+        mark_fhir_json(&path_str, response.headers_mut());
+    }
 
     response
+}
+
+/// Whether the client named `application/json` and not the FHIR media type.
+fn asks_plain_json(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::ACCEPT)
+        .is_some_and(|accept| {
+            let accept = accept.as_bytes();
+            contains_ignore_ascii_case(accept, b"application/json")
+                && !contains_ignore_ascii_case(accept, b"application/fhir+json")
+        })
+}
+
+/// A JSON body of the FHIR API is `application/fhir+json`, whichever handler built it. The
+/// discovery documents under `.well-known` are plain JSON by their own specifications.
+fn mark_fhir_json(path: &str, headers: &mut axum::http::HeaderMap) {
+    let fhir_api =
+        (path == "/fhir" || path.starts_with("/fhir/")) && !path.contains("/.well-known/");
+    let json = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .is_some_and(|value| value.as_bytes().starts_with(b"application/json"));
+    if fhir_api && json {
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_static("application/fhir+json"),
+        );
+    }
 }
 
 /// Check if an endpoint is noisy (should skip tracing + metrics).
@@ -1923,6 +1954,55 @@ mod request_timeout_tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    }
+}
+
+#[cfg(test)]
+mod fhir_media_type_tests {
+    use super::{asks_plain_json, mark_fhir_json};
+    use axum::http::{HeaderMap, HeaderValue, header};
+
+    fn marked(path: &str, content_type: &'static str) -> HeaderValue {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        mark_fhir_json(path, &mut headers);
+        headers[header::CONTENT_TYPE].clone()
+    }
+
+    #[test]
+    fn json_of_the_fhir_api_is_fhir_json() {
+        assert_eq!(
+            marked("/fhir/metadata", "application/json"),
+            "application/fhir+json"
+        );
+        assert_eq!(marked("/fhir", "application/json"), "application/fhir+json");
+    }
+
+    #[test]
+    fn other_responses_keep_their_type() {
+        assert_eq!(marked("/fhir/$sql-run", "text/csv"), "text/csv");
+        assert_eq!(
+            marked("/api/settings", "application/json"),
+            "application/json"
+        );
+        assert_eq!(
+            marked("/fhir/.well-known/smart-configuration", "application/json"),
+            "application/json"
+        );
+    }
+
+    #[test]
+    fn only_a_request_for_plain_json_gets_it() {
+        let accepts = |value: &'static str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ACCEPT, HeaderValue::from_static(value));
+            asks_plain_json(&headers)
+        };
+        assert!(accepts("application/json"));
+        assert!(!accepts("application/fhir+json"));
+        assert!(!accepts("application/fhir+json, application/json;q=0.9"));
+        assert!(!accepts("*/*"));
+        assert!(!asks_plain_json(&HeaderMap::new()));
     }
 }
 

@@ -38,9 +38,7 @@ TerminologyProvider), never as the way terminology reaches SQL.
 
 ## To do
 
-1. **Strict expander gaps**: `compose.lockedDate`, code system supplements and
-   `caseSensitive = false` are not applied.
-2. `$viewdefinition-export` still returns the v2 bulk-style manifest (not part of 3.0, which
+1. `$viewdefinition-export` still returns the v2 bulk-style manifest (not part of 3.0, which
    replaces it with `$sql-export`); decide whether to keep it.
 
 Later / explicitly not now: maintained materialized views (`$viewdefinition-materialize`) —

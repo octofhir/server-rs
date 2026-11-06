@@ -826,6 +826,30 @@ define "Gender": Patient.gender
     );
 }
 
+/// Every JSON answer of the API is the FHIR media type, unless plain JSON was asked for.
+async fn media_types(client: &Client, base: &str) {
+    for path in ["metadata", "Patient?_count=1", "Patient/no-such-patient"] {
+        let answer = client
+            .get(format!("{base}/fhir/{path}"))
+            .header("Accept", "application/fhir+json")
+            .send()
+            .await
+            .unwrap();
+        let content_type = answer.headers()["content-type"].to_str().unwrap();
+        assert!(
+            content_type.starts_with("application/fhir+json"),
+            "{path}: {content_type}"
+        );
+    }
+    let plain = client
+        .get(format!("{base}/fhir/Patient?_count=1"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(plain.headers()["content-type"], "application/json");
+}
+
 /// A document Bundle is found by what is inside it. Before R6 these parameters are
 /// `reference` typed, and they chain into the entry all the same.
 async fn embedded_chains(client: &Client, base: &str) {
@@ -965,6 +989,7 @@ async fn paging_summary_and_agents() {
     explain(&client, &base).await;
     mcp(&client, &base).await;
     measure(&client, &base).await;
+    media_types(&client, &base).await;
     embedded_chains(&client, &base).await;
     delete_history(&client, &base).await;
 }
