@@ -80,6 +80,7 @@ const CONTROL_PARAMS: &[&str] = &[
     "_format",
     "_count",
     "_offset",
+    "_cursor",
     "_sort",
     "_include",
     "_revinclude",
@@ -89,6 +90,96 @@ const CONTROL_PARAMS: &[&str] = &[
     "_contained",
     "_containedType",
 ];
+
+/// Orders a search can seek in instead of skipping rows, with `id` as the tie-break. On
+/// `_id` the primary key makes a page cost the same at any depth; `_lastUpdated` needs
+/// an index on `updated_at` for that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeysetOrder {
+    Id { descending: bool },
+    LastUpdated { descending: bool },
+}
+
+fn keyset_order(params: &SearchParams) -> Option<KeysetOrder> {
+    match params.sort.as_deref() {
+        Some([sort]) if sort.field == "_id" => Some(KeysetOrder::Id {
+            descending: sort.descending,
+        }),
+        Some([sort]) if sort.field == "_lastUpdated" => Some(KeysetOrder::LastUpdated {
+            descending: sort.descending,
+        }),
+        _ => None,
+    }
+}
+
+/// Lets a plain listing page by seeking: with no criteria and no `_sort`, the primary
+/// key gives an order for free, and deep pages stop costing a scan of everything before
+/// them. Searches with criteria keep their unordered, LIMIT-bounded plan.
+pub fn apply_default_keyset_order(params: &mut SearchParams) {
+    if params.sort.is_none()
+        && params.offset.unwrap_or(0) == 0
+        && params.total.is_none()
+        && params.parameters.keys().all(|name| is_control_param(name))
+    {
+        params.sort = Some(vec![octofhir_storage::SortParam {
+            field: "_id".into(),
+            descending: false,
+        }]);
+    }
+}
+
+/// The `_cursor` of the page after a row, when this search can seek. `None` otherwise:
+/// its pages go by `_offset`.
+pub fn next_cursor(
+    params: &SearchParams,
+    id: &str,
+    last_updated: time::OffsetDateTime,
+) -> Option<String> {
+    // A page's condition would narrow the count too, so totals stay with offsets.
+    if params.total.is_some() {
+        return None;
+    }
+    match keyset_order(params)? {
+        KeysetOrder::Id { .. } => Some(id.to_owned()),
+        KeysetOrder::LastUpdated { .. } => {
+            let instant = last_updated
+                .to_offset(time::UtcOffset::UTC)
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()?;
+            Some(format!("{instant}~{id}"))
+        }
+    }
+}
+
+/// The condition that continues after `cursor`, matching the search's `ORDER BY`.
+fn append_cursor(
+    cursor: &str,
+    params: &SearchParams,
+    builder: &mut SqlBuilder,
+) -> Result<(), SqlBuilderError> {
+    let invalid = || SqlBuilderError::InvalidSearchValue("Invalid _cursor for this _sort".into());
+    match keyset_order(params).ok_or_else(invalid)? {
+        KeysetOrder::Id { descending } => {
+            let id = builder.add_text_param(cursor);
+            let comparison = if descending { "<" } else { ">" };
+            builder.add_raw_condition(format!("r.id {comparison} ${id}"));
+        }
+        KeysetOrder::LastUpdated { descending } => {
+            let (instant, id) = cursor.split_once('~').ok_or_else(invalid)?;
+            time::OffsetDateTime::parse(instant, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| invalid())?;
+            let at = builder.add_timestamp_param(instant);
+            let id = builder.add_text_param(id);
+            // Ties on the timestamp go by id ascending in either direction.
+            let comparison = if descending { "<" } else { ">" };
+            builder.add_raw_condition(format!(
+                "(r.updated_at {comparison} ${at}::text::timestamptz \
+                 OR (r.updated_at = ${at}::text::timestamptz AND r.id > ${id}))"
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Result of converting SearchParams to a query builder.
 pub struct ConvertedQuery {
@@ -176,6 +267,10 @@ pub fn build_native_ir_query_from_params_with_config(
             &mut builder,
             &mut sql_builder,
         )?;
+    }
+
+    if let Some(cursor) = &params.cursor {
+        append_cursor(cursor, params, &mut sql_builder)?;
     }
 
     // Add status filter to exclude deleted resources
@@ -529,6 +624,11 @@ fn append_constraint(
                 registry,
                 sql_builder,
             )?;
+            false
+        }
+        SearchConstraint::IdAfter(id) => {
+            let parameter = sql_builder.add_text_param(id);
+            sql_builder.add_raw_condition(format!("r.id > ${parameter}"));
             false
         }
         SearchConstraint::And(children) | SearchConstraint::Or(children) => {
@@ -1279,6 +1379,7 @@ pub fn parse_query_string(query: &str, default_count: u32, max_count: u32) -> Se
                     params = params.with_offset(n);
                 }
             }
+            "_cursor" => params.cursor = Some(value),
             "_sort" => {
                 // Parse sort string: "-date,name" -> sort by date desc, name asc
                 for sort_field in value.split(',') {
@@ -1934,6 +2035,37 @@ mod tests {
             "expected no ORDER BY without _sort, got: {}",
             built.sql
         );
+    }
+
+    #[test]
+    fn cursors_continue_in_the_order_of_the_sort() {
+        let registry = SearchParameterRegistry::new();
+        crate::common::register_common_parameters(&registry);
+        let sql = |query: &str| {
+            let params = parse_query_string(query, 10, 100);
+            build_native_ir_query_from_params("Patient", &params, &registry, "public")
+                .map(|converted| converted.builder.with_raw_resource(true).build().unwrap().sql)
+        };
+        assert!(sql("_sort=_id&_cursor=abc").unwrap().contains("r.id > $"));
+        assert!(sql("_sort=-_id&_cursor=abc").unwrap().contains("r.id < $"));
+        let recent = sql("_sort=-_lastUpdated&_cursor=2026-01-01T00:00:00Z~abc").unwrap();
+        assert!(recent.contains("r.updated_at < $"), "{recent}");
+        assert!(sql("_sort=-_lastUpdated&_cursor=abc").is_err(), "no timestamp");
+        assert!(sql("_cursor=abc").is_err(), "no keyset order");
+        assert!(sql("_sort=name&_cursor=abc").is_err(), "no keyset order");
+    }
+
+    #[test]
+    fn only_a_plain_listing_gets_the_default_keyset_order() {
+        let order = |query: &str| {
+            let mut params = parse_query_string(query, 10, 100);
+            apply_default_keyset_order(&mut params);
+            params.sort.is_some()
+        };
+        assert!(order("_count=5"));
+        assert!(order("_cursor=abc"));
+        assert!(!order("name=x"));
+        assert!(!order("_offset=20"));
     }
 
     #[test]

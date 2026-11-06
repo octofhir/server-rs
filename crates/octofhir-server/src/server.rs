@@ -153,6 +153,12 @@ pub struct AppStateInner {
     pub jwt_cache: Arc<crate::cache::JwtVerificationCache>,
     /// Cache for JSON Schema conversions (FhirSchema -> JSON Schema)
     pub json_schema_cache: Arc<dashmap::DashMap<String, serde_json::Value>>,
+    /// Status polls per bulk job, to throttle clients that poll too often
+    pub bulk_poll_gate: Arc<crate::operations::bulk::PollGate>,
+    /// Queries of long searches being paged
+    pub search_pages: Arc<crate::search_pages::SearchPages>,
+    /// The application itself, for tools that act as a client of it
+    pub internal_router: Arc<arc_swap::ArcSwapOption<Router>>,
     /// Cache for FHIR resource reads (reduces DB queries for read-heavy workloads)
     pub resource_cache: Option<Arc<crate::cache::ResourceCache>>,
     /// Query cache for search SQL template reuse
@@ -1873,6 +1879,9 @@ async fn build_app_with_runtime(
         auth_cache,
         jwt_cache,
         json_schema_cache: Arc::new(dashmap::DashMap::new()),
+        bulk_poll_gate: Arc::default(),
+        search_pages: Arc::default(),
+        internal_router: Arc::default(),
         resource_cache,
         query_cache: Some(Arc::new(octofhir_search::QueryCache::new(
             cfg.search.cache_capacity,

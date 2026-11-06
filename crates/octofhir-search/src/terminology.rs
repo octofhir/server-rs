@@ -430,6 +430,9 @@ impl HybridTerminologyProvider {
         system: Option<&str>,
         code: &str,
     ) -> Option<bool> {
+        if let Some(valid) = grammar_value_set(valueset_url, code) {
+            return Some(valid);
+        }
         let (expansion, complete) = self.expand_from_local_detailed(valueset_url).await?;
 
         // Check if code is in expansion
@@ -828,6 +831,47 @@ impl crate::terminology_provider::HierarchyProvider for HybridTerminologyProvide
     }
 }
 
+/// Value sets over a code system defined by a grammar: any code of the right shape belongs
+/// to them, so they cannot be enumerated and need no terminology server.
+fn grammar_value_set(valueset_url: &str, code: &str) -> Option<bool> {
+    let url = valueset_url.split('|').next().unwrap_or(valueset_url);
+    let token = |text: &str| {
+        !text.is_empty()
+            && text.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(
+                        byte,
+                        b'!' | b'#' | b'$' | b'&' | b'-' | b'^' | b'_' | b'.' | b'+'
+                    )
+            })
+    };
+    match url {
+        // urn:ietf:bcp:13: type/subtype with optional parameters.
+        "http://hl7.org/fhir/ValueSet/mimetypes" => {
+            let media_type = code.split(';').next().unwrap_or_default().trim();
+            Some(
+                media_type
+                    .split_once('/')
+                    .is_some_and(|(kind, subtype)| token(kind) && token(subtype)),
+            )
+        }
+        // urn:ietf:bcp:47: primary language with subtags.
+        "http://hl7.org/fhir/ValueSet/all-languages" => {
+            let mut subtags = code.split('-');
+            let primary = subtags.next().unwrap_or_default();
+            Some(
+                (2..=8).contains(&primary.len())
+                    && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
+                    && subtags.all(|subtag| {
+                        (1..=8).contains(&subtag.len())
+                            && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                    }),
+            )
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -837,5 +881,24 @@ mod tests {
         let config = TerminologyConfig::default();
         assert_eq!(config.server_url, "https://tx.fhir.org/r4");
         assert_eq!(config.cache_ttl_secs, 3600);
+    }
+
+    #[test]
+    fn grammar_value_sets_judge_the_shape_of_a_code() {
+        let mime = "http://hl7.org/fhir/ValueSet/mimetypes|4.0.1";
+        for code in [
+            "text/cql",
+            "application/fhir+json",
+            "text/plain; charset=utf-8",
+        ] {
+            assert_eq!(grammar_value_set(mime, code), Some(true), "{code}");
+        }
+        for code in ["text", "/cql", "text/", "a b/c"] {
+            assert_eq!(grammar_value_set(mime, code), Some(false), "{code}");
+        }
+        let languages = "http://hl7.org/fhir/ValueSet/all-languages";
+        assert_eq!(grammar_value_set(languages, "en-US"), Some(true));
+        assert_eq!(grammar_value_set(languages, "e"), Some(false));
+        assert_eq!(grammar_value_set("http://example.org/vs", "x"), None);
     }
 }

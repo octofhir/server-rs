@@ -3034,7 +3034,15 @@ pub async fn search_resource(
         .and_then(|h| h.to_str().ok())
         .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
-    let raw_q = raw.unwrap_or_default();
+    let raw_q = state.search_pages.expand(raw.unwrap_or_default())?;
+    // A continued search keeps the result parameters of the query it continues.
+    let params = if params.contains_key("_page") {
+        url::form_urlencoded::parse(raw_q.as_bytes())
+            .into_owned()
+            .collect()
+    } else {
+        params
+    };
     let debug_request = search_debug_request(&state.config.search, &headers, &raw_q);
     let raw_q = strip_search_debug_params(&raw_q);
     let cfg = state.search_config.config();
@@ -3042,6 +3050,7 @@ pub async fn search_resource(
     // Parse query string to SearchParams
     let mut search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
+    octofhir_search::apply_default_keyset_order(&mut search_params);
     apply_search_visibility(&state, visibility.clone(), &mut search_params).await?;
 
     // Strip result params from query suffix for pagination links
@@ -3083,6 +3092,11 @@ pub async fn search_resource(
 
     let (total, total_is_exact) =
         resolved_search_total(result.total, result.has_more, offset, result.entries.len());
+    let next_cursor = result
+        .entries
+        .last()
+        .filter(|_| result.has_more)
+        .and_then(|last| octofhir_search::next_cursor(&search_params, &last.id, last.last_updated));
 
     // Convert main entries to RawJson
     let (resources, ids): (Vec<_>, Vec<_>) = result
@@ -3109,7 +3123,7 @@ pub async fn search_resource(
         None
     };
 
-    let bundle = octofhir_api::bundle_from_search_raw_with_warnings_and_pagination(
+    let mut bundle = octofhir_api::bundle_from_search_raw_with_warnings_and_pagination(
         total,
         total_is_exact,
         result.has_more,
@@ -3123,6 +3137,8 @@ pub async fn search_resource(
         suffix.as_deref(),
         warnings,
     );
+    apply_keyset_links(&mut bundle.link, &search_params, next_cursor);
+    state.search_pages.shorten(&mut bundle.link, &raw_q);
 
     // Apply _summary and _elements filters if present
     let has_result_params = params.contains_key("_summary") || params.contains_key("_elements");
@@ -3269,6 +3285,7 @@ pub async fn search_resource_post(
     // Parse query string to SearchParams
     let mut search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
+    octofhir_search::apply_default_keyset_order(&mut search_params);
     apply_search_visibility(&state, visibility.clone(), &mut search_params).await?;
 
     // Strip result params from query suffix for pagination links
@@ -3310,6 +3327,11 @@ pub async fn search_resource_post(
 
     let (total, total_is_exact) =
         resolved_search_total(result.total, result.has_more, offset, result.entries.len());
+    let next_cursor = result
+        .entries
+        .last()
+        .filter(|_| result.has_more)
+        .and_then(|last| octofhir_search::next_cursor(&search_params, &last.id, last.last_updated));
 
     // Convert main entries to RawJson
     let (resources, ids): (Vec<_>, Vec<_>) = result
@@ -3336,7 +3358,7 @@ pub async fn search_resource_post(
         None
     };
 
-    let bundle = octofhir_api::bundle_from_search_raw_with_warnings_and_pagination(
+    let mut bundle = octofhir_api::bundle_from_search_raw_with_warnings_and_pagination(
         total,
         total_is_exact,
         result.has_more,
@@ -3350,6 +3372,8 @@ pub async fn search_resource_post(
         suffix.as_deref(),
         warnings,
     );
+    apply_keyset_links(&mut bundle.link, &search_params, next_cursor);
+    state.search_pages.shorten(&mut bundle.link, &raw_q);
 
     let result_params: HashMap<String, String> = ["_summary", "_elements"]
         .into_iter()
@@ -3657,7 +3681,7 @@ fn build_applied_query_suffix(raw_q: &str, ignored: &[String]) -> Option<String>
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     for (key, value) in url::form_urlencoded::parse(raw_q.as_bytes()) {
         let name = key.split(':').next().unwrap_or(&key);
-        if !matches!(key.as_ref(), "_count" | "_offset")
+        if !matches!(key.as_ref(), "_count" | "_offset" | "_cursor")
             && !ignored.iter().any(|ignored| ignored == name)
         {
             serializer.append_pair(&key, &value);
@@ -3665,6 +3689,52 @@ fn build_applied_query_suffix(raw_q: &str, ignored: &[String]) -> Option<String>
     }
     let query = serializer.finish();
     (!query.is_empty()).then_some(query)
+}
+
+/// Rewrites the links of a keyset-paged result: `next` seeks from the page's last row,
+/// `self` repeats this page's cursor, and `last` goes, since a seek has no way there.
+fn apply_keyset_links(
+    links: &mut Vec<octofhir_api::BundleLink>,
+    params: &octofhir_storage::SearchParams,
+    next: Option<String>,
+) {
+    let with_cursor = |url: &str, cursor: &str| {
+        let Ok(mut parsed) = url::Url::parse(url) else {
+            return url.to_owned();
+        };
+        let kept: Vec<(String, String)> = parsed
+            .query_pairs()
+            .filter(|(name, _)| name != "_offset" && name != "_cursor")
+            .map(|(name, value)| (name.into_owned(), value.into_owned()))
+            .collect();
+        parsed
+            .query_pairs_mut()
+            .clear()
+            .extend_pairs(kept)
+            .append_pair("_cursor", cursor);
+        parsed.into()
+    };
+    let Some(next) = next else {
+        if let Some(current) = &params.cursor {
+            links.retain(|link| link.relation != "last");
+            for link in links.iter_mut().filter(|link| link.relation == "self") {
+                link.url = with_cursor(&link.url, current);
+            }
+        }
+        return;
+    };
+    links.retain(|link| link.relation != "last");
+    for link in links.iter_mut() {
+        match link.relation.as_str() {
+            "next" => link.url = with_cursor(&link.url, &next),
+            "self" => {
+                if let Some(current) = &params.cursor {
+                    link.url = with_cursor(&link.url, current);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn resolved_search_total(

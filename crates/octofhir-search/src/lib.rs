@@ -82,7 +82,7 @@ pub use terminology::{CacheStats, HybridTerminologyProvider, TerminologyConfig, 
 pub use params_converter::{
     ConvertedQuery, SearchConfig as ParamsSearchConfig, UnknownParamHandling, UnknownParamWarning,
     build_native_ir_query_from_params, build_native_ir_query_from_params_with_config,
-    parse_query_string,
+    apply_default_keyset_order, next_cursor, parse_query_string,
 };
 
 #[cfg(feature = "canonical")]
