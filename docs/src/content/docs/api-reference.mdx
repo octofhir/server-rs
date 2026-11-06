@@ -99,7 +99,13 @@ GET /fhir/{resourceType}/_history
 
 # System history
 GET /fhir/_history
+
+# Remove the history of a resource, or one version; never the current version
+DELETE /fhir/{resourceType}/{id}/_history
+DELETE /fhir/{resourceType}/{id}/_history/{versionId}
 ```
+
+Removing history needs an administrator. See [FHIR R6](/fhir-r6/#new-in-the-restful-api).
 
 ### Version Read
 
@@ -229,6 +235,8 @@ The response is a `Parameters` resource:
 | `versions` | Stored versions, removed or about to be, counting the live one |
 
 A resource with nothing stored is 404, so a second `$expunge` of the same id is 404.
+
+To remove a whole patient record on R6, see [`$purge`](/fhir-r6/#purge).
 
 ## Search Parameters
 

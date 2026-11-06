@@ -1,0 +1,114 @@
+---
+title: FHIR R6
+description: Running the server on R6 and what changes from R5
+---
+
+R6 is not published yet. The server runs on the newest package in the registry,
+`hl7.fhir.r6.core#6.0.0-snapshot1`, and `CapabilityStatement.fhirVersion` says so.
+
+```toml
+[fhir]
+version = "R6"
+
+[packages]
+load = ["hl7.fhir.r6.core#6.0.0-snapshot1"]
+```
+
+R6 has no terminology package of its own yet, so the server loads `hl7.terminology.r5`.
+
+## New in the RESTful API
+
+| Interaction | Request | Result |
+|---|---|---|
+| `delete-history` | `DELETE /fhir/{type}/{id}/_history` | Every version but the current one goes; 204 |
+| `delete-history-version` | `DELETE /fhir/{type}/{id}/_history/{vid}` | That version goes; 204. The current version gives 409, an unknown one 404 |
+
+Both need an administrator, like [`$expunge`](/api-reference/#expunge). For a deleted resource
+the record of the deletion stays as the current version. Both work on every FHIR version, and
+only R6 has codes to declare them in the CapabilityStatement.
+
+On R6 the CapabilityStatement also declares `create-conditional`, `update-conditional`,
+`patch-conditional` and `delete-conditional-single`. `delete-conditional-multiple` is left out:
+a conditional delete takes one match. ViewDefinition, an additional resource, carries
+`rest.resource.definition`.
+
+## The `resource` search parameter type
+
+R6 adds a type that chains into a resource held inside another. Core has two such parameters,
+`composition` and `message` on Bundle, both on the first entry:
+
+```bash
+# Documents about a patient
+GET /fhir/Bundle?composition.subject=Patient/123
+
+# A document by the id of its Composition
+GET /fhir/Bundle?composition._id=abc
+
+# Further through a reference
+GET /fhir/Bundle?composition.subject:Patient.active=true
+```
+
+The type has no test of its own, so `Bundle?composition=x` is 400. In R4 and R5 these same
+parameters are of type `reference`, and they chain the same way.
+
+## `$purge`
+
+`POST /fhir/Patient/{id}/$purge` and `POST /fhir/Group/{id}/$purge` remove every version of
+every resource in the patient compartments, and the patients. The answer is an OperationOutcome
+with what went, by type.
+
+```json
+{"resourceType": "OperationOutcome", "issue": [{
+  "severity": "information", "code": "success",
+  "diagnostics": "Removed Composition: 1, Observation: 12, Patient: 1"
+}]}
+```
+
+The specification leaves the policy to the server. Here:
+
+- It needs an administrator and removes for good, like `$expunge`.
+- A GET, or a `dryRun` parameter, only counts: `Would remove …`.
+- `Group` resources stay. A patient's membership puts a cohort in the compartment, and one
+  person's request must not take the cohort away from the others. The reference to the patient
+  stays in the Group and no longer resolves.
+- A patient linked to this one is in the compartment, so that patient and their records go too.
+  Check with a dry run first.
+- It runs in the request, not as an async job.
+
+## `Measure/$evaluate`
+
+R6 keeps `$evaluate-measure` and adds `$evaluate`: several measures at once, the reports as
+Bundles organized by subject.
+
+```http
+POST /fhir/Measure/$evaluate
+Content-Type: application/fhir+json
+
+{"resourceType": "Parameters", "parameter": [
+  {"name": "measureUrl", "valueCanonical": "http://example.org/Measure/screening"},
+  {"name": "periodStart", "valueDate": "2026"},
+  {"name": "periodEnd", "valueDate": "2026"},
+  {"name": "reportType", "valueCode": "individual"}
+]}
+```
+
+| `reportType` | Result |
+|---|---|
+| `individual` | A Bundle per subject, with a report per measure. The default for a Patient subject |
+| `summary` | One Bundle, with a report per measure. The default otherwise |
+| `subject-list` | One Bundle, with a subject list report per measure |
+
+`subject` is a Patient or a Group. The Bundles hold the MeasureReports only, without the evaluated
+resources. `subjectGroup`, `reporterResource` and `manifest` are refused.
+
+## Measures from R5 on
+
+`scoring`, `basis` and `aggregateMethod` read from the elements that took over from R5 on, per
+group, and from the R4 elements and extensions otherwise. `library` can be on the group. Reports
+use `measureScoreQuantity` and `valueCodeableConcept` on R5 and later.
+
+## Resource types
+
+R6 drops some R5 resources from core, such as ChargeItem, Contract and StructureMap, and adds
+DeviceAlert. So on R6 the operations on the dropped types, `StructureMap/$transform` among them,
+have no resource to work on.

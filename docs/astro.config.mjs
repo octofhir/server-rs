@@ -65,6 +65,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { label: 'Transactions', link: 'transactions/' },
+            { label: 'FHIR R6', link: 'fhir-r6/' },
             { label: 'Bulk Data', link: 'bulk-export/' },
             { label: 'Terminology', link: 'terminology/' },
             { label: 'SQL on FHIR', link: 'sql-on-fhir/' },

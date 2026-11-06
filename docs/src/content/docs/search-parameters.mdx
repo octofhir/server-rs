@@ -168,6 +168,11 @@ GET /fhir/Patient?birthdate=1980-01
 GET /fhir/Patient?birthdate=1980-01-15
 ```
 
+## Chaining into embedded resources
+
+`Bundle` parameters such as `composition` chain into the resource inside the entry, not through
+a reference: `Bundle?composition.subject=Patient/123`. See [FHIR R6](/fhir-r6/#the-resource-search-parameter-type).
+
 ## Include and RevInclude
 
 ### _include
