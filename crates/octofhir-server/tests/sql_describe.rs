@@ -161,7 +161,7 @@ const CODES: &str = "http://example.org/ValueSet/cardiovascular-disease|2026";
 #[tokio::test]
 async fn describe_reports_columns_dependencies_and_terminology() {
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("postgres");

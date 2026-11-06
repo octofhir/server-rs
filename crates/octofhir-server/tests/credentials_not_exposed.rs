@@ -83,7 +83,7 @@ async fn stored_password_hash(postgres_url: &str, id: &str) -> Option<String> {
 #[tokio::test]
 async fn user_password_hashes_never_leave_the_server() {
     let container = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("start postgres container");

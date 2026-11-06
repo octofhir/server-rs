@@ -196,7 +196,7 @@ fn context(resource: &Value) -> Value {
 #[tokio::test]
 async fn sql_export_runs_subjects_as_one_job() {
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("postgres");

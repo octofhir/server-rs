@@ -83,7 +83,7 @@ async fn smart_grant_scenario() {
         .with_test_writer()
         .try_init();
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .unwrap();
@@ -96,6 +96,7 @@ async fn smart_grant_scenario() {
     config.bulk_export.export_path = export_dir.path().to_str().unwrap().to_owned();
     config.bulk_export.max_resources_per_file = 1;
     config.bulk_export.batch_size = 1;
+    config.bulk_export.min_poll_interval_ms = 0;
 
     // Pin the published archive so each fresh fixture DB can reuse the
     // integrity-checked tarball cache without registry metadata requests.

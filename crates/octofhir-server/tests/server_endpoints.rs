@@ -14,7 +14,7 @@ async fn start_server() -> (
     ContainerAsync<Postgres>,
 ) {
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("start postgres container");
@@ -108,10 +108,10 @@ async fn server_endpoints_work() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["resourceType"], "CapabilityStatement");
     assert_eq!(
-        body["rest"][0]["patchFormat"][0],
+        body["patchFormat"][0],
         "application/json-patch+json"
     );
-    assert_eq!(body["rest"][0]["patchFormat"][1], "application/fhir+json");
+    assert_eq!(body["patchFormat"][1], "application/fhir+json");
 
     let patient = body["rest"][0]["resource"]
         .as_array()

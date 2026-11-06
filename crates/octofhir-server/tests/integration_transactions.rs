@@ -372,11 +372,11 @@ async fn validate_honors_explicit_profiles_in_query_and_parameters() {
         let response = request.send().await.unwrap();
         let status = response.status();
         let body: Value = response.json().await.unwrap();
-        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         assert_eq!(body["resourceType"], "OperationOutcome", "{body}");
         assert!(
             body.get("status").is_none(),
-            "unavailable scoring must not fabricate a complete report: {body}"
+            "a missing Measure must not produce a report: {body}"
         );
     }
     let metadata: Value = client
@@ -418,19 +418,11 @@ async fn validate_honors_explicit_profiles_in_query_and_parameters() {
     );
     assert!(patient_capability.get("supportedProfile").is_none());
 
-    assert!(metadata.get("instantiates").is_none());
-    for rest in metadata["rest"].as_array().unwrap() {
-        for operation in rest["operation"].as_array().into_iter().flatten().chain(
-            rest["resource"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .flat_map(|resource| resource["operation"].as_array().into_iter().flatten()),
-        ) {
-            assert_ne!(operation["name"], "evaluate-measure");
-            assert_ne!(operation["name"], "$evaluate-measure");
-        }
-    }
+    // Installed profiles are no conformance claim; only implemented IGs are.
+    assert_eq!(
+        metadata["instantiates"],
+        json!(["http://hl7.org/fhir/uv/bulkdata/CapabilityStatement/bulk-data"])
+    );
 
     for (profile, expected) in [
         (
@@ -1088,7 +1080,7 @@ async fn start_postgres() -> (PostgresFixture, String) {
     // PG14+ for tstzmultirange and the jsonpath[] date-extraction overloads;
     // the testcontainers default (11-alpine) lacks both.
     let container = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("start postgres container");

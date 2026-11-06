@@ -160,7 +160,7 @@ const PATIENTS: &str = "http://example.org/ViewDefinition/patients";
 #[tokio::test]
 async fn sql_on_fhir_conformance_details() {
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("postgres");

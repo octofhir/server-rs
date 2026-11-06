@@ -9,7 +9,7 @@ use testcontainers_modules::postgres::Postgres;
 async fn test_migrations_run_successfully() {
     // Start PostgreSQL testcontainer
     let container = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("Failed to start PostgreSQL container");

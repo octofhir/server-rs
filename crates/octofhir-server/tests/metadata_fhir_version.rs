@@ -27,7 +27,7 @@ async fn start_server_with_cfg(
 ) {
     let serial = SERIAL.lock().await;
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("start postgres container");

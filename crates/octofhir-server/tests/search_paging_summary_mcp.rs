@@ -1,0 +1,636 @@
+//! Keyset paging, long POST searches, `Patient/$summary`, `$validate-code` with `_explain`,
+//! and the MCP endpoint, over one server.
+//!
+//! Requirements: Docker running (testcontainers).
+
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use octofhir_config::ConfigurationManager;
+use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
+use reqwest::{Client, StatusCode};
+use serde_json::{Value, json};
+use testcontainers::{ImageExt, runners::AsyncRunner};
+use testcontainers_modules::postgres::Postgres;
+
+struct ServerHandle(tokio::task::JoinHandle<()>);
+
+impl Drop for ServerHandle {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn start_server(postgres_url: &str) -> (String, ServerHandle) {
+    let mut config = AppConfig::default();
+    config.storage.postgres = Some(PostgresStorageConfig {
+        url: Some(postgres_url.to_owned()),
+        pool_size: 10,
+        connect_timeout_ms: 10_000,
+        idle_timeout_ms: Some(60_000),
+        ..Default::default()
+    });
+    config.auth.policy.anonymous_access = true;
+    config.mcp.allow_writes = true;
+    config.cql.enabled = true;
+    config.packages.load = vec![octofhir_server::config::PackageSpec::Table {
+        id: Some("hl7.fhir.r4.core".into()),
+        version: Some("4.0.1".into()),
+        path: None,
+        url: Some("https://hl7.org/fhir/R4/hl7.fhir.r4.core.tgz".into()),
+    }];
+    let config_manager = Arc::new(
+        ConfigurationManager::builder()
+            .build()
+            .await
+            .expect("config manager"),
+    );
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().unwrap();
+    config.server.base_url = Some(format!("http://{addr}"));
+    let app = build_app(&config, config_manager).await.expect("build app");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}"), ServerHandle(server))
+}
+
+async fn put(client: &Client, base: &str, resource: Value) {
+    let path = format!(
+        "{base}/fhir/{}/{}",
+        resource["resourceType"].as_str().unwrap(),
+        resource["id"].as_str().unwrap()
+    );
+    let response = client.put(path).json(&resource).send().await.unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert!(status.is_success(), "{status}: {body}");
+}
+
+async fn get(client: &Client, url: &str) -> Value {
+    let response = client.get(url).send().await.unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert!(status.is_success(), "{url}: {status}: {body}");
+    serde_json::from_str(&body).unwrap()
+}
+
+fn link<'a>(bundle: &'a Value, relation: &str) -> Option<&'a str> {
+    bundle["link"]
+        .as_array()?
+        .iter()
+        .find(|link| link["relation"] == relation)?["url"]
+        .as_str()
+}
+
+fn ids(bundle: &Value) -> Vec<String> {
+    bundle["entry"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry["resource"]["id"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// Follows `next` to the end; the ids in order, and how many pages it took.
+async fn walk(client: &Client, first: &str) -> (Vec<String>, usize) {
+    let mut seen = Vec::new();
+    let mut pages = 0;
+    let mut url = first.to_owned();
+    loop {
+        let bundle = get(client, &url).await;
+        seen.extend(ids(&bundle));
+        pages += 1;
+        assert!(link(&bundle, "last").is_none() || !url.contains("_cursor"));
+        match link(&bundle, "next") {
+            Some(next) => url = next.to_owned(),
+            None => return (seen, pages),
+        }
+        assert!(pages < 50, "paging does not end");
+    }
+}
+
+async fn keyset_paging(client: &Client, base: &str) {
+    for n in 0..7 {
+        put(
+            client,
+            base,
+            json!({"resourceType":"Practitioner","id":format!("pr-{n}")}),
+        )
+        .await;
+    }
+    let all: Vec<String> = (0..7).map(|n| format!("pr-{n}")).collect();
+
+    // A plain listing seeks by id.
+    let first = get(client, &format!("{base}/fhir/Practitioner?_count=3")).await;
+    assert!(link(&first, "next").unwrap().contains("_cursor="));
+    assert!(!link(&first, "next").unwrap().contains("_offset"));
+    let (seen, pages) = walk(client, &format!("{base}/fhir/Practitioner?_count=3")).await;
+    assert_eq!(seen, all);
+    assert_eq!(pages, 3);
+
+    let (seen, _) = walk(
+        client,
+        &format!("{base}/fhir/Practitioner?_sort=-_id&_count=3"),
+    )
+    .await;
+    let mut reversed = all.clone();
+    reversed.reverse();
+    assert_eq!(seen, reversed);
+
+    // Order by last update, with every row once.
+    let (seen, _) = walk(
+        client,
+        &format!("{base}/fhir/Practitioner?_sort=-_lastUpdated&_count=2"),
+    )
+    .await;
+    assert_eq!(seen.iter().collect::<HashSet<_>>().len(), 7);
+    let mut newest_last = seen.clone();
+    newest_last.reverse();
+    assert_eq!(newest_last, all);
+
+    // A resource written between pages neither repeats nor hides another row.
+    let first = get(client, &format!("{base}/fhir/Practitioner?_count=3")).await;
+    put(
+        client,
+        base,
+        json!({"resourceType":"Practitioner","id":"pr-0","active":true}),
+    )
+    .await;
+    let next = get(client, link(&first, "next").unwrap()).await;
+    assert_eq!(ids(&next), ["pr-3", "pr-4", "pr-5"]);
+
+    // Criteria without a keyset order stay on offsets, and a bad cursor is refused.
+    let filtered = get(
+        client,
+        &format!("{base}/fhir/Practitioner?active=true&_count=1"),
+    )
+    .await;
+    assert!(link(&filtered, "next").is_none());
+    let invalid = client
+        .get(format!(
+            "{base}/fhir/Practitioner?_sort=-_lastUpdated&_cursor=nope"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+}
+
+async fn long_post_search(client: &Client, base: &str) {
+    let mut wanted: Vec<String> = (0..7).map(|n| format!("pr-{n}")).collect();
+    wanted.extend((0..600).map(|n| format!("absent-{n}")));
+    let form = format!("_id={}&_count=3&_sort=_id", wanted.join(","));
+    let response = client
+        .post(format!("{base}/fhir/Practitioner/_search"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let first: Value = response.json().await.unwrap();
+    assert_eq!(ids(&first).len(), 3);
+    let next = link(&first, "next").expect("a next link");
+    assert!(
+        next.len() < 300,
+        "the link must not repeat the query: {next}"
+    );
+    assert!(next.contains("_page="));
+    let (seen, _) = walk(client, next).await;
+    assert_eq!(seen.len(), 4, "the rest of the seven, by the kept query");
+    let gone = client
+        .get(format!("{base}/fhir/Practitioner?_page=unknown"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), StatusCode::GONE);
+}
+
+async fn summary(client: &Client, base: &str) {
+    put(
+        client,
+        base,
+        json!({"resourceType":"Patient","id":"s1","identifier":[
+        {"system":"urn:mrn","value":"123"}]}),
+    )
+    .await;
+    put(client, base, json!({"resourceType":"Patient","id":"s2"})).await;
+    put(
+        client,
+        base,
+        json!({"resourceType":"Organization","id":"org","name":"Lab"}),
+    )
+    .await;
+    put(client, base, json!({"resourceType":"Condition","id":"c-active",
+        "clinicalStatus":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/condition-clinical","code":"active"}]},
+        "code":{"text":"Asthma"},"subject":{"reference":"Patient/s1"}}))
+    .await;
+    put(client, base, json!({"resourceType":"Condition","id":"c-old",
+        "clinicalStatus":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/condition-clinical","code":"resolved"}]},
+        "code":{"text":"Measles"},"subject":{"reference":"Patient/s1"}}))
+    .await;
+    put(client, base, json!({"resourceType":"Observation","id":"lab","status":"final",
+        "category":[{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/observation-category","code":"laboratory"}]}],
+        "code":{"text":"Glucose"},"subject":{"reference":"Patient/s1"},
+        "performer":[{"reference":"Organization/org"}]}))
+    .await;
+    put(client, base, json!({"resourceType":"Condition","id":"c-other",
+        "clinicalStatus":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/condition-clinical","code":"active"}]},
+        "code":{"text":"Other"},"subject":{"reference":"Patient/s2"}}))
+    .await;
+
+    let document = get(client, &format!("{base}/fhir/Patient/s1/$summary")).await;
+    assert_eq!(document["type"], "document");
+    assert!(document["identifier"]["value"].is_string());
+    assert!(document["timestamp"].is_string());
+    let entries = document["entry"].as_array().unwrap();
+    let composition = &entries[0]["resource"];
+    assert_eq!(composition["resourceType"], "Composition");
+    assert_eq!(composition["type"]["coding"][0]["code"], "60591-5");
+    assert_eq!(composition["subject"]["reference"], "Patient/s1");
+    assert_eq!(entries[1]["resource"]["resourceType"], "Patient");
+    let section = |code: &str| {
+        composition["section"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|section| section["code"]["coding"][0]["code"] == code)
+            .cloned()
+    };
+    let problems = section("11450-4").expect("problems are required");
+    assert_eq!(problems["entry"][0]["reference"], "Condition/c-active");
+    assert_eq!(problems["entry"].as_array().unwrap().len(), 1);
+    assert!(problems["text"]["div"].as_str().unwrap().contains("Asthma"));
+    let allergies = section("48765-2").expect("allergies are required");
+    assert_eq!(allergies["emptyReason"]["coding"][0]["code"], "unavailable");
+    assert!(section("10160-0").is_some(), "medications are required");
+    assert_eq!(
+        section("11348-0").unwrap()["entry"][0]["reference"],
+        "Condition/c-old"
+    );
+    assert_eq!(
+        section("30954-2").unwrap()["entry"][0]["reference"],
+        "Observation/lab"
+    );
+    assert!(
+        section("8716-3").is_none(),
+        "an empty optional section stays out"
+    );
+
+    let held: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}/{}",
+                entry["resource"]["resourceType"].as_str().unwrap(),
+                entry["resource"]["id"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert!(
+        held.iter().any(|entry| entry == "Organization/org"),
+        "{held:?}"
+    );
+    assert!(
+        !held.iter().any(|entry| entry == "Condition/c-other"),
+        "another patient's data"
+    );
+
+    let by_identifier = get(
+        client,
+        &format!("{base}/fhir/Patient/$summary?identifier=urn:mrn%7C123"),
+    )
+    .await;
+    assert_eq!(by_identifier["entry"][1]["resource"]["id"], "s1");
+    let missing = client
+        .get(format!("{base}/fhir/Patient/$summary"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+}
+
+async fn explain(client: &Client, base: &str) {
+    let response: Value = client
+        .post(format!("{base}/fhir/ValueSet/$validate-code"))
+        .json(&json!({"resourceType":"Parameters","parameter":[
+            {"name":"url","valueUri":"http://hl7.org/fhir/ValueSet/administrative-gender"},
+            {"name":"system","valueUri":"http://hl7.org/fhir/administrative-gender"},
+            {"name":"code","valueCode":"male"},
+            {"name":"_explain","valueBoolean":true}
+        ]}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let parameters = response["parameter"].as_array().unwrap();
+    assert_eq!(parameters[0]["valueBoolean"], true, "{response}");
+    let explain = parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "explain")
+        .expect("explain output");
+    let parts = explain["part"].as_array().unwrap();
+    let source = parts.iter().find(|part| part["name"] == "source").unwrap();
+    assert!(
+        source["valueString"]
+            .as_str()
+            .unwrap()
+            .contains("hl7.fhir.r4.core"),
+        "{source}"
+    );
+    assert!(parts.iter().any(|part| part["name"] == "codeSystem"));
+}
+
+async fn mcp_call(client: &Client, base: &str, method: &str, params: Value) -> (StatusCode, Value) {
+    let response = client
+        .post(format!("{base}/mcp"))
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", method)
+        .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
+async fn tool(client: &Client, base: &str, name: &str, arguments: Value) -> Value {
+    let (status, body) = mcp_call(
+        client,
+        base,
+        "tools/call",
+        json!({"name":name,"arguments":arguments}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["result"].clone()
+}
+
+async fn mcp(client: &Client, base: &str) {
+    let (status, discover) = mcp_call(client, base, "server/discover", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(discover["result"]["supportedVersions"][0], "2026-07-28");
+    assert_eq!(discover["result"]["resultType"], "complete");
+
+    let (_, legacy) = mcp_call(
+        client,
+        base,
+        "initialize",
+        json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}),
+    )
+    .await;
+    assert_eq!(legacy["result"]["protocolVersion"], "2025-06-18");
+
+    let (_, listed) = mcp_call(client, base, "tools/list", json!({})).await;
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"patient_summary"));
+    assert!(names.contains(&"write_resource"));
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted, "a deterministic order lets clients cache");
+    assert!(listed["result"]["ttlMs"].as_u64().is_some());
+
+    let (status, unknown) = mcp_call(client, base, "no/such", json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(unknown["error"]["code"], -32601);
+
+    let summary = tool(client, base, "patient_summary", json!({"patientId":"s1"})).await;
+    assert_eq!(summary["isError"], false);
+    assert_eq!(summary["structuredContent"]["type"], "document");
+
+    let found = tool(
+        client,
+        base,
+        "search_resources",
+        json!({"resourceType":"Condition","query":"patient=s1"}),
+    )
+    .await;
+    assert_eq!(found["structuredContent"]["resourceType"], "Bundle");
+
+    let missing = tool(
+        client,
+        base,
+        "read_resource",
+        json!({"resourceType":"Patient","id":"nobody"}),
+    )
+    .await;
+    assert_eq!(missing["isError"], true);
+
+    let (_, escape) = mcp_call(
+        client,
+        base,
+        "tools/call",
+        json!({"name":"read_resource","arguments":{"resourceType":"..","id":"admin"}}),
+    )
+    .await;
+    assert!(escape.get("error").is_some(), "{escape}");
+
+    let written = tool(
+        client,
+        base,
+        "write_resource",
+        json!({"resource":{"resourceType":"Observation","id":"ai-note","status":"preliminary",
+            "code":{"text":"Suggested"},"subject":{"reference":"Patient/s1"}}}),
+    )
+    .await;
+    assert_eq!(written["isError"], false, "{written}");
+    let stored = get(client, &format!("{base}/fhir/Observation/ai-note")).await;
+    assert_eq!(stored["meta"]["security"][0]["code"], "AIAST");
+    let provenance = get(
+        client,
+        &format!("{base}/fhir/Provenance?target=Observation/ai-note"),
+    )
+    .await;
+    let record = &provenance["entry"][0]["resource"];
+    assert_eq!(record["reason"][0]["coding"][0]["code"], "AIAST");
+    let device = record["agent"][0]["who"]["reference"].as_str().unwrap();
+    let agent = get(client, &format!("{base}/fhir/{device}")).await;
+    assert_eq!(
+        agent["type"]["coding"][0]["code"],
+        "Artificial-Intelligence"
+    );
+
+    // A second write reuses the agent's Device.
+    tool(
+        client,
+        base,
+        "write_resource",
+        json!({"resource":{"resourceType":"Observation","id":"ai-note-2","status":"preliminary",
+            "code":{"text":"Suggested"},"subject":{"reference":"Patient/s1"}}}),
+    )
+    .await;
+    let devices = get(client, &format!("{base}/fhir/Device?_count=10")).await;
+    assert_eq!(ids(&devices).len(), 1);
+}
+
+async fn measure(client: &Client, base: &str) {
+    use base64::Engine as _;
+    let cql = r#"library Screening version '1.0'
+using FHIR version '4.0.1'
+parameter "Measurement Period" Interval<DateTime>
+context Patient
+define "Initial Population": Patient.gender = 'female'
+define "Denominator": "Initial Population"
+define "Screenings": [Observation] O where O.status = 'final' and O.effective during "Measurement Period"
+define "Numerator": exists "Screenings"
+define "Gender": Patient.gender
+"#;
+    put(
+        client,
+        base,
+        json!({"resourceType":"Library","id":"screening","status":"active",
+        "url":"http://example.org/Library/screening","version":"1.0",
+        "type":{"coding":[{"code":"logic-library"}]},
+        "content":[{"contentType":"text/cql",
+            "data":base64::engine::general_purpose::STANDARD.encode(cql)}]}),
+    )
+    .await;
+    let population = |code: &str, name: &str| {
+        json!({"code":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/measure-population","code":code}]},
+            "criteria":{"language":"text/cql-identifier","expression":name}})
+    };
+    put(client, base, json!({"resourceType":"Measure","id":"screening","status":"active",
+        "url":"http://example.org/Measure/screening",
+        "library":["http://example.org/Library/screening"],
+        "scoring":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/measure-scoring","code":"proportion"}]},
+        "group":[{"population":[
+            population("initial-population","Initial Population"),
+            population("denominator","Denominator"),
+            population("numerator","Numerator")],
+            "stratifier":[{"criteria":{"language":"text/cql-identifier","expression":"Gender"}}]}]}))
+    .await;
+    for (id, gender) in [("m1", "female"), ("m2", "female"), ("m3", "male")] {
+        put(
+            client,
+            base,
+            json!({"resourceType":"Patient","id":id,"gender":gender}),
+        )
+        .await;
+    }
+    for (id, patient, date) in [("mo1", "m1", "2024-03-01"), ("mo2", "m2", "2020-03-01")] {
+        put(
+            client,
+            base,
+            json!({"resourceType":"Observation","id":id,"status":"final",
+            "code":{"text":"Screening"},"subject":{"reference":format!("Patient/{patient}")},
+            "effectiveDateTime":date}),
+        )
+        .await;
+    }
+    put(
+        client,
+        base,
+        json!({"resourceType":"Group","id":"mg","type":"person","actual":true,
+        "member":[{"entity":{"reference":"Patient/m1"}},{"entity":{"reference":"Patient/m2"}},
+                  {"entity":{"reference":"Patient/m3"}}]}),
+    )
+    .await;
+    let url = |extra: &str| {
+        format!(
+            "{base}/fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31{extra}"
+        )
+    };
+    let counts = |group: &Value| -> Vec<(String, u64)> {
+        group["population"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|population| {
+                (
+                    population["code"]["coding"][0]["code"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                    population["count"].as_u64().unwrap(),
+                )
+            })
+            .collect()
+    };
+
+    let individual = get(client, &url("&subject=Patient/m1")).await;
+    assert_eq!(individual["resourceType"], "MeasureReport");
+    assert_eq!(individual["type"], "individual");
+    assert_eq!(individual["subject"]["reference"], "Patient/m1");
+    assert_eq!(
+        individual["measure"],
+        "http://example.org/Measure/screening"
+    );
+    assert_eq!(individual["group"][0]["measureScore"]["value"], 1.0);
+
+    let summary = get(client, &url("&subject=Group/mg")).await;
+    assert_eq!(summary["type"], "summary");
+    let group = &summary["group"][0];
+    let found = counts(group);
+    assert!(
+        found.contains(&("initial-population".to_owned(), 2)),
+        "{found:?}"
+    );
+    assert!(found.contains(&("denominator".to_owned(), 2)), "{found:?}");
+    assert!(found.contains(&("numerator".to_owned(), 1)), "{found:?}");
+    assert_eq!(group["measureScore"]["value"], 0.5);
+    let strata = group["stratifier"][0]["stratum"].as_array().unwrap();
+    assert_eq!(strata.len(), 2, "{strata:?}");
+
+    let listed = get(client, &url("&subject=Group/mg&reportType=subject-list")).await;
+    assert_eq!(listed["type"], "subject-list");
+    let list = listed["contained"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|list| list["id"] == "group-0-numerator")
+        .unwrap();
+    assert_eq!(list["entry"][0]["item"]["reference"], "Patient/m1");
+
+    let by_url = get(
+        client,
+        &format!("{base}/fhir/Measure/$evaluate-measure?measure=http://example.org/Measure/screening&periodStart=2024&periodEnd=2024&subject=Patient/m2"),
+    )
+    .await;
+    assert!(
+        by_url["group"][0]["measureScore"]["value"].as_f64() == Some(0.0),
+        "{by_url}"
+    );
+
+    let response = client
+        .get(format!("{base}/fhir/Measure/screening/$evaluate-measure"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "the period is required"
+    );
+}
+
+#[tokio::test]
+async fn paging_summary_and_agents() {
+    let postgres = Postgres::default()
+        .with_tag("18-alpine")
+        .start()
+        .await
+        .expect("postgres");
+    let port = postgres.get_host_port_ipv4(5432).await.unwrap();
+    let (base, _server) = start_server(&format!(
+        "postgres://postgres:postgres@127.0.0.1:{port}/postgres"
+    ))
+    .await;
+    let client = Client::new();
+    keyset_paging(&client, &base).await;
+    long_post_search(&client, &base).await;
+    summary(&client, &base).await;
+    explain(&client, &base).await;
+    mcp(&client, &base).await;
+    measure(&client, &base).await;
+}

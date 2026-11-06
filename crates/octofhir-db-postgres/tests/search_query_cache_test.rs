@@ -40,7 +40,7 @@ async fn observation_fixture() -> (
     PostgresStorage,
 ) {
     let container = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .unwrap();

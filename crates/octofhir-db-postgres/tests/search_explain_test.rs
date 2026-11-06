@@ -21,7 +21,7 @@ use testcontainers_modules::postgres::Postgres;
 #[ignore = "manual live-DB EXPLAIN smoke test"]
 async fn representative_search_explain_json_runs_with_bound_params() {
     let container = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("Failed to start PostgreSQL container");

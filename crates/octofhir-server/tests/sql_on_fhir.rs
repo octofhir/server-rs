@@ -105,7 +105,7 @@ async fn viewdefinition_run_over_server_data() {
         .with_test_writer()
         .try_init();
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("postgres");

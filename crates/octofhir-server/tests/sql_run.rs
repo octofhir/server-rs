@@ -131,7 +131,7 @@ fn sql_library(
 #[tokio::test]
 async fn sql_run_queries_views_in_a_sandbox() {
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("postgres");

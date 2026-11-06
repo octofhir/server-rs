@@ -29,7 +29,7 @@ async fn get_postgres_url() -> String {
     let container_arc = SHARED_POSTGRES
         .get_or_init(|| async {
             let container = Postgres::default()
-                .with_tag("17-alpine")
+                .with_tag("18-alpine")
                 .start()
                 .await
                 .expect("start postgres container");

@@ -37,7 +37,7 @@ fn instance_config(postgres_url: &str) -> AppConfig {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_instances_boot_against_one_database() {
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("start postgres container");

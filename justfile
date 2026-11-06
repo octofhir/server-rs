@@ -361,6 +361,10 @@ inferno-test:
 inferno-results *ARGS:
     bun run scripts/inferno/collect-results.ts {{ARGS}}
 
+# Run an Inferno suite through its API against a local server: export, submit or us-core
+inferno-bulk MODE="export" *ARGS:
+    bun run scripts/inferno/run-bulk.ts {{MODE}} {{ARGS}}
+
 # Open Inferno UI in browser
 inferno-ui:
     open http://localhost:4567

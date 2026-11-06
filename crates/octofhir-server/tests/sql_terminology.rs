@@ -266,7 +266,7 @@ const SCT_TO_ICD10: &str = "http://example.org/ConceptMap/sct-to-icd10|2026";
 #[tokio::test]
 async fn terminology_dependencies_are_relations() {
     let postgres = Postgres::default()
-        .with_tag("17-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("postgres");
