@@ -8,7 +8,7 @@
 //! `measure-observation` names a CQL function: each member of the population it refers to
 //! goes through it and the group's `aggregateMethod` turns the values into the score. A ratio
 //! can observe its numerator and denominator, and then divides the two aggregates.
-//! [`composite`] combines other measures and [`supplemental`] reports `supplementalData`.
+//! The `composite` module combines other measures and `supplemental` reports `supplementalData`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
