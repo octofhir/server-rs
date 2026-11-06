@@ -43,6 +43,7 @@ export default defineConfig({
             { label: 'Overview', link: 'authentication/' },
             { label: 'Auth Architecture', link: 'auth-architecture/' },
             { label: 'Access Policies', link: 'access-policies/' },
+            { label: 'UDAP Security', link: 'udap/' },
             { label: 'JWT Key Persistence', link: 'jwt-key-persistence/' },
           ]
         },

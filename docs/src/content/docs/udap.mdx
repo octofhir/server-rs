@@ -1,0 +1,104 @@
+---
+title: UDAP Security
+description: Certificates instead of shared secrets, for applications of a trust community
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+UDAP Security ([FAST Security STU2](https://hl7.org/fhir/us/udap-security/), package
+`hl7.fhir.us.udap-security#2.0.0`) lets an application from a trust community use the server
+without anyone creating a client for it. The application holds a certificate from the community.
+It registers itself with a signed software statement and signs in with a JWT carrying the
+certificate chain, so the server trusts the community's anchors rather than each client.
+
+## Configuration
+
+UDAP is off by default.
+
+```toml
+[auth.udap]
+enabled = true
+# This server's chain, leaf first. The leaf carries the FHIR base URL as a URI
+# Subject Alternative Name, for example https://fhir.example.org/fhir
+certificate = "/etc/octofhir/udap/server.pem"
+# RSA: the metadata is signed with RS256.
+private_key = "/etc/octofhir/udap/server.key"
+# What a registration can be granted. This is the default.
+scopes = ["openid", "fhirUser", "offline_access", "patient/*.rs", "user/*.rs", "system/*.rs"]
+
+[[auth.udap.communities]]
+uri = "urn:example:community"
+anchors = ["/etc/octofhir/udap/community-root.pem"]
+revocation_lists = ["/etc/octofhir/udap/community.crl"]
+```
+
+If a file cannot be read, or the certificate does not name the base URL, the server logs the
+reason and starts with UDAP off.
+
+<Aside type="caution">
+A registration needs no one's approval: any certificate from a configured community gets a
+client. `scopes` bounds what it can ask for, and access policies decide what it reaches, as for
+any client. Add a community only if you trust everyone it certifies.
+</Aside>
+
+## Discovery
+
+`GET /fhir/.well-known/udap` gives the server metadata, with `signed_metadata` signed by the
+server's certificate. With `?community=` it answers for that community, and with 204 if it is
+not one of the configured ones.
+
+## Registration
+
+`POST /auth/udap/register`:
+
+```json
+{"software_statement": "eyJ...", "udap": "1"}
+```
+
+The software statement is a JWT with the certificate chain in `x5c`. Its `iss` has to be a URI in
+the Subject Alternative Name of the certificate, `aud` this endpoint, and it lives 5 minutes at
+most. It asks for `authorization_code` or `client_credentials`, not both.
+
+| Answer | When |
+|---|---|
+| 201 and `client_id` | A new registration. Scopes outside the configured list are dropped |
+| 200, same `client_id` | The same `iss` in the same community registers again: the registration is replaced |
+| 200, `grant_types: []` | The statement has an empty `grant_types`: the registration is cancelled |
+| 400 `unapproved_software_statement` | No chain to an anchor, or `iss` is not in the certificate |
+| 400 `invalid_software_statement` | A bad signature, audience or lifetime, or a `jti` already used |
+| 400 `invalid_client_metadata` | A registration value is wrong, or no requested scope is available |
+
+Certifications in the request are not read.
+
+## Getting a token
+
+The application authenticates with a JWT signed by its certificate, with `udap=1` in the request:
+
+```http
+POST /auth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&scope=system/Patient.rs&udap=1
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&client_assertion=eyJ...
+```
+
+`iss` and `sub` are the `client_id`, and `aud` is the token endpoint. The chain has to lead to the
+community of the registration and the certificate has to name the registered application, so a
+renewed certificate keeps working and another member's does not.
+
+Client credentials requests carry the `hl7-b2b` extension in the JWT, with `version`,
+`organization_id` and `purpose_of_use`. The organization and purpose go to the log. Access tokens
+last 60 minutes at most.
+
+Authorization code applications use the usual `/auth/authorize` with PKCE, and the same JWT at the
+token endpoint, without the extension.
+
+## Not done
+
+- Tiered OAuth (`udap_to`): the server does not act as a client of an identity provider through
+  UDAP, so the metadata does not list it.
+- Revocation is read from the configured files. CRL distribution points and OCSP are not fetched,
+  and a list past its `nextUpdate` fails every certificate in that community until it is replaced.
+- Intermediates come from `x5c`; missing ones are not fetched through the certificate's AIA.
+- The experimental `jku` workflow.
