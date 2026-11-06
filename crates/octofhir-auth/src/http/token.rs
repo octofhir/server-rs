@@ -45,9 +45,10 @@ use tracing::{debug, info, warn};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::config::CookieConfig;
+use crate::config::{CookieConfig, LockoutConfig};
 use crate::error::AuthError;
 use crate::federation::ClientJwksCache;
+use crate::lockout::Lockout;
 use crate::oauth::client_assertion::{ClientAssertionConfig, extract_client_id_unverified};
 use crate::oauth::token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};
 use crate::storage::session::SessionStorage;
@@ -79,6 +80,8 @@ pub struct TokenState {
     fhir_storage: Option<Arc<dyn octofhir_storage::FhirStorage>>,
     /// Trust communities, for clients registered through UDAP (optional).
     udap: Option<Arc<crate::udap::Trust>>,
+    /// Counts failed attempts at passwords and client secrets.
+    lockout: Arc<Lockout>,
 }
 
 impl TokenState {
@@ -116,6 +119,7 @@ impl TokenState {
             jwks_cache: None,
             token_endpoint_url: None,
             udap: None,
+            lockout: Arc::new(Lockout::new(LockoutConfig::default())),
             fhir_storage: None,
         }
     }
@@ -140,6 +144,7 @@ impl TokenState {
             jwks_cache: None,
             token_endpoint_url: None,
             udap: None,
+            lockout: Arc::new(Lockout::new(LockoutConfig::default())),
         }
     }
 
@@ -171,6 +176,13 @@ impl TokenState {
     #[must_use]
     pub fn with_jwks_cache(mut self, jwks_cache: Arc<ClientJwksCache>) -> Self {
         self.jwks_cache = Some(jwks_cache);
+        self
+    }
+
+    /// Shares the failed attempts with the other places that check passwords.
+    #[must_use]
+    pub fn with_lockout(mut self, lockout: Arc<Lockout>) -> Self {
+        self.lockout = lockout;
         self
     }
 
@@ -397,11 +409,14 @@ async fn authenticate_with_secret(
     client_id: &str,
     client_secret: &str,
 ) -> Result<Client, AuthError> {
-    let client = state
-        .client_storage
-        .find_by_client_id(client_id)
-        .await?
-        .ok_or_else(|| AuthError::invalid_client("Unknown client"))?;
+    let name = format!("client:{client_id}");
+    if let Some(retry_after) = state.lockout.remaining(&name) {
+        return Err(AuthError::TooManyAttempts { retry_after });
+    }
+    let Some(client) = state.client_storage.find_by_client_id(client_id).await? else {
+        state.lockout.failed(&name);
+        return Err(AuthError::invalid_client("Unknown client"));
+    };
 
     if !client.active {
         return Err(AuthError::invalid_client("Client is inactive"));
@@ -419,8 +434,10 @@ async fn authenticate_with_secret(
         .await?;
 
     if !valid {
+        state.lockout.failed(&name);
         return Err(AuthError::invalid_client("Invalid client secret"));
     }
+    state.lockout.succeeded(&name);
 
     Ok(client)
 }
@@ -638,10 +655,14 @@ async fn password_grant(
         .ok_or_else(|| AuthError::invalid_request("Missing password parameter"))?;
 
     // 4. Find user by username
-    let user = user_storage
-        .find_by_username(username)
-        .await?
-        .ok_or_else(|| AuthError::invalid_grant("Invalid username or password"))?;
+    let name = format!("user:{username}");
+    if let Some(retry_after) = state.lockout.remaining(&name) {
+        return Err(AuthError::TooManyAttempts { retry_after });
+    }
+    let Some(user) = user_storage.find_by_username(username).await? else {
+        state.lockout.failed(&name);
+        return Err(AuthError::invalid_grant("Invalid username or password"));
+    };
 
     // 5. Verify user is active
     if !user.is_active() {
@@ -651,8 +672,10 @@ async fn password_grant(
     // 6. Verify password
     let password_valid = user_storage.verify_password(&user.id, password).await?;
     if !password_valid {
+        state.lockout.failed(&name);
         return Err(AuthError::invalid_grant("Invalid username or password"));
     }
+    state.lockout.succeeded(&name);
 
     info!(
         user_id = %user.id,
@@ -815,6 +838,24 @@ fn token_success_response(response: TokenResponse, cookie_config: &CookieConfig)
 
 /// Build an error response for token endpoint.
 fn token_error_response(error: AuthError) -> Response {
+    if let AuthError::TooManyAttempts { retry_after } = &error {
+        // Rounded up: a client that waits this long is let through.
+        let seconds = retry_after.as_secs() + 1;
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [
+                ("Content-Type", "application/json".to_owned()),
+                ("Cache-Control", "no-store".to_owned()),
+                ("Retry-After", seconds.to_string()),
+            ],
+            serde_json::json!({
+                "error": error.oauth_error_code(),
+                "error_description": "Too many failed attempts",
+            })
+            .to_string(),
+        )
+            .into_response();
+    }
     let (code, description) = match &error {
         AuthError::InvalidClient { message, .. } => {
             (TokenErrorCode::InvalidClient, message.clone())

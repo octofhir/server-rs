@@ -24,6 +24,7 @@ use octofhir_auth::federation::{ClientJwksCache, JwksCacheConfig};
 use octofhir_auth::http::introspect::{IntrospectionState, introspect_handler};
 use octofhir_auth::http::revoke::{RevocationState, revoke_handler};
 use octofhir_auth::http::udap::{UdapState, udap_metadata_handler, udap_register_handler};
+use octofhir_auth::lockout::Lockout;
 use octofhir_auth::oauth::service::{AuthorizationConfig, AuthorizationService};
 use octofhir_auth::oauth::token::TokenRequest;
 use octofhir_auth::token::jwt::JwtService;
@@ -103,6 +104,7 @@ impl OAuthState {
         let user_storage = Arc::new(ArcUserStorage::new(db_pool.clone()));
 
         // Create TokenState with user storage for password grant and cookie config
+        let lockout = Arc::new(Lockout::new(config.auth.lockout.clone()));
         let token_state = TokenState::new(
             jwt_service.clone(),
             session_storage.clone(),
@@ -112,6 +114,7 @@ impl OAuthState {
             token_config,
         )
         .with_user_storage(user_storage.clone())
+        .with_lockout(lockout.clone())
         .with_cookie_config(config.auth.cookie.clone())
         .with_fhir_storage(app_state.storage.clone())
         // private_key_jwt, the client authentication of SMART Backend Services.
@@ -191,6 +194,7 @@ impl OAuthState {
             client_storage,
             consent_storage,
             session_storage,
+            lockout,
             secure_cookies,
             sso_session_storage,
             session_config: config.auth.session.clone(),

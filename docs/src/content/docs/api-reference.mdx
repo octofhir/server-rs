@@ -429,10 +429,12 @@ with no criteria, page by `_cursor` and have no `last` link. See
 
 ## Rate Limiting
 
-The server has no rate limiting and sends no `X-RateLimit-*` headers.
+There is no general rate limit and no `X-RateLimit-*` headers.
 
-`Retry-After` appears only on bulk status polling: on `202` while a job runs, and on `429` when a
-client polls the same job faster than `bulk_export.min_poll_interval_ms` allows.
+A username or client id that fails to authenticate too often gets `429` with `Retry-After` at
+`/auth/token`; see [Lockout](/server-rs/configuration/#lockout). Bulk status polling also sends
+`Retry-After`: on `202` while a job runs, and on `429` when a client polls the same job faster than
+`bulk_export.min_poll_interval_ms` allows.
 
 ## CORS
 

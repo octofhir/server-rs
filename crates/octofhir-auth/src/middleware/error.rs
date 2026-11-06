@@ -60,6 +60,12 @@ impl IntoResponse for AuthError {
 /// Returns (HTTP status, OAuth error code, FHIR issue code, message).
 fn error_details(error: &AuthError) -> (StatusCode, &'static str, &'static str, String) {
     match error {
+        AuthError::TooManyAttempts { .. } => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "temporarily_unavailable",
+            "throttled",
+            "Too many failed attempts".to_string(),
+        ),
         AuthError::InvalidClient { message } => (
             StatusCode::UNAUTHORIZED,
             "invalid_client",

@@ -225,6 +225,19 @@ max_stack_size_kb = 256
 timeout_ms = 100
 ```
 
+### Lockout
+
+A username or client id that fails to authenticate too often is refused for a while, at the token
+endpoint and the login form, with `429` and `Retry-After`. Failures are counted by the name being
+guessed, so someone who knows a name can lock it out; the lock is short for that reason. Counts live
+in the memory of the instance.
+
+```toml
+[auth.lockout]
+max_failed_attempts = 5   # 0 turns it off
+duration = "5m"
+```
+
 ### Sessions & Cookies
 
 ```toml

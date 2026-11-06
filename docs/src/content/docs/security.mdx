@@ -171,6 +171,13 @@ confidential_asymmetric_allowed = true
 
 ---
 
+## Password Guessing
+
+After 5 failed attempts a username or client id is refused for 5 minutes, with `429` and
+`Retry-After`, even with the right password. See [Lockout](/server-rs/configuration/#lockout).
+
+---
+
 ## Access Policies
 
 OctoFHIR uses a policy engine for fine-grained access control.

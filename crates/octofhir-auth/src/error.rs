@@ -8,6 +8,13 @@ use std::fmt;
 /// Errors that can occur during authentication and authorization operations.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
+    /// A name failed to authenticate too often and is locked for now.
+    #[error("Too many failed attempts")]
+    TooManyAttempts {
+        /// How long the name stays locked.
+        retry_after: std::time::Duration,
+    },
+
     /// The client credentials are invalid or the client is not registered.
     #[error("Invalid client: {message}")]
     InvalidClient {
@@ -323,6 +330,7 @@ impl AuthError {
     #[must_use]
     pub fn category(&self) -> ErrorCategory {
         match self {
+            Self::TooManyAttempts { .. } => ErrorCategory::Authentication,
             Self::InvalidClient { .. } => ErrorCategory::Authentication,
             Self::InvalidGrant { .. } => ErrorCategory::Authentication,
             Self::InvalidScope { .. } => ErrorCategory::Authorization,
@@ -348,6 +356,7 @@ impl AuthError {
     #[must_use]
     pub fn oauth_error_code(&self) -> &'static str {
         match self {
+            Self::TooManyAttempts { .. } => "temporarily_unavailable",
             Self::InvalidClient { .. } => "invalid_client",
             Self::InvalidGrant { .. } => "invalid_grant",
             Self::InvalidScope { .. } => "invalid_scope",

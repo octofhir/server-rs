@@ -43,6 +43,9 @@ pub struct AuthConfig {
     /// Policy engine configuration.
     pub policy: PolicyConfig,
 
+    /// Lockout of names that fail to authenticate too often.
+    pub lockout: LockoutConfig,
+
     /// Audit configuration.
     pub audit: AuditConfig,
 
@@ -67,6 +70,7 @@ impl Default for AuthConfig {
             audit: AuditConfig::default(),
             cookie: CookieConfig::default(),
             session: SessionConfig::default(),
+            lockout: LockoutConfig::default(),
             udap: UdapConfig::default(),
         }
     }
@@ -342,6 +346,27 @@ impl Default for QuickJsConfig {
             max_stack_size_kb: 256,
             timeout_ms: 100,
             pool_size: num_cpus::get().max(1),
+        }
+    }
+}
+
+/// Lockout of usernames and client ids that fail to authenticate too often.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LockoutConfig {
+    /// Failed attempts before a name is locked. 0 turns the lockout off.
+    pub max_failed_attempts: u32,
+
+    /// How long a lock lasts, and how long failures are remembered.
+    #[serde(with = "humantime_serde")]
+    pub duration: Duration,
+}
+
+impl Default for LockoutConfig {
+    fn default() -> Self {
+        Self {
+            max_failed_attempts: 5,
+            duration: Duration::from_secs(300),
         }
     }
 }

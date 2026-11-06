@@ -37,6 +37,7 @@ use uuid::Uuid;
 
 use crate::config::SessionConfig;
 use crate::device::{extract_ip_address, extract_user_agent, generate_device_name};
+use crate::lockout::Lockout;
 use crate::oauth::authorize::{
     AuthorizationError, AuthorizationErrorCode, AuthorizationRequest, AuthorizationResponse,
 };
@@ -69,6 +70,8 @@ pub struct AuthorizeState {
     pub consent_storage: Arc<dyn ConsentStorage>,
     /// Session storage for authorization codes.
     pub session_storage: Arc<dyn SessionStorage>,
+    /// Counts failed attempts at passwords.
+    pub lockout: Arc<Lockout>,
     /// SSO session storage for persistent authentication.
     pub sso_session_storage: Arc<dyn SsoSessionStorage>,
     /// FHIR storage for accessing AuthSession resources.
@@ -461,6 +464,19 @@ async fn handle_login(
             .into_response();
     }
 
+    let name = format!("user:{username}");
+    if state.lockout.remaining(&name).is_some() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Html(render_login_form(
+                client_name,
+                &session.id.to_string(),
+                Some("Too many failed attempts, try again later"),
+            )),
+        )
+            .into_response();
+    }
+
     // Find user by username
     tracing::debug!(username = %username, "Looking up user by username");
     let user = match state.user_storage.find_by_username(username).await {
@@ -476,6 +492,7 @@ async fn handle_login(
         }
         Ok(None) => {
             tracing::warn!(username = %username, "User not found");
+            state.lockout.failed(&name);
             return (
                 StatusCode::OK,
                 Html(render_login_form(
@@ -504,6 +521,7 @@ async fn handle_login(
     tracing::debug!(user_id = %user.id, "Verifying password");
     match state.user_storage.verify_password(&user.id, password).await {
         Ok(true) => {
+            state.lockout.succeeded(&name);
             tracing::info!(user_id = %user.id, username = %user.username, "Password verified successfully");
             // Password verified, update session with user_id
             if let Err(e) = state
@@ -557,6 +575,7 @@ async fn handle_login(
                 has_password_hash = user.password_hash.is_some(),
                 "Password verification failed - hash mismatch"
             );
+            state.lockout.failed(&name);
             (
                 StatusCode::OK,
                 Html(render_login_form(

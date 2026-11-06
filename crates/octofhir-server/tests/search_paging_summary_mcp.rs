@@ -745,6 +745,37 @@ define "Bad": singleton from {1, 2}
     assert!(failed.to_string().contains("OperationOutcome"), "{failed}");
 }
 
+/// Guessing a secret locks the name out; another name goes on as before.
+async fn lockout(client: &Client, base: &str) {
+    let attempt = |id: &'static str| {
+        client
+            .post(format!("{base}/auth/token"))
+            .basic_auth(id, Some("wrong"))
+            .form(&[("grant_type", "client_credentials")])
+            .send()
+    };
+    for _ in 0..5 {
+        assert_eq!(
+            attempt("guessed").await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let locked = attempt("guessed").await.unwrap();
+    assert_eq!(locked.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry_after: u64 = locked.headers()["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(retry_after > 0 && retry_after <= 301, "{retry_after}");
+    let body: Value = locked.json().await.unwrap();
+    assert_eq!(body["error"], "temporarily_unavailable");
+    assert_eq!(
+        attempt("other").await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
 async fn continuous_variable(client: &Client, base: &str) {
     let cql = r#"library Stays version '1.0'
 using FHIR version '4.0.1'
@@ -935,6 +966,7 @@ define "Gender": Patient.gender
     composites_and_supplemental_data(client, base).await;
     fhirpath_debug_trace(client, base).await;
     cql_debug_trace(client, base).await;
+    lockout(client, base).await;
     let url = |extra: &str| {
         format!(
             "{base}/fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31{extra}"

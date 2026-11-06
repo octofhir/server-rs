@@ -38,6 +38,7 @@ pub mod error;
 pub mod extractors;
 pub mod federation;
 pub mod http;
+pub mod lockout;
 pub mod middleware;
 pub mod oauth;
 pub mod policy;
