@@ -313,12 +313,12 @@ define Result:
         let mut dependencies = Vec::with_capacity(includes.len());
         for (name, version) in includes.keys() {
             let library = self.stored_library(name, version.as_deref()).await?;
-            dependencies.extend(library["url"].as_str().map(|url| {
-                match library["version"].as_str() {
+            dependencies.extend(library["url"].as_str().map(
+                |url| match library["version"].as_str() {
                     Some(version) => format!("{url}|{version}"),
                     None => url.to_owned(),
-                }
-            }));
+                },
+            ));
         }
         let cql_source = cql_source.to_owned();
         tokio::task::spawn_blocking(move || {

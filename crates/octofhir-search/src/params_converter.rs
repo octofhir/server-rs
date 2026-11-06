@@ -2043,14 +2043,25 @@ mod tests {
         crate::common::register_common_parameters(&registry);
         let sql = |query: &str| {
             let params = parse_query_string(query, 10, 100);
-            build_native_ir_query_from_params("Patient", &params, &registry, "public")
-                .map(|converted| converted.builder.with_raw_resource(true).build().unwrap().sql)
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").map(
+                |converted| {
+                    converted
+                        .builder
+                        .with_raw_resource(true)
+                        .build()
+                        .unwrap()
+                        .sql
+                },
+            )
         };
         assert!(sql("_sort=_id&_cursor=abc").unwrap().contains("r.id > $"));
         assert!(sql("_sort=-_id&_cursor=abc").unwrap().contains("r.id < $"));
         let recent = sql("_sort=-_lastUpdated&_cursor=2026-01-01T00:00:00Z~abc").unwrap();
         assert!(recent.contains("r.updated_at < $"), "{recent}");
-        assert!(sql("_sort=-_lastUpdated&_cursor=abc").is_err(), "no timestamp");
+        assert!(
+            sql("_sort=-_lastUpdated&_cursor=abc").is_err(),
+            "no timestamp"
+        );
         assert!(sql("_cursor=abc").is_err(), "no keyset order");
         assert!(sql("_sort=name&_cursor=abc").is_err(), "no keyset order");
     }

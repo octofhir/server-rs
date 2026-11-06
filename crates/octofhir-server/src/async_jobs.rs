@@ -522,11 +522,12 @@ impl AsyncJobManager {
                 let import_permit = self.import_semaphore.clone().try_acquire_owned().ok();
                 match self.claim_job_matching(import_permit.is_some()).await {
                     Ok(Some(job)) => {
-                        let import_permit = if matches!(job.request_type.as_str(), "bulk_import" | "bulk_submit") {
-                            import_permit
-                        } else {
-                            None
-                        };
+                        let import_permit =
+                            if matches!(job.request_type.as_str(), "bulk_import" | "bulk_submit") {
+                                import_permit
+                            } else {
+                                None
+                            };
                         let manager = self.clone();
                         self.background.spawn_tracked(async move {
                             manager.execute_job(executor, job).await;

@@ -107,10 +107,7 @@ async fn server_endpoints_work() {
     assert!(resp.status().is_success());
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["resourceType"], "CapabilityStatement");
-    assert_eq!(
-        body["patchFormat"][0],
-        "application/json-patch+json"
-    );
+    assert_eq!(body["patchFormat"][0], "application/json-patch+json");
     assert_eq!(body["patchFormat"][1], "application/fhir+json");
 
     let patient = body["rest"][0]["resource"]

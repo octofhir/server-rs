@@ -997,7 +997,7 @@ pub struct EvaluateOperation;
 impl EvaluateOperation {
     /// The report type asked for, or the default for this subject. `subject` and
     /// `population` are the older names the definition keeps for compatibility.
-    fn report_type<'p>(params: &'p Value, group: bool) -> Result<&'p str, OperationError> {
+    fn report_type(params: &Value, group: bool) -> Result<&'static str, OperationError> {
         let subject = text_parameter(params, "subject");
         match text_parameter(params, "reportType") {
             Some("individual" | "subject") => Ok("individual"),

@@ -1316,7 +1316,11 @@ mod tests {
     fn bulk_submit_is_an_operation_scope_that_round_trips() {
         let scopes = SmartScopes::parse("system/bulk-submit system/Patient.r").unwrap();
         assert!(scopes.bulk_submit);
-        assert_eq!(scopes.resource_scopes.len(), 1, "it grants no resource access");
+        assert_eq!(
+            scopes.resource_scopes.len(),
+            1,
+            "it grants no resource access"
+        );
         assert!(scopes.to_string().contains(BULK_SUBMIT_SCOPE));
         assert!(!SmartScopes::parse("system/*.cruds").unwrap().bulk_submit);
         assert!(!SmartScopes::parse("").unwrap().bulk_submit);

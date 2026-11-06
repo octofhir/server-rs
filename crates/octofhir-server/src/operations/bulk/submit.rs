@@ -1282,7 +1282,10 @@ impl<'a> ProviderAuth<'a> {
                 )
             })?;
         if !response.status().is_success() {
-            return Err(format!("Token endpoint returned HTTP {}", response.status()));
+            return Err(format!(
+                "Token endpoint returned HTTP {}",
+                response.status()
+            ));
         }
         let body: Value = response
             .json()

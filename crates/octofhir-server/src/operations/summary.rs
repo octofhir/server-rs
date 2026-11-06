@@ -3,7 +3,7 @@
 //!
 //! The document is built on request from the patient's current data. The IG leaves what
 //! is relevant to the implementer beyond current allergies, medications and problems; the
-//! selection here is the table in [`SECTIONS`]. Every search goes through the caller's
+//! selection here is the table in `SECTIONS`. Every search goes through the caller's
 //! grants, so a summary holds only what the caller may read.
 
 use std::collections::{BTreeMap, HashSet};
@@ -228,7 +228,7 @@ struct SummaryProfile {
     composition: &'static str,
     bundle: &'static str,
     title: &'static str,
-    /// Sections of [`SECTIONS`] that this profile requires on top of the common ones.
+    /// Sections of `SECTIONS` that this profile requires on top of the common ones.
     also_required: &'static [&'static str],
     /// Sections only this profile has.
     extra: &'static [Section],

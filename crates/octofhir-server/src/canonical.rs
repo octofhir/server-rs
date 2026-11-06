@@ -716,9 +716,10 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                 crate::config::BulkSpecVersion::Stu3 => {
                     ("3.0.0", crate::bootstrap::EMBEDDED_BULK_STU3_RESOURCES)
                 }
-                crate::config::BulkSpecVersion::Stu4 => {
-                    ("4.0.0-ballot", crate::bootstrap::EMBEDDED_BULK_STU4_RESOURCES)
-                }
+                crate::config::BulkSpecVersion::Stu4 => (
+                    "4.0.0-ballot",
+                    crate::bootstrap::EMBEDDED_BULK_STU4_RESOURCES,
+                ),
             };
             load_embedded_package(
                 &postgres_store,

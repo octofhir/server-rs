@@ -1054,11 +1054,13 @@ pub async fn expunge(
     .map_err(failed)?;
     if !dry_run {
         // In this order: the history trigger copies what leaves the live table.
-        query(AssertSqlSafe(format!(r#"DELETE FROM "{table}" WHERE id = $1"#)))
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(failed)?;
+        query(AssertSqlSafe(format!(
+            r#"DELETE FROM "{table}" WHERE id = $1"#
+        )))
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(failed)?;
         query(AssertSqlSafe(format!(
             r#"DELETE FROM "{table}_history" WHERE id = $1"#
         )))
