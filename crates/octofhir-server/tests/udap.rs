@@ -298,10 +298,12 @@ async fn refused_registrations(client: &Client, base: &str, app: &Member, ca: &A
     let (_, body) = register(client, base, app.sign(&no_contact)).await;
     assert_eq!(body["error"], "invalid_client_metadata");
 
-    // A certificate signed by someone else cannot pass for the application's own.
-    let mut forged = app.sign(&statement(base, json!(["client_credentials"])));
-    forged.pop();
-    forged.push(if forged.ends_with('A') { 'B' } else { 'A' });
+    // A changed signature does not verify. The first character of it holds six bits of the
+    // signature, while the last one holds only two.
+    let signed = app.sign(&statement(base, json!(["client_credentials"])));
+    let (content, signature) = signed.rsplit_once('.').unwrap();
+    let first = if signature.starts_with('A') { 'B' } else { 'A' };
+    let forged = format!("{content}.{first}{}", &signature[1..]);
     let (status, _) = register(client, base, forged).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
