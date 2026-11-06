@@ -166,6 +166,16 @@ from its numerator in the first three, one minus its score in `weighted`.
 The library is compiled once for the run and all data is read under the caller's grants. The result
 is a `MeasureReport`, which is not stored.
 
+## Debug trace
+
+`$cql` with a `debug` parameter set to true adds a debug trace to the response, in the format the
+FHIR Mapping Language IG proposes for all evaluation languages: `traceStatus`, and a `trace` per event.
+The units of CQL are its definitions and function calls: each has an `enter`, with the operands of a
+function, and an `exit` with the value, and `Message()` adds a `step`. A definition already evaluated is
+not entered again. `expressionPosition` holds the name of the unit and `source` its library. A library
+that fails while evaluating answers with its trace, status `stopped`, and an `outcome`. The console has
+a **Trace** switch that replays it.
+
 ## Data requirements
 
 `$data-requirements` says what a Measure or Library reads before anything runs:

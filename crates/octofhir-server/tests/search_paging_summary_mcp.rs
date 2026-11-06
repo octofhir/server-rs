@@ -688,6 +688,63 @@ async fn fhirpath_debug_trace(client: &Client, base: &str) {
     assert_eq!(named(&failed, "outcome").len(), 1);
 }
 
+async fn cql_debug_trace(client: &Client, base: &str) {
+    let run = |library: &str| {
+        let body = json!({"resourceType":"Parameters","parameter":[
+            {"name":"library","valueString":library},
+            {"name":"debug","valueBoolean":true}]});
+        let request = client.post(format!("{base}/fhir/$cql")).json(&body);
+        async move { request.send().await.unwrap().json::<Value>().await.unwrap() }
+    };
+    let library = r#"library Traced version '1.0'
+define function Twice(value Integer): value * 2
+define "Answer": Twice(21)
+"#;
+    let report = run(library).await;
+    let parameters = report["parameter"].as_array().unwrap();
+    let status = parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "traceStatus")
+        .unwrap();
+    assert_eq!(status["valueCode"], "complete", "{report}");
+    let positions: Vec<&str> = parameters
+        .iter()
+        .filter(|parameter| parameter["name"] == "trace")
+        .filter_map(|event| {
+            event["part"]
+                .as_array()?
+                .iter()
+                .find(|part| part["name"] == "expressionPosition")?["valueString"]
+                .as_str()
+        })
+        .collect();
+    assert_eq!(
+        positions,
+        ["Answer", "Twice", "Twice", "Answer"],
+        "{report}"
+    );
+    assert!(
+        report.to_string().contains(r#""valueInteger":42"#),
+        "{report}"
+    );
+    assert!(
+        parameters
+            .iter()
+            .any(|parameter| parameter["name"] == "result")
+    );
+
+    // A failure while evaluating keeps what was traced.
+    let failed = run(r#"library Fails version '1.0'
+define "Bad": singleton from {1, 2}
+"#)
+    .await;
+    assert!(
+        failed.to_string().contains(r#""valueCode":"stopped""#),
+        "{failed}"
+    );
+    assert!(failed.to_string().contains("OperationOutcome"), "{failed}");
+}
+
 async fn continuous_variable(client: &Client, base: &str) {
     let cql = r#"library Stays version '1.0'
 using FHIR version '4.0.1'
@@ -877,6 +934,7 @@ define "Gender": Patient.gender
     data_requirements(client, base).await;
     composites_and_supplemental_data(client, base).await;
     fhirpath_debug_trace(client, base).await;
+    cql_debug_trace(client, base).await;
     let url = |extra: &str| {
         format!(
             "{base}/fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31{extra}"

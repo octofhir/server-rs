@@ -4,6 +4,7 @@ import {
   Braces,
   Check,
   CircleAlert,
+  Footprints,
   Library,
   Play,
   Sigma,
@@ -14,6 +15,8 @@ import {
   X as Xmark,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TracePanel } from "@/pages/fml-console/components/TracePanel";
+import type { TraceEvent } from "@/pages/fml-console/trace";
 import { fhirClient, HttpError } from "@/shared/api/fhirClient";
 import { isRecord } from "@/shared/api/guards";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
@@ -96,6 +99,9 @@ function buildParamEntries(paramsJson: string): InputParam[] {
   });
 }
 
+/** A definition or function by its name, a `Message()` by its text. */
+const traceLabel = (event: TraceEvent) => event.position || event.messages.join(" ");
+
 export function CqlConsolePage() {
   const [source, setSource] = useState(() => localStorage.getItem(STORAGE_SRC) ?? DEFAULT_SOURCE);
   const [contextResource, setContextResource] = useState(
@@ -104,6 +110,8 @@ export function CqlConsolePage() {
   const [paramsJson, setParamsJson] = useState(() => localStorage.getItem(STORAGE_PARAMS) ?? "{}");
 
   const [showFunctions, setShowFunctions] = useState(false);
+  const [debug, setDebug] = useState(false);
+  const [traceEvent, setTraceEvent] = useState(0);
   const [inputTab, setInputTab] = useState<"context" | "params">("context");
   const [diagnostics, setDiagnostics] = useState<CqlDiagnostic[]>([]);
   const [validated, setValidated] = useState(false);
@@ -190,6 +198,7 @@ export function CqlConsolePage() {
       }
 
       parameter.push(...buildParamEntries(paramsJson));
+      if (debug) parameter.push({ name: "debug", valueBoolean: true });
 
       let response: Awaited<ReturnType<typeof fhirClient.customRequest>>;
       try {
@@ -211,7 +220,10 @@ export function CqlConsolePage() {
     },
   });
 
-  const handleExecute = () => evaluateMutation.mutate();
+  const handleExecute = () => {
+    setTraceEvent(0);
+    evaluateMutation.mutate();
+  };
 
   const handleClear = () => {
     setSource("");
@@ -316,6 +328,15 @@ export function CqlConsolePage() {
                       {ex.label}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className={`${classes.chip} ${debug ? classes.chipActive : ""}`}
+                    onClick={() => setDebug((v) => !v)}
+                    title="Record a debug trace of the evaluation"
+                  >
+                    <Footprints size={12} />
+                    Trace
+                  </button>
                   <button
                     type="button"
                     className={`${classes.chip} ${showFunctions ? classes.chipActive : ""}`}
@@ -451,6 +472,7 @@ export function CqlConsolePage() {
               )}
 
               {data ? (
+                <>
                 <div className={classes.resultSection}>
                   <div className={classes.resultSectionHead}>
                     <span className={classes.sectionTitle}>
@@ -475,6 +497,27 @@ export function CqlConsolePage() {
                     </div>
                   )}
                 </div>
+                {data.trace && (
+                  <div className={classes.resultSection}>
+                    <div className={classes.resultSectionHead}>
+                      <span className={classes.sectionTitle}>Trace</span>
+                      <span className={classes.sectionCount}>{data.trace.events.length}</span>
+                    </div>
+                    {data.trace.issues.map((issue) => (
+                      <div key={issue.diagnostics} className={classes.errorBox}>
+                        <CircleAlert size={18} className={classes.errorIcon} />
+                        <div className={classes.errorMsg}>{issue.diagnostics}</div>
+                      </div>
+                    ))}
+                    <TracePanel
+                      trace={data.trace}
+                      current={traceEvent}
+                      onSelect={setTraceEvent}
+                      labelOf={traceLabel}
+                    />
+                  </div>
+                )}
+                </>
               ) : (
                 !evaluateMutation.error && (
                   <div className={classes.emptyState}>

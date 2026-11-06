@@ -4112,9 +4112,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e01a770a7bd433c3860260b3f0bc1e0b21d6b1dd2efb075b429bffcb06e66619"
+checksum = "0a8bb1b746117c410fc27f7fe34d54b602abc3ba1dece7f47c763cd6ead3e5f2"
 dependencies = [
  "indexmap 2.14.2",
  "octofhir-cql-ast",
@@ -4128,9 +4128,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql-ast"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e67e6f5254f27e499e7178f5f1fa56c3b66f997b2aeadf7df697550662d2b24b"
+checksum = "e18065fa4a1712fcdb983265166e982390b9fb7a0d83183b3637456313dbd56a"
 dependencies = [
  "bigdecimal",
  "octofhir-cql-diagnostics",
@@ -4139,9 +4139,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql-diagnostics"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67ae17396a9c0301451dc25ed408db4a0e9b1be28afde715835a65b5c812ae8f"
+checksum = "d83469a9cd507ee43c7dcb0519dacdb9dcad9bbce473e8d3a958989e15dd6260"
 dependencies = [
  "serde",
  "thiserror",
@@ -4149,9 +4149,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql-elm"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b488232fb043f8cdad939438bfcae89c07e7b79634ab4caf97982ba9057a5241"
+checksum = "68510d95bae70187ec0d8466a468725828796479125ed08a66140414e70dadb7"
 dependencies = [
  "bigdecimal",
  "octofhir-cql-ast",
@@ -4163,9 +4163,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql-eval"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9951662834e1deb89d512baf507988c8a5e706e9dc66e54500668952a81bf927"
+checksum = "1ec0a196bdb476922ae6bbdaf77437d546e37a6e7d3b2e802ab972d7eed0186f"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -4186,9 +4186,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql-model"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57105b9b9f2bd43a068c951fdd907a2910b11973bb2b802b4ce251e6611a0a09"
+checksum = "b18497dcd31199c2ec36d033d3800cbb347dbb584a9066107b644df88e9cc970"
 dependencies = [
  "async-trait",
  "bigdecimal",
@@ -4205,9 +4205,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql-parser"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6df2e21bf0f1e43e32512772af583fedbdc38a12ab331828956ea0188a2e0ca5"
+checksum = "73bff254ce57c2e1869f14aa4c3cf1f05484da997cae73e1b544c626b7a1153e"
 dependencies = [
  "bigdecimal",
  "octofhir-cql-ast",
@@ -4244,9 +4244,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql-types"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8bf3bf039e6e8fb36ff165942f05f864ad96229e2b6a8191868268387024f74"
+checksum = "1a1e158a167347be6052f0f52430bd6db1dd1674bd2fccea98cefeac504db639"
 dependencies = [
  "bigdecimal",
  "chrono",

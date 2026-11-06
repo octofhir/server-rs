@@ -1,3 +1,5 @@
+import { type DebugResult, parseDebugParameters } from "@/pages/fml-console/trace";
+
 /**
  * Parsing for the `$cql` operation response.
  *
@@ -33,6 +35,8 @@ export interface CqlDefine {
 export interface CqlEvaluationResult {
   mode: "expression" | "library";
   defines: CqlDefine[];
+  /** With `debug`: what the evaluation did, and why it failed if it did. */
+  trace?: DebugResult;
 }
 
 interface FhirParameterPart {
@@ -97,6 +101,10 @@ function toDefine(name: string, raw: string): CqlDefine {
 
 export function parseCqlResponse(params: { parameter?: FhirParameterPart[] }): CqlEvaluationResult {
   const parts = params.parameter ?? [];
+  const trace = parts.some((p) => p.name === "traceStatus") ? parseDebugParameters(params) : undefined;
+
+  // A debug run that failed: only the trace and its outcome.
+  if (trace?.issues.length) return { mode: "library", defines: [], trace };
 
   // Library mode: a single `result` parameter carrying one part per define.
   const resultParam = parts.find((p) => p.name === "result");
@@ -104,10 +112,10 @@ export function parseCqlResponse(params: { parameter?: FhirParameterPart[] }): C
     const defines = resultParam.part
       .filter((p) => p.valueString !== undefined)
       .map((p) => toDefine(p.name, p.valueString ?? "null"));
-    return { mode: "library", defines };
+    return { mode: "library", defines, trace };
   }
 
   // Expression mode: a single `return` value.
   const raw = parts.find((p) => p.name === "return")?.valueString ?? "null";
-  return { mode: "expression", defines: [toDefine("Result", raw)] };
+  return { mode: "expression", defines: [toDefine("Result", raw)], trace };
 }

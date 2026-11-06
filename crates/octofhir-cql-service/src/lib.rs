@@ -14,7 +14,8 @@ pub mod library_cache;
 mod requirements;
 pub mod service;
 pub mod terminology_provider;
+mod trace;
 
 pub use config::CqlConfig;
 pub use error::{CqlError, CqlResult};
-pub use service::{CqlService, ValidationIssue};
+pub use service::{CqlService, Traced, ValidationIssue, expression_library};

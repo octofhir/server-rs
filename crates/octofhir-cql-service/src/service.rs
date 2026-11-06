@@ -6,8 +6,10 @@ use crate::error::{CqlError, CqlResult};
 use crate::library_cache::LibraryCache;
 use crate::requirements::module_definition;
 use crate::terminology_provider::CqlTerminologyProvider;
+use crate::trace;
 use indexmap::IndexMap;
 use octofhir_cql::{CompiledLibrary as CqlLibrary, parse};
+use octofhir_cql_eval::TraceRecorder;
 use octofhir_cql_model::fhir::json::fhir_to_cql;
 use octofhir_cql_types::{CqlDateTime, CqlInterval, CqlType, CqlValue};
 use octofhir_storage::SearchParams;
@@ -41,6 +43,24 @@ pub struct CqlService {
     library_cache: Arc<LibraryCache>,
     storage: octofhir_storage::DynStorage,
     config: CqlConfig,
+}
+
+/// An evaluation with its debug trace.
+pub struct Traced {
+    pub defines: CqlResult<IndexMap<String, Value>>,
+    /// `traceStatus` and `trace` output parameters; empty without a trace.
+    pub parameters: Vec<Value>,
+}
+
+/// An expression as a minimal ad-hoc library with a single `Result` define.
+pub fn expression_library(expression: &str) -> String {
+    format!(
+        r#"library Adhoc version '1.0.0'
+
+define Result:
+  {expression}
+"#
+    )
 }
 
 impl CqlService {
@@ -105,16 +125,7 @@ impl CqlService {
         context_value: Option<Value>,
         parameters: HashMap<String, Value>,
     ) -> CqlResult<Value> {
-        // Wrap expression in a minimal ad-hoc library with a single `Result` define.
-        let library_cql = format!(
-            r#"library Adhoc version '1.0.0'
-
-define Result:
-  {}
-"#,
-            expression
-        );
-
+        let library_cql = expression_library(expression);
         let results = self
             .eval_source(&library_cql, context_type, context_value, parameters)
             .await?;
@@ -134,6 +145,33 @@ define Result:
         context_value: Option<Value>,
         parameters: HashMap<String, Value>,
     ) -> CqlResult<IndexMap<String, Value>> {
+        self.run_source(cql_source, context_type, context_value, parameters, false)
+            .await?
+            .defines
+    }
+
+    /// Evaluate a library, or an expression through [`expression_library`], with a debug trace.
+    /// A library that does not compile is an error; one that fails while evaluating gives the
+    /// failure in [`Traced::defines`] next to what was traced up to it.
+    pub async fn evaluate_debug(
+        &self,
+        cql_source: &str,
+        context_type: Option<&str>,
+        context_value: Option<Value>,
+        parameters: HashMap<String, Value>,
+    ) -> CqlResult<Traced> {
+        self.run_source(cql_source, context_type, context_value, parameters, true)
+            .await
+    }
+
+    async fn run_source(
+        &self,
+        cql_source: &str,
+        context_type: Option<&str>,
+        context_value: Option<Value>,
+        parameters: HashMap<String, Value>,
+        debug: bool,
+    ) -> CqlResult<Traced> {
         let timeout = Duration::from_millis(self.config.evaluation_timeout_ms);
         let deadline = std::time::Instant::now() + timeout;
         let data_provider = Arc::new(self.data_provider.for_evaluation(deadline));
@@ -142,7 +180,7 @@ define Result:
         let cql_source = cql_source.to_owned();
         let context_type = context_type.map(str::to_owned);
         let runtime = tokio::runtime::Handle::current();
-        let job = tokio::task::spawn_blocking(move || -> CqlResult<IndexMap<String, Value>> {
+        let job = tokio::task::spawn_blocking(move || -> CqlResult<Traced> {
             // The evaluator has synchronous callbacks. Enter the runtime on a
             // blocking thread so callbacks can await SQL/FHIRPath safely even
             // when the caller runs on Tokio's single-thread runtime.
@@ -179,23 +217,35 @@ define Result:
 
             let mut ctx = ctx_builder.build();
             library.register(&mut ctx);
+            if debug {
+                ctx.record_trace(TraceRecorder::new(trace::MAX_TRACE_EVENTS));
+            }
 
             // Evaluate the library — returns every define's value
             let result = library.evaluate(&mut ctx);
-            if let Some(error) = data_provider.take_error() {
-                return Err(error);
-            }
-            let results =
-                result.map_err(|error| CqlError::EvaluationError(format!("{error:?}")))?;
-
-            // Convert every definition to JSON, preserving source (define) order
-            let mut json_results = IndexMap::new();
-            for (name, value) in results {
-                let json = super::data_provider::cql_value_to_json(&value).unwrap_or(Value::Null);
-                json_results.insert(name, json);
-            }
-
-            Ok(json_results)
+            let defines = match data_provider.take_error() {
+                Some(error) => Err(error),
+                None => result
+                    .map_err(|error| CqlError::EvaluationError(format!("{error:?}")))
+                    // Every definition as JSON, preserving source (define) order
+                    .map(|results| {
+                        results
+                            .into_iter()
+                            .map(|(name, value)| {
+                                let json = super::data_provider::cql_value_to_json(&value)
+                                    .unwrap_or(Value::Null);
+                                (name, json)
+                            })
+                            .collect()
+                    }),
+            };
+            let parameters = ctx.take_trace().map_or_else(Vec::new, |recorder| {
+                trace::parameters(&recorder, defines.is_err())
+            });
+            Ok(Traced {
+                defines,
+                parameters,
+            })
         });
         tokio::time::timeout(timeout, job)
             .await

@@ -9,6 +9,10 @@
 //! - **expression**: The CQL expression that was evaluated
 //! - **result**: The evaluation result serialized as a JSON value
 //!
+//! With `debug` set to true the response also holds a debug trace (`traceStatus` and a `trace`
+//! per event): definitions, function calls and `Message()`. A library that fails while evaluating
+//! then answers with its trace and an `outcome`.
+//!
 //! # Examples
 //!
 //! System-level (no resource context):
@@ -37,6 +41,7 @@ use crate::operations::handler::OperationLevel;
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
+use octofhir_cql_service::{Traced, expression_library};
 use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Arc};
 
@@ -135,12 +140,13 @@ impl CqlOperation {
 
     /// Names handled out-of-band (expression source, library source, context)
     /// rather than as CQL `parameter` declarations.
-    const RESERVED_PARAMS: [&'static str; 5] = [
+    const RESERVED_PARAMS: [&'static str; 6] = [
         "expression",
         "library",
         "context",
         "contextValue",
         "validate",
+        "debug",
     ];
 
     /// Whether the request asks for parse-only validation (`validate` = true).
@@ -299,6 +305,33 @@ impl CqlOperation {
         })
     }
 
+    /// The result of a `debug` run, or its failure as an `outcome`, with the trace.
+    fn build_debug_response(&self, traced: Traced, expression: Option<&str>) -> Value {
+        let mut response = match (traced.defines.as_ref(), expression) {
+            (Ok(defines), Some(expression)) => self.build_response(
+                expression,
+                defines.get("Result").cloned().unwrap_or(Value::Null),
+            ),
+            (Ok(defines), None) => self.build_library_response(defines.clone()),
+            (Err(error), _) => json!({
+                "resourceType": "Parameters",
+                "id": "cql",
+                "parameter": [{"name": "outcome", "resource": {
+                    "resourceType": "OperationOutcome",
+                    "issue": [{
+                        "severity": "error",
+                        "code": "processing",
+                        "diagnostics": error.to_string(),
+                    }],
+                }}],
+            }),
+        };
+        if let Some(parameters) = response["parameter"].as_array_mut() {
+            parameters.extend(traced.parameters);
+        }
+        response
+    }
+
     /// Build Parameters response for parse-only validation: one `issue` part per
     /// diagnostic. An empty `parameter` list means the source is valid.
     fn build_validate_response(&self, issues: Vec<octofhir_cql_service::ValidationIssue>) -> Value {
@@ -352,6 +385,22 @@ impl CqlOperation {
 
         let parameters = self.extract_parameters(params);
 
+        if wants_debug(params) {
+            let library = self.extract_library(params);
+            let (source, expression) = match library {
+                Some(source) => (source, None),
+                None => {
+                    let expression = self.extract_expression(params)?;
+                    (expression_library(&expression), Some(expression))
+                }
+            };
+            let traced = cql_service
+                .evaluate_debug(&source, context_type, context_value, parameters)
+                .await
+                .map_err(map_cql_error)?;
+            return Ok(self.build_debug_response(traced, expression.as_deref()));
+        }
+
         if let Some(library_source) = self.extract_library(params) {
             let defines = cql_service
                 .evaluate_library_source(&library_source, context_type, context_value, parameters)
@@ -367,6 +416,14 @@ impl CqlOperation {
             .map_err(map_cql_error)?;
         Ok(self.build_response(&expression, result))
     }
+}
+
+fn wants_debug(params: &Value) -> bool {
+    params["parameter"].as_array().is_some_and(|parameters| {
+        parameters
+            .iter()
+            .any(|parameter| parameter["name"] == "debug" && parameter["valueBoolean"] == true)
+    })
 }
 
 impl Default for CqlOperation {
