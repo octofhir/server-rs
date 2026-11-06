@@ -59,6 +59,16 @@ fn tools(state: &AppState) -> Vec<Value> {
                 "expression": text("FHIRPath expression"),
                 "resource": {"type": "object", "description": "FHIR resource to evaluate against"},
             }), &["expression"])}),
+        json!({"name": "evaluate_measure", "title": "Evaluate a measure",
+            "description": "Score a Measure for a period, for one Patient, a Group, or everyone \
+the token can read. Returns a MeasureReport.",
+            "annotations": read_only,
+            "inputSchema": object(json!({
+                "measureId": text("Measure id"),
+                "periodStart": text("Start of the period, for example 2024-01-01"),
+                "periodEnd": text("End of the period, for example 2024-12-31"),
+                "subject": text("Patient/id or Group/id"),
+            }), &["measureId", "periodStart", "periodEnd"])}),
         json!({"name": "get_capabilities", "title": "Server capabilities",
             "description": "List the resource types, search parameters and operations of this server.",
             "annotations": read_only,
@@ -486,6 +496,23 @@ async fn call_tool(
             (
                 Method::POST,
                 format!("/fhir/{resource_type}/$validate"),
+                Some(parameters(json!(list))),
+            )
+        }
+        "evaluate_measure" => {
+            let mut list = vec![
+                json!({"name": "periodStart", "valueDate": required(arguments, "periodStart")?}),
+                json!({"name": "periodEnd", "valueDate": required(arguments, "periodEnd")?}),
+            ];
+            if let Some(subject) = arguments["subject"].as_str() {
+                list.push(json!({"name": "subject", "valueString": subject}));
+            }
+            (
+                Method::POST,
+                format!(
+                    "/fhir/Measure/{}/$evaluate-measure",
+                    id_segment(arguments, "measureId")?
+                ),
                 Some(parameters(json!(list))),
             )
         }
