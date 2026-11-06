@@ -53,6 +53,7 @@ pub mod definition;
 pub mod evaluate_measure;
 pub mod everything;
 pub mod expunge;
+pub mod purge;
 pub mod fhirpath;
 pub mod fml;
 pub mod graph;
@@ -82,7 +83,7 @@ pub use context::OperationContext;
 pub use cql::CqlOperation;
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
 pub use data_requirements::DataRequirementsOperation;
-pub use evaluate_measure::EvaluateMeasureOperation;
+pub use evaluate_measure::{EvaluateMeasureOperation, EvaluateOperation};
 pub use everything::EverythingOperation;
 pub use fhirpath::FhirPathOperation;
 pub use fml::{ConvertOperation, ExtractOperation, TransformOperation};
@@ -93,7 +94,9 @@ pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
 pub use params::OperationParams;
 pub use registry::OperationRegistry;
 pub use router::{
-    compartment_post_handler, instance_operation_handler, instance_operation_or_history_handler,
+    compartment_post_handler, delete_compartment_history_handler, delete_instance_history_handler,
+    delete_version_handler,
+    instance_operation_handler, instance_operation_or_history_handler,
     is_operation, merged_root_get_handler, merged_root_post_handler, merged_type_get_handler,
     merged_type_post_handler, system_operation_handler, type_operation_handler,
 };
@@ -311,6 +314,7 @@ pub fn register_core_operations_all(
             "evaluate-measure".to_string(),
             Arc::new(EvaluateMeasureOperation::new()),
         );
+        handlers.insert("evaluate".to_string(), Arc::new(EvaluateOperation));
         handlers.insert(
             "data-requirements".to_string(),
             Arc::new(DataRequirementsOperation),
@@ -341,6 +345,9 @@ pub fn register_core_operations_all(
 
     // $expunge operation
     handlers.insert("expunge".to_string(), Arc::new(expunge::ExpungeOperation));
+
+    // Patient/$purge and Group/$purge (the definitions come with the R6 package)
+    handlers.insert("purge".to_string(), Arc::new(purge::PurgeOperation));
 
     // Patient/$summary (International Patient Summary)
     handlers.insert("summary".to_string(), Arc::new(summary::SummaryOperation));

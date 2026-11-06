@@ -60,12 +60,14 @@ enum Scoring {
 }
 
 impl Scoring {
-    fn of(measure: &Value) -> Result<Self, OperationError> {
-        let code = measure["scoring"]["coding"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find_map(|coding| coding["code"].as_str());
+    /// From the group (R5 and later) or the Measure (R4, R5).
+    fn of(measure: &Value, group: &Value) -> Result<Self, OperationError> {
+        let code = [group, measure].into_iter().find_map(|source| {
+            source["scoring"]["coding"]
+                .as_array()?
+                .iter()
+                .find_map(|coding| coding["code"].as_str())
+        });
         match code {
             Some("proportion") => Ok(Self::Proportion),
             Some("ratio") => Ok(Self::Ratio),
@@ -81,7 +83,8 @@ impl Scoring {
     }
 }
 
-/// How observation values become the score, from the `aggregateMethod` extension.
+/// How observation values become the score, from `aggregateMethod` (R5 and later) or the
+/// extension of that name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Aggregate {
     Sum,
@@ -94,16 +97,19 @@ enum Aggregate {
 
 impl Aggregate {
     fn of(population: &Value) -> Result<Self, OperationError> {
-        let code = population["extension"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|extension| {
-                extension["url"]
+        let code = population["aggregateMethod"]["coding"][0]["code"]
+            .as_str()
+            .or_else(|| {
+                population["extension"]
+                    .as_array()?
+                    .iter()
+                    .find(|extension| {
+                        extension["url"]
+                            .as_str()
+                            .is_some_and(|url| url.ends_with("aggregateMethod"))
+                    })?["valueCode"]
                     .as_str()
-                    .is_some_and(|url| url.ends_with("aggregateMethod"))
-            })
-            .and_then(|extension| extension["valueCode"].as_str());
+            });
         match code {
             Some("sum") => Ok(Self::Sum),
             Some("average") => Ok(Self::Average),
@@ -115,7 +121,7 @@ impl Aggregate {
                 "Aggregate method {other} is not supported"
             ))),
             None => Err(OperationError::InvalidParameters(
-                "The measure-observation has no aggregateMethod extension".into(),
+                "The measure-observation has no aggregateMethod".into(),
             )),
         }
     }
@@ -161,23 +167,25 @@ fn in_population(value: Option<&Value>) -> bool {
     }
 }
 
-/// Whether the populations hold resources rather than subjects: the Measure's
-/// `populationBasis` extension names a type other than `boolean`.
-fn resource_based(measure: &Value) -> bool {
-    measure["extension"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|extension| {
-            extension["url"]
-                .as_str()
-                .is_some_and(|url| url.ends_with("populationBasis"))
-        })
-        .any(|extension| {
-            extension["valueCode"]
-                .as_str()
-                .is_some_and(|code| code != "boolean")
-        })
+/// Whether the populations hold resources rather than subjects: `basis` (R5 and later) or
+/// the `populationBasis` extension names a type other than `boolean`.
+fn resource_based(measure: &Value, group: &Value) -> bool {
+    let declared = |source: &'_ Value| -> Option<String> {
+        let extension = || {
+            source["extension"].as_array()?.iter().find(|extension| {
+                extension["url"]
+                    .as_str()
+                    .is_some_and(|url| url.ends_with("populationBasis"))
+            })
+        };
+        source["basis"]
+            .as_str()
+            .or_else(|| extension()?["valueCode"].as_str())
+            .map(str::to_owned)
+    };
+    declared(group)
+        .or_else(|| declared(measure))
+        .is_some_and(|basis| basis != "boolean")
 }
 
 /// The ids of the resources a define returned; a population holds one resource type.
@@ -468,11 +476,15 @@ struct Request {
     subject: Option<String>,
 }
 
-pub(super) fn text_parameter<'a>(params: &'a Value, name: &str) -> Option<&'a str> {
+fn parameter<'a>(params: &'a Value, name: &str) -> Option<&'a Value> {
     params["parameter"]
         .as_array()?
         .iter()
-        .find(|parameter| parameter["name"] == name)?
+        .find(|parameter| parameter["name"] == name)
+}
+
+pub(super) fn text_parameter<'a>(params: &'a Value, name: &str) -> Option<&'a str> {
+    parameter(params, name)?
         .as_object()?
         .iter()
         .find(|(key, _)| key.starts_with("value"))?
@@ -550,6 +562,7 @@ pub(super) async fn measure_library<'m>(
 ) -> Result<(&'m str, String), OperationError> {
     let library = measure["library"][0]
         .as_str()
+        .or_else(|| measure["group"][0]["library"][0].as_str())
         .ok_or_else(|| OperationError::InvalidParameters("The Measure has no library".into()))?;
     let (url, version) = library
         .split_once('|')
@@ -559,6 +572,22 @@ pub(super) async fn measure_library<'m>(
         .await
         .map_err(map_cql_error)?;
     Ok((library, source))
+}
+
+async fn measure_by_url(
+    state: &AppState,
+    context: &OperationContext,
+    url: &str,
+) -> Result<Value, OperationError> {
+    let search = SearchParams::new().with_count(1).with_param("url", url);
+    context
+        .search(state, "Measure", &search)
+        .await?
+        .entries
+        .into_iter()
+        .next()
+        .map(|measure| measure.resource)
+        .ok_or_else(|| OperationError::NotFound(format!("Measure {url} not found")))
 }
 
 pub struct EvaluateMeasureOperation;
@@ -610,27 +639,30 @@ impl EvaluateMeasureOperation {
         state: &AppState,
         context: &OperationContext,
         measure: &Value,
-        params: &Value,
+        request: &Request,
     ) -> Result<Value, OperationError> {
         let service = state
             .cql_service
             .as_ref()
             .ok_or_else(|| OperationError::NotSupported("CQL service not enabled".into()))?;
         let service = scoped_service(state, context, service);
-        let request = Request::parse(params)?;
-        let scoring = Scoring::of(measure)?;
         let groups = measure["group"]
             .as_array()
             .filter(|groups| !groups.is_empty())
             .ok_or_else(|| OperationError::InvalidParameters("The Measure has no group".into()))?
             .iter()
             .enumerate()
-            .map(|(index, group)| Group::parse(index, group))
-            .collect::<Result<Vec<_>, _>>()?;
-        let by_resource = resource_based(measure);
+            .map(|(index, group)| {
+                Ok((
+                    Group::parse(index, group)?,
+                    Scoring::of(measure, group)?,
+                    resource_based(measure, group),
+                ))
+            })
+            .collect::<Result<Vec<_>, OperationError>>()?;
         let (_, mut source) = measure_library(&service, measure).await?;
-        for group in &groups {
-            if let Some(define) = group.observation_define(by_resource)? {
+        for (group, _, by_resource) in &groups {
+            if let Some(define) = group.observation_define(*by_resource)? {
                 source.push('\n');
                 source.push_str(&define);
             }
@@ -660,7 +692,13 @@ impl EvaluateMeasureOperation {
         let now = Utc::now().to_rfc3339();
         let mut contained = Vec::new();
         let mut report_groups = Vec::with_capacity(groups.len());
-        for (index, group) in groups.iter().enumerate() {
+        // R5 turned these two into choice elements.
+        let (score_element, value_element) = match state.fhir_version.as_str() {
+            "R4" | "R4B" => ("measureScore", "value"),
+            _ => ("measureScoreQuantity", "valueCodeableConcept"),
+        };
+        for (index, (group, scoring, by_resource)) in groups.iter().enumerate() {
+            let (scoring, by_resource) = (*scoring, *by_resource);
             let mut tally = Tally::default();
             let mut strata: Vec<BTreeMap<String, Tally>> =
                 vec![BTreeMap::new(); group.stratifiers.len()];
@@ -691,7 +729,7 @@ impl EvaluateMeasureOperation {
                 result["code"] = code.clone();
             }
             if let Some(score) = group.score(&tally, scoring) {
-                result["measureScore"] = json!({"value": score});
+                result[score_element] = json!({"value": score});
             }
             if !strata.is_empty() {
                 let stratifiers: Vec<Value> = strata
@@ -701,11 +739,11 @@ impl EvaluateMeasureOperation {
                             .iter()
                             .map(|(value, tally)| {
                                 let mut item = json!({
-                                    "value": {"text": value},
+                                    value_element: {"text": value},
                                     "population": tally.populations(&used, None),
                                 });
                                 if let Some(score) = group.score(tally, scoring) {
-                                    item["measureScore"] = json!({"value": score});
+                                    item[score_element] = json!({"value": score});
                                 }
                                 item
                             })
@@ -772,15 +810,8 @@ impl OperationHandler for EvaluateMeasureOperation {
         let url = text_parameter(params, "measure").ok_or_else(|| {
             OperationError::InvalidParameters("measure is required at this level".into())
         })?;
-        let search = SearchParams::new().with_count(1).with_param("url", url);
-        let measure = context
-            .search(state, "Measure", &search)
-            .await?
-            .entries
-            .into_iter()
-            .next()
-            .ok_or_else(|| OperationError::NotFound(format!("Measure {url} not found")))?;
-        self.evaluate(state, context, &measure.resource, params)
+        let measure = measure_by_url(state, context, url).await?;
+        self.evaluate(state, context, &measure, &Request::parse(params)?)
             .await
     }
 
@@ -796,8 +827,119 @@ impl OperationHandler for EvaluateMeasureOperation {
             .read(state, "Measure", id)
             .await?
             .ok_or_else(|| OperationError::NotFound(format!("Measure/{id} not found")))?;
-        self.evaluate(state, context, &measure.resource, params)
+        self.evaluate(state, context, &measure.resource, &Request::parse(params)?)
             .await
+    }
+}
+
+/// `Measure/$evaluate` (R6): any number of measures, the reports as Bundles organized by
+/// subject in the `return` parameters.
+pub struct EvaluateOperation;
+
+impl EvaluateOperation {
+    /// The report type asked for, or the default for this subject. `subject` and
+    /// `population` are the older names the definition keeps for compatibility.
+    fn report_type<'p>(params: &'p Value, group: bool) -> Result<&'p str, OperationError> {
+        let subject = text_parameter(params, "subject");
+        match text_parameter(params, "reportType") {
+            Some("individual" | "subject") => Ok("individual"),
+            Some("summary" | "population") => Ok("summary"),
+            Some("subject-list") => Ok("subject-list"),
+            Some(other) => Err(OperationError::InvalidParameters(format!(
+                "Unknown reportType {other}"
+            ))),
+            None if subject.is_some() && !group => Ok("individual"),
+            None => Ok("summary"),
+        }
+    }
+
+    async fn bundle(
+        state: &AppState,
+        context: &OperationContext,
+        measures: &[Value],
+        request: &Request,
+    ) -> Result<Value, OperationError> {
+        let mut entry = Vec::with_capacity(measures.len());
+        for measure in measures {
+            let report = EvaluateMeasureOperation
+                .evaluate(state, context, measure, request)
+                .await?;
+            entry.push(json!({"resource": report}));
+        }
+        Ok(json!({"name": "return", "resource": {
+            "resourceType": "Bundle",
+            "type": "collection",
+            "entry": entry,
+        }}))
+    }
+}
+
+#[async_trait]
+impl OperationHandler for EvaluateOperation {
+    fn supports_level(&self, level: OperationLevel, resource_type: Option<&str>) -> bool {
+        level == OperationLevel::Type && resource_type == Some("Measure")
+    }
+
+    fn code(&self) -> &str {
+        "evaluate"
+    }
+
+    async fn handle_type(
+        &self,
+        state: &AppState,
+        context: &OperationContext,
+        _resource_type: &str,
+        params: &Value,
+    ) -> Result<Value, OperationError> {
+        for name in ["subjectGroup", "reporterResource", "manifest"] {
+            if parameter(params, name).is_some() {
+                return Err(OperationError::NotSupported(format!(
+                    "The {name} parameter is not supported"
+                )));
+            }
+        }
+        let urls: Vec<&str> = params["parameter"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|parameter| parameter["name"] == "measureUrl")
+            .filter_map(|parameter| {
+                parameter["valueCanonical"]
+                    .as_str()
+                    .or_else(|| parameter["valueString"].as_str())
+            })
+            .collect();
+        if urls.is_empty() {
+            return Err(OperationError::InvalidParameters(
+                "measureUrl is required".into(),
+            ));
+        }
+        let mut measures = Vec::with_capacity(urls.len());
+        for url in urls {
+            measures.push(measure_by_url(state, context, url).await?);
+        }
+
+        let mut request = Request::parse(params)?;
+        let group = request
+            .subject
+            .as_deref()
+            .is_some_and(|subject| subject.contains("Group/"));
+        let report_type = Self::report_type(params, group)?;
+        request.report_type = Some(report_type.to_owned());
+
+        let mut bundles = Vec::new();
+        if report_type == "individual" {
+            let (subjects, _) = EvaluateMeasureOperation
+                .subjects(state, context, request.subject.as_deref())
+                .await?;
+            for subject in subjects {
+                request.subject = Some(format!("Patient/{}", subject.id));
+                bundles.push(Self::bundle(state, context, &measures, &request).await?);
+            }
+        } else {
+            bundles.push(Self::bundle(state, context, &measures, &request).await?);
+        }
+        Ok(json!({"resourceType": "Parameters", "parameter": bundles}))
     }
 }
 
@@ -876,14 +1018,71 @@ mod tests {
     }
 
     #[test]
+    fn the_group_scoring_comes_before_the_measure_one() {
+        let scoring = |code: &str| json!({"scoring": {"coding": [{"code": code}]}});
+        assert_eq!(
+            Scoring::of(&scoring("cohort"), &scoring("ratio")).unwrap(),
+            Scoring::Ratio
+        );
+        assert_eq!(
+            Scoring::of(&scoring("cohort"), &json!({})).unwrap(),
+            Scoring::Cohort
+        );
+    }
+
+    #[test]
+    fn the_aggregate_method_is_an_element_from_r5() {
+        let population = json!({"aggregateMethod": {"coding": [{"code": "median"}]}});
+        assert_eq!(Aggregate::of(&population).unwrap(), Aggregate::Median);
+    }
+
+    #[test]
+    fn the_report_type_defaults_by_subject() {
+        let params = |parameters: Value| json!({"parameter": parameters});
+        let of = |parameters: Value, group| {
+            EvaluateOperation::report_type(&params(parameters), group)
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(of(json!([]), false), "summary");
+        assert_eq!(
+            of(
+                json!([{"name": "subject", "valueString": "Patient/1"}]),
+                false
+            ),
+            "individual"
+        );
+        assert_eq!(
+            of(json!([{"name": "subject", "valueString": "Group/1"}]), true),
+            "summary"
+        );
+        assert_eq!(
+            of(
+                json!([{"name": "reportType", "valueCode": "population"}]),
+                false
+            ),
+            "summary"
+        );
+        assert!(
+            EvaluateOperation::report_type(
+                &params(json!([{"name": "reportType", "valueCode": "x"}])),
+                false
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn resource_based_populations_count_each_resource() {
         let measure = json!({"extension":[{
             "url":"http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-populationBasis",
             "valueCode":"Encounter"}]});
-        assert!(resource_based(&measure));
+        assert!(resource_based(&measure, &json!({})));
+        assert!(resource_based(&json!({}), &json!({"basis": "Encounter"})));
+        assert!(!resource_based(&measure, &json!({"basis": "boolean"})));
         let boolean = json!({"extension":[{"url":"x/populationBasis","valueCode":"boolean"}]});
-        assert!(!resource_based(&boolean));
-        assert!(!resource_based(&json!({})));
+        assert!(!resource_based(&boolean, &json!({})));
+        assert!(!resource_based(&json!({}), &json!({})));
 
         let source = json!({"population":[
             {"code":{"coding":[{"code":"initial-population"}]},"criteria":{"expression":"IP"}},

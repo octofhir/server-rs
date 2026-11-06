@@ -325,6 +325,8 @@ pub fn fhir_interaction(method: &str, path: &str) -> Option<(&'static str, Strin
         ("DELETE", [rt, _]) => ("delete", rt.to_string()),
         ("GET", [rt, _, "_history"]) => ("history-instance", rt.to_string()),
         ("GET", [rt, _, "_history", _]) => ("vread", rt.to_string()),
+        ("DELETE", [rt, _, "_history"]) => ("delete-history", rt.to_string()),
+        ("DELETE", [rt, _, "_history", _]) => ("delete-history-version", rt.to_string()),
         (_, [rt, _, op]) if op.starts_with('$') => ("operation", rt.to_string()),
         // Compartment search: /Patient/123/Observation
         ("GET", [rt, _, _]) => ("search-compartment", rt.to_string()),

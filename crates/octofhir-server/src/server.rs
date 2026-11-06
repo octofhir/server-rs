@@ -2406,23 +2406,33 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         // POST /Patient/123/$validate - instance-level operation
         .route(
             "/Patient/{id}/{resource_type}",
-            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler)
+                .delete(crate::operations::delete_compartment_history_handler),
         )
         .route(
             "/Encounter/{id}/{resource_type}",
-            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler)
+                .delete(crate::operations::delete_compartment_history_handler),
         )
         .route(
             "/Practitioner/{id}/{resource_type}",
-            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler)
+                .delete(crate::operations::delete_compartment_history_handler),
         )
         .route(
             "/RelatedPerson/{id}/{resource_type}",
-            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler)
+                .delete(crate::operations::delete_compartment_history_handler),
         )
         .route(
             "/Device/{id}/{resource_type}",
-            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler)
+                .delete(crate::operations::delete_compartment_history_handler),
         )
         // CRUD, search, and system operations
         // This merged route handles both /$operation and /ResourceType
@@ -2443,7 +2453,7 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         // Vread: GET /[type]/[id]/_history/[vid]
         .route(
             "/{resource_type}/{id}/_history/{version_id}",
-            get(handlers::vread_resource),
+            get(handlers::vread_resource).delete(crate::operations::delete_version_handler),
         )
         // Instance-level operations and history: GET/POST /{type}/{id}/{operation_or_history}
         // Note: /{type}/{id}/_history and /{type}/{id}/{operation} cannot coexist as separate
@@ -2451,7 +2461,8 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         .route(
             "/{resource_type}/{id}/{operation}",
             get(crate::operations::instance_operation_or_history_handler)
-                .post(crate::operations::instance_operation_handler),
+                .post(crate::operations::instance_operation_handler)
+                .delete(crate::operations::delete_instance_history_handler),
         )
         // Type operations and resource CRUD
         // This merged route handles both /{type}/$operation and /{type}/{id}

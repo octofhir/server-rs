@@ -1071,6 +1071,104 @@ pub async fn expunge(
     Ok((live > 0, (live + historic) as u64))
 }
 
+/// Permanently removes these resources and all of their versions in one transaction.
+/// Returns how many live rows went.
+pub async fn expunge_many(
+    pool: &PgPool,
+    resource_type: &str,
+    ids: &[String],
+) -> Result<u64, StorageError> {
+    let table = SchemaManager::table_name(resource_type);
+    let failed =
+        |e: sqlx_core::Error| StorageError::internal(format!("Failed to expunge resources: {e}"));
+    let mut tx = pool.begin().await.map_err(failed)?;
+    // In this order: the history trigger copies what leaves the live table.
+    let removed = query(AssertSqlSafe(format!(
+        r#"DELETE FROM "{table}" WHERE id = ANY($1)"#
+    )))
+    .bind(ids)
+    .execute(&mut *tx)
+    .await
+    .map_err(failed)?
+    .rows_affected();
+    query(AssertSqlSafe(format!(
+        r#"DELETE FROM "{table}_history" WHERE id = ANY($1)"#
+    )))
+    .bind(ids)
+    .execute(&mut *tx)
+    .await
+    .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
+    Ok(removed)
+}
+
+/// What came of removing one historical version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryRemoval {
+    /// So many versions are gone.
+    Removed(u64),
+    /// The version asked for is the current one, which stays.
+    Current,
+    /// No such resource or version.
+    NotFound,
+}
+
+/// The newest version: the live row, or for a deleted resource the last row of its history.
+async fn current_version(
+    tx: &mut PgTransaction<'_>,
+    table: &str,
+    id: &str,
+) -> Result<Option<i64>, sqlx_core::Error> {
+    query_scalar(AssertSqlSafe(format!(
+        r#"SELECT COALESCE(
+            (SELECT txid FROM "{table}" WHERE id = $1),
+            (SELECT max(txid) FROM "{table}_history" WHERE id = $1))"#
+    )))
+    .bind(id)
+    .fetch_one(&mut **tx)
+    .await
+}
+
+/// Removes the history of a resource, or one version of it, and never the current version.
+pub async fn delete_history(
+    pool: &PgPool,
+    resource_type: &str,
+    id: &str,
+    version: Option<i64>,
+) -> Result<HistoryRemoval, StorageError> {
+    let table = SchemaManager::table_name(resource_type);
+    let failed = |e: sqlx_core::Error| {
+        if e.to_string().contains("does not exist") {
+            StorageError::not_found(resource_type, id)
+        } else {
+            StorageError::internal(format!("Failed to delete history: {e}"))
+        }
+    };
+    let mut tx = pool.begin().await.map_err(failed)?;
+    let Some(current) = current_version(&mut tx, &table, id).await.map_err(failed)? else {
+        return Ok(HistoryRemoval::NotFound);
+    };
+    if version == Some(current) {
+        return Ok(HistoryRemoval::Current);
+    }
+    let removed = query(AssertSqlSafe(format!(
+        r#"DELETE FROM "{table}_history" WHERE id = $1 AND txid < $2
+            AND ($3::bigint IS NULL OR txid = $3)"#
+    )))
+    .bind(id)
+    .bind(current)
+    .bind(version)
+    .execute(&mut *tx)
+    .await
+    .map_err(failed)?
+    .rows_affected();
+    tx.commit().await.map_err(failed)?;
+    Ok(match (version, removed) {
+        (Some(_), 0) => HistoryRemoval::NotFound,
+        _ => HistoryRemoval::Removed(removed),
+    })
+}
+
 /// Same single DELETE statement, returning the live body it removed so event
 /// consumers see the previous state. None = nothing was live (idempotent).
 pub async fn delete_returning_previous(

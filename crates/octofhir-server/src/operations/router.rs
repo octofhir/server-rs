@@ -25,6 +25,7 @@ use super::params::OperationParams;
 use crate::handlers;
 use crate::server::AppState;
 use octofhir_api::ApiError;
+use octofhir_db_postgres::queries::crud::HistoryRemoval;
 
 /// Checks if a path segment represents an operation (starts with `$`).
 #[inline]
@@ -241,6 +242,90 @@ pub async fn type_operation_handler(
 /// Dispatches `_history` requests to the history handler and `$operation` requests
 /// to the operation handler. These must share a route because matchit cannot have
 /// both `/{a}/{b}/_history` and `/{a}/{b}/{c}` as separate routes.
+/// `DELETE [base]/[type]/[id]/_history`: everything but the current version.
+pub async fn delete_instance_history_handler(
+    State(state): State<AppState>,
+    context: OperationContext,
+    Path((resource_type, id, segment)): Path<(String, String, String)>,
+) -> Result<Response, ApiError> {
+    if segment != "_history" {
+        return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
+    }
+    delete_history(&state, &context, &resource_type, &id, None).await
+}
+
+/// The same on the types with a compartment, whose routes take only `id` and the segment.
+pub async fn delete_compartment_history_handler(
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    State(state): State<AppState>,
+    context: OperationContext,
+    Path((id, segment)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    if segment != "_history" {
+        return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
+    }
+    let resource_type = uri
+        .path()
+        .strip_prefix("/fhir/")
+        .unwrap_or(uri.path())
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    delete_history(&state, &context, resource_type, &id, None).await
+}
+
+/// `DELETE [base]/[type]/[id]/_history/[vid]`: one version, never the current one.
+pub async fn delete_version_handler(
+    State(state): State<AppState>,
+    context: OperationContext,
+    Path((resource_type, id, version)): Path<(String, String, String)>,
+) -> Result<Response, ApiError> {
+    let Ok(parsed) = version.parse::<i64>() else {
+        return Err(ApiError::not_found(format!(
+            "{resource_type}/{id}/_history/{version} not found"
+        )));
+    };
+    delete_history(&state, &context, &resource_type, &id, Some(parsed)).await
+}
+
+async fn delete_history(
+    state: &AppState,
+    context: &OperationContext,
+    resource_type: &str,
+    id: &str,
+    version: Option<i64>,
+) -> Result<Response, ApiError> {
+    super::expunge::require_administrator(state, context)?;
+    if !state.resource_type_set.load().contains(resource_type) {
+        return Err(ApiError::not_found(format!(
+            "Unknown resource type {resource_type}"
+        )));
+    }
+    let removal = octofhir_db_postgres::queries::crud::delete_history(
+        &state.db_pool,
+        resource_type,
+        id,
+        version,
+    )
+    .await
+    .map_err(crate::handlers::map_storage_error)?;
+    match removal {
+        HistoryRemoval::Removed(versions) => {
+            if let Some(cache) = &state.resource_cache {
+                cache.invalidate(resource_type, id).await;
+            }
+            tracing::warn!(resource_type, id, versions, "History deleted");
+            Ok(StatusCode::NO_CONTENT.into_response())
+        }
+        HistoryRemoval::Current => Err(ApiError::conflict(
+            "The current version stays; delete the resource instead",
+        )),
+        HistoryRemoval::NotFound => Err(ApiError::not_found(format!(
+            "{resource_type}/{id} has no such version"
+        ))),
+    }
+}
+
 pub async fn instance_operation_or_history_handler(
     state: State<AppState>,
     context: OperationContext,

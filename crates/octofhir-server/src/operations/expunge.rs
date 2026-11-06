@@ -18,7 +18,7 @@ const ADMIN_ROLES: [&str; 2] = ["admin", "superuser"];
 
 pub struct ExpungeOperation;
 
-fn require_administrator(
+pub(crate) fn require_administrator(
     state: &AppState,
     context: &OperationContext,
 ) -> Result<(), OperationError> {
@@ -46,11 +46,11 @@ fn require_administrator(
     if administrator || system_wide {
         Ok(())
     } else {
-        Err(ApiError::forbidden("$expunge requires an administrator").into())
+        Err(ApiError::forbidden("Removing data for good requires an administrator").into())
     }
 }
 
-fn dry_run(params: &Value) -> Result<bool, OperationError> {
+pub(super) fn dry_run(params: &Value) -> Result<bool, OperationError> {
     let found = params["parameter"]
         .as_array()
         .into_iter()
