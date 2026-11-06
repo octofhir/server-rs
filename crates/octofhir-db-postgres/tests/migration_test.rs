@@ -146,7 +146,14 @@ async fn test_migrations_run_successfully() {
             .await
             .unwrap();
     assert!(checksums.iter().all(|(_, checksum)| checksum.len() == 48));
-    assert_eq!(checksums.len(), 1);
+    let migrations = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
+        .unwrap()
+        .filter(|entry| {
+            let path = entry.as_ref().unwrap().path();
+            path.extension().is_some_and(|extension| extension == "sql")
+        })
+        .count();
+    assert_eq!(checksums.len(), migrations);
     let job_columns: Vec<(String,)> = query_as("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='async_jobs'")
         .fetch_all(&pool).await.unwrap();
     for expected in ["execution_id", "lease_expires_at", "attempts", "checkpoint"] {

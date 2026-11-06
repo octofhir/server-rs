@@ -312,9 +312,10 @@ async fn pagination_fetches_one_lookahead_and_preserves_page_boundaries() {
                     sql.contains(&format!("LIMIT {}", count + 1)),
                     "extra lookahead: {sql}"
                 );
+                // PostgreSQL 18 reports fractional row counts, so this is a float.
                 assert_eq!(
-                    debug.explain.unwrap()[0]["Plan"]["Actual Rows"],
-                    all_ids.len().saturating_sub(offset).min(count + 1)
+                    debug.explain.unwrap()[0]["Plan"]["Actual Rows"].as_f64(),
+                    Some(all_ids.len().saturating_sub(offset).min(count + 1) as f64)
                 );
                 assert_eq!(
                     result

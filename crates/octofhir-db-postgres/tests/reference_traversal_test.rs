@@ -1290,7 +1290,10 @@ async fn reference_sql_ab_benchmark() {
                 )
                 .await
                 .unwrap();
-                assert_eq!(plan[0]["Plan"]["Actual Rows"], expected_rows);
+                assert_eq!(
+                    plan[0]["Plan"]["Actual Rows"].as_f64(),
+                    Some(expected_rows as f64)
+                );
                 if iteration > 0 {
                     println!(
                         "{label} {variant} sample={iteration}: execution_ms={} plan={}",

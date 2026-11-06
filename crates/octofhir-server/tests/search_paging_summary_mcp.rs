@@ -305,6 +305,38 @@ async fn summary(client: &Client, base: &str) {
     )
     .await;
     assert_eq!(by_identifier["entry"][1]["resource"]["id"], "s1");
+    let europe = get(
+        client,
+        &format!(
+            "{base}/fhir/Patient/s1/$summary?profile=\
+http://hl7.eu/fhir/eps/StructureDefinition/composition-eu-eps"
+        ),
+    )
+    .await;
+    let composition = &europe["entry"][0]["resource"];
+    assert_eq!(composition["title"], "Patient Summary");
+    assert_eq!(
+        composition["meta"]["profile"][0],
+        "http://hl7.eu/fhir/eps/StructureDefinition/composition-eu-eps"
+    );
+    let codes: Vec<_> = composition["section"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|section| section["code"]["coding"][0]["code"].as_str().unwrap())
+        .collect();
+    for required in ["11450-4", "48765-2", "10160-0", "47519-4", "46264-8"] {
+        assert!(codes.contains(&required), "{required} missing in {codes:?}");
+    }
+    let other = client
+        .get(format!(
+            "{base}/fhir/Patient/s1/$summary?profile=http://example.org/other"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(other.status().is_client_error(), "{}", other.status());
+
     let missing = client
         .get(format!("{base}/fhir/Patient/$summary"))
         .send()
@@ -474,6 +506,130 @@ async fn mcp(client: &Client, base: &str) {
     assert_eq!(ids(&devices).len(), 1);
 }
 
+async fn data_requirements(client: &Client, base: &str) {
+    let measure = get(
+        client,
+        &format!(
+            "{base}/fhir/Measure/screening/$data-requirements?periodStart=2024-01-01&periodEnd=2024-12-31"
+        ),
+    )
+    .await;
+    assert_eq!(measure["resourceType"], "Library");
+    assert_eq!(measure["type"]["coding"][0]["code"], "module-definition");
+    assert_eq!(
+        measure["relatedArtifact"][0]["resource"],
+        "http://example.org/Library/screening"
+    );
+    let types: Vec<_> = measure["dataRequirement"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|requirement| requirement["type"].as_str().unwrap())
+        .collect();
+    assert!(types.contains(&"Observation"), "{types:?}");
+    assert_eq!(measure["parameter"][0]["name"], "Measurement Period");
+    assert_eq!(measure["parameter"][0]["type"], "Period");
+
+    let library = get(
+        client,
+        &format!("{base}/fhir/Library/screening/$data-requirements"),
+    )
+    .await;
+    assert_eq!(library["dataRequirement"], measure["dataRequirement"]);
+
+    let no_period = client
+        .get(format!("{base}/fhir/Measure/screening/$data-requirements"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_period.status(), StatusCode::BAD_REQUEST);
+}
+
+/// An Encounter-based measure: length of stay, excluding cancelled ones by a define.
+async fn continuous_variable(client: &Client, base: &str) {
+    use base64::Engine as _;
+    let cql = r#"library Stays version '1.0'
+using FHIR version '4.0.1'
+parameter "Measurement Period" Interval<DateTime>
+context Patient
+define "Initial Population": [Encounter] E where E.period.start during "Measurement Period"
+define "Measure Population": "Initial Population" E where E.status = 'finished'
+define "Measure Population Exclusion": "Measure Population" E where E.class.code = 'EMER'
+define function "Stay"(E Encounter): difference in minutes between E.period.start and E.period.end
+"#;
+    put(
+        client,
+        base,
+        json!({"resourceType":"Library","id":"stays","status":"active",
+        "url":"http://example.org/Library/stays","version":"1.0",
+        "type":{"coding":[{"code":"logic-library"}]},
+        "content":[{"contentType":"text/cql",
+            "data":base64::engine::general_purpose::STANDARD.encode(cql)}]}),
+    )
+    .await;
+    let population = |code: &str, name: &str| {
+        json!({"code":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/measure-population","code":code}]},
+            "criteria":{"language":"text/cql-identifier","expression":name}})
+    };
+    let mut observation = population("measure-observation", "Stay");
+    observation["extension"] = json!([{
+        "url":"http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-aggregateMethod",
+        "valueCode":"median"}]);
+    put(client, base, json!({"resourceType":"Measure","id":"stays","status":"active",
+        "url":"http://example.org/Measure/stays",
+        "extension":[{"url":"http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-populationBasis",
+            "valueCode":"Encounter"}],
+        "library":["http://example.org/Library/stays"],
+        "scoring":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/measure-scoring",
+            "code":"continuous-variable"}]},
+        "group":[{"population":[
+            population("initial-population","Initial Population"),
+            population("measure-population","Measure Population"),
+            population("measure-population-exclusion","Measure Population Exclusion"),
+            observation]}]}))
+    .await;
+    for (id, status, class, hours) in [
+        ("st1", "finished", "AMB", 1),
+        ("st2", "finished", "AMB", 3),
+        ("st3", "finished", "EMER", 9),
+        ("st4", "cancelled", "AMB", 5),
+    ] {
+        put(
+            client,
+            base,
+            json!({"resourceType":"Encounter","id":id,"status":status,
+            "class":{"system":"http://terminology.hl7.org/CodeSystem/v3-ActCode","code":class},
+            "subject":{"reference":"Patient/m1"},
+            "period":{"start":"2024-05-01T08:00:00Z",
+                "end":format!("2024-05-01T{:02}:00:00Z", 8 + hours)}}),
+        )
+        .await;
+    }
+    let report = get(
+        client,
+        &format!(
+            "{base}/fhir/Measure/stays/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31&subject=Patient/m1"
+        ),
+    )
+    .await;
+    let group = &report["group"][0];
+    let count = |code: &str| {
+        group["population"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|population| population["code"]["coding"][0]["code"] == code)
+            .unwrap_or_else(|| panic!("{code} missing in {group}"))["count"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(count("initial-population"), 4, "{group}");
+    assert_eq!(count("measure-population"), 3, "{group}");
+    assert_eq!(count("measure-population-exclusion"), 1, "{group}");
+    assert_eq!(count("measure-observation"), 2, "{group}");
+    assert_eq!(group["measureScore"]["value"], 120.0, "{group}");
+}
+
 async fn measure(client: &Client, base: &str) {
     use base64::Engine as _;
     let cql = r#"library Screening version '1.0'
@@ -536,6 +692,8 @@ define "Gender": Patient.gender
                   {"entity":{"reference":"Patient/m3"}}]}),
     )
     .await;
+    continuous_variable(client, base).await;
+    data_requirements(client, base).await;
     let url = |extra: &str| {
         format!(
             "{base}/fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31{extra}"
@@ -600,6 +758,19 @@ define "Gender": Patient.gender
     assert!(
         by_url["group"][0]["measureScore"]["value"].as_f64() == Some(0.0),
         "{by_url}"
+    );
+
+    let scored = tool(
+        client,
+        base,
+        "evaluate_measure",
+        json!({"measureId":"screening","periodStart":"2024-01-01","periodEnd":"2024-12-31",
+            "subject":"Patient/m1"}),
+    )
+    .await;
+    assert_eq!(
+        scored["structuredContent"]["type"], "individual",
+        "{scored}"
     );
 
     let response = client

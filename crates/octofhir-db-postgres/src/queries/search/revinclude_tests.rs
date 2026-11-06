@@ -142,7 +142,7 @@ async fn revinclude_sql_ab() {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-                assert_eq!(plan[0]["Plan"]["Actual Rows"], count);
+                assert_eq!(plan[0]["Plan"]["Actual Rows"].as_f64(), Some(count as f64));
                 if sample > 0 {
                     println!(
                         "revinclude targets={count} {variant} sample={sample} execution_ms={} plan={}",
