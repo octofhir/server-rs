@@ -11,7 +11,10 @@ pub(crate) fn active_members(
     fhir_base: &str,
     now: OffsetDateTime,
 ) -> Result<Vec<FhirReference>, OperationError> {
-    if group["type"] != "person" || group["actual"] != true {
+    // `actual` until R4B, `membership` from R5 on; R6 makes `type` optional.
+    let enumerated = group["actual"] == true || group["membership"] == "enumerated";
+    let of_people = group["type"] == "person" || group["type"].is_null();
+    if !enumerated || !of_people {
         return Err(OperationError::NotSupported(
             "Patient records require an actual person Group with explicit members".into(),
         ));
@@ -161,6 +164,30 @@ pub(crate) async fn resolve_membership(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_explicit_group_is_actual_before_r5_and_enumerated_after() {
+        let now = time::OffsetDateTime::now_utc();
+        let member = serde_json::json!([{"entity": {"reference": "Patient/1"}}]);
+        for group in [
+            serde_json::json!({"type": "person", "actual": true, "member": member}),
+            serde_json::json!({"type": "person", "membership": "enumerated", "member": member}),
+            serde_json::json!({"membership": "enumerated", "member": member}),
+        ] {
+            let members = active_members(&group, "http://localhost/fhir", now).unwrap();
+            assert_eq!(members[0].id, "1", "{group}");
+        }
+        for group in [
+            serde_json::json!({"type": "person", "actual": false}),
+            serde_json::json!({"type": "person", "membership": "definitional"}),
+            serde_json::json!({"type": "device", "membership": "enumerated"}),
+        ] {
+            assert!(
+                active_members(&group, "http://localhost/fhir", now).is_err(),
+                "{group}"
+            );
+        }
+    }
 
     #[test]
     fn active_members_use_local_identity_and_period_precision() {
