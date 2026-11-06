@@ -9,6 +9,9 @@
 //! - **metadata**: Evaluator version, expression, expected return type, and timing breakdown
 //! - **results**: Collection of values with proper FHIR type mapping and resource paths
 //!
+//! With `debug` set to true the response also holds a debug trace (`traceStatus` and a `trace`
+//! per event), and a failing expression answers with its trace and an `outcome`.
+//!
 //! # Examples
 //!
 //! System-level (no resource):
@@ -42,7 +45,7 @@ use std::time::Instant;
 
 use super::{OperationError, OperationHandler};
 use crate::server::AppState;
-use octofhir_fhirpath::{Collection, FhirPathValue};
+use octofhir_fhirpath::{Collection, DebugLimits, DebugTrace, FhirPathValue};
 
 /// Handler for the `$fhirpath` operation.
 ///
@@ -89,6 +92,30 @@ impl FhirPathOperation {
         }
 
         None
+    }
+
+    /// Extract the optional `debug` parameter.
+    fn extract_debug(&self, params: &Value) -> bool {
+        params["parameter"].as_array().is_some_and(|parameters| {
+            parameters
+                .iter()
+                .any(|parameter| parameter["name"] == "debug" && parameter["valueBoolean"] == true)
+        })
+    }
+
+    /// The trace of a `debug=true` run. Unlike a run without it, a failing expression still
+    /// answers with a Parameters: what it did up to the failure, and an `outcome`.
+    fn add_trace(response: &mut Value, trace: &DebugTrace, failure: Option<&str>) {
+        let parameters = response["parameter"]
+            .as_array_mut()
+            .expect("a Parameters resource has parameters");
+        parameters.extend(trace.parameters());
+        if let Some(failure) = failure {
+            parameters.push(json!({"name": "outcome", "resource": {
+                "resourceType": "OperationOutcome",
+                "issue": [{"severity": "error", "code": "processing", "diagnostics": failure}],
+            }}));
+        }
     }
 
     /// Build comprehensive Parameters response with metadata and results.
@@ -275,6 +302,7 @@ impl FhirPathOperation {
         state: &AppState,
         expression: &str,
         resource: Option<Value>,
+        debug: bool,
     ) -> Result<Value, OperationError> {
         // For now, parse and eval are combined - measure total time
         let parse_start = Instant::now();
@@ -305,25 +333,50 @@ impl FhirPathOperation {
 
         // Measure evaluation time
         let eval_start = Instant::now();
-        let eval_result = state
-            .fhirpath_engine
-            .evaluate(expression, &context)
-            .await
-            .map_err(|e| {
-                OperationError::InvalidParameters(format!("FHIRPath evaluation error: {}", e))
-            })?;
+        let (eval_result, trace) = if debug {
+            let (result, trace) = state
+                .fhirpath_engine
+                .evaluate_debug(expression, &context, DebugLimits::default())
+                .await;
+            (result, Some(trace))
+        } else {
+            (
+                state.fhirpath_engine.evaluate(expression, &context).await,
+                None,
+            )
+        };
         let eval_time = eval_start.elapsed();
+
+        let eval_result = match (eval_result, &trace) {
+            (Ok(result), _) => result,
+            (Err(error), Some(trace)) => {
+                let mut response = json!({
+                    "resourceType": "Parameters", "id": "fhirpath", "parameter": []
+                });
+                Self::add_trace(&mut response, trace, Some(&error.to_string()));
+                return Ok(response);
+            }
+            (Err(error), None) => {
+                return Err(OperationError::InvalidParameters(format!(
+                    "FHIRPath evaluation error: {error}"
+                )));
+            }
+        };
 
         // Extract Collection from EvaluationResult
         let result = eval_result.value;
 
-        Ok(self.build_response(
+        let mut response = self.build_response(
             expression,
             result,
             resource.as_ref().unwrap_or(&json!({})),
             parse_time,
             eval_time,
-        ))
+        );
+        if let Some(trace) = &trace {
+            Self::add_trace(&mut response, trace, None);
+        }
+        Ok(response)
     }
 }
 
@@ -351,7 +404,9 @@ impl OperationHandler for FhirPathOperation {
     ) -> Result<Value, OperationError> {
         let expression = self.extract_expression(params)?;
         let resource = self.extract_resource(params);
-        self.evaluate_expression(state, &expression, resource).await
+        let debug = self.extract_debug(params);
+        self.evaluate_expression(state, &expression, resource, debug)
+            .await
     }
 
     async fn handle_type(
@@ -365,7 +420,9 @@ impl OperationHandler for FhirPathOperation {
         let resource = self
             .extract_resource(params)
             .or_else(|| Some(json!({ "resourceType": resource_type })));
-        self.evaluate_expression(state, &expression, resource).await
+        let debug = self.extract_debug(params);
+        self.evaluate_expression(state, &expression, resource, debug)
+            .await
     }
 
     async fn handle_instance(
@@ -391,7 +448,8 @@ impl OperationHandler for FhirPathOperation {
             }
         };
 
-        self.evaluate_expression(state, &expression, Some(resource))
+        let debug = self.extract_debug(params);
+        self.evaluate_expression(state, &expression, Some(resource), debug)
             .await
     }
 }

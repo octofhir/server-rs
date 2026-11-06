@@ -655,6 +655,39 @@ define "Numerator": Patient.gender = 'female'
     assert_eq!(individual["contained"][0]["valueString"], "female");
 }
 
+async fn fhirpath_debug_trace(client: &Client, base: &str) {
+    let run = |expression: &str| {
+        let body = json!({"resourceType":"Parameters","parameter":[
+            {"name":"expression","valueString":expression},
+            {"name":"debug","valueBoolean":true},
+            {"name":"resource","resource":{"resourceType":"Patient","gender":"female"}}]});
+        let request = client.post(format!("{base}/fhir/$fhirpath")).json(&body);
+        async move { request.send().await.unwrap().json::<Value>().await.unwrap() }
+    };
+    let named = |response: &Value, name: &str| -> Vec<Value> {
+        response["parameter"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|parameter| parameter["name"] == name)
+            .cloned()
+            .collect()
+    };
+
+    let done = run("gender.trace('g')").await;
+    assert_eq!(named(&done, "traceStatus")[0]["valueCode"], "complete");
+    let events = named(&done, "trace");
+    assert!(events.len() >= 3, "{done}");
+    assert!(done.to_string().contains("\"phase\""));
+    assert_eq!(named(&done, "metadata").len(), 1);
+
+    // A failure answers with what happened up to it.
+    let failed = run("gender.nosuchfunction()").await;
+    assert_eq!(failed["resourceType"], "Parameters", "{failed}");
+    assert_eq!(named(&failed, "traceStatus")[0]["valueCode"], "stopped");
+    assert_eq!(named(&failed, "outcome").len(), 1);
+}
+
 async fn continuous_variable(client: &Client, base: &str) {
     let cql = r#"library Stays version '1.0'
 using FHIR version '4.0.1'
@@ -843,6 +876,7 @@ define "Gender": Patient.gender
     continuous_variable(client, base).await;
     data_requirements(client, base).await;
     composites_and_supplemental_data(client, base).await;
+    fhirpath_debug_trace(client, base).await;
     let url = |extra: &str| {
         format!(
             "{base}/fhir/Measure/screening/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31{extra}"

@@ -189,6 +189,32 @@ GET /fhir/Patient/$summary?identifier={identifier}
 
 An International Patient Summary document. See [Patient Summary](/server-rs/patient-summary/).
 
+### $fhirpath
+
+Evaluates a FHIRPath expression, against a resource given inline or at `{Type}/{id}/$fhirpath` against
+a stored one.
+
+```http
+POST /fhir/$fhirpath
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    { "name": "expression", "valueString": "name.where(use = 'official').family" },
+    { "name": "resource", "resource": { "resourceType": "Patient" } },
+    { "name": "debug", "valueBoolean": true }
+  ]
+}
+```
+
+With `debug` the response also holds a debug trace in the format the FHIR Mapping Language IG proposes
+for all evaluation languages: `traceStatus`, and a `trace` per event with its phase (`enter`, `step`,
+`exit`), depth, position in the expression, the focus and the result. `trace()` adds a `step` with its
+message, and the inside of `where()` and other functions is traced for each item. A failing expression
+then answers with its trace, status `stopped`, and an `outcome`. A trace stops at 10,000 events or about
+4 MiB of values, and evaluation goes on with status `truncated`.
+
 ### $expunge
 
 ```http

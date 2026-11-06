@@ -13,6 +13,7 @@ import {
   stackAt,
   stepOut,
   stepOver,
+  type TraceEvent,
   type TraceVariable,
 } from "../trace";
 
@@ -22,6 +23,8 @@ export interface TracePanelProps {
   onSelect: (index: number) => void;
   /** Where input paths are in an XML input (CDA), by path. */
   positions?: Record<string, { line: number; column: number }>;
+  /** The name of an event in the list; by default, its position in the map. */
+  labelOf?: (event: TraceEvent) => string;
 }
 
 const STATUS_COLOR: Record<DebugResult["status"], string> = {
@@ -36,7 +39,7 @@ function valueText(variable: TraceVariable): string {
   return JSON.stringify(variable.value, null, 2);
 }
 
-export function TracePanel({ trace, current, onSelect, positions }: TracePanelProps) {
+export function TracePanel({ trace, current, onSelect, positions, labelOf }: TracePanelProps) {
   const events = trace.events;
   const event = events[current];
   const stack = useMemo(() => stackAt(events, current), [events, current]);
@@ -58,7 +61,7 @@ export function TracePanel({ trace, current, onSelect, positions }: TracePanelPr
   }, [event]);
 
   if (events.length === 0) {
-    return <EmptyState title="No trace events" description="The map ran no rules for this input." />;
+    return <EmptyState title="No trace events" description="Nothing ran for this input." />;
   }
 
   const last = events.length - 1;
@@ -119,7 +122,7 @@ export function TracePanel({ trace, current, onSelect, positions }: TracePanelPr
               onClick={() => onSelect(item.index)}
             >
               <span className={classes.tracePhase}>{item.phase}</span>
-              <span className={classes.mono}>{positionLabel(item.position)}</span>
+              <span className={classes.mono}>{labelOf?.(item) ?? positionLabel(item.position)}</span>
               {item.messages.length > 0 && <CornerDownRight size={12} className={classes.muted} />}
             </button>
           ))}

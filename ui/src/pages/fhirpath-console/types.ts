@@ -1,3 +1,5 @@
+import { type DebugResult, parseDebugParameters } from "@/pages/fml-console/trace";
+
 export interface FhirPathMetadata {
   evaluator: string;
   expression: string;
@@ -18,6 +20,8 @@ export interface FhirPathResult {
 export interface FhirPathEvaluationResponse {
   metadata: FhirPathMetadata;
   results: FhirPathResult[];
+  /** With `debug`: what the evaluation did, and why it failed if it did. */
+  trace?: DebugResult;
 }
 
 interface FhirParameterPart {
@@ -85,11 +89,15 @@ function extractValue(param: {
   return null;
 }
 
+const NOT_RESULTS = new Set(["metadata", "traceStatus", "trace", "outcome"]);
+
 export function parseParametersResponse(params: {
   parameter?: FhirParameterPart[];
 }): FhirPathEvaluationResponse {
   const metadataParam = params.parameter?.find((p) => p.name === "metadata");
-  const resultParams = params.parameter?.filter((p) => p.name !== "metadata") || [];
+  const resultParams =
+    params.parameter?.filter((p) => !NOT_RESULTS.has(p.name)) || [];
+  const hasTrace = params.parameter?.some((p) => p.name === "traceStatus");
 
   const timingPart = findPart(metadataParam, "timing") as {
     part?: Array<{ name: string; valueDecimal?: number }>;
@@ -119,5 +127,5 @@ export function parseParametersResponse(params: {
     };
   });
 
-  return { metadata, results };
+  return { metadata, results, trace: hasTrace ? parseDebugParameters(params) : undefined };
 }

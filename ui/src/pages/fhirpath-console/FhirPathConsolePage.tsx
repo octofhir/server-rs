@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import {
   Braces,
   CircleAlert,
+  Footprints,
   FunctionSquare,
   Play,
   Sigma,
@@ -11,6 +12,8 @@ import {
   X as Xmark,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TracePanel } from "@/pages/fml-console/components/TracePanel";
+import type { TraceEvent } from "@/pages/fml-console/trace";
 import { assertFhirResource } from "@/shared/api/guards";
 import { FhirPathEditor, type FhirPathEditorHandle } from "@/shared/monaco/FhirPathEditor";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
@@ -39,6 +42,8 @@ export function FhirPathConsolePage() {
   );
 
   const [showFunctions, setShowFunctions] = useState(false);
+  const [debug, setDebug] = useState(false);
+  const [traceEvent, setTraceEvent] = useState(0);
   const editorRef = useRef<FhirPathEditorHandle>(null);
 
   useEffect(() => {
@@ -66,12 +71,14 @@ export function FhirPathConsolePage() {
         parameter: Array<{
           name: string;
           valueString?: string;
+          valueBoolean?: boolean;
           resource?: unknown;
         }>;
       } = {
         resourceType: "Parameters",
         parameter: [{ name: "expression", valueString: expression }],
       };
+      if (debug) body.parameter.push({ name: "debug", valueBoolean: true });
 
       if (inputResource.trim()) {
         try {
@@ -98,7 +105,22 @@ export function FhirPathConsolePage() {
     },
   });
 
-  const handleExecute = () => evaluateMutation.mutate();
+  const handleExecute = () => {
+    setTraceEvent(0);
+    evaluateMutation.mutate();
+  };
+
+  /** The text of the expression an event is about. */
+  const eventText = (event: TraceEvent) => {
+    if (event.messages.length > 0) return event.messages.join(" ");
+    const range = event.range;
+    if (!range) return "";
+    const lines = expression.split("\n");
+    if (range.startLine !== range.endLine) {
+      return `${lines[range.startLine - 1]?.slice(range.startColumn - 1) ?? ""} …`;
+    }
+    return lines[range.startLine - 1]?.slice(range.startColumn - 1, range.endColumn - 1) ?? "";
+  };
 
   const handleClear = () => {
     setExpression("");
@@ -191,6 +213,15 @@ export function FhirPathConsolePage() {
                       {ex.label}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className={`${classes.chip} ${debug ? classes.chipActive : ""}`}
+                    onClick={() => setDebug((v) => !v)}
+                    title="Record a debug trace of the evaluation"
+                  >
+                    <Footprints size={12} />
+                    Trace
+                  </button>
                   <button
                     type="button"
                     className={`${classes.chip} ${showFunctions ? classes.chipActive : ""}`}
@@ -338,6 +369,27 @@ export function FhirPathConsolePage() {
                       </div>
                     )}
                   </div>
+
+                  {data.trace && (
+                    <div className={classes.resultSection}>
+                      <div className={classes.resultSectionHead}>
+                        <span className={classes.sectionTitle}>Trace</span>
+                        <span className={classes.sectionCount}>{data.trace.events.length}</span>
+                      </div>
+                      {data.trace.issues.map((issue) => (
+                        <div key={issue.diagnostics} className={classes.errorBox}>
+                          <CircleAlert size={18} className={classes.errorIcon} />
+                          <div className={classes.errorMsg}>{issue.diagnostics}</div>
+                        </div>
+                      ))}
+                      <TracePanel
+                        trace={data.trace}
+                        current={traceEvent}
+                        onSelect={setTraceEvent}
+                        labelOf={eventText}
+                      />
+                    </div>
+                  )}
                 </>
               ) : (
                 !evaluateMutation.error && (

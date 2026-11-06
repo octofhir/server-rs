@@ -20,7 +20,7 @@ palette everywhere, `g` followed by a letter jumps to a page, and `?` lists ever
 | Page | What it does |
 |------|--------------|
 | **SQL** (`g s`) | A Postgres console with completion, formatting, history and charts of results. |
-| **GraphQL** (`g g`), **FHIRPath** (`g f`), **CQL** (`g q`) | Consoles for each language against live data. See [CQL](/server-rs/cql/). |
+| **GraphQL** (`g g`), **FHIRPath** (`g f`), **CQL** (`g q`) | Consoles for each language against live data; the FHIRPath one replays a debug trace of the evaluation. See [CQL](/server-rs/cql/). |
 | **FML** (`g k`) | Write a map or open a stored one, check it as you type, run it over a resource or a CDA document, replay the debug trace, save it as a StructureMap and share it as a link. See [FHIR Mapping Language](/server-rs/fml/). |
 | **Views** (`g v`) | SQL on FHIR: author ViewDefinitions and SQLQuery / SQLView Libraries over them, and run either through `$sql-run`. The SQL editor completes and checks against the query's dependencies (their labels and columns) and its `:name` parameters, and applies the same sandbox check the server does. Each dependency shows what it resolved to: a view's columns, or for a ValueSet or ConceptMap its version, size and where its content came from. See [SQL on FHIR](/server-rs/sql-on-fhir/). |
 | **Terminology** (`g t`) | Search value sets, code systems and concept maps across installed packages; expand and filter value sets, check codes, browse concept hierarchies with `$lookup`, test `$subsumes` and `$translate`. |

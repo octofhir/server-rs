@@ -4302,9 +4302,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirpath"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "894beab3d0157822f4bcfe73e75318e4fc72cf139f473ee2ceef9f507da94742"
+checksum = "1357e087de7f4297d2fe18c0ab2a4e977a9f66946e74b7acf182bb068e009ad8"
 dependencies = [
  "anyhow",
  "ariadne",
