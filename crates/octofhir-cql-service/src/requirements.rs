@@ -119,19 +119,141 @@ fn code_filters(libraries: &Libraries, elm: &Value, retrieve: &Value) -> Vec<Val
     filters
 }
 
-fn data_requirement(libraries: &Libraries, elm: &Value, retrieve: &Value) -> Option<Value> {
+/// The dotted path of a property of the query's alias, such as `period.start`.
+fn alias_path(node: &Value, alias: &str) -> Option<String> {
+    if node["type"] != "Property" {
+        return None;
+    }
+    let path = node["path"].as_str()?;
+    if node["source"]["type"] == "AliasRef" {
+        return (node["source"]["name"] == alias).then(|| path.to_owned());
+    }
+    Some(format!("{}.{path}", alias_path(&node["source"], alias)?))
+}
+
+fn string_literal(node: &Value) -> Option<&Value> {
+    let literal = node["type"] == "Literal"
+        && node["valueType"]
+            .as_str()
+            .is_some_and(|name| name.ends_with("String"));
+    literal.then(|| &node["value"])
+}
+
+/// What a `where` clause narrows a retrieve to, as filters on the data requirement.
+struct WhereFilters<'a> {
+    libraries: &'a Libraries,
+    elm: &'a Value,
+    alias: &'a str,
+    codes: Vec<Value>,
+    dates: Vec<Value>,
+}
+
+impl WhereFilters<'_> {
+    fn value_set(&mut self, path: String, reference: &Value) {
+        if let Some((_, definition)) = self.libraries.resolve(self.elm, reference, "valueSets") {
+            self.codes
+                .push(json!({"path": path, "valueSet": canonical(definition)}));
+        }
+    }
+
+    /// The filter of comparing `path` with `value`, if a filter can say it.
+    fn compare(&mut self, path: String, value: &Value) {
+        if let Some(code) = string_literal(value) {
+            self.codes
+                .push(json!({"path": path, "code": [{"code": code}]}));
+            return;
+        }
+        match value["type"].as_str() {
+            Some("CodeRef") => {
+                let coding =
+                    self.libraries
+                        .resolve(self.elm, value, "codes")
+                        .and_then(|(owner, code)| {
+                            let (_, system) = self.libraries.resolve(
+                                owner,
+                                &code["codeSystem"],
+                                "codeSystems",
+                            )?;
+                            Some(json!({"system": system["id"], "code": code["id"]}))
+                        });
+                if let Some(coding) = coding {
+                    self.codes.push(json!({"path": path, "code": [coding]}));
+                }
+            }
+            Some("ValueSetRef") => self.value_set(path, value),
+            Some("List") => {
+                let codes: Option<Vec<Value>> = value["element"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|item| Some(json!({"code": string_literal(item)?})))
+                    .collect();
+                if let Some(codes) = codes.filter(|codes| !codes.is_empty()) {
+                    self.codes.push(json!({"path": path, "code": codes}));
+                }
+            }
+            // The interval is only known at run time, so the filter names just the element.
+            Some("ParameterRef") => self.dates.push(json!({"path": path})),
+            _ => {}
+        }
+    }
+
+    /// Only conjunctions narrow the retrieve as a whole; any other shape is left alone.
+    fn visit(&mut self, condition: &Value) {
+        let operands = condition["operand"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        match condition["type"].as_str() {
+            Some("And") => operands.iter().for_each(|operand| self.visit(operand)),
+            Some("Equal" | "Equivalent" | "In" | "IncludedIn") => {
+                if let [left, right] = operands
+                    && let Some(path) = alias_path(left, self.alias)
+                {
+                    self.compare(path, right);
+                }
+            }
+            Some("InValueSet") => {
+                if let Some(path) = alias_path(&condition["code"], self.alias) {
+                    self.value_set(path, &condition["valueset"]);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn data_requirement(
+    libraries: &Libraries,
+    elm: &Value,
+    retrieve: &Value,
+    query: Option<&Value>,
+) -> Option<Value> {
     let data_type = retrieve["dataType"].as_str()?;
     let name = data_type.rsplit('}').next().unwrap_or(data_type);
     let mut requirement = json!({"type": name});
     if let Some(profile) = retrieve["templateId"].as_str() {
         requirement["profile"] = json!([profile]);
     }
-    let filters = code_filters(libraries, elm, retrieve);
-    if !filters.is_empty() {
-        requirement["codeFilter"] = json!(filters);
-    }
+    let mut filters = WhereFilters {
+        libraries,
+        elm,
+        alias: query.map_or("", |query| {
+            query["source"][0]["alias"].as_str().unwrap_or_default()
+        }),
+        codes: code_filters(libraries, elm, retrieve),
+        dates: Vec::new(),
+    };
     if let Some(path) = retrieve["dateProperty"].as_str() {
-        requirement["dateFilter"] = json!([{"path": path}]);
+        filters.dates.push(json!({"path": path}));
+    }
+    if let Some(query) = query {
+        filters.visit(&query["where"]);
+    }
+    if !filters.codes.is_empty() {
+        requirement["codeFilter"] = json!(filters.codes);
+    }
+    if !filters.dates.is_empty() {
+        requirement["dateFilter"] = json!(filters.dates);
     }
     Some(requirement)
 }
@@ -192,8 +314,16 @@ pub(crate) fn module_definition(
     for elm in libraries.iter() {
         let mut retrieves = Vec::new();
         nodes_of(&elm["statements"], "Retrieve", &mut retrieves);
+        let mut queries = Vec::new();
+        nodes_of(&elm["statements"], "Query", &mut queries);
+        // A query over one retrieve narrows it; with more sources a condition can relate them.
+        queries.retain(|query| query["source"].as_array().is_some_and(|all| all.len() == 1));
         for retrieve in retrieves {
-            if let Some(requirement) = data_requirement(&libraries, elm, retrieve)
+            let query = queries
+                .iter()
+                .find(|query| std::ptr::eq(&query["source"][0]["expression"], retrieve))
+                .copied();
+            if let Some(requirement) = data_requirement(&libraries, elm, retrieve, query)
                 && !requirements.contains(&requirement)
             {
                 requirements.push(requirement);
@@ -253,6 +383,59 @@ define "Encounters": [Encounter]
             &["http://example.org/Library/common|1".to_owned()],
         )
         .unwrap()
+    }
+
+    fn requirements_of(defines: &str) -> Value {
+        let source = format!(
+            r#"library Filters version '1'
+using FHIR version '4.0.1'
+codesystem "S": 'http://example.org/s'
+valueset "V": 'http://example.org/v'
+code "C": 'x' from "S"
+parameter "Period" Interval<DateTime>
+context Patient
+{defines}
+"#
+        );
+        let library = CompiledLibrary::compile(&source).unwrap();
+        module_definition(&library, &[]).unwrap()["dataRequirement"].clone()
+    }
+
+    #[test]
+    fn where_conditions_become_filters() {
+        let requirements = requirements_of(
+            r#"define "A": [Encounter] E where E.status = 'finished' and E.class ~ "C"
+                and E.priority in "V" and E.status in { 'a', 'b' }
+                and E.period.start during "Period""#,
+        );
+        let encounter = requirements
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|requirement| requirement["type"] == "Encounter")
+            .unwrap();
+        assert_eq!(
+            encounter["codeFilter"],
+            json!([
+                {"path": "status", "code": [{"code": "finished"}]},
+                {"path": "class", "code": [{"system": "http://example.org/s", "code": "x"}]},
+                {"path": "priority", "valueSet": "http://example.org/v"},
+                {"path": "status", "code": [{"code": "a"}, {"code": "b"}]},
+            ])
+        );
+        assert_eq!(encounter["dateFilter"], json!([{"path": "period.start"}]));
+    }
+
+    #[test]
+    fn a_condition_that_does_not_narrow_the_retrieve_stays_out() {
+        let requirements = requirements_of(
+            r#"define "A": [Encounter] E where E.status = 'a' or E.status = 'b'
+define "B": [Condition] C where C.id is not null
+define "D": [Observation] O where not (O.status = 'final')"#,
+        );
+        for requirement in requirements.as_array().unwrap() {
+            assert!(requirement.get("codeFilter").is_none(), "{requirement}");
+        }
     }
 
     #[test]
