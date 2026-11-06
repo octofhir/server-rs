@@ -76,7 +76,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: octofhir-postgres
     restart: unless-stopped
     environment:
@@ -90,7 +90,7 @@ services:
     ports:
       - "5450:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres18_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -100,7 +100,7 @@ services:
       - octofhir
 
 volumes:
-  postgres_data:
+  postgres18_data:
     driver: local
 
 networks:
@@ -124,6 +124,9 @@ docker compose logs postgres
 # Test database connection
 docker exec octofhir-postgres psql -U postgres -d octofhir -c "SELECT version();"
 ```
+
+An existing PostgreSQL 16 volume cannot be read by PostgreSQL 18. Move the data with `pg_dump` and
+`pg_restore`, as described in the deployment guide on the docs site.
 
 ### 4. (Optional) Enable Redis for Caching
 

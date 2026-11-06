@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: octofhir-postgres
     environment:
       POSTGRES_USER: postgres
@@ -68,7 +68,7 @@ services:
     ports:
       - "5450:5432"
     volumes:
-      - octofhir_postgres_data:/var/lib/postgresql/data
+      - octofhir_postgres18_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d octofhir"]
       interval: 5s
@@ -139,7 +139,7 @@ services:
       - octofhir-network
 
 volumes:
-  octofhir_postgres_data:
+  octofhir_postgres18_data:
   octofhir_redis_data:
   octofhir_prometheus_data:
   octofhir_grafana_data:

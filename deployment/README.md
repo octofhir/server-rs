@@ -99,7 +99,7 @@ bash deployment/scripts/deploy.sh
 
 ### Docker Compose
 
-- **PostgreSQL 16**: Main database with performance tuning
+- **PostgreSQL 18**: Main database with performance tuning
 - **Redis** (optional): For caching in multi-instance deployments
 - Persistent volumes for data
 - Health checks

@@ -28,7 +28,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: octofhir
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -120,6 +120,26 @@ docker run -d \
 1. Use a managed PostgreSQL service or properly configured instance
 2. Enable connection pooling (PgBouncer) for high traffic
 3. Regular backups and point-in-time recovery
+
+#### Moving to PostgreSQL 18
+
+PostgreSQL 18 cannot read the data directory of an older major version, and the official image
+keeps its data in `/var/lib/postgresql/18/docker`. Mount the volume at `/var/lib/postgresql`: with
+a volume at `/var/lib/postgresql/data` the container exits at startup.
+
+Move the data with a dump, into a new volume, and keep the old one until the server runs:
+
+```bash
+# On the old server
+docker exec octofhir-postgres pg_dump -U postgres -Fc octofhir > octofhir.dump
+
+# After switching to the new image and volume
+docker compose up -d postgres
+docker cp octofhir.dump octofhir-postgres:/tmp/octofhir.dump
+docker exec octofhir-postgres pg_restore -U postgres -d octofhir --no-owner /tmp/octofhir.dump
+```
+
+Restore before the first start of OctoFHIR, while the database is empty.
 
 #### Scaling
 

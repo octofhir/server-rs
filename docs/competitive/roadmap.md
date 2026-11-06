@@ -104,7 +104,7 @@ Month 5-12: P2 — Differentiation
 ## Assumptions
 
 - Team of 3-5 developers with Rust and FHIR domain knowledge
-- PostgreSQL 16 as primary database (no plan to add other backends)
+- PostgreSQL 18 as primary database (no plan to add other backends)
 - Redis available for caching and pub/sub (horizontal scaling)
 - CI/CD pipeline with GitHub Actions (existing)
 - Access to Inferno test suite (open source, free)

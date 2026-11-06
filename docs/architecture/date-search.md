@@ -1,7 +1,7 @@
 # Date search — OctoFHIR Postgres-native design
 
 OctoFHIR uses Postgres as the **only** storage backend. The date-search layer
-is engineered to maximise what Postgres 16 ships natively: `tstzrange`, GiST
+is engineered to maximise what Postgres 18 ships natively: `tstzrange`, GiST
 range indexes, list partitioning, generated columns, and partition-pruned
 COPY/UNNEST inserts. Every FHIR value with a date-shaped element — `date`,
 `dateTime`, `instant`, `Period`, `Timing` — collapses to the **same uniform
@@ -215,7 +215,7 @@ CREATE INDEX search_idx_date_by_resource
   when a resource is touched and its set of indexed events stays the same
   size.
 - `autovacuum_vacuum_scale_factor = 0.05` per hot partition.
-- `btree_gist` ships in `postgres:16-alpine` (confirmed — it's part of the
+- `btree_gist` ships in `postgres:18-alpine` (confirmed — it's part of the
   `postgresql-contrib` set bundled with the official image).
 
 ### Why GiST, not two btrees on `(lower, upper)`

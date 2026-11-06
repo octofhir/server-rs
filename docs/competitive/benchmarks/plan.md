@@ -35,7 +35,7 @@ synthea -p 1000 -s 42 --exporter.fhir.transaction_bundle true
 **Docker Compose setup** (all servers share identical infra):
 
 ```yaml
-# All servers connect to the same PostgreSQL 16 instance
+# All servers connect to the same PostgreSQL 18 instance
 # Separate databases per server to avoid interference
 # Same hardware, same network, same OS
 ```
