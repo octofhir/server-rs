@@ -8555,6 +8555,13 @@ fn too_many_polls(retry_after: u64) -> Result<Response, ApiError> {
     if let Ok(value) = header::HeaderValue::from_str(&retry_after.to_string()) {
         headers.insert(header::RETRY_AFTER, value);
     }
+    let body = json!({"resourceType": "OperationOutcome", "issue": [{
+        "severity": "error",
+        "code": "throttled",
+        "diagnostics": "Status is polled too often; wait for Retry-After",
+    }]});
+    Ok((StatusCode::TOO_MANY_REQUESTS, headers, Json(body)).into_response())
+}
 
 /// GET /_async-status/{job-id}/manifest/{page}
 ///
@@ -10436,7 +10443,10 @@ mod tests {
             rest["resource"][0]["operation"],
             json!([{"name":"everything","definition":"http://example.org/OperationDefinition/everything"}])
         );
-        assert!(rest["resource"][1].get("operation").is_none());
+        assert_eq!(
+            rest["resource"][1]["operation"][0]["name"],
+            "evaluate-measure"
+        );
         assert!(rest["resource"][2].get("operation").is_none());
         apply_capability_operations(&mut metadata, &registry, &handlers, true);
         assert_eq!(
