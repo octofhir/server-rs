@@ -5,8 +5,9 @@
 //! puts the subject in the population. With a `populationBasis` extension naming a resource
 //! type the members are the resources the defines return, such as Encounters, and each is
 //! counted. Proportion, ratio, cohort and continuous variable scoring are implemented. A
-//! `measure-observation` names a CQL function: each member of the measure population goes
-//! through it and the group's `aggregateMethod` turns the values into the score.
+//! `measure-observation` names a CQL function: each member of the population it refers to
+//! goes through it and the group's `aggregateMethod` turns the values into the score. A ratio
+//! can observe its numerator and denominator, and then divides the two aggregates.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -236,27 +237,59 @@ fn classify(scoring: Scoring, criteria: impl Fn(&str) -> bool) -> Memberships {
     memberships
 }
 
-/// Where a member falls, and the value observed for it.
-type Classified = (Memberships, Option<f64>);
+/// The population an observation is taken over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObservationTarget {
+    MeasurePopulation,
+    Numerator,
+    Denominator,
+}
+
+impl ObservationTarget {
+    fn population(self) -> &'static str {
+        match self {
+            Self::MeasurePopulation => "measure-population",
+            Self::Numerator => "numerator",
+            Self::Denominator => "denominator",
+        }
+    }
+
+    /// Whether a member counts here: exclusions leave before anything is observed.
+    fn holds(self, memberships: &Memberships) -> bool {
+        match self {
+            Self::MeasurePopulation => memberships[8],
+            Self::Numerator => memberships[4] && !memberships[5],
+            Self::Denominator => memberships[1] && !memberships[2],
+        }
+    }
+}
+
+/// A group has one observation, or a ratio's two.
+const MAX_OBSERVATIONS: usize = 2;
+
+/// Where a member falls, and the values observed for it, one per observation of the group.
+type Classified = (Memberships, [Option<f64>; MAX_OBSERVATIONS]);
 
 /// Population counts of a group or stratum.
 #[derive(Debug, Clone, Default)]
 struct Tally {
     counts: [u64; POPULATIONS.len()],
     subjects: [Vec<String>; POPULATIONS.len()],
-    observations: Vec<f64>,
+    observations: [Vec<f64>; MAX_OBSERVATIONS],
 }
 
 impl Tally {
-    fn add(&mut self, (memberships, observation): Classified, subject: &str) {
+    fn add(&mut self, (memberships, observed): Classified, subject: &str, group: &Group<'_>) {
         for (index, member) in memberships.into_iter().enumerate() {
             if member {
                 self.counts[index] += 1;
                 self.subjects[index].push(subject.to_owned());
             }
         }
-        if memberships[8] {
-            self.observations.extend(observation);
+        for (slot, observation) in group.observations.iter().enumerate() {
+            if observation.target.holds(&memberships) {
+                self.observations[slot].extend(observed[slot]);
+            }
         }
     }
 
@@ -279,23 +312,34 @@ impl Tally {
         (bottom > 0).then(|| top as f64 / bottom as f64)
     }
 
-    fn populations(&self, used: &[&str], list_id: Option<&str>) -> Vec<Value> {
-        POPULATIONS
-            .iter()
-            .enumerate()
-            .filter(|(_, code)| used.contains(code))
-            .map(|(index, code)| {
-                let mut population = json!({
-                    "code": {"coding": [{"system": MEASURE_POPULATION, "code": code}]},
-                    "count": self.counts[index],
-                });
-                if let Some(prefix) = list_id {
-                    population["subjectResults"] =
-                        json!({"reference": format!("#{prefix}-{code}")});
-                }
-                population
-            })
-            .collect()
+    /// The populations of a report; each observation of a group is a population of its own.
+    fn populations(&self, used: &[&str], list_id: Option<&str>, observations: usize) -> Vec<Value> {
+        let row = |code: &str, count: u64| {
+            let mut population = json!({
+                "code": {"coding": [{"system": MEASURE_POPULATION, "code": code}]},
+                "count": count,
+            });
+            if let Some(prefix) = list_id {
+                population["subjectResults"] = json!({"reference": format!("#{prefix}-{code}")});
+            }
+            population
+        };
+        let mut rows = Vec::with_capacity(used.len() + 1);
+        for (index, code) in POPULATIONS.iter().enumerate() {
+            if !used.contains(code) {
+                continue;
+            }
+            if *code == OBSERVATION {
+                rows.extend(
+                    self.observations[..observations]
+                        .iter()
+                        .map(|values| row(code, values.len() as u64)),
+                );
+            } else {
+                rows.push(row(code, self.counts[index]));
+            }
+        }
+        rows
     }
 }
 
@@ -305,17 +349,84 @@ struct Group<'m> {
     /// Population code to the name of its define.
     criteria: BTreeMap<&'m str, &'m str>,
     stratifiers: Vec<&'m str>,
-    /// How the observations of a continuous variable group are scored.
-    aggregate: Option<Aggregate>,
-    /// The define added to the library to run the observation function.
-    observation: Option<String>,
+    observations: Vec<Observation<'m>>,
+}
+
+/// A `measure-observation` population.
+#[derive(Debug, Clone)]
+struct Observation<'m> {
+    target: ObservationTarget,
+    function: &'m str,
+    aggregate: Aggregate,
+    /// The define added to the library to run the function.
+    define: String,
+}
+
+impl<'m> Observation<'m> {
+    fn parse(
+        group: usize,
+        population: &'m Value,
+        function: &'m str,
+        populations: &'m [Value],
+    ) -> Result<Self, OperationError> {
+        let target = match criteria_reference(population) {
+            None => ObservationTarget::MeasurePopulation,
+            Some(reference) => {
+                let code = populations
+                    .iter()
+                    .find(|other| other["id"] == reference || other["linkId"] == reference)
+                    .and_then(|other| other["code"]["coding"][0]["code"].as_str());
+                match code {
+                    Some("measure-population") => ObservationTarget::MeasurePopulation,
+                    Some("numerator") => ObservationTarget::Numerator,
+                    Some("denominator") => ObservationTarget::Denominator,
+                    _ => {
+                        return Err(OperationError::InvalidParameters(format!(
+                            "A measure-observation refers to {reference}, which is no \
+                             measure population, numerator or denominator of its group"
+                        )));
+                    }
+                }
+            }
+        };
+        let define = match target {
+            ObservationTarget::MeasurePopulation => format!("OctoFHIR Observation {group}"),
+            ObservationTarget::Numerator => format!("OctoFHIR Observation {group} Numerator"),
+            ObservationTarget::Denominator => format!("OctoFHIR Observation {group} Denominator"),
+        };
+        Ok(Self {
+            target,
+            function,
+            aggregate: Aggregate::of(population)?,
+            define,
+        })
+    }
+}
+
+/// The population an observation is over: `inputPopulationId` (R5 and later) or the
+/// `criteriaReference` extension.
+fn criteria_reference(population: &Value) -> Option<&str> {
+    population["inputPopulationId"].as_str().or_else(|| {
+        population["extension"]
+            .as_array()?
+            .iter()
+            .find(|extension| {
+                extension["url"]
+                    .as_str()
+                    .is_some_and(|url| url.ends_with("criteriaReference"))
+            })?["valueString"]
+            .as_str()
+    })
 }
 
 impl<'m> Group<'m> {
     fn parse(index: usize, source: &'m Value) -> Result<Self, OperationError> {
         let mut criteria = BTreeMap::new();
-        let mut aggregate = None;
-        for population in source["population"].as_array().into_iter().flatten() {
+        let mut observations = Vec::new();
+        let populations = source["population"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        for population in populations {
             let code = population["code"]["coding"][0]["code"]
                 .as_str()
                 .ok_or_else(|| {
@@ -335,7 +446,12 @@ impl<'m> Group<'m> {
                 })?;
             criteria.insert(code, expression);
             if code == OBSERVATION {
-                aggregate = Some(Aggregate::of(population)?);
+                observations.push(Observation::parse(
+                    index,
+                    population,
+                    expression,
+                    populations,
+                )?);
             }
         }
         let stratifiers = source["stratifier"]
@@ -344,44 +460,58 @@ impl<'m> Group<'m> {
             .flatten()
             .filter_map(|stratifier| stratifier["criteria"]["expression"].as_str())
             .collect();
-        let observation = aggregate.map(|_| format!("OctoFHIR Observation {index}"));
+        if observations.len() > MAX_OBSERVATIONS {
+            return Err(OperationError::NotSupported(
+                "A group has one measure-observation, or two on a ratio".into(),
+            ));
+        }
         Ok(Self {
             source,
             criteria,
             stratifiers,
-            aggregate,
-            observation,
+            observations,
         })
     }
 
-    fn observed<'d>(&self, defines: &'d IndexMap<String, Value>) -> Option<&'d Value> {
-        defines.get(self.observation.as_deref()?)
-    }
-
-    /// The CQL that runs the observation function: over each member of the measure
-    /// population, or once for a subject-based measure.
-    fn observation_define(&self, by_resource: bool) -> Result<Option<String>, OperationError> {
-        let Some(name) = &self.observation else {
-            return Ok(None);
-        };
-        let function = self.criteria[OBSERVATION];
-        let population = self.criteria.get("measure-population").ok_or_else(|| {
-            OperationError::InvalidParameters(
-                "A measure-observation needs a measure-population".into(),
-            )
-        })?;
-        if function.contains('"') || population.contains('"') {
+    /// A ratio observes its numerator and denominator both, or neither.
+    fn check_observations(&self, scoring: Scoring) -> Result<(), OperationError> {
+        let observes = |target| self.observations.iter().any(|o| o.target == target);
+        let ratio_pair =
+            observes(ObservationTarget::Numerator) && observes(ObservationTarget::Denominator);
+        if scoring == Scoring::Ratio && !self.observations.is_empty() && !ratio_pair {
             return Err(OperationError::InvalidParameters(
-                "A population names a define or function, not an expression".into(),
+                "A ratio observes its numerator and its denominator".into(),
             ));
         }
-        Ok(Some(if by_resource {
-            format!(
-                "define \"{name}\": \"{population}\" M return Tuple {{ id: M.id, value: \"{function}\"(M) }}\n"
-            )
-        } else {
-            format!("define \"{name}\": \"{function}\"()\n")
-        }))
+        Ok(())
+    }
+
+    /// The CQL that runs each observation function: over each member of its population, or
+    /// once for a subject-based measure.
+    fn observation_defines(&self, by_resource: bool) -> Result<String, OperationError> {
+        let mut source = String::new();
+        for observation in &self.observations {
+            let population = observation.target.population();
+            let population = self.criteria.get(population).ok_or_else(|| {
+                OperationError::InvalidParameters(format!(
+                    "A measure-observation needs a {population}"
+                ))
+            })?;
+            let (name, function) = (&observation.define, observation.function);
+            if function.contains('"') || population.contains('"') {
+                return Err(OperationError::InvalidParameters(
+                    "A population names a define or function, not an expression".into(),
+                ));
+            }
+            source.push_str(&if by_resource {
+                format!(
+                    "define \"{name}\": \"{population}\" M return Tuple {{ id: M.id, value: \"{function}\"(M) }}\n"
+                )
+            } else {
+                format!("define \"{name}\": \"{function}\"()\n")
+            });
+        }
+        Ok(source)
     }
 
     fn in_define(&self, code: &str, defines: &IndexMap<String, Value>) -> bool {
@@ -392,12 +522,17 @@ impl<'m> Group<'m> {
 
     /// The subject as the one member of its populations.
     fn subject_member(&self, scoring: Scoring, defines: &IndexMap<String, Value>) -> Classified {
-        let observation = self.observed(defines).and_then(observed_number);
+        let mut observed = [None; MAX_OBSERVATIONS];
+        for (slot, observation) in self.observations.iter().enumerate() {
+            observed[slot] = defines
+                .get(observation.define.as_str())
+                .and_then(observed_number);
+        }
         let memberships = classify(scoring, |code| match code {
-            OBSERVATION => observation.is_some(),
+            OBSERVATION => observed[0].is_some(),
             _ => self.in_define(code, defines),
         });
-        (memberships, observation)
+        (memberships, observed)
     }
 
     /// One classification per resource found in any population of a subject.
@@ -412,32 +547,52 @@ impl<'m> Group<'m> {
             .filter(|(code, _)| **code != OBSERVATION)
             .map(|(code, name)| (*code, members(defines.get(*name))))
             .collect();
-        let observed: HashMap<&str, f64> = self
-            .observed(defines)
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|item| Some((item["id"].as_str()?, observed_number(&item["value"])?)))
+        let observed: Vec<HashMap<&str, f64>> = self
+            .observations
+            .iter()
+            .map(|observation| {
+                defines
+                    .get(observation.define.as_str())
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| {
+                        Some((item["id"].as_str()?, observed_number(&item["value"])?))
+                    })
+                    .collect()
+            })
             .collect();
         let all: HashSet<&str> = populations.values().flatten().copied().collect();
         all.into_iter()
             .map(|resource| {
-                let observation = observed.get(resource).copied();
+                let mut values = [None; MAX_OBSERVATIONS];
+                for (slot, by_resource) in observed.iter().enumerate() {
+                    values[slot] = by_resource.get(resource).copied();
+                }
                 let memberships = classify(scoring, |code| match code {
-                    OBSERVATION => observation.is_some(),
+                    OBSERVATION => values[0].is_some(),
                     _ => populations
                         .get(code)
                         .is_some_and(|population| population.contains(resource)),
                 });
-                (memberships, observation)
+                (memberships, values)
             })
             .collect()
     }
 
     fn score(&self, tally: &Tally, scoring: Scoring) -> Option<f64> {
-        match self.aggregate {
-            Some(aggregate) if scoring == Scoring::ContinuousVariable => {
-                aggregate.apply(&tally.observations)
+        let aggregate = |target| {
+            let slot = self.observations.iter().position(|o| o.target == target)?;
+            self.observations[slot]
+                .aggregate
+                .apply(&tally.observations[slot])
+        };
+        match scoring {
+            Scoring::ContinuousVariable => aggregate(ObservationTarget::MeasurePopulation),
+            Scoring::Ratio if !self.observations.is_empty() => {
+                let numerator = aggregate(ObservationTarget::Numerator)?;
+                let denominator = aggregate(ObservationTarget::Denominator)?;
+                (denominator != 0.0).then(|| numerator / denominator)
             }
             _ => tally.score(scoring),
         }
@@ -661,10 +816,12 @@ impl EvaluateMeasureOperation {
             })
             .collect::<Result<Vec<_>, OperationError>>()?;
         let (_, mut source) = measure_library(&service, measure).await?;
-        for (group, _, by_resource) in &groups {
-            if let Some(define) = group.observation_define(*by_resource)? {
+        for (group, scoring, by_resource) in &groups {
+            group.check_observations(*scoring)?;
+            let defines = group.observation_defines(*by_resource)?;
+            if !defines.is_empty() {
                 source.push('\n');
-                source.push_str(&define);
+                source.push_str(&defines);
             }
         }
 
@@ -709,12 +866,12 @@ impl EvaluateMeasureOperation {
                     vec![group.subject_member(scoring, defines)]
                 };
                 for member in classified {
-                    tally.add(member, subject);
+                    tally.add(member, subject, group);
                     for (stratifier, by_value) in group.stratifiers.iter().zip(&mut strata) {
                         by_value
                             .entry(stratum_key(defines.get(*stratifier)))
                             .or_default()
-                            .add(member, subject);
+                            .add(member, subject, group);
                     }
                 }
             }
@@ -724,7 +881,8 @@ impl EvaluateMeasureOperation {
             if subject_list {
                 contained.extend(contained_lists(&prefix, &used, &tally, &now));
             }
-            let mut result = json!({"population": tally.populations(&used, list)});
+            let observations = group.observations.len();
+            let mut result = json!({"population": tally.populations(&used, list, observations)});
             if let Some(code) = group.source.get("code") {
                 result["code"] = code.clone();
             }
@@ -740,7 +898,7 @@ impl EvaluateMeasureOperation {
                             .map(|(value, tally)| {
                                 let mut item = json!({
                                     value_element: {"text": value},
-                                    "population": tally.populations(&used, None),
+                                    "population": tally.populations(&used, None, observations),
                                 });
                                 if let Some(score) = group.score(tally, scoring) {
                                     item[score_element] = json!({"value": score});
@@ -948,10 +1106,16 @@ mod tests {
     use super::*;
 
     fn tally(scoring: Scoring, subjects: &[&[&str]]) -> Tally {
+        let source = json!({});
+        let group = Group::parse(0, &source).unwrap();
         let mut tally = Tally::default();
         for (index, memberships) in subjects.iter().enumerate() {
             let classified = classify(scoring, |code| memberships.contains(&code));
-            tally.add((classified, None), &format!("Patient/{index}"));
+            tally.add(
+                (classified, [None; MAX_OBSERVATIONS]),
+                &format!("Patient/{index}"),
+                &group,
+            );
         }
         tally
     }
@@ -1100,7 +1264,7 @@ mod tests {
         ]);
         let mut tally = Tally::default();
         for member in group.resource_members(Scoring::Proportion, &defines) {
-            tally.add(member, "Patient/1");
+            tally.add(member, "Patient/1", &group);
         }
         assert_eq!(tally.counts[..6], [3, 2, 0, 0, 1, 0]);
         assert_eq!(tally.score(Scoring::Proportion), Some(0.5));
@@ -1134,14 +1298,14 @@ mod tests {
     fn continuous_variable_observes_the_measure_population_without_its_exclusions() {
         let source = continuous_group();
         let group = Group::parse(0, &source).unwrap();
-        assert_eq!(group.aggregate, Some(Aggregate::Median));
+        assert_eq!(group.observations[0].aggregate, Aggregate::Median);
         assert_eq!(
-            group.observation_define(true).unwrap().unwrap(),
+            group.observation_defines(true).unwrap(),
             "define \"OctoFHIR Observation 0\": \"MP\" M return \
 Tuple { id: M.id, value: \"Stay\"(M) }\n"
         );
         assert_eq!(
-            group.observation_define(false).unwrap().unwrap(),
+            group.observation_defines(false).unwrap(),
             "define \"OctoFHIR Observation 0\": \"Stay\"()\n"
         );
 
@@ -1168,7 +1332,7 @@ Tuple { id: M.id, value: \"Stay\"(M) }\n"
         ]);
         let mut tally = Tally::default();
         for member in group.resource_members(Scoring::ContinuousVariable, &defines) {
-            tally.add(member, "Patient/1");
+            tally.add(member, "Patient/1", &group);
         }
         assert_eq!(tally.counts, [4, 0, 0, 0, 0, 0, 3, 1, 2]);
         assert_eq!(group.score(&tally, Scoring::ContinuousVariable), Some(15.0));
@@ -1186,8 +1350,101 @@ Tuple { id: M.id, value: \"Stay\"(M) }\n"
         ]);
         let (memberships, observation) =
             group.subject_member(Scoring::ContinuousVariable, &defines);
-        assert_eq!(observation, Some(7.0));
+        assert_eq!(observation[0], Some(7.0));
         assert!(memberships[8]);
+    }
+
+    fn ratio_group() -> Value {
+        let observation = |id: &str, target: &str, function: &str| {
+            json!({
+                "id": id,
+                "code": {"coding": [{"code": "measure-observation"}]},
+                "criteria": {"expression": function},
+                "extension": [
+                    {"url": "http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-criteriaReference",
+                     "valueString": target},
+                    {"url": "http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-aggregateMethod",
+                     "valueCode": "sum"},
+                ],
+            })
+        };
+        json!({"population": [
+            {"code": {"coding": [{"code": "initial-population"}]}, "criteria": {"expression": "IP"}},
+            {"id": "den", "code": {"coding": [{"code": "denominator"}]}, "criteria": {"expression": "D"}},
+            {"code": {"coding": [{"code": "denominator-exclusion"}]}, "criteria": {"expression": "DX"}},
+            {"id": "num", "code": {"coding": [{"code": "numerator"}]}, "criteria": {"expression": "N"}},
+            {"code": {"coding": [{"code": "numerator-exclusion"}]}, "criteria": {"expression": "NX"}},
+            observation("num-obs", "num", "NumberOf"),
+            observation("den-obs", "den", "DaysOf"),
+        ]})
+    }
+
+    #[test]
+    fn a_ratio_divides_its_aggregates_without_the_excluded() {
+        let source = ratio_group();
+        let group = Group::parse(0, &source).unwrap();
+        group.check_observations(Scoring::Ratio).unwrap();
+        assert_eq!(group.observations[0].target, ObservationTarget::Numerator);
+        assert_eq!(group.observations[1].target, ObservationTarget::Denominator);
+        assert_eq!(
+            group.observation_defines(false).unwrap(),
+            "define \"OctoFHIR Observation 0 Numerator\": \"NumberOf\"()\n\
+             define \"OctoFHIR Observation 0 Denominator\": \"DaysOf\"()\n"
+        );
+
+        let member = |ip: bool, d: bool, dx: bool, n: bool, nx: bool, num: f64, den: f64| {
+            IndexMap::from([
+                ("IP".to_owned(), json!(ip)),
+                ("D".to_owned(), json!(d)),
+                ("DX".to_owned(), json!(dx)),
+                ("N".to_owned(), json!(n)),
+                ("NX".to_owned(), json!(nx)),
+                ("OctoFHIR Observation 0 Numerator".to_owned(), json!(num)),
+                ("OctoFHIR Observation 0 Denominator".to_owned(), json!(den)),
+            ])
+        };
+        let mut tally = Tally::default();
+        for defines in [
+            member(true, true, false, true, false, 2.0, 10.0),
+            member(true, true, false, false, false, 5.0, 30.0),
+            // Excluded on either side: nothing is observed there.
+            member(true, true, true, true, true, 100.0, 100.0),
+            // Outside the initial population.
+            member(false, true, false, true, false, 100.0, 100.0),
+        ] {
+            tally.add(
+                group.subject_member(Scoring::Ratio, &defines),
+                "Patient/1",
+                &group,
+            );
+        }
+        assert_eq!(tally.observations[0], [2.0]);
+        assert_eq!(tally.observations[1], [10.0, 30.0]);
+        assert_eq!(group.score(&tally, Scoring::Ratio), Some(0.05));
+
+        let used: Vec<&str> = group.criteria.keys().copied().collect();
+        let rows = tally.populations(&used, None, 2);
+        let observations: Vec<_> = rows
+            .iter()
+            .filter(|row| row["code"]["coding"][0]["code"] == OBSERVATION)
+            .map(|row| row["count"].as_u64().unwrap())
+            .collect();
+        assert_eq!(observations, [1, 2]);
+    }
+
+    #[test]
+    fn a_ratio_observes_both_sides_or_neither() {
+        let mut source = ratio_group();
+        source["population"].as_array_mut().unwrap().pop();
+        let group = Group::parse(0, &source).unwrap();
+        assert!(group.check_observations(Scoring::Ratio).is_err());
+    }
+
+    #[test]
+    fn an_observation_refers_to_a_population_of_its_group() {
+        let mut source = ratio_group();
+        source["population"][5]["extension"][0]["valueString"] = json!("missing");
+        assert!(Group::parse(0, &source).is_err());
     }
 
     #[test]
@@ -1215,6 +1472,6 @@ Tuple { id: M.id, value: \"Stay\"(M) }\n"
         let mut source = continuous_group();
         source["population"][3]["criteria"]["expression"] = json!("Stay\" x");
         let group = Group::parse(0, &source).unwrap();
-        assert!(group.observation_define(true).is_err());
+        assert!(group.observation_defines(true).is_err());
     }
 }

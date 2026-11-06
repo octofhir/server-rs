@@ -628,6 +628,47 @@ define function "Stay"(E Encounter): difference in minutes between E.period.star
     assert_eq!(count("measure-population-exclusion"), 1, "{group}");
     assert_eq!(count("measure-observation"), 2, "{group}");
     assert_eq!(group["measureScore"]["value"], 120.0, "{group}");
+
+    // A ratio of two observations: minutes of finished stays over minutes of all stays.
+    let observed = |id: &str, target: &str| {
+        let mut observation = population("measure-observation", "Stay");
+        observation["id"] = json!(id);
+        observation["extension"] = json!([
+            {"url":"http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-aggregateMethod",
+             "valueCode":"sum"},
+            {"url":"http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-criteriaReference",
+             "valueString":target}]);
+        observation
+    };
+    let mut denominator = population("denominator", "Initial Population");
+    denominator["id"] = json!("all");
+    let mut numerator = population("numerator", "Measure Population");
+    numerator["id"] = json!("finished");
+    put(client, base, json!({"resourceType":"Measure","id":"stay-ratio","status":"active",
+        "url":"http://example.org/Measure/stay-ratio",
+        "extension":[{"url":"http://hl7.org/fhir/us/cqfmeasures/StructureDefinition/cqfm-populationBasis",
+            "valueCode":"Encounter"}],
+        "library":["http://example.org/Library/stays"],
+        "scoring":{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/measure-scoring",
+            "code":"ratio"}]},
+        "group":[{"population":[
+            population("initial-population","Initial Population"),
+            denominator,
+            numerator,
+            population("numerator-exclusion","Measure Population Exclusion"),
+            observed("over-finished", "finished"),
+            observed("over-all", "all")]}]}))
+    .await;
+    let report = get(
+        client,
+        &format!(
+            "{base}/fhir/Measure/stay-ratio/$evaluate-measure?periodStart=2024-01-01&periodEnd=2024-12-31&subject=Patient/m1"
+        ),
+    )
+    .await;
+    let group = &report["group"][0];
+    let score = group["measureScore"]["value"].as_f64().unwrap();
+    assert!((score - 240.0 / 1080.0).abs() < 1e-9, "{group}");
 }
 
 async fn measure(client: &Client, base: &str) {
