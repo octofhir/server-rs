@@ -126,6 +126,7 @@ pub fn search_type_name(search_type: SearchParameterType) -> &'static str {
         SearchParameterType::Quantity => "quantity",
         SearchParameterType::Uri => "uri",
         SearchParameterType::Special => "special",
+        SearchParameterType::Resource => "resource",
     }
 }
 

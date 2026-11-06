@@ -656,6 +656,7 @@ fn analyze_fhir_queries(
                 SearchParameterType::Uri => "uri",
                 SearchParameterType::Composite => "composite",
                 SearchParameterType::Special => "special",
+                SearchParameterType::Resource => "resource",
             };
             *usage
                 .entry((

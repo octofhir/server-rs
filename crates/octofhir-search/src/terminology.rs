@@ -847,7 +847,12 @@ fn grammar_value_set(valueset_url: &str, code: &str) -> Option<bool> {
     };
     match url {
         // urn:ietf:bcp:13: type/subtype with optional parameters.
-        "http://hl7.org/fhir/ValueSet/mimetypes" => {
+        "http://hl7.org/fhir/ValueSet/mimetypes"
+        | "http://hl7.org/fhir/ValueSet/supplemented-mimetypes" => {
+            // R6 adds the simple format codes to the media types.
+            if url.ends_with("supplemented-mimetypes") && matches!(code, "xml" | "json" | "ttl") {
+                return Some(true);
+            }
             let media_type = code.split(';').next().unwrap_or_default().trim();
             Some(
                 media_type

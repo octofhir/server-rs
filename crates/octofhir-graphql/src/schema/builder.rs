@@ -821,6 +821,9 @@ impl FhirSchemaBuilder {
                 SearchParameterType::Special => {
                     format!("Search by {} (special)", param.code)
                 }
+                SearchParameterType::Resource => {
+                    format!("Chain through {} (embedded resource)", param.code)
+                }
             };
 
             let input = InputValue::new(&graphql_name, type_ref).description(description);

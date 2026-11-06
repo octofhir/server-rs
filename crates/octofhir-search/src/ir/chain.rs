@@ -52,6 +52,9 @@ pub struct ChainLink {
     pub target_type: Option<String>,
     /// The FHIRPath expression locating the reference on the source resource.
     pub expression: String,
+    /// JSONPath of a resource held inside the source, which the link enters directly
+    /// instead of following a reference.
+    pub embedded: Option<String>,
 }
 
 /// A fully parsed chained search parameter.
@@ -75,6 +78,47 @@ fn parse_parameter_with_type(part: &str) -> (&str, Option<&str>) {
         Some(pos) => (&part[..pos], Some(&part[pos + 1..])),
         None => (part, None),
     }
+}
+
+/// `Bundle.entry[0].resource as Composition` as the JSONPath `$.entry[0].resource` and the
+/// cast type. `None` for anything but a plain path, so nothing else reaches the SQL text.
+fn embedded_path(expression: &str) -> Option<(String, Option<&str>)> {
+    let (path, cast) = match expression.split_once(" as ") {
+        Some((path, cast)) => (path.trim(), Some(cast.trim())),
+        None => (expression.trim(), None),
+    };
+    if cast.is_some_and(|cast| !cast.chars().all(|c| c.is_ascii_alphanumeric())) {
+        return None;
+    }
+    let mut json_path = String::from("$");
+    for step in path.split('.').skip(1) {
+        let (name, index) = match step.split_once('[') {
+            Some((name, index)) => (name, Some(index.strip_suffix(']')?)),
+            None => (step, None),
+        };
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        json_path.push('.');
+        json_path.push_str(name);
+        if let Some(index) = index {
+            if index.is_empty() || !index.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            json_path.push('[');
+            json_path.push_str(index);
+            json_path.push(']');
+        }
+    }
+    (json_path.len() > 1).then_some((json_path, cast))
+}
+
+/// The embedded resource a parameter chains into. Before R6 there was no `resource` type, so
+/// `reference` parameters on an element named `resource` do the same.
+fn embedded_link(param_def: &SearchParameter) -> Option<(String, Option<&str>)> {
+    let (json_path, cast) = embedded_path(param_def.expression.as_deref()?)?;
+    (param_def.param_type == SearchParameterType::Resource || json_path.ends_with(".resource"))
+        .then_some((json_path, cast))
 }
 
 impl ChainClause {
@@ -105,17 +149,28 @@ impl ChainClause {
                 }
             })?;
 
-            if param_def.param_type != SearchParameterType::Reference {
+            if !matches!(
+                param_def.param_type,
+                SearchParameterType::Reference | SearchParameterType::Resource
+            ) {
                 return Err(ChainError::NotReferenceType(param_name.to_string()));
             }
 
-            let resolved_type = target_type.map(|s| s.to_string()).or_else(|| {
-                if param_def.target.len() == 1 {
-                    Some(param_def.target[0].clone())
-                } else {
-                    None
-                }
-            });
+            let embedded = embedded_link(&param_def);
+            if param_def.param_type == SearchParameterType::Resource && embedded.is_none() {
+                return Err(ChainError::NotReferenceType(param_name.to_string()));
+            }
+
+            let resolved_type = target_type
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    if param_def.target.len() == 1 {
+                        Some(param_def.target[0].clone())
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| embedded.as_ref()?.1.map(str::to_string));
 
             if resolved_type.is_none() && i < parts.len() - 2 {
                 return Err(ChainError::AmbiguousTarget(param_name.to_string()));
@@ -126,6 +181,7 @@ impl ChainClause {
                 parameter: param_name.to_string(),
                 target_type: resolved_type.clone(),
                 expression,
+                embedded: embedded.map(|(json_path, _)| json_path),
             });
 
             if let Some(t) = resolved_type {
@@ -193,11 +249,33 @@ fn render_nested_chain(
         format!("chain{}.resource", depth - 1)
     };
 
-    let segments = fhirpath_to_jsonb_path(&link.expression, current_type);
-    // Extract reference IDs once per source row, then probe the target PK. The
-    // old nested EXISTS compared every reference against every target candidate.
-    let ids = reference_target_ids_sql(&outer_resource_col, &segments, target_type);
-    let ref_exists = SqlExpr::Raw(format!("{alias}.id = ANY(ARRAY({ids}))"));
+    let (from_table, link_conditions) = match &link.embedded {
+        Some(json_path) => {
+            let resource_type = target_type.replace('\'', "''");
+            (
+                format!(
+                    "(SELECT embedded AS resource, embedded->>'id' AS id \
+                     FROM jsonb_path_query({outer_resource_col}, '{json_path}') AS embedded)"
+                ),
+                vec![SqlExpr::Raw(format!(
+                    "{alias}.resource->>'resourceType' = '{resource_type}'"
+                ))],
+            )
+        }
+        None => {
+            let segments = fhirpath_to_jsonb_path(&link.expression, current_type);
+            // Extract reference IDs once per source row, then probe the target PK. The
+            // old nested EXISTS compared every reference against every target candidate.
+            let ids = reference_target_ids_sql(&outer_resource_col, &segments, target_type);
+            (
+                format!("\"{target_table}\""),
+                vec![
+                    SqlExpr::Raw(format!("{alias}.status != 'deleted'")),
+                    SqlExpr::Raw(format!("{alias}.id = ANY(ARRAY({ids}))")),
+                ],
+            )
+        }
+    };
 
     let inner_condition = if depth + 1 < clause.chain.len() {
         render_nested_chain(builder, clause, target_type, registry, depth + 1)?
@@ -217,14 +295,15 @@ fn render_nested_chain(
     Ok(SqlExpr::Exists(Box::new(SelectStmt {
         projection: vec![SqlTerm::Integer(1)],
         from: SqlFrom {
-            table: format!("\"{target_table}\""),
+            table: from_table,
             alias: Some(alias.clone()),
         },
-        where_clause: Some(SqlExpr::And(vec![
-            SqlExpr::Raw(format!("{alias}.status != 'deleted'")),
-            ref_exists,
-            inner_condition,
-        ])),
+        where_clause: Some(SqlExpr::And(
+            link_conditions
+                .into_iter()
+                .chain(std::iter::once(inner_condition))
+                .collect(),
+        )),
     })))
 }
 
@@ -488,6 +567,94 @@ fn render_final_condition(
 mod tests {
     use super::*;
     use crate::parameters::{ElementTypeHint, SearchParameter};
+
+    fn embedded_registry(
+        param_type: SearchParameterType,
+        targets: Vec<String>,
+    ) -> SearchParameterRegistry {
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "composition",
+                "http://hl7.org/fhir/SearchParameter/Bundle-composition",
+                param_type,
+                vec!["Bundle".to_string()],
+            )
+            .with_expression("Bundle.entry[0].resource as Composition")
+            .with_targets(targets),
+        );
+        registry.register(
+            SearchParameter::new(
+                "title",
+                "http://hl7.org/fhir/SearchParameter/Composition-title",
+                SearchParameterType::String,
+                vec!["Composition".to_string()],
+            )
+            .with_expression("Composition.title"),
+        );
+        registry
+    }
+
+    #[test]
+    fn embedded_path_keeps_the_index_and_reads_the_cast() {
+        assert_eq!(
+            embedded_path("Bundle.entry[0].resource as MessageHeader"),
+            Some(("$.entry[0].resource".to_string(), Some("MessageHeader")))
+        );
+        assert_eq!(
+            embedded_path("Bundle.entry.resource"),
+            Some(("$.entry.resource".to_string(), None))
+        );
+    }
+
+    #[test]
+    fn embedded_path_refuses_anything_but_a_plain_path() {
+        for expression in [
+            "Bundle.entry.where(x = 'y').resource",
+            "Bundle.entry[0].resource as Comp'osition",
+            "Bundle.entry[x].resource",
+            "Bundle",
+        ] {
+            assert_eq!(embedded_path(expression), None, "{expression}");
+        }
+    }
+
+    #[test]
+    fn a_resource_parameter_chains_into_the_embedded_resource() {
+        // R6 gives no target: the type comes from the cast in the expression.
+        let registry = embedded_registry(SearchParameterType::Resource, Vec::new());
+        let clause =
+            ChainClause::parse("composition.title", "Discharge", &registry, "Bundle").unwrap();
+        assert_eq!(clause.chain[0].target_type.as_deref(), Some("Composition"));
+        assert_eq!(
+            clause.chain[0].embedded.as_deref(),
+            Some("$.entry[0].resource")
+        );
+
+        let mut builder = SqlBuilder::new();
+        render_chain_clause(&mut builder, &clause, "Bundle", &registry).unwrap();
+        let sql = builder.build_where_clause().unwrap();
+        assert!(
+            sql.contains("jsonb_path_query(resource, '$.entry[0].resource')"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("chain0.resource->>'resourceType' = 'Composition'"),
+            "{sql}"
+        );
+        assert!(!sql.contains("\"composition\""), "{sql}");
+    }
+
+    #[test]
+    fn a_reference_parameter_on_a_resource_element_is_embedded_too() {
+        let registry = embedded_registry(
+            SearchParameterType::Reference,
+            vec!["Composition".to_string()],
+        );
+        let clause =
+            ChainClause::parse("composition.title", "Discharge", &registry, "Bundle").unwrap();
+        assert!(clause.chain[0].embedded.is_some());
+    }
 
     fn registry() -> SearchParameterRegistry {
         let registry = SearchParameterRegistry::new();

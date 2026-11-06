@@ -16,6 +16,8 @@ pub enum SearchParameterType {
     Quantity,
     Uri,
     Special,
+    /// R6: chains into a resource held inside this one, has no test of its own.
+    Resource,
 }
 
 impl SearchParameterType {
@@ -32,6 +34,7 @@ impl SearchParameterType {
             "quantity" => Some(Self::Quantity),
             "uri" => Some(Self::Uri),
             "special" => Some(Self::Special),
+            "resource" => Some(Self::Resource),
             _ => None,
         }
     }
@@ -189,7 +192,8 @@ impl SearchPrefix {
             | SearchParameterType::Reference
             | SearchParameterType::Uri
             | SearchParameterType::Composite
-            | SearchParameterType::Special => matches!(self, Self::Eq),
+            | SearchParameterType::Special
+            | SearchParameterType::Resource => matches!(self, Self::Eq),
         }
     }
 

@@ -255,6 +255,8 @@ fn dispatch_search_inner(
             }
         }
 
+        SearchParameterType::Resource => Err(resource_type_has_no_test(definition)),
+
         SearchParameterType::Special => {
             // Special parameters are usually handled by name, not by expression
             // Detect special type and dispatch accordingly
@@ -443,7 +445,16 @@ fn dispatch_user_defined_jsonb_search(
             "User-defined special SearchParameter '{}' is not supported",
             definition.url
         ))),
+        SearchParameterType::Resource => Err(resource_type_has_no_test(definition)),
     }
+}
+
+/// A `resource` parameter only chains: the spec leaves `Bundle?composition=x` undefined.
+fn resource_type_has_no_test(definition: &SearchParameter) -> SqlBuilderError {
+    SqlBuilderError::InvalidSearchValue(format!(
+        "Parameter '{0}' has no test of its own, chain through it: {0}.[parameter]",
+        definition.code
+    ))
 }
 
 fn build_reference_jsonb_search(
