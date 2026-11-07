@@ -33,7 +33,7 @@
         "id": "IdentityProvider.type",
         "path": "IdentityProvider.type",
         "short": "Provider type",
-        "definition": "Type of identity provider protocol (oidc or saml)",
+        "definition": "Type of identity provider protocol (oidc, oauth2 or saml)",
         "min": 1,
         "max": "1",
         "type": [{ "code": "code" }],
@@ -156,6 +156,15 @@
         "path": "IdentityProvider.userMapping.rolesClaim",
         "short": "Roles claim name",
         "definition": "Claim containing user roles (array or comma-separated)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.usernameClaim",
+        "path": "IdentityProvider.userMapping.usernameClaim",
+        "short": "Username claim name",
+        "definition": "Claim with a name for the user (default: 'preferred_username')",
         "min": 0,
         "max": "1",
         "type": [{ "code": "string" }]

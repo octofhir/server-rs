@@ -80,6 +80,23 @@ pub struct IdentityProviderConfig {
     /// A logo for its button on sign-in pages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logo_url: Option<String>,
+
+    /// How to talk to it.
+    #[serde(default)]
+    pub protocol: Protocol,
+}
+
+/// What a provider speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    /// OpenID Connect: the user comes in a signed ID token.
+    #[default]
+    Oidc,
+    /// OAuth 2.0 alone: the user comes from a userinfo endpoint.
+    Oauth2,
+    /// SAML 2.0: the user comes in a signed assertion.
+    Saml,
 }
 
 fn default_scopes() -> Vec<String> {
@@ -109,6 +126,7 @@ impl IdentityProviderConfig {
             enabled: true,
             user_mapping: UserMappingConfig::default(),
             logo_url: None,
+            protocol: Protocol::default(),
             authorization_endpoint: None,
             token_endpoint: None,
             userinfo_endpoint: None,
@@ -223,6 +241,10 @@ pub struct UserMappingConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles_claim: Option<String>,
 
+    /// The claim with a name for the user (default: "preferred_username").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username_claim: Option<String>,
+
     /// Rules that turn values of claims into roles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claims_to_roles: Vec<ClaimMapping>,
@@ -323,6 +345,7 @@ impl Default for UserMappingConfig {
             given_name_claim: Some("given_name".to_string()),
             family_name_claim: Some("family_name".to_string()),
             roles_claim: None,
+            username_claim: None,
             claims_to_roles: Vec::new(),
             fhir_resource_type: FhirUserType::default(),
             auto_provision: true,

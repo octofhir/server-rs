@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::federation::provider::{
-    ClaimMapping, FhirUserType, IdentityProviderConfig, UserMappingConfig,
+    ClaimMapping, FhirUserType, IdentityProviderConfig, Protocol, UserMappingConfig,
 };
 
 /// IdentityProvider FHIR resource for external IdP configuration.
@@ -292,6 +292,23 @@ impl IdentityProviderResource {
 
         // Apply optional fields
         config.logo_url.clone_from(&self.logo_url);
+        config.protocol = match self.provider_type {
+            IdentityProviderType::Oidc => Protocol::Oidc,
+            IdentityProviderType::Oauth2 => Protocol::Oauth2,
+            IdentityProviderType::Saml => Protocol::Saml,
+        };
+        // Without discovery these have to be named.
+        if self.provider_type == IdentityProviderType::Oauth2 {
+            for (element, value) in [
+                ("authorizationEndpoint", &self.authorization_endpoint),
+                ("tokenEndpoint", &self.token_endpoint),
+                ("userinfoEndpoint", &self.userinfo_endpoint),
+            ] {
+                if value.is_none() {
+                    return Err(ConversionError::MissingEndpoint(element));
+                }
+            }
+        }
         if let Some(ref secret) = self.client_secret {
             config = config.with_client_secret(secret);
         }
@@ -322,7 +339,9 @@ pub enum IdentityProviderType {
     /// OpenID Connect 1.0.
     #[default]
     Oidc,
-    /// SAML 2.0 (future support).
+    /// OAuth 2.0 alone, for providers without OpenID Connect.
+    Oauth2,
+    /// SAML 2.0.
     Saml,
 }
 
@@ -332,6 +351,7 @@ impl IdentityProviderType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Oidc => "oidc",
+            Self::Oauth2 => "oauth2",
             Self::Saml => "saml",
         }
     }
@@ -350,6 +370,10 @@ pub struct UserMappingElement {
     /// Claim to use as subject identifier (default: "sub").
     #[serde(default = "default_subject_claim")]
     pub subject_claim: String,
+
+    /// Claim with a name for the user (default: "preferred_username").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username_claim: Option<String>,
 
     /// Rules that turn values of claims into roles. With rules, the provider decides a user's
     /// roles at every sign-in, and nobody signs in without one.
@@ -439,6 +463,7 @@ impl UserMappingElement {
             .with_auto_provision(self.auto_provision);
         config.email_claim.clone_from(&self.email_claim);
         config.roles_claim.clone_from(&self.roles_claim);
+        config.username_claim.clone_from(&self.username_claim);
         config.claims_to_roles.clone_from(&self.claims_to_roles);
         config
     }
@@ -466,6 +491,10 @@ pub enum ConversionError {
     /// URL parsing failed.
     #[error("Invalid URL: {0}")]
     InvalidUrl(#[from] url::ParseError),
+
+    /// An OAuth 2.0 provider has no discovery to take this endpoint from.
+    #[error("{0} is required for OAuth 2.0")]
+    MissingEndpoint(&'static str),
 
     /// A rule of `claimsToRoles` does not compile.
     #[error("Invalid claim rule `{0}`: {1}")]

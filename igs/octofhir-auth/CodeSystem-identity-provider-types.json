@@ -10,7 +10,7 @@
   "description": "Types of external identity providers supported for federated authentication.",
   "caseSensitive": true,
   "content": "complete",
-  "count": 2,
+  "count": 3,
   "concept": [
     {
       "code": "oidc",
@@ -18,9 +18,14 @@
       "definition": "OpenID Connect 1.0 identity provider"
     },
     {
+      "code": "oauth2",
+      "display": "OAuth 2.0",
+      "definition": "OAuth 2.0 provider without OpenID Connect: the user comes from a userinfo endpoint"
+    },
+    {
       "code": "saml",
       "display": "SAML 2.0",
-      "definition": "SAML 2.0 identity provider (future support)"
+      "definition": "SAML 2.0 identity provider"
     }
   ]
 }

@@ -46,13 +46,17 @@ use std::time::Duration;
 
 use jsonwebtoken::{Validation, decode_header};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::RwLock;
 use url::Url;
 
 use super::discovery::{DiscoveryCache, DiscoveryCacheConfig};
 use super::error::IdpError;
 use super::jwks::{ProviderJwksCache, ProviderJwksCacheConfig};
-use super::provider::{IdentityProviderConfig, MappedUser, UserMappingConfig, claim_values};
+use super::oidc::OidcDiscoveryDocument;
+use super::provider::{
+    IdentityProviderConfig, MappedUser, Protocol, UserMappingConfig, claim_values,
+};
 use crate::oauth::pkce::{PkceChallenge, PkceVerifier};
 
 /// Configuration for the IdP authentication service.
@@ -133,6 +137,7 @@ impl IdpAuthService {
 
         let http_client = reqwest::Client::builder()
             .timeout(config.request_timeout)
+            .user_agent(concat!("octofhir/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("Failed to create HTTP client");
 
@@ -154,6 +159,7 @@ impl IdpAuthService {
     ) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(config.request_timeout)
+            .user_agent(concat!("octofhir/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("Failed to create HTTP client");
 
@@ -222,19 +228,13 @@ impl IdpAuthService {
     ) -> Result<IdpAuthRequest, IdpError> {
         let provider = self.get_enabled_provider(provider_id).await?;
 
-        // Get discovery document
-        let discovery = self.discovery_cache.get(&provider.issuer).await?;
-
-        // Use endpoint override or discovered endpoint
-        let auth_endpoint = provider
-            .authorization_endpoint
-            .as_ref()
-            .map(|e| Url::parse(e))
-            .transpose()?
-            .unwrap_or_else(|| {
-                Url::parse(&discovery.authorization_endpoint)
-                    .expect("Discovery returned invalid authorization endpoint")
-            });
+        let auth_endpoint = self
+            .endpoint(
+                &provider,
+                provider.authorization_endpoint.as_deref(),
+                |document| &document.authorization_endpoint,
+            )
+            .await?;
 
         // Generate PKCE
         let pkce_verifier = PkceVerifier::generate();
@@ -249,7 +249,9 @@ impl IdpAuthService {
             params.append_pair("redirect_uri", self.config.callback_url.as_str());
             params.append_pair("scope", &provider.scopes.join(" "));
             params.append_pair("state", state);
-            params.append_pair("nonce", nonce);
+            if provider.protocol == Protocol::Oidc {
+                params.append_pair("nonce", nonce);
+            }
             params.append_pair("code_challenge", pkce_challenge.as_str());
             params.append_pair("code_challenge_method", "S256");
 
@@ -300,10 +302,17 @@ impl IdpAuthService {
 
         // Exchange code for tokens
         let token_response = self.exchange_code(&provider, code, pkce_verifier).await?;
+        if provider.protocol == Protocol::Oauth2 {
+            return self.oauth2_result(&provider, token_response).await;
+        }
 
         // Validate ID token
+        let id_token = token_response
+            .id_token
+            .as_deref()
+            .ok_or_else(|| IdpError::MissingField("id_token".to_string()))?;
         let claims = self
-            .validate_id_token(&provider, &token_response.id_token, expected_nonce)
+            .validate_id_token(&provider, id_token, expected_nonce)
             .await?;
 
         // Map user claims
@@ -313,15 +322,7 @@ impl IdpAuthService {
             let known = self
                 .known_claims(&provider, &claims, &token_response.access_token)
                 .await?;
-            for role in mapping
-                .claims_to_roles
-                .iter()
-                .flat_map(|rule| rule.roles_for(&known))
-            {
-                if !mapped_user.roles.contains(&role) {
-                    mapped_user.roles.push(role);
-                }
-            }
+            add_roles(&mut mapped_user, mapping, &known);
         }
 
         tracing::info!(
@@ -335,11 +336,53 @@ impl IdpAuthService {
             external_subject: claims.sub.clone(),
             mapped_user,
             manages_roles: mapping.manages_roles(),
-            id_token: token_response.id_token,
+            id_token: token_response.id_token.unwrap_or_default(),
             access_token: token_response.access_token,
             refresh_token: token_response.refresh_token,
             expires_in: token_response.expires_in,
         })
+    }
+
+    /// Plain OAuth 2.0 says nothing about the user: everything comes from the userinfo endpoint,
+    /// over TLS and for this access token. There is no ID token to verify.
+    async fn oauth2_result(
+        &self,
+        provider: &IdentityProviderConfig,
+        token_response: TokenResponse,
+    ) -> Result<IdpAuthResult, IdpError> {
+        let claims = self
+            .fetch_userinfo(&provider.id, &token_response.access_token)
+            .await?;
+        let mapping = &provider.user_mapping;
+        let mut mapped_user = map_claims(&claims, mapping);
+        if mapped_user.external_id.is_empty() {
+            return Err(IdpError::MissingField(mapping.subject_claim.clone()));
+        }
+        add_roles(&mut mapped_user, mapping, &claims);
+        Ok(IdpAuthResult {
+            provider_id: provider.id.clone(),
+            external_subject: mapped_user.external_id.clone(),
+            mapped_user,
+            manages_roles: mapping.manages_roles(),
+            id_token: String::new(),
+            access_token: token_response.access_token,
+            refresh_token: token_response.refresh_token,
+            expires_in: token_response.expires_in,
+        })
+    }
+
+    /// An endpoint the provider's configuration names, or else its discovery document.
+    async fn endpoint(
+        &self,
+        provider: &IdentityProviderConfig,
+        configured: Option<&str>,
+        discovered: impl Fn(&OidcDiscoveryDocument) -> &str,
+    ) -> Result<Url, IdpError> {
+        if let Some(endpoint) = configured {
+            return Ok(Url::parse(endpoint)?);
+        }
+        let document = self.discovery_cache.get(&provider.issuer).await?;
+        Ok(Url::parse(discovered(&document))?)
     }
 
     /// The claims rules can use: those of the ID token, and of userinfo when a rule names a
@@ -404,19 +447,11 @@ impl IdpAuthService {
         code: &str,
         pkce_verifier: &PkceVerifier,
     ) -> Result<TokenResponse, IdpError> {
-        // Get discovery document
-        let discovery = self.discovery_cache.get(&provider.issuer).await?;
-
-        // Use endpoint override or discovered endpoint
-        let token_endpoint = provider
-            .token_endpoint
-            .as_ref()
-            .map(|e| Url::parse(e))
-            .transpose()?
-            .unwrap_or_else(|| {
-                Url::parse(&discovery.token_endpoint)
-                    .expect("Discovery returned invalid token endpoint")
-            });
+        let token_endpoint = self
+            .endpoint(&provider, provider.token_endpoint.as_deref(), |document| {
+                &document.token_endpoint
+            })
+            .await?;
 
         // Build request body
         let mut params = vec![
@@ -442,6 +477,8 @@ impl IdpAuthService {
         let response = self
             .http_client
             .post(token_endpoint.as_str())
+            // Some OAuth 2.0 providers answer with a form otherwise.
+            .header(reqwest::header::ACCEPT, "application/json")
             .form(&params)
             .send()
             .await?;
@@ -526,51 +563,7 @@ impl IdpAuthService {
 
     /// Maps ID token claims to a [`MappedUser`].
     fn map_user_claims(&self, claims: &IdTokenClaims, mapping: &UserMappingConfig) -> MappedUser {
-        // Get external ID from configured claim (usually "sub")
-        let external_id = if mapping.subject_claim == "sub" {
-            claims.sub.clone()
-        } else {
-            // For custom subject claims, try to get from extra claims
-            claims
-                .extra
-                .get(&mapping.subject_claim)
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| claims.sub.clone())
-        };
-
-        // Extract roles from configured claim
-        let roles = mapping.roles_claim.as_ref().map_or_else(Vec::new, |claim| {
-            claims
-                .extra
-                .get(claim)
-                .map(|v| {
-                    if let Some(arr) = v.as_array() {
-                        arr.iter()
-                            .filter_map(|item| item.as_str())
-                            .map(String::from)
-                            .collect()
-                    } else if let Some(s) = v.as_str() {
-                        // Handle comma-separated roles
-                        s.split(',').map(|r| r.trim().to_string()).collect()
-                    } else {
-                        Vec::new()
-                    }
-                })
-                .unwrap_or_default()
-        });
-
-        MappedUser {
-            external_id,
-            email: claims.email.clone(),
-            email_verified: claims.email_verified,
-            name: claims.name.clone(),
-            given_name: claims.given_name.clone(),
-            family_name: claims.family_name.clone(),
-            preferred_username: claims.preferred_username.clone(),
-            roles,
-            fhir_user_type: mapping.fhir_resource_type,
-        }
+        map_claims(&serde_json::to_value(claims).unwrap_or_default(), mapping)
     }
 
     /// Fetches user info from the IdP's userinfo endpoint.
@@ -584,18 +577,20 @@ impl IdpAuthService {
     ) -> Result<serde_json::Value, IdpError> {
         let provider = self.get_enabled_provider(provider_id).await?;
 
-        // Get discovery document
-        let discovery = self.discovery_cache.get(&provider.issuer).await?;
-
-        let userinfo_endpoint = provider
-            .userinfo_endpoint
-            .as_ref()
-            .or(discovery.userinfo_endpoint.as_ref())
-            .ok_or_else(|| IdpError::MissingField("userinfo_endpoint".to_string()))?;
+        let userinfo_endpoint = match &provider.userinfo_endpoint {
+            Some(endpoint) => endpoint.clone(),
+            None => self
+                .discovery_cache
+                .get(&provider.issuer)
+                .await?
+                .userinfo_endpoint
+                .ok_or_else(|| IdpError::MissingField("userinfo_endpoint".to_string()))?,
+        };
 
         let response = self
             .http_client
-            .get(userinfo_endpoint)
+            .get(&userinfo_endpoint)
+            .header(reqwest::header::ACCEPT, "application/json")
             .bearer_auth(access_token)
             .send()
             .await?;
@@ -612,6 +607,53 @@ impl IdpAuthService {
         })?;
 
         Ok(userinfo)
+    }
+}
+
+/// Add what the rules give for `claims` to the roles of a user.
+pub(crate) fn add_roles(user: &mut MappedUser, mapping: &UserMappingConfig, claims: &Value) {
+    for role in mapping
+        .claims_to_roles
+        .iter()
+        .flat_map(|rule| rule.roles_for(claims))
+    {
+        if !user.roles.contains(&role) {
+            user.roles.push(role);
+        }
+    }
+}
+
+/// What claims say about a user, whether of an ID token, of userinfo or of a SAML assertion.
+pub(crate) fn map_claims(claims: &Value, mapping: &UserMappingConfig) -> MappedUser {
+    let first = |name: &str| claim_values(claims, name).into_iter().next();
+    let named =
+        |custom: &Option<String>, standard: &str| first(custom.as_deref().unwrap_or(standard));
+    let roles = mapping
+        .roles_claim
+        .as_deref()
+        .map(|claim| claim_values(claims, claim))
+        .unwrap_or_default();
+    MappedUser {
+        external_id: first(&mapping.subject_claim).unwrap_or_default(),
+        email: named(&mapping.email_claim, "email"),
+        email_verified: match &claims["email_verified"] {
+            Value::Bool(verified) => Some(*verified),
+            Value::String(verified) => Some(verified == "true"),
+            _ => None,
+        },
+        name: named(&mapping.name_claim, "name"),
+        given_name: named(&mapping.given_name_claim, "given_name"),
+        family_name: named(&mapping.family_name_claim, "family_name"),
+        preferred_username: named(&mapping.username_claim, "preferred_username"),
+        // A claim can hold the roles as one comma-separated text.
+        roles: roles
+            .iter()
+            .flat_map(|value| value.split(','))
+            .map(str::trim)
+            .filter(|role| !role.is_empty())
+            .map(String::from)
+            .collect(),
+        fhir_user_type: mapping.fhir_resource_type,
     }
 }
 
@@ -678,7 +720,8 @@ pub struct TokenResponse {
     pub refresh_token: Option<String>,
 
     /// The ID token (JWT).
-    pub id_token: String,
+    #[serde(default)]
+    pub id_token: Option<String>,
 
     /// Granted scopes.
     pub scope: Option<String>,

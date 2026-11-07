@@ -142,7 +142,7 @@ pub use identity::{
 pub use jwks::{JwksError, ProviderJwksCache, ProviderJwksCacheConfig};
 pub use oidc::OidcDiscoveryDocument;
 pub use provider::{
-    ClaimMapping, FhirUserType, IdentityProviderConfig, MappedUser, UserMappingConfig,
+    ClaimMapping, FhirUserType, IdentityProviderConfig, MappedUser, Protocol, UserMappingConfig,
 };
 pub use provisioning::{
     ProvisioningAction, ProvisioningConfig, ProvisioningError, ProvisioningResult,

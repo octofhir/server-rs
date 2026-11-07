@@ -32,6 +32,8 @@ struct Person {
     claims: Value,
     /// What only userinfo tells.
     userinfo: Value,
+    /// Answer as an OAuth 2.0 provider: no ID token.
+    plain: bool,
     nonce: String,
 }
 
@@ -77,6 +79,9 @@ async fn token(
     assert_eq!(form["grant_type"], "authorization_code");
     assert!(form.contains_key("code_verifier"), "PKCE is used");
     let person = provider.person.lock().unwrap().clone();
+    if person.plain {
+        return Json(json!({"access_token": "provider-token", "token_type": "bearer"}));
+    }
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let mut claims = person.claims;
     claims["iss"] = json!(provider.issuer);
@@ -477,4 +482,66 @@ async fn sign_in_through_an_external_provider() {
     says(&provider, json!({"sub": "another-stranger"}));
     let (_, response) = sign_in(&client, &open, &id, &provider, "/ui/").await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // A provider without OpenID Connect has its endpoints named, and no ID token to give.
+    let issuer = &provider.issuer;
+    let created = client
+        .post(format!("{open}/IdentityProvider"))
+        .bearer_auth(&open_bearer)
+        .json(&json!({
+            "resourceType": "IdentityProvider",
+            "name": "Plain",
+            "type": "oauth2",
+            "issuer": issuer,
+            "clientId": CLIENT_ID,
+            "clientSecret": "secret-at-the-provider",
+            "active": true,
+            "scopes": ["read:user"],
+            "authorizationEndpoint": format!("{issuer}/authorize"),
+            "tokenEndpoint": format!("{issuer}/token"),
+            "userinfoEndpoint": format!("{issuer}/userinfo"),
+            "userMapping": {"subjectClaim": "id", "usernameClaim": "login"},
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created: Value = created.json().await.unwrap();
+    let plain = created["id"].as_str().unwrap().to_owned();
+    for _ in 0..50 {
+        if providers(&client, &open).await.as_array().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    {
+        let mut person = provider.person.lock().unwrap();
+        person.plain = true;
+        person.claims = json!({});
+        person.userinfo = json!({"id": 583231, "login": "octo", "email": "o@example.org"});
+    }
+    let mut browser = Browser::default();
+    let url = format!("{open}/auth/idp/{plain}/login");
+    let response = browser.get(&client, &url).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = url::Url::parse(response.headers()[LOCATION].to_str().unwrap()).unwrap();
+    let query: HashMap<_, _> = location.query_pairs().into_owned().collect();
+    assert!(!query.contains_key("nonce"));
+    assert_eq!(query["code_challenge_method"], "S256");
+    let callback = format!("{open}/auth/idp/callback?code=abc&state={}", query["state"]);
+    let response = browser.get(&client, &callback).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let subject = subject(&client, &open, &mut browser).await;
+    let user: Value = client
+        .get(format!("{open}/User/{subject}"))
+        .bearer_auth(&open_bearer)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(user["username"], "octo");
+    // Nothing vouches for this address, so it links to nobody.
+    assert_eq!(user["email"], "o@example.org");
 }
