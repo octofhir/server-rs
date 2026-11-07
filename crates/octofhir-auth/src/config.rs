@@ -382,6 +382,12 @@ pub struct FederationConfig {
 
     /// Accept providers without TLS. For local testing only.
     pub allow_http: bool,
+
+    /// A certificate (PEM) to sign SAML requests with, for providers that want them signed.
+    pub saml_certificate: Option<PathBuf>,
+
+    /// The private key of `saml_certificate` (PEM).
+    pub saml_private_key: Option<PathBuf>,
 }
 
 impl Default for FederationConfig {
@@ -393,6 +399,8 @@ impl Default for FederationConfig {
             default_roles: Vec::new(),
             jwks_cache_ttl: Duration::from_secs(3600),
             allow_http: false,
+            saml_certificate: None,
+            saml_private_key: None,
         }
     }
 }

@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::federation::provider::{
-    ClaimMapping, FhirUserType, IdentityProviderConfig, Protocol, UserMappingConfig,
+    ClaimMapping, FhirUserType, IdentityProviderConfig, Protocol, SamlProvider, UserMappingConfig,
 };
 
 /// IdentityProvider FHIR resource for external IdP configuration.
@@ -53,8 +53,13 @@ pub struct IdentityProviderResource {
     /// The OIDC issuer URL.
     pub issuer: String,
 
-    /// OAuth client_id registered with this provider.
+    /// OAuth client_id registered with this provider; SAML has none.
+    #[serde(default)]
     pub client_id: String,
+
+    /// For SAML: the provider's metadata, as XML.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml_metadata: Option<String>,
 
     /// OAuth client_secret for confidential clients.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,6 +123,7 @@ impl Default for IdentityProviderResource {
             issuer: String::new(),
             client_id: String::new(),
             client_secret: None,
+            saml_metadata: None,
             active: true,
             scopes: default_scopes(),
             authorization_endpoint: None,
@@ -213,7 +219,7 @@ impl IdentityProviderResource {
         if self.issuer.is_empty() {
             return Err(ValidationError::MissingField("issuer"));
         }
-        if self.client_id.is_empty() {
+        if self.client_id.is_empty() && self.provider_type != IdentityProviderType::Saml {
             return Err(ValidationError::MissingField("clientId"));
         }
 
@@ -297,6 +303,19 @@ impl IdentityProviderResource {
             IdentityProviderType::Oauth2 => Protocol::Oauth2,
             IdentityProviderType::Saml => Protocol::Saml,
         };
+        if self.provider_type == IdentityProviderType::Saml {
+            let metadata = self
+                .saml_metadata
+                .clone()
+                .ok_or(ConversionError::MissingEndpoint("samlMetadata"))?;
+            // A provider whose metadata does not read never gets a request.
+            crate::federation::saml::ServiceProvider::provider(&self.issuer, &metadata)
+                .map_err(|error| ConversionError::Saml(error.to_string()))?;
+            config.saml = Some(SamlProvider {
+                entity_id: self.issuer.clone(),
+                metadata,
+            });
+        }
         // Without discovery these have to be named.
         if self.provider_type == IdentityProviderType::Oauth2 {
             for (element, value) in [
@@ -492,9 +511,13 @@ pub enum ConversionError {
     #[error("Invalid URL: {0}")]
     InvalidUrl(#[from] url::ParseError),
 
-    /// An OAuth 2.0 provider has no discovery to take this endpoint from.
-    #[error("{0} is required for OAuth 2.0")]
+    /// Something this kind of provider cannot do without.
+    #[error("{0} is required")]
     MissingEndpoint(&'static str),
+
+    /// SAML metadata that cannot be used.
+    #[error("Invalid SAML metadata: {0}")]
+    Saml(String),
 
     /// A rule of `claimsToRoles` does not compile.
     #[error("Invalid claim rule `{0}`: {1}")]

@@ -3,9 +3,13 @@
 //! - `GET /auth/idp/providers` lists the active providers for a sign-in page.
 //! - `GET /auth/idp/{provider}/login?return_to=` sends the browser to the provider.
 //! - `GET /auth/idp/callback` takes it back, finds or creates the user and starts a session.
+//! - `POST /auth/idp/saml/acs` takes a SAML response, which then goes on to the callback.
+//! - `GET /auth/idp/saml/metadata` describes this server to SAML providers.
 //!
 //! `state` is single use, lives ten minutes and is tied to the browser with a cookie, so a code
-//! obtained elsewhere cannot be planted in someone's browser. `return_to` is a local path. An
+//! obtained elsewhere cannot be planted in someone's browser. A SAML response arrives by a
+//! cross-site POST, which carries no `SameSite=Lax` cookie, so it is verified there and finished
+//! at the callback, where the cookie is back. `return_to` is a local path. An
 //! interrupted `/auth/authorize` carries on from there, as the SSO session now answers it;
 //! anywhere else is the console, which gets its cookie here.
 
@@ -14,20 +18,22 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
-use axum::http::header::SET_COOKIE;
+use axum::extract::{Form, Path, Query, State};
+use axum::http::header::{CONTENT_TYPE, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use cookie::{Cookie, SameSite};
+use saml_rs::PendingAuthnRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::error::AuthError;
+use crate::federation::saml::ServiceProvider;
 use crate::federation::{
     IdpAuthResult, IdpAuthService, IdpError, ProvisioningConfig, add_identity,
-    create_identity_from_auth_result, create_user_from_auth_result,
+    create_identity_from_auth_result, create_user_from_auth_result, result_from_claims,
 };
 use crate::http::authorize::{AuthorizeState, create_sso_session};
 use crate::http::authorize_templates::render_error_page;
@@ -54,10 +60,22 @@ const CONSOLE_SCOPE: &str = "openid user/*.cruds system/*.cruds";
 /// A sign-in the provider has not answered yet.
 struct Pending {
     provider_id: String,
-    nonce: String,
-    verifier: PkceVerifier,
+    step: Step,
     return_to: String,
     expires: Instant,
+}
+
+/// Where a sign-in is.
+enum Step {
+    /// Waiting for an authorization code.
+    Code {
+        nonce: String,
+        verifier: PkceVerifier,
+    },
+    /// Waiting for a SAML response.
+    Saml(Box<PendingAuthnRequest>),
+    /// The provider's answer is verified; the browser has to come back for it.
+    Verified(Box<IdpAuthResult>),
 }
 
 /// State of the federated sign-in endpoints.
@@ -68,6 +86,7 @@ pub struct FederatedState {
     token: TokenState,
     provisioning: ProvisioningConfig,
     console_client: String,
+    saml: Option<Arc<ServiceProvider>>,
     pending: Arc<Mutex<HashMap<String, Pending>>>,
 }
 
@@ -85,8 +104,15 @@ impl FederatedState {
             token,
             provisioning,
             console_client: console_client.into(),
+            saml: None,
             pending: Arc::default(),
         }
+    }
+
+    /// Take SAML providers too, as this service provider.
+    pub fn with_saml(mut self, saml: Arc<ServiceProvider>) -> Self {
+        self.saml = Some(saml);
+        self
     }
 
     /// Remember a sign-in; `false` when too many are under way.
@@ -334,29 +360,60 @@ pub async fn federated_login(
         );
     }
     let token = Uuid::new_v4().to_string();
-    let nonce = Uuid::new_v4().to_string();
-    let request = match state.service.start_auth(&provider_id, &token, &nonce).await {
-        Ok(request) => request,
-        Err(IdpError::ProviderNotFound(_) | IdpError::ProviderDisabled(_)) => {
-            return error_page(
-                StatusCode::NOT_FOUND,
-                "invalid_request",
-                "This identity provider is not available.",
-            );
+    let unavailable = || {
+        error_page(
+            StatusCode::NOT_FOUND,
+            "invalid_request",
+            "This identity provider is not available.",
+        )
+    };
+    let provider = match state.service.get_provider(&provider_id).await {
+        Some(provider) if provider.enabled => provider,
+        _ => return unavailable(),
+    };
+    let (step, redirect) = if let Some(saml) = &provider.saml {
+        let Some(sp) = &state.saml else {
+            return unavailable();
+        };
+        let started = ServiceProvider::provider(&saml.entity_id, &saml.metadata)
+            .and_then(|descriptor| sp.start(&descriptor, &token));
+        match started {
+            Ok(started) => (Step::Saml(Box::new(started.pending)), started.redirect),
+            Err(error) => {
+                tracing::error!(provider = %provider_id, %error, "Cannot start a SAML sign-in");
+                return error_page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "server_error",
+                    "This identity provider cannot be used yet; the server log says why.",
+                );
+            }
         }
-        Err(error) => {
-            tracing::error!(provider = %provider_id, %error, "Cannot reach the identity provider");
-            return error_page(
-                StatusCode::BAD_GATEWAY,
-                "temporarily_unavailable",
-                "The identity provider cannot be reached.",
-            );
+    } else {
+        let nonce = Uuid::new_v4().to_string();
+        match state.service.start_auth(&provider_id, &token, &nonce).await {
+            Ok(request) => (
+                Step::Code {
+                    nonce,
+                    verifier: request.pkce_verifier,
+                },
+                request.authorization_url.to_string(),
+            ),
+            Err(IdpError::ProviderNotFound(_) | IdpError::ProviderDisabled(_)) => {
+                return unavailable();
+            }
+            Err(error) => {
+                tracing::error!(provider = %provider_id, %error, "Cannot reach the identity provider");
+                return error_page(
+                    StatusCode::BAD_GATEWAY,
+                    "temporarily_unavailable",
+                    "The identity provider cannot be reached.",
+                );
+            }
         }
     };
     let pending = Pending {
         provider_id,
-        nonce,
-        verifier: request.pkce_verifier,
+        step,
         return_to,
         expires: Instant::now() + PENDING_LIFETIME,
     };
@@ -375,11 +432,85 @@ pub async fn federated_login(
         .path(STATE_COOKIE_PATH)
         .max_age(time::Duration::seconds(PENDING_LIFETIME.as_secs() as i64))
         .build();
-    (
-        jar.add(cookie),
-        Redirect::to(request.authorization_url.as_str()),
+    (jar.add(cookie), Redirect::to(&redirect)).into_response()
+}
+
+fn unverified() -> Response {
+    error_page(
+        StatusCode::UNAUTHORIZED,
+        "access_denied",
+        "The identity provider's answer could not be verified.",
     )
-        .into_response()
+}
+
+/// What a SAML provider posts.
+#[derive(Debug, Deserialize)]
+pub struct AcsForm {
+    #[serde(rename = "SAMLResponse")]
+    pub saml_response: String,
+    #[serde(rename = "RelayState")]
+    pub relay_state: Option<String>,
+}
+
+/// `POST /auth/idp/saml/acs`
+pub async fn saml_acs(State(state): State<FederatedState>, Form(form): Form<AcsForm>) -> Response {
+    let expired = || {
+        error_page(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "This sign-in has expired or was not started here. Please start again.",
+        )
+    };
+    // Only answers to requests made here: RelayState names the sign-in.
+    let Some(token) = form.relay_state else {
+        return expired();
+    };
+    let Some(mut pending) = state.take(&token) else {
+        return expired();
+    };
+    let Step::Saml(request) = &pending.step else {
+        return expired();
+    };
+    let (Some(sp), Some(provider)) = (
+        &state.saml,
+        state.service.get_provider(&pending.provider_id).await,
+    ) else {
+        return expired();
+    };
+    let Some(saml) = &provider.saml else {
+        return expired();
+    };
+    let verified = ServiceProvider::provider(&saml.entity_id, &saml.metadata)
+        .and_then(|descriptor| sp.finish(&descriptor, request, &form.saml_response, &token))
+        .map_err(|error| error.to_string())
+        .and_then(|claims| result_from_claims(&provider, &claims).map_err(|e| e.to_string()));
+    let result = match verified {
+        Ok(result) => result,
+        Err(error) => {
+            tracing::warn!(provider = %pending.provider_id, %error, "SAML response refused");
+            return unverified();
+        }
+    };
+    pending.step = Step::Verified(Box::new(result));
+    if !state.remember(token.clone(), pending) {
+        return expired();
+    }
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("state", &token)
+        .finish();
+    Redirect::to(&format!("/auth/idp/callback?{query}")).into_response()
+}
+
+/// `GET /auth/idp/saml/metadata`
+pub async fn saml_metadata(State(state): State<FederatedState>) -> Response {
+    match &state.saml {
+        Some(sp) => (
+            [(CONTENT_TYPE, "application/samlmetadata+xml")],
+            sp.metadata().to_owned(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// Query of the callback.
@@ -415,36 +546,33 @@ pub async fn federated_callback(
         return expired();
     };
     let jar = jar.remove(Cookie::build(STATE_COOKIE).path(STATE_COOKIE_PATH).build());
-    if let Some(error) = query.error {
-        let description = query.error_description.unwrap_or_default();
-        tracing::warn!(provider = %pending.provider_id, %error, %description, "Provider refused");
-        return error_page(
-            StatusCode::FORBIDDEN,
-            "access_denied",
-            "Sign-in was refused.",
-        );
-    }
-    let Some(code) = query.code else {
-        return expired();
-    };
-    let result = state
-        .service
-        .handle_callback(
-            &pending.provider_id,
-            &code,
-            &pending.verifier,
-            &pending.nonce,
-        )
-        .await;
-    let result = match result {
-        Ok(result) => result,
-        Err(error) => {
-            tracing::warn!(provider = %pending.provider_id, %error, "Federated sign-in failed");
-            return error_page(
-                StatusCode::UNAUTHORIZED,
-                "access_denied",
-                "The identity provider's answer could not be verified.",
-            );
+    let result = match pending.step {
+        Step::Verified(result) => *result,
+        Step::Saml(_) => return expired(),
+        Step::Code { nonce, verifier } => {
+            if let Some(error) = query.error {
+                let description = query.error_description.unwrap_or_default();
+                tracing::warn!(provider = %pending.provider_id, %error, %description, "Provider refused");
+                return error_page(
+                    StatusCode::FORBIDDEN,
+                    "access_denied",
+                    "Sign-in was refused.",
+                );
+            }
+            let Some(code) = query.code else {
+                return expired();
+            };
+            let result = state
+                .service
+                .handle_callback(&pending.provider_id, &code, &verifier, &nonce)
+                .await;
+            match result {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::warn!(provider = %pending.provider_id, %error, "Federated sign-in failed");
+                    return unverified();
+                }
+            }
         }
     };
     let user = match state.user_of(&result).await {

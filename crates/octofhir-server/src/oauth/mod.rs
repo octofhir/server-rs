@@ -21,12 +21,14 @@ use axum::{
     routing::{get, post},
 };
 use octofhir_auth::federation::resources::IdentityProviderResource;
+use octofhir_auth::federation::saml::ServiceProvider;
 use octofhir_auth::federation::{
     ClientJwksCache, DiscoveryCache, DiscoveryCacheConfig, IdpAuthService, IdpAuthServiceConfig,
     JwksCacheConfig, ProviderJwksCache, ProviderJwksCacheConfig, ProvisioningConfig,
 };
 use octofhir_auth::http::federated::{
-    FederatedState, federated_callback, federated_login, federated_providers,
+    FederatedState, federated_callback, federated_login, federated_providers, saml_acs,
+    saml_metadata,
 };
 use octofhir_auth::http::introspect::{IntrospectionState, introspect_handler};
 use octofhir_auth::http::revoke::{RevocationState, revoke_handler};
@@ -217,13 +219,17 @@ impl OAuthState {
                 .with_auto_provision(federation.auto_provision_users)
                 .with_link_by_email(federation.link_by_email)
                 .with_default_roles(federation.default_roles.clone());
-            FederatedState::new(
+            let federated = FederatedState::new(
                 service,
                 authorize_state.clone(),
                 token_state.clone(),
                 provisioning,
                 crate::bootstrap::DEFAULT_UI_CLIENT_ID,
-            )
+            );
+            match saml_service_provider(config) {
+                Some(saml) => federated.with_saml(saml),
+                None => federated,
+            }
         });
 
         Some(Self {
@@ -338,12 +344,52 @@ fn udap_state(
     }
 }
 
+/// This server as a SAML service provider, signing its requests when it has a certificate.
+fn saml_service_provider(config: &crate::config::AppConfig) -> Option<Arc<ServiceProvider>> {
+    let federation = &config.auth.federation;
+    let base = config.base_url();
+    let base = base.trim_end_matches('/');
+    let signing = match (&federation.saml_certificate, &federation.saml_private_key) {
+        (Some(certificate), Some(key)) => {
+            match (
+                std::fs::read_to_string(certificate),
+                std::fs::read_to_string(key),
+            ) {
+                (Ok(certificate), Ok(key)) => Some((certificate, key)),
+                (Err(error), _) | (_, Err(error)) => {
+                    tracing::error!(%error, "SAML stays off: cannot read its certificate or key");
+                    return None;
+                }
+            }
+        }
+        (None, None) => None,
+        _ => {
+            tracing::error!("SAML stays off: a certificate needs its key and the other way round");
+            return None;
+        }
+    };
+    let built = ServiceProvider::new(
+        &format!("{base}/auth/idp/saml/metadata"),
+        &format!("{base}/auth/idp/saml/acs"),
+        signing,
+    );
+    match built {
+        Ok(sp) => Some(Arc::new(sp)),
+        Err(error) => {
+            tracing::error!(%error, "SAML stays off");
+            None
+        }
+    }
+}
+
 /// Sign-in through external identity providers.
 pub fn federated_route(state: FederatedState) -> Router {
     Router::new()
         .route("/auth/idp/providers", get(federated_providers))
         .route("/auth/idp/callback", get(federated_callback))
         .route("/auth/idp/{provider}/login", get(federated_login))
+        .route("/auth/idp/saml/acs", post(saml_acs))
+        .route("/auth/idp/saml/metadata", get(saml_metadata))
         .with_state(state)
 }
 

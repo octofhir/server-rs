@@ -12,7 +12,9 @@ import {
   MultiSelect,
   PasswordInput,
   Skeleton,
+  Select,
   Switch,
+  TextArea,
   Text,
   TextInput,
   useDebouncedValue,
@@ -33,6 +35,8 @@ import {
   getIdentityProviderTypeView,
   type ClaimToRoles,
   type IdentityProviderResource,
+  type IdentityProviderType,
+  identityProviderTypeOptions,
 } from "@/entities/identity-provider";
 import { getBundleResources } from "@/shared/api/guards";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
@@ -96,7 +100,7 @@ export function IdentityProvidersPage() {
   return (
     <WorkspacePageLayout
       title="Identity providers"
-      description="OpenID Connect providers people can sign in through"
+      description="OpenID Connect, OAuth 2.0 and SAML providers people can sign in through"
       actions={
         <Button variant="filled" onClick={open}>
           <Button.Icon>
@@ -280,12 +284,16 @@ interface ClaimRule {
 }
 
 interface IdpFormValues {
+  type: IdentityProviderType;
   name: string;
   displayName: string;
   logoUrl: string;
   issuer: string;
   clientId: string;
   clientSecret: string;
+  samlMetadata: string;
+  subjectClaim: string;
+  usernameClaim: string;
   authorizationEndpoint: string;
   tokenEndpoint: string;
   userinfoEndpoint: string;
@@ -295,12 +303,16 @@ interface IdpFormValues {
 }
 
 const IDP_DEFAULTS: IdpFormValues = {
+  type: "oidc",
   name: "",
   displayName: "",
   logoUrl: "",
   issuer: "",
   clientId: "",
   clientSecret: "",
+  samlMetadata: "",
+  subjectClaim: "",
+  usernameClaim: "",
   authorizationEndpoint: "",
   tokenEndpoint: "",
   userinfoEndpoint: "",
@@ -387,7 +399,17 @@ function validateIdp(values: IdpFormValues) {
   const errors: Partial<Record<keyof IdpFormValues, string>> = {};
   if (!values.name || values.name.length < 2) errors.name = "Name too short";
   if (!values.issuer || !values.issuer.startsWith("http")) errors.issuer = "Must be a valid URL";
-  if (!values.clientId) errors.clientId = "Client ID required";
+  if (values.type === "saml") {
+    if (!values.samlMetadata) errors.samlMetadata = "Paste the provider's metadata";
+  } else if (!values.clientId) {
+    errors.clientId = "Client ID required";
+  }
+  if (
+    values.type === "oauth2" &&
+    !(values.authorizationEndpoint && values.tokenEndpoint && values.userinfoEndpoint)
+  ) {
+    errors.userinfoEndpoint = "OAuth 2.0 needs all three endpoints";
+  }
   return errors;
 }
 
@@ -406,12 +428,16 @@ function IdpModal({
 
   const initialValues: IdpFormValues = idp
     ? {
+        type: idp.type ?? "oidc",
         name: idp.name,
         displayName: idp.displayName ?? "",
         logoUrl: idp.logoUrl ?? "",
         issuer: idp.issuer,
-        clientId: idp.clientId,
+        clientId: idp.clientId ?? "",
         clientSecret: "",
+        samlMetadata: idp.samlMetadata ?? "",
+        subjectClaim: idp.userMapping?.subjectClaim ?? "",
+        usernameClaim: idp.userMapping?.usernameClaim ?? "",
         authorizationEndpoint: idp.authorizationEndpoint ?? "",
         tokenEndpoint: idp.tokenEndpoint ?? "",
         userinfoEndpoint: idp.userinfoEndpoint ?? "",
@@ -421,17 +447,31 @@ function IdpModal({
       }
     : IDP_DEFAULTS;
 
-  const handleSubmit = async ({ rules, ...values }: IdpFormValues) => {
+  const handleSubmit = async ({
+    rules,
+    subjectClaim,
+    usernameClaim,
+    ...values
+  }: IdpFormValues) => {
     // An element the resource does not use is left out, not sent empty.
     const filled = Object.fromEntries(
       Object.entries(values).filter(([, value]) => value !== ""),
-    ) as Pick<IdentityProviderResource, "name" | "issuer" | "clientId" | "active" | "scopes">;
+    ) as Pick<IdentityProviderResource, "type" | "name" | "issuer" | "active" | "scopes">;
     const claimsToRoles = fromRules(rules);
-    const { claimsToRoles: _replaced, ...mapping } = idp?.userMapping ?? {};
-    const userMapping = claimsToRoles.length > 0 ? { ...mapping, claimsToRoles } : mapping;
+    const {
+      claimsToRoles: _rules,
+      subjectClaim: _subject,
+      usernameClaim: _username,
+      ...mapping
+    } = idp?.userMapping ?? {};
+    const userMapping = {
+      ...mapping,
+      ...(subjectClaim ? { subjectClaim } : {}),
+      ...(usernameClaim ? { usernameClaim } : {}),
+      ...(claimsToRoles.length > 0 ? { claimsToRoles } : {}),
+    };
     const payload: IdentityProviderResource = {
       resourceType: "IdentityProvider",
-      type: "oidc",
       ...filled,
       ...(Object.keys(userMapping).length > 0 ? { userMapping } : {}),
     };
@@ -503,10 +543,21 @@ function IdpModal({
                 /auth/idp/callback
               </Text>
 
+              <Field<IdentityProviderType> name="type">
+                {({ input }) => (
+                  <Select
+                    label="Protocol"
+                    data={identityProviderTypeOptions}
+                    value={input.value}
+                    onChange={input.onChange}
+                  />
+                )}
+              </Field>
+
               <Field<string> name="issuer">
                 {({ input, meta }) => (
                   <TextInput
-                    label="Issuer URL"
+                    label="Issuer URL, or SAML entity ID"
                     required
                     value={input.value}
                     onChange={input.onChange}
@@ -586,6 +637,42 @@ function IdpModal({
                   />
                 )}
               </Field>
+
+              <Field<string> name="samlMetadata">
+                {({ input, meta }) => (
+                  <TextArea
+                    label="SAML Metadata (XML)"
+                    placeholder="<md:EntityDescriptor …>, for SAML providers"
+                    rows={4}
+                    value={input.value}
+                    onChange={input.onChange}
+                    error={meta.touched && meta.error ? meta.error : undefined}
+                  />
+                )}
+              </Field>
+
+              <div className={classes.formGrid}>
+                <Field<string> name="subjectClaim">
+                  {({ input }) => (
+                    <TextInput
+                      label="Subject Claim"
+                      placeholder="sub (id for some OAuth 2.0 providers)"
+                      value={input.value}
+                      onChange={input.onChange}
+                    />
+                  )}
+                </Field>
+                <Field<string> name="usernameClaim">
+                  {({ input }) => (
+                    <TextInput
+                      label="Username Claim"
+                      placeholder="preferred_username"
+                      value={input.value}
+                      onChange={input.onChange}
+                    />
+                  )}
+                </Field>
+              </div>
 
               <Field<ClaimRule[]> name="rules">
                 {({ input }) => <ClaimRules value={input.value || []} onChange={input.onChange} />}

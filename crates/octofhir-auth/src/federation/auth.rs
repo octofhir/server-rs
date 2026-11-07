@@ -353,22 +353,11 @@ impl IdpAuthService {
         let claims = self
             .fetch_userinfo(&provider.id, &token_response.access_token)
             .await?;
-        let mapping = &provider.user_mapping;
-        let mut mapped_user = map_claims(&claims, mapping);
-        if mapped_user.external_id.is_empty() {
-            return Err(IdpError::MissingField(mapping.subject_claim.clone()));
-        }
-        add_roles(&mut mapped_user, mapping, &claims);
-        Ok(IdpAuthResult {
-            provider_id: provider.id.clone(),
-            external_subject: mapped_user.external_id.clone(),
-            mapped_user,
-            manages_roles: mapping.manages_roles(),
-            id_token: String::new(),
-            access_token: token_response.access_token,
-            refresh_token: token_response.refresh_token,
-            expires_in: token_response.expires_in,
-        })
+        let mut result = result_from_claims(provider, &claims)?;
+        result.access_token = token_response.access_token;
+        result.refresh_token = token_response.refresh_token;
+        result.expires_in = token_response.expires_in;
+        Ok(result)
     }
 
     /// An endpoint the provider's configuration names, or else its discovery document.
@@ -448,7 +437,7 @@ impl IdpAuthService {
         pkce_verifier: &PkceVerifier,
     ) -> Result<TokenResponse, IdpError> {
         let token_endpoint = self
-            .endpoint(&provider, provider.token_endpoint.as_deref(), |document| {
+            .endpoint(provider, provider.token_endpoint.as_deref(), |document| {
                 &document.token_endpoint
             })
             .await?;
@@ -608,6 +597,29 @@ impl IdpAuthService {
 
         Ok(userinfo)
     }
+}
+
+/// Who a provider vouched for, from claims nothing else has to verify any more.
+pub fn result_from_claims(
+    provider: &IdentityProviderConfig,
+    claims: &Value,
+) -> Result<IdpAuthResult, IdpError> {
+    let mapping = &provider.user_mapping;
+    let mut mapped_user = map_claims(claims, mapping);
+    if mapped_user.external_id.is_empty() {
+        return Err(IdpError::MissingField(mapping.subject_claim.clone()));
+    }
+    add_roles(&mut mapped_user, mapping, claims);
+    Ok(IdpAuthResult {
+        provider_id: provider.id.clone(),
+        external_subject: mapped_user.external_id.clone(),
+        mapped_user,
+        manages_roles: mapping.manages_roles(),
+        id_token: String::new(),
+        access_token: String::new(),
+        refresh_token: None,
+        expires_in: None,
+    })
 }
 
 /// Add what the rules give for `claims` to the roles of a user.

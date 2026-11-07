@@ -823,6 +823,152 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bergshamra"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a292eea51d033e3ae24e2f17817991cf8435012878fd343b7a0df1827cb4bec3"
+dependencies = [
+ "base64 0.22.1",
+ "bergshamra-c14n",
+ "bergshamra-core",
+ "bergshamra-crypto",
+ "bergshamra-dsig",
+ "bergshamra-enc",
+ "bergshamra-keys",
+ "bergshamra-transforms",
+ "bergshamra-xml",
+ "clap",
+ "kryptering",
+ "uppsala",
+]
+
+[[package]]
+name = "bergshamra-c14n"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9ea63f9d7b6cceeeef8ad96da61325c6ed6397e342377b552a0bf9917e266a9"
+dependencies = [
+ "bergshamra-core",
+ "bergshamra-xml",
+ "memchr",
+ "uppsala",
+]
+
+[[package]]
+name = "bergshamra-core"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af1b1fcd28756ae14d297d69595f0e21da40485b5b7861bd37e7cd8f570b5e39"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
+name = "bergshamra-crypto"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e0eeb926a8440dea8a531c0ab33446efcbd16dcb70f81a63fc0c5859aede9e4"
+dependencies = [
+ "bergshamra-core",
+ "kryptering",
+]
+
+[[package]]
+name = "bergshamra-dsig"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ab7bb2d291c4d6af5e1af2ad3801176a5d3bbffc8b34be3c7de87ec9b0d8644"
+dependencies = [
+ "base64 0.22.1",
+ "bergshamra-c14n",
+ "bergshamra-core",
+ "bergshamra-crypto",
+ "bergshamra-keys",
+ "bergshamra-transforms",
+ "bergshamra-xml",
+ "der",
+ "kryptering",
+ "uppsala",
+ "x509-cert",
+]
+
+[[package]]
+name = "bergshamra-enc"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee9882186758e2229da892f060e3e7c7e2f3ad352f323c953c77e5dea974aea9"
+dependencies = [
+ "base64 0.22.1",
+ "bergshamra-c14n",
+ "bergshamra-core",
+ "bergshamra-crypto",
+ "bergshamra-keys",
+ "bergshamra-transforms",
+ "bergshamra-xml",
+ "kryptering",
+ "uppsala",
+]
+
+[[package]]
+name = "bergshamra-keys"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a1bc0d93c57375a09f9fb818c45a95636fe85eeafae1fbca41f8cb14bb6aece"
+dependencies = [
+ "base64 0.22.1",
+ "bergshamra-core",
+ "bergshamra-crypto",
+ "bergshamra-pkcs12",
+ "der",
+ "kryptering",
+ "pem-rfc7468",
+ "pkcs8",
+ "spki",
+ "tsp-ltv",
+ "uppsala",
+ "x509-cert",
+ "zeroize",
+]
+
+[[package]]
+name = "bergshamra-pkcs12"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53ad4ed8ddc3482b0581c1c5d8774a89ef59e1d86b13299cadb5f0e87e35a064"
+dependencies = [
+ "bergshamra-core",
+ "cipher 0.5.2",
+ "kryptering",
+ "yasna 0.5.2",
+ "zeroize",
+]
+
+[[package]]
+name = "bergshamra-transforms"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db260349625b0712bcc919278c3a382a984d5665327be54cd5b9bb3a7d4895c8"
+dependencies = [
+ "base64 0.22.1",
+ "bergshamra-c14n",
+ "bergshamra-core",
+ "bergshamra-crypto",
+ "bergshamra-keys",
+ "bergshamra-xml",
+ "uppsala",
+]
+
+[[package]]
+name = "bergshamra-xml"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2e314d227c3f8cf06487e0d81e6d9992e4eee47cbff2c2dfd6597582ae5e868"
+dependencies = [
+ "bergshamra-core",
+ "uppsala",
+]
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,6 +1080,15 @@ name = "block-buffer"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
+name = "block-padding"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "710f1dd022ef4e93f8a438b4ba958de7f64308434fa6a87104481645cc30068b"
 dependencies = [
  "hybrid-array",
 ]
@@ -1306,6 +1461,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
+name = "cms"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b77c319abfd5219629c45c34c89ba945ed3c5e49fcde9d16b6c3885f118a730"
+dependencies = [
+ "const-oid 0.9.6",
+ "der",
+ "spki",
+ "x509-cert",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1379,6 +1546,12 @@ dependencies = [
  "winnow 1.0.4",
  "yaml-rust2",
 ]
+
+[[package]]
+name = "const-oid"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "const-oid"
@@ -1853,6 +2026,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "der"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
+dependencies = [
+ "const-oid 0.9.6",
+ "der_derive",
+ "flagset",
+ "pem-rfc7468",
+ "zeroize",
+]
+
+[[package]]
 name = "der-parser"
 version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1864,6 +2050,17 @@ dependencies = [
  "num-bigint 0.4.8",
  "num-traits",
  "rusticata-macros",
+]
+
+[[package]]
+name = "der_derive"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8034092389675178f570469e6c3b0465d3d30b4505c294a6550db47f3c17ad18"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1893,7 +2090,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.1",
- "const-oid",
+ "const-oid 0.10.2",
  "crypto-common 0.2.2",
  "ctutils",
 ]
@@ -2115,6 +2312,12 @@ name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
+
+[[package]]
+name = "flagset"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "flatbuffers"
@@ -3017,6 +3220,7 @@ version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b5cf4372d022092674a83b8febf5865f7a573cc0c5baec5e49c879b6a20978f"
 dependencies = [
+ "block-padding",
  "hybrid-array",
 ]
 
@@ -3254,6 +3458,18 @@ checksum = "07293a4e297ac234359b510362495713f75ea345d5307140414f20c69ffeb087"
 dependencies = [
  "bitflags 2.13.2",
  "libc",
+]
+
+[[package]]
+name = "kryptering"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "246fc275192d5342930279ed2070daf15204ca2e6158e91daaa3eaff78a5477d"
+dependencies = [
+ "aws-lc-rs",
+ "pkcs8",
+ "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -3973,6 +4189,7 @@ dependencies = [
  "rquickjs",
  "rustls-pki-types",
  "rustls-webpki",
+ "saml-rs",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -4529,6 +4746,7 @@ dependencies = [
  "redis",
  "regex",
  "reqwest 0.13.5",
+ "saml-rs",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -4976,6 +5194,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5070,6 +5297,16 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pkcs8"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
+dependencies = [
+ "der",
+ "spki",
+]
 
 [[package]]
 name = "pkg-config"
@@ -5537,7 +5774,7 @@ dependencies = [
  "rustls-pki-types",
  "time",
  "x509-parser",
- "yasna",
+ "yasna 0.6.0",
 ]
 
 [[package]]
@@ -6009,6 +6246,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "saml-rs"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4997d94a9df26e1e2768acc8fedc70afeb456d503f7af4cd85d8d8bd363ab984"
+dependencies = [
+ "base64 0.23.1",
+ "bergshamra",
+ "flate2",
+ "quick-xml",
+ "thiserror",
+ "time",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6421,6 +6674,16 @@ name = "spin"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
+
+[[package]]
+name = "spki"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
+dependencies = [
+ "base64ct",
+ "der",
+]
 
 [[package]]
 name = "sqlx-core"
@@ -6875,6 +7138,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
+name = "tls_codec"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0de2e01245e2bb89d6f05801c564fa27624dbd7b1846859876c7dad82e90bf6b"
+dependencies = [
+ "tls_codec_derive",
+ "zeroize",
+]
+
+[[package]]
+name = "tls_codec_derive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d2e76690929402faae40aebdda620a2c0e25dd6d3b9afe48867dfd95991f4bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "tokio"
 version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7284,6 +7568,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "tsp-ltv"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "563d1761c001e91bfd607f254b1fbc61fa2929dbd3685d5d89964aa95d53c8b2"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "cms",
+ "const-oid 0.9.6",
+ "der",
+ "hex",
+ "kryptering",
+ "log",
+ "pem-rfc7468",
+ "spki",
+ "thiserror",
+ "x509-cert",
+]
+
+[[package]]
 name = "tungstenite"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7427,6 +7731,12 @@ name = "unty"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
+
+[[package]]
+name = "uppsala"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a27f7d40a93824eefcf6b62fd2fa86bca9ea6a5825de56b4aa9a5ed7804b766c"
 
 [[package]]
 name = "ureq"
@@ -8009,6 +8319,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
+name = "x509-cert"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
+dependencies = [
+ "const-oid 0.9.6",
+ "der",
+ "spki",
+ "tls_codec",
+]
+
+[[package]]
 name = "x509-parser"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8058,6 +8380,12 @@ name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
 
 [[package]]
 name = "yasna"

@@ -127,10 +127,11 @@ pub mod oidc;
 pub mod provider;
 pub mod provisioning;
 pub mod resources;
+pub mod saml;
 
 pub use auth::{
     IdTokenClaims, IdpAuthRequest, IdpAuthResult, IdpAuthService, IdpAuthServiceConfig,
-    TokenResponse,
+    TokenResponse, result_from_claims,
 };
 pub use client_jwks::{ClientJwksCache, JwksCacheConfig};
 pub use discovery::{DiscoveryCache, DiscoveryCacheConfig, DiscoveryError, OidcDiscoveryClient};
@@ -142,7 +143,8 @@ pub use identity::{
 pub use jwks::{JwksError, ProviderJwksCache, ProviderJwksCacheConfig};
 pub use oidc::OidcDiscoveryDocument;
 pub use provider::{
-    ClaimMapping, FhirUserType, IdentityProviderConfig, MappedUser, Protocol, UserMappingConfig,
+    ClaimMapping, FhirUserType, IdentityProviderConfig, MappedUser, Protocol, SamlProvider,
+    UserMappingConfig,
 };
 pub use provisioning::{
     ProvisioningAction, ProvisioningConfig, ProvisioningError, ProvisioningResult,

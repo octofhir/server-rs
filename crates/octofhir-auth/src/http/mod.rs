@@ -41,7 +41,10 @@ pub use admin::{
 };
 pub use authorize::{AuthorizeFormData, AuthorizeState, authorize_get, authorize_post};
 pub use discovery::{SmartConfigState, openid_configuration_handler, smart_configuration_handler};
-pub use federated::{FederatedState, federated_callback, federated_login, federated_providers};
+pub use federated::{
+    FederatedState, federated_callback, federated_login, federated_providers, saml_acs,
+    saml_metadata,
+};
 pub use introspect::introspect_handler;
 pub use jwks::{JwksState, jwks_handler};
 pub use launch::{CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler};

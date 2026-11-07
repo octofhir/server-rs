@@ -9,7 +9,7 @@ use axum::extract::{Form, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use octofhir_config::ConfigurationManager;
 use octofhir_server::config::{AdminUserConfig, PackageSpec};
@@ -130,6 +130,35 @@ async fn start_provider() -> Provider {
     });
     provider
 }
+
+/// A SAML identity provider, signing with a certificate of its own.
+fn saml_provider() -> saml_rs::Saml<saml_rs::Idp> {
+    use saml_rs::{
+        CertificatePem, Credentials, EntityId, IdpConfig, IdpValidationPolicy, PrivateKeyPem, Saml,
+        SsoEndpoint,
+    };
+    let key = KeyPair::generate_for(&rcgen::PKCS_RSA_SHA256).unwrap();
+    let mut params = rcgen::CertificateParams::default();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "idp.example.org");
+    let certificate = params.self_signed(&key).unwrap();
+    Saml::idp(
+        IdpConfig::builder(EntityId::try_new(SAML_IDP).unwrap())
+            .sso_endpoint(SsoEndpoint::redirect("https://idp.example.org/sso").unwrap())
+            .credentials(Credentials {
+                signing_key: Some(PrivateKeyPem::new(key.serialize_pem())),
+                signing_certificate: Some(CertificatePem::new(certificate.pem())),
+                ..Credentials::default()
+            })
+            .validation(IdpValidationPolicy::recommended())
+            .build()
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+const SAML_IDP: &str = "https://idp.example.org/metadata";
 
 async fn start_server(postgres_url: &str, auto_provision: bool) -> String {
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -281,8 +310,11 @@ async fn providers(client: &Client, base: &str) -> Value {
         .unwrap()
 }
 
+/// One server per process: the canonical manager behind validation is global, so the servers
+/// of these scenarios run one after the other.
 #[tokio::test(flavor = "multi_thread")]
-async fn sign_in_through_an_external_provider() {
+async fn sign_in_through_external_providers() {
+    // One database outlives every server, which keep running in the background.
     let postgres = Postgres::default()
         .with_tag("18-alpine")
         .start()
@@ -290,9 +322,14 @@ async fn sign_in_through_an_external_provider() {
         .unwrap();
     let port = postgres.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    sign_in_through_an_external_provider(&url).await;
+    sign_in_through_saml(&url).await;
+}
+
+async fn sign_in_through_an_external_provider(url: &str) {
     let client = Client::builder().redirect(Policy::none()).build().unwrap();
     let provider = start_provider().await;
-    let strict = start_server(&url, false).await;
+    let strict = start_server(url, false).await;
     assert_eq!(providers(&client, &strict).await, json!([]));
 
     // A provider made the way the console does it takes effect without a restart.
@@ -313,8 +350,9 @@ async fn sign_in_through_an_external_provider() {
         .send()
         .await
         .unwrap();
-    assert_eq!(created.status(), StatusCode::CREATED);
+    let status = created.status();
     let created: Value = created.json().await.unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{created}");
     assert!(created.get("clientSecret").is_none(), "{created}");
     let id = created["id"].as_str().unwrap().to_owned();
     let mut listed = json!([]);
@@ -359,7 +397,7 @@ async fn sign_in_through_an_external_provider() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     // A server started later reads the providers, and this one creates users.
-    let open = start_server(&url, true).await;
+    let open = start_server(url, true).await;
     assert_eq!(
         providers(&client, &open).await,
         json!([{"id": id, "name": "Example"}])
@@ -505,8 +543,9 @@ async fn sign_in_through_an_external_provider() {
         .send()
         .await
         .unwrap();
-    assert_eq!(created.status(), StatusCode::CREATED);
+    let status = created.status();
     let created: Value = created.json().await.unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{created}");
     let plain = created["id"].as_str().unwrap().to_owned();
     for _ in 0..50 {
         if providers(&client, &open).await.as_array().unwrap().len() == 2 {
@@ -544,4 +583,174 @@ async fn sign_in_through_an_external_provider() {
     assert_eq!(user["username"], "octo");
     // Nothing vouches for this address, so it links to nobody.
     assert_eq!(user["email"], "o@example.org");
+}
+
+/// Up to the SAML provider and back to the ACS with what it answers for `name_id`.
+async fn saml_round_trip(
+    client: &Client,
+    base: &str,
+    id: &str,
+    idp: &saml_rs::Saml<saml_rs::Idp>,
+    browser: &mut Browser,
+    name_id: &str,
+) -> (String, Vec<(String, String)>) {
+    use saml_rs::{
+        AuthnRequest, BrowserInput, EntityId, MetadataTrustPolicy, NameId, ReplayPolicy,
+        RespondSso, SamlValidationContext, SpDescriptor, Subject,
+    };
+    let metadata = client
+        .get(format!("{base}/auth/idp/saml/metadata"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let sp = SpDescriptor::from_metadata_xml_for(
+        EntityId::try_new(format!("{base}/auth/idp/saml/metadata")).unwrap(),
+        &metadata,
+        MetadataTrustPolicy::UnsignedForCompatibility,
+    )
+    .unwrap();
+    let response = browser
+        .get(client, &format!("{base}/auth/idp/{id}/login"))
+        .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = url::Url::parse(response.headers()[LOCATION].to_str().unwrap()).unwrap();
+    assert!(location.as_str().starts_with("https://idp.example.org/sso"));
+    let request = idp
+        .receive_sso(
+            &sp,
+            BrowserInput::<AuthnRequest>::redirect(location.query().unwrap()),
+            SamlValidationContext::new(
+                std::time::SystemTime::now(),
+                ReplayPolicy::DisabledForCompatibility,
+            ),
+        )
+        .unwrap();
+    let answer = idp
+        .respond_sso(
+            &sp,
+            &request,
+            Subject::new(NameId::new(name_id, None), Vec::new()),
+            RespondSso::post(),
+        )
+        .unwrap();
+    let fields: Vec<(String, String)> = answer
+        .post_form()
+        .unwrap()
+        .fields()
+        .iter()
+        .map(|field| (field.name().to_owned(), field.value().to_owned()))
+        .collect();
+    let relay = fields
+        .iter()
+        .find(|(name, _)| name == "RelayState")
+        .unwrap()
+        .1
+        .clone();
+    (relay, fields)
+}
+
+async fn post_acs(client: &Client, base: &str, fields: &[(String, String)]) -> Response {
+    client
+        .post(format!("{base}/auth/idp/saml/acs"))
+        .form(fields)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn sign_in_through_saml(url: &str) {
+    let client = Client::builder().redirect(Policy::none()).build().unwrap();
+    let base = start_server(url, true).await;
+    let bearer = admin_token(&client, &base).await;
+    let idp = saml_provider();
+    let created = client
+        .post(format!("{base}/IdentityProvider"))
+        .bearer_auth(&bearer)
+        .json(&json!({
+            "resourceType": "IdentityProvider",
+            "name": "Campus",
+            "type": "saml",
+            "issuer": SAML_IDP,
+            "samlMetadata": idp.metadata_xml(),
+            "active": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = created.status();
+    let created: Value = created.json().await.unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().unwrap().to_owned();
+    for _ in 0..50 {
+        let listed = providers(&client, &base).await;
+        if listed.as_array().unwrap().iter().any(|p| p["id"] == id) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // There and back: the ACS verifies, the browser that started finishes.
+    let mut browser = Browser::default();
+    let (relay, fields) =
+        saml_round_trip(&client, &base, &id, &idp, &mut browser, "alice@example.org").await;
+    let response = post_acs(&client, &base, &fields).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let callback = response.headers()[LOCATION].to_str().unwrap().to_owned();
+    assert_eq!(callback, format!("/auth/idp/callback?state={relay}"));
+    // Another browser cannot pick it up.
+    let mut other = Browser::default();
+    let response = other.get(&client, &format!("{base}{callback}")).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let mut browser = Browser::default();
+    let (_, fields) =
+        saml_round_trip(&client, &base, &id, &idp, &mut browser, "alice@example.org").await;
+    let response = post_acs(&client, &base, &fields).await;
+    let callback = response.headers()[LOCATION].to_str().unwrap().to_owned();
+    let response = browser.get(&client, &format!("{base}{callback}")).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()[LOCATION], "/ui/");
+    let alice = subject(&client, &base, &mut browser).await;
+
+    // The same response again is not a sign-in.
+    let response = post_acs(&client, &base, &fields).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // A response changed on the way does not verify.
+    let mut browser = Browser::default();
+    let (_, mut fields) =
+        saml_round_trip(&client, &base, &id, &idp, &mut browser, "alice@example.org").await;
+    for (name, value) in &mut fields {
+        if name == "SAMLResponse" {
+            let xml = String::from_utf8(STANDARD.decode(&*value).unwrap()).unwrap();
+            assert!(xml.contains("alice@example.org"));
+            *value = STANDARD.encode(xml.replace("alice@example.org", "admin@example.org"));
+        }
+    }
+    let response = post_acs(&client, &base, &fields).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // An answer to a request this server did not make goes nowhere.
+    let mut browser = Browser::default();
+    let (_, mut fields) =
+        saml_round_trip(&client, &base, &id, &idp, &mut browser, "alice@example.org").await;
+    for (name, value) in &mut fields {
+        if name == "RelayState" {
+            *value = "made-up".to_owned();
+        }
+    }
+    let response = post_acs(&client, &base, &fields).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // The same person again is the same user.
+    let mut browser = Browser::default();
+    let (_, fields) =
+        saml_round_trip(&client, &base, &id, &idp, &mut browser, "alice@example.org").await;
+    let response = post_acs(&client, &base, &fields).await;
+    let callback = response.headers()[LOCATION].to_str().unwrap().to_owned();
+    browser.get(&client, &format!("{base}{callback}")).await;
+    assert_eq!(subject(&client, &base, &mut browser).await, alice);
 }

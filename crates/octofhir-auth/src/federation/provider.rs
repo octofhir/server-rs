@@ -84,6 +84,17 @@ pub struct IdentityProviderConfig {
     /// How to talk to it.
     #[serde(default)]
     pub protocol: Protocol,
+
+    /// For SAML: the provider's entity ID as written, and its metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saml: Option<SamlProvider>,
+}
+
+/// What a SAML provider is known by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SamlProvider {
+    pub entity_id: String,
+    pub metadata: String,
 }
 
 /// What a provider speaks.
@@ -127,6 +138,7 @@ impl IdentityProviderConfig {
             user_mapping: UserMappingConfig::default(),
             logo_url: None,
             protocol: Protocol::default(),
+            saml: None,
             authorization_endpoint: None,
             token_endpoint: None,
             userinfo_endpoint: None,
