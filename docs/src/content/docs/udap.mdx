@@ -33,7 +33,9 @@ revocation_lists = ["/etc/octofhir/udap/community.crl"]
 ```
 
 If a file cannot be read, or the certificate does not name the base URL, the server logs the
-reason and starts with UDAP off.
+reason and starts with UDAP off. While UDAP is off, `/fhir/.well-known/udap` and the registration
+endpoint answer 404. A change to the `auth` configuration takes effect without a restart: UDAP and
+Tiered OAuth are built again from it, switched on or off, or re-keyed.
 
 ### Revocation
 

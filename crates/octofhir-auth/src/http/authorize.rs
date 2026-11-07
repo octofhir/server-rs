@@ -48,7 +48,7 @@ use crate::storage::{
     AuthorizeSessionStorage, ClientStorage, ConsentStorage, SessionStorage, SsoSessionStorage,
     UserStorage,
 };
-use crate::udap::tiered::TieredOAuth;
+use crate::udap::live::LiveUdap;
 
 use super::authorize_templates::{
     LoginProvider, PatientInfo, render_consent_form, render_error_page, render_login_form,
@@ -86,8 +86,9 @@ pub struct AuthorizeState {
     pub secure_cookies: bool,
     /// External identity providers offered next to the password, when enabled.
     pub identity_providers: Option<Arc<IdpAuthService>>,
-    /// UDAP Tiered OAuth, when enabled: `idp` names the provider to sign the user in at.
-    pub tiered_oauth: Option<Arc<TieredOAuth>>,
+    /// UDAP as configured now; with Tiered OAuth on, `idp` names the provider to sign the
+    /// user in at.
+    pub udap: LiveUdap,
 }
 
 impl AuthorizeState {
@@ -254,7 +255,7 @@ pub async fn authorize_get(
 
     // UDAP Tiered OAuth: the user signs in at the identity provider the client app names, and
     // comes back to this request (without `idp`) with a session.
-    if let (Some(tiered), Some(idp)) = (&state.tiered_oauth, params.idp.as_deref())
+    if let (Some(tiered), Some(idp)) = (state.udap.tiered(), params.idp.as_deref())
         && params.scope.split_whitespace().any(|scope| scope == "udap")
     {
         return match tiered.provider_for(idp).await {

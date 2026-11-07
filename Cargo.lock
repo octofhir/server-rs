@@ -4252,6 +4252,7 @@ dependencies = [
 name = "octofhir-auth"
 version = "0.0.3"
 dependencies = [
+ "arc-swap",
  "argon2",
  "async-trait",
  "aws-lc-rs",

@@ -139,6 +139,23 @@ async fn subscriptions_in_the_r4_backport_form() {
         .respond_with(ResponseTemplate::new(200))
         .mount(&hooks)
         .await;
+    // UDAP is off here: its endpoints say so with 404, not an error.
+    for (path, post) in [
+        ("fhir/.well-known/udap", false),
+        ("auth/udap/register", true),
+    ] {
+        let url = format!("{}/{path}", api.base);
+        let request = if post {
+            api.client
+                .post(&url)
+                .json(&json!({"software_statement": "x", "udap": "1"}))
+        } else {
+            api.client.get(&url)
+        };
+        let status = request.send().await.unwrap().status();
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+
     let topic = "https://octofhir.io/topics/encounter-start";
     let (status, body) = api
         .post(
@@ -241,7 +258,10 @@ async fn subscriptions_in_the_r4_backport_form() {
         .await;
     let mut filtered = subscription.clone();
     filtered["channel"]["endpoint"] = json!(format!("{}/filtered", filtered_hooks.uri()));
-    filtered["channel"].as_object_mut().unwrap().remove("extension");
+    filtered["channel"]
+        .as_object_mut()
+        .unwrap()
+        .remove("extension");
     filtered["_criteria"] = json!({"extension": [{
         "url": format!("{backport}/backport-filter-criteria"),
         "valueString": format!("Encounter?patient={ada}"),

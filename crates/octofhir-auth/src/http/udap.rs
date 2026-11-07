@@ -12,6 +12,7 @@ use time::OffsetDateTime;
 
 use crate::storage::{ClientStorage, JtiStorage};
 use crate::types::{Client, UdapBinding};
+use crate::udap::live::LiveUdap;
 use crate::udap::statement::{Registration, RegistrationError, SoftwareStatement, client_id};
 use crate::udap::{MAX_ACCESS_TOKEN_LIFETIME_SECONDS, Trust, TrustError, UdapMetadata, Verified};
 
@@ -30,6 +31,18 @@ pub struct UdapState {
     pub access_token_lifetime: i64,
 }
 
+/// UDAP is off: the Security IG has a server without UDAP answer 404 at its discovery endpoint.
+fn not_enabled() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "not_found",
+            "error_description": "UDAP is not enabled on this server",
+        })),
+    )
+        .into_response()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DiscoveryQuery {
     community: Option<String>,
@@ -37,9 +50,12 @@ pub struct DiscoveryQuery {
 
 /// `GET {base}/.well-known/udap`. An unknown community gets 204: no UDAP workflows there.
 pub async fn udap_metadata_handler(
-    State(state): State<UdapState>,
+    State(live): State<LiveUdap>,
     Query(query): Query<DiscoveryQuery>,
 ) -> Response {
+    let Some(state) = live.current() else {
+        return not_enabled();
+    };
     if let Some(community) = &query.community
         && !state.trust.has_community(community)
     {
@@ -132,9 +148,12 @@ fn client(
 
 /// `POST /auth/udap/register`: registers, changes or cancels an application.
 pub async fn udap_register_handler(
-    State(state): State<UdapState>,
+    State(live): State<LiveUdap>,
     Json(request): Json<RegistrationRequest>,
 ) -> Response {
+    let Some(state) = live.current() else {
+        return not_enabled();
+    };
     if request.udap.as_deref() != Some("1") {
         return refused(RegistrationError::metadata("udap has to be 1"));
     }

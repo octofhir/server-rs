@@ -79,7 +79,9 @@ pub struct TokenState {
     /// FHIR storage for creating AuthSession resources (optional).
     fhir_storage: Option<Arc<dyn octofhir_storage::FhirStorage>>,
     /// Trust communities, for clients registered through UDAP (optional).
-    udap: Option<Arc<crate::udap::Trust>>,
+    /// UDAP as configured now: clients registered through it authenticate with their
+    /// certificate while it is on.
+    udap: crate::udap::live::LiveUdap,
     /// Counts failed attempts at passwords and client secrets.
     lockout: Arc<Lockout>,
 }
@@ -145,7 +147,7 @@ impl TokenState {
             jti_storage: None,
             jwks_cache: None,
             token_endpoint_url: None,
-            udap: None,
+            udap: Default::default(),
             lockout: Arc::new(Lockout::new(LockoutConfig::default())),
             fhir_storage: None,
         }
@@ -170,7 +172,7 @@ impl TokenState {
             jti_storage: None,
             jwks_cache: None,
             token_endpoint_url: None,
-            udap: None,
+            udap: Default::default(),
             lockout: Arc::new(Lockout::new(LockoutConfig::default())),
         }
     }
@@ -214,8 +216,8 @@ impl TokenState {
     }
 
     /// Accepts clients registered through UDAP, with these trust communities.
-    pub fn with_udap(mut self, trust: Arc<crate::udap::Trust>) -> Self {
-        self.udap = Some(trust);
+    pub fn with_udap(mut self, udap: crate::udap::live::LiveUdap) -> Self {
+        self.udap = udap;
         self
     }
 
@@ -542,12 +544,12 @@ async fn authenticate_with_assertion(
 
     // An application registered through UDAP proves itself with its certificate.
     if let Some(binding) = &client.udap {
-        let trust = state
+        let udap = state
             .udap
-            .as_ref()
+            .current()
             .ok_or_else(|| AuthError::invalid_client("UDAP is not enabled"))?;
         let token = crate::udap::assertion::authenticate(
-            trust,
+            &udap.trust,
             &client,
             binding,
             assertion,
@@ -971,7 +973,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
-            udap: None,
+            udap: Default::default(),
             refresh_token: None,
             scope: None,
             username: None,
@@ -1003,7 +1005,7 @@ mod tests {
             client_secret: Some("test-secret".to_string()),
             client_assertion_type: None,
             client_assertion: None,
-            udap: None,
+            udap: Default::default(),
             refresh_token: None,
             scope: None,
             username: None,
@@ -1035,7 +1037,7 @@ mod tests {
             client_secret: None,
             client_assertion_type: None,
             client_assertion: None,
-            udap: None,
+            udap: Default::default(),
             refresh_token: None,
             scope: None,
             username: None,

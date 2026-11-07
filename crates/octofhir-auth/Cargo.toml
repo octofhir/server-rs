@@ -37,6 +37,8 @@ pem = "4"
 rustls-pki-types = { version = "1", features = ["std"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["std", "aws-lc-rs"] }
 x509-parser = "0.18"
+# UDAP is replaced in place when the configuration changes.
+arc-swap = { workspace = true }
 # OCSP request and response formats (RFC 6960); signatures are checked with webpki.
 x509-ocsp = { version = "0.2", default-features = false }
 x509-cert = { version = "0.2", default-features = false }

@@ -10,6 +10,7 @@
 //! - [`metadata`] builds the signed `.well-known/udap` document.
 
 pub mod assertion;
+pub mod live;
 pub mod metadata;
 pub mod ocsp;
 pub mod revocation;

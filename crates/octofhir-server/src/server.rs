@@ -2707,7 +2707,9 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
         .map(crate::oauth::federated_route);
     let authorize_router = crate::oauth::authorize_route(oauth_state.authorize_state);
     let launch_router = crate::oauth::launch_route(oauth_state.launch_state);
-    let udap_router = oauth_state.udap_state.map(crate::oauth::udap_route);
+    // Always routed: with UDAP off the endpoints answer 404, and a configuration reload can
+    // switch it on.
+    let udap_router = crate::oauth::udap_route(oauth_state.udap.clone());
 
     // Duplicate discovery routes under /fhir so that
     // /fhir/.well-known/smart-configuration works when Inferno uses /fhir as base URL
@@ -2724,10 +2726,7 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
         .merge(userinfo_router)
         .merge(authorize_router)
         .merge(launch_router);
-    let router = match udap_router {
-        Some(udap) => router.merge(udap),
-        None => router,
-    };
+    let router = router.merge(udap_router);
     let router = match federated_router {
         Some(federated) => router.merge(federated),
         None => router,

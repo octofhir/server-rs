@@ -41,7 +41,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use jsonwebtoken::{Validation, decode_header};
@@ -132,15 +132,15 @@ pub struct IdpAuthService {
     providers: Arc<RwLock<HashMap<String, IdentityProviderConfig>>>,
     /// Service configuration.
     config: IdpAuthServiceConfig,
-    /// Signs client assertions for UDAP providers; set once, when UDAP is configured.
-    assertions: Arc<OnceLock<Arc<dyn ClientAssertion>>>,
+    /// Signs client assertions for UDAP providers, while UDAP is configured.
+    assertions: Arc<std::sync::RwLock<Option<Arc<dyn ClientAssertion>>>>,
 }
 
 impl IdpAuthService {
-    /// Authenticate to UDAP providers' token endpoints with assertions from `signer`. The first
-    /// signer set stays.
-    pub fn set_client_assertion(&self, signer: Arc<dyn ClientAssertion>) {
-        let _ = self.assertions.set(signer);
+    /// Authenticate to UDAP providers' token endpoints with assertions from `signer`; `None`
+    /// when UDAP is switched off.
+    pub fn set_client_assertion(&self, signer: Option<Arc<dyn ClientAssertion>>) {
+        *self.assertions.write().unwrap_or_else(|e| e.into_inner()) = signer;
     }
 
     /// Creates a new IdP authentication service.
@@ -477,9 +477,14 @@ impl IdpAuthService {
         let secret_binding;
         let assertion;
         if provider.protocol == Protocol::Udap {
-            let signer = self.assertions.get().ok_or_else(|| {
-                IdpError::TokenExchangeFailed("UDAP client authentication is not set up".into())
-            })?;
+            let signer = self
+                .assertions
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+                .ok_or_else(|| {
+                    IdpError::TokenExchangeFailed("UDAP client authentication is not set up".into())
+                })?;
             assertion = signer
                 .client_assertion(&provider.client_id, token_endpoint.as_str())
                 .map_err(IdpError::TokenExchangeFailed)?;

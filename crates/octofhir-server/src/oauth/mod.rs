@@ -38,6 +38,7 @@ use octofhir_auth::oauth::service::{AuthorizationConfig, AuthorizationService};
 use octofhir_auth::oauth::token::TokenRequest;
 use octofhir_auth::token::jwt::JwtService;
 use octofhir_auth::token::service::TokenConfig;
+use octofhir_auth::udap::live::LiveUdap;
 use octofhir_auth::udap::metadata::Endpoints;
 use octofhir_auth::udap::tiered::TieredOAuth;
 use octofhir_auth::udap::{Trust, UdapMetadata};
@@ -70,8 +71,8 @@ pub struct OAuthState {
     pub authorize_state: AuthorizeState,
     pub launch_state: LaunchState,
     pub audit_service: Arc<AuditService>,
-    /// Set when UDAP is enabled and its files could be read.
-    pub udap_state: Option<UdapState>,
+    /// UDAP as configured now: off, on, or changed by a configuration reload.
+    pub udap: LiveUdap,
     /// Set when sign-in through external identity providers is allowed.
     pub federated_state: Option<FederatedState>,
 }
@@ -137,16 +138,20 @@ impl OAuthState {
         .with_jwks_cache(Arc::new(ClientJwksCache::new(JwksCacheConfig::default())))
         .with_jti_storage(Arc::new(ArcJtiStorage::new(db_pool.clone())));
 
-        let udap_state = udap_state(
-            config,
-            client_storage.clone(),
-            Arc::new(ArcJtiStorage::new(db_pool.clone())),
-            access_token_secs,
-        );
-        let token_state = match &udap_state {
-            Some(udap) => token_state.with_udap(udap.trust.clone()),
-            None => token_state,
+        let udap = UdapSetup {
+            live: LiveUdap::default(),
+            base_url: config.base_url().trim_end_matches('/').to_owned(),
+            clients: client_storage.clone(),
+            jti: Arc::new(ArcJtiStorage::new(db_pool.clone())),
+            access_token_lifetime: access_token_secs,
+            providers: app_state.identity_providers.clone(),
+            storage: app_state.storage.clone(),
         };
+        udap.apply(&config.auth);
+        if let Some(manager) = app_state.config_manager.clone() {
+            udap.follow(manager);
+        }
+        let token_state = token_state.with_udap(udap.live.clone());
 
         let revocation_state =
             RevocationState::new(token_state.token_service(), client_storage.clone());
@@ -212,12 +217,7 @@ impl OAuthState {
             session_config: config.auth.session.clone(),
             fhir_storage: app_state.storage.clone(),
             identity_providers: app_state.identity_providers.clone(),
-            tiered_oauth: tiered_oauth(
-                config,
-                udap_state.as_ref(),
-                app_state.identity_providers.as_ref(),
-                app_state.storage.clone(),
-            ),
+            udap: udap.live.clone(),
         };
 
         let federation = &config.auth.federation;
@@ -249,7 +249,7 @@ impl OAuthState {
             authorize_state,
             launch_state,
             audit_service: app_state.audit_service.clone(),
-            udap_state,
+            udap: udap.live,
             federated_state,
         })
     }
@@ -310,87 +310,140 @@ pub async fn identity_providers(
     Some(Arc::new(service))
 }
 
-/// UDAP Tiered OAuth, when `[auth.udap.tiered_oauth]` enables it: it needs UDAP itself (this
-/// server's certificate signs its registrations and client assertions) and external identity
-/// providers (`[auth.federation]`), since the sign-in goes through them.
-fn tiered_oauth(
-    config: &crate::config::AppConfig,
-    udap: Option<&UdapState>,
-    providers: Option<&Arc<IdpAuthService>>,
-    storage: Arc<dyn octofhir_storage::FhirStorage>,
-) -> Option<Arc<TieredOAuth>> {
-    let tiered = &config.auth.udap.tiered_oauth;
-    if !tiered.enabled {
-        return None;
-    }
-    let (Some(udap), Some(providers)) = (udap, providers) else {
-        tracing::error!(
-            "UDAP Tiered OAuth stays off: it needs auth.udap and auth.federation enabled"
-        );
-        return None;
-    };
-    providers.set_client_assertion(udap.metadata.clone());
-    let callback = format!(
-        "{}/auth/idp/callback",
-        config.base_url().trim_end_matches('/')
-    );
-    Some(Arc::new(
-        TieredOAuth::new(
-            udap.metadata.clone(),
-            udap.trust.clone(),
-            providers.clone(),
-            storage,
-            callback,
-            tiered.clone(),
-        )
-        .with_allow_http(config.auth.federation.allow_http),
-    ))
-}
-
-/// The UDAP endpoints. A misconfiguration leaves them off and says why: nothing here may
-/// weaken the rest of the server.
-fn udap_state(
-    config: &crate::config::AppConfig,
+/// What UDAP is built from, kept so it can be built again when the `auth` configuration
+/// changes: UDAP and Tiered OAuth follow `[auth.udap]` without a restart.
+struct UdapSetup {
+    live: LiveUdap,
+    base_url: String,
     clients: Arc<ArcClientStorage>,
     jti: Arc<ArcJtiStorage>,
     access_token_lifetime: i64,
-) -> Option<UdapState> {
-    let mut udap = config.auth.udap.clone();
-    if !udap.enabled {
-        return None;
-    }
-    // A data holder that supports Tiered OAuth lists `udap` in scopes_supported, and client
-    // apps that use it register with it.
-    if udap.tiered_oauth.enabled && !udap.scopes.iter().any(|scope| scope == "udap") {
-        udap.scopes.push("udap".to_owned());
-    }
-    let udap = &udap;
-    let base = config.base_url();
-    let base = base.trim_end_matches('/');
-    let registration_url = format!("{base}/auth/udap/register");
-    let built = Trust::from_config(udap).and_then(|trust| {
-        let endpoints = Endpoints {
-            base_url: format!("{base}/fhir"),
-            authorization: format!("{base}/auth/authorize"),
-            token: format!("{base}/auth/token"),
-            registration: registration_url.clone(),
-        };
-        Ok((trust, UdapMetadata::from_config(udap, endpoints)?))
-    });
-    match built {
-        Ok((trust, metadata)) => Some(UdapState {
-            trust: Arc::new(trust),
-            metadata: Arc::new(metadata),
-            clients,
-            jti,
-            registration_url,
-            scopes: udap.scopes.clone().into(),
-            access_token_lifetime,
-        }),
-        Err(error) => {
-            tracing::error!(%error, "UDAP stays off");
-            None
+    providers: Option<Arc<IdpAuthService>>,
+    storage: Arc<dyn octofhir_storage::FhirStorage>,
+}
+
+impl UdapSetup {
+    /// Puts `auth.udap` in force. A misconfiguration leaves UDAP off and says why: nothing here
+    /// may weaken the rest of the server.
+    fn apply(&self, auth: &octofhir_auth::config::AuthConfig) {
+        let state = self.state(auth);
+        let tiered = state.as_ref().and_then(|state| self.tiered(auth, state));
+        if let Some(providers) = &self.providers {
+            let signer: Option<Arc<dyn octofhir_auth::federation::ClientAssertion>> =
+                tiered.as_ref().and(state.as_ref()).map(|state| {
+                    state.metadata.clone() as Arc<dyn octofhir_auth::federation::ClientAssertion>
+                });
+            providers.set_client_assertion(signer);
         }
+        tracing::info!(
+            udap = state.is_some(),
+            tiered_oauth = tiered.is_some(),
+            "UDAP configuration in force"
+        );
+        self.live.replace(state, tiered);
+    }
+
+    /// Rebuilds UDAP whenever the `auth` configuration changes.
+    fn follow(&self, manager: Arc<octofhir_config::ConfigurationManager>) {
+        let setup = UdapSetup {
+            live: self.live.clone(),
+            base_url: self.base_url.clone(),
+            clients: self.clients.clone(),
+            jti: self.jti.clone(),
+            access_token_lifetime: self.access_token_lifetime,
+            providers: self.providers.clone(),
+            storage: self.storage.clone(),
+        };
+        let mut events = manager.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match events.recv().await {
+                    Ok(event) if event.category == octofhir_config::ConfigCategory::Auth => {
+                        let Some(section) = manager
+                            .get_category(octofhir_config::ConfigCategory::Auth)
+                            .await
+                        else {
+                            continue;
+                        };
+                        match serde_json::from_value::<octofhir_auth::config::AuthConfig>(section) {
+                            Ok(auth) => setup.apply(&auth),
+                            Err(error) => {
+                                tracing::error!(%error, "The auth configuration does not read; UDAP is unchanged")
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
+    fn state(&self, auth: &octofhir_auth::config::AuthConfig) -> Option<UdapState> {
+        let mut udap = auth.udap.clone();
+        if !udap.enabled {
+            return None;
+        }
+        // A data holder that supports Tiered OAuth lists `udap` in scopes_supported, and
+        // client apps that use it register with it.
+        if udap.tiered_oauth.enabled && !udap.scopes.iter().any(|scope| scope == "udap") {
+            udap.scopes.push("udap".to_owned());
+        }
+        let base = &self.base_url;
+        let registration_url = format!("{base}/auth/udap/register");
+        let built = Trust::from_config(&udap).and_then(|trust| {
+            let endpoints = Endpoints {
+                base_url: format!("{base}/fhir"),
+                authorization: format!("{base}/auth/authorize"),
+                token: format!("{base}/auth/token"),
+                registration: registration_url.clone(),
+            };
+            Ok((trust, UdapMetadata::from_config(&udap, endpoints)?))
+        });
+        match built {
+            Ok((trust, metadata)) => Some(UdapState {
+                trust: Arc::new(trust),
+                metadata: Arc::new(metadata),
+                clients: self.clients.clone(),
+                jti: self.jti.clone(),
+                registration_url,
+                scopes: udap.scopes.clone().into(),
+                access_token_lifetime: self.access_token_lifetime,
+            }),
+            Err(error) => {
+                tracing::error!(%error, "UDAP stays off");
+                None
+            }
+        }
+    }
+
+    /// Tiered OAuth, when `[auth.udap.tiered_oauth]` enables it: it needs external identity
+    /// providers (`[auth.federation]`), since the sign-in goes through them.
+    fn tiered(
+        &self,
+        auth: &octofhir_auth::config::AuthConfig,
+        state: &UdapState,
+    ) -> Option<Arc<TieredOAuth>> {
+        let tiered = &auth.udap.tiered_oauth;
+        if !tiered.enabled {
+            return None;
+        }
+        let Some(providers) = &self.providers else {
+            tracing::error!("UDAP Tiered OAuth stays off: it needs auth.federation enabled");
+            return None;
+        };
+        Some(Arc::new(
+            TieredOAuth::new(
+                state.metadata.clone(),
+                state.trust.clone(),
+                providers.clone(),
+                self.storage.clone(),
+                format!("{}/auth/idp/callback", self.base_url),
+                tiered.clone(),
+            )
+            .with_allow_http(auth.federation.allow_http),
+        ))
     }
 }
 
@@ -619,7 +672,7 @@ pub fn smart_config_route(state: SmartConfigState) -> Router {
 }
 
 /// Creates the UDAP discovery document and registration endpoint.
-pub fn udap_route(state: UdapState) -> Router {
+pub fn udap_route(state: LiveUdap) -> Router {
     Router::new()
         .route("/fhir/.well-known/udap", get(udap_metadata_handler))
         .route("/auth/udap/register", post(udap_register_handler))
