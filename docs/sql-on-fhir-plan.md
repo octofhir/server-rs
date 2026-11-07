@@ -1,7 +1,7 @@
 # SQL on FHIR in the server — plan
 
-Status: 2026-11-04. Only work still to do; phases 1–6 are done (git history). Priority: strategic (multi-year). Quality bar: the server path
-over its own PostgreSQL is the product; the CLI / in-memory paths follow it.
+Status: 2026-11-07. Priority: strategic (multi-year). Quality bar: the server path over its own
+PostgreSQL is the product; the CLI / in-memory paths follow it.
 
 ## Spec baseline (verify against these, not memory)
 
@@ -15,31 +15,6 @@ over its own PostgreSQL is the product; the CLI / in-memory paths follow it.
 subsets: we keep it as an extension of our runners (in-memory, needs a
 TerminologyProvider), never as the way terminology reaches SQL.
 
-## Where things are
-
-- Views over the server's data run as SQL with the same authorization as `search`
-  (`plan_search`); per-resource policies fall back to the in-memory engine.
-- Operations: `$viewdefinition-run`, `$viewdefinition-export`, `$sql-run`, `$sql-export`
-  (`crates/octofhir-server/src/operations/sof/`); sandbox: the static check is
-  `octofhir_sof::guard`, the database half is `octofhir-db-postgres` `sql_job`;
-  artifacts and terminology in `term_source.rs` over sof's `plan` / `catalog`
-  (`compare_versions`, `value_set_content`); a value set beyond the strict
-  expander goes to the terminology server through the server's
-  `TerminologyProvider` (the one `memberOf()` uses), only for published value
-  sets. Temporal parameters bind as text (sof 0.3.3).
-- Console: the Views page runs ViewDefinitions, SQLQueries and SQLViews through `$sql-run`;
-  the console-only `$sql-describe` (`sql_describe.rs`) resolves a subject's dependencies as
-  `$sql-run` does and prepares its SQL without data (columns, provenance, `check`); the SQL
-  editor's language server runs in SQL on FHIR mode (`/api/lsp/pg?mode=sof`,
-  `lsp/sof_catalog.rs`): the dependencies' labels and columns instead of the catalog.
-- Tests: `tests/sql_run.rs`, `tests/sql_terminology.rs`, `tests/sql_export.rs`,
-  `tests/sql_conformance.rs`, `tests/sql_describe.rs` (each its own binary);
-  `scripts/test-sof-console.ts` against a running server.
-
 ## To do
 
-Nothing open. `ViewDefinition/$export`, the export of 2.0 that 3.0 replaced with `$sql-export`,
-stays behind `sql_on_fhir.viewdefinition_export`.
-
-Later / explicitly not now: maintained materialized views (`$viewdefinition-materialize`) —
-only with our own incremental-by-`txid` design.
+Nothing open.
