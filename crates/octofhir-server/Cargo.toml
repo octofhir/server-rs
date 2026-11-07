@@ -89,6 +89,7 @@ fml-model = { workspace = true }
 fml-check = { workspace = true }
 ccda-fhir = { workspace = true }
 fml-engine = { workspace = true }
+fml-lsp = { workspace = true }
 
 # UI embedding
 include_dir = "0.7"

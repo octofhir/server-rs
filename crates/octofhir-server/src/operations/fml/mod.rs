@@ -7,7 +7,7 @@ mod check;
 mod convert;
 mod extract;
 mod library;
-mod resolve;
+pub(crate) mod resolve;
 mod transform;
 
 use std::sync::Arc;

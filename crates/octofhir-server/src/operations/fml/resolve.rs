@@ -425,7 +425,7 @@ impl Models {
 
 /// The core definitions, shared between requests.
 #[derive(Clone)]
-pub(crate) struct SharedCore(Arc<fml_check::CoreDefinitions>);
+pub(crate) struct SharedCore(pub(crate) Arc<fml_check::CoreDefinitions>);
 
 impl Definitions for SharedCore {
     fn structure(&self, url: &str) -> Option<Arc<Structure>> {

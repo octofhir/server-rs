@@ -43,6 +43,13 @@ const DARK_RULES: monaco.editor.ITokenThemeRule[] = [
   { token: "string.sql", foreground: "86d39d" },
   { token: "predefined.sql", foreground: ACCENT_TEXT_DARK },
   { token: "operator.sql", foreground: "8b8b94" },
+  // Semantic tokens from language servers (FML): what a name is, not only how it looks.
+  { token: "variable", foreground: "ededef" },
+  { token: "variable.readonly", foreground: "8fb3ff" },
+  { token: "parameter", foreground: "ededef", fontStyle: "italic" },
+  { token: "property", foreground: "a5b8d8" },
+  { token: "function", foreground: ACCENT_TEXT_DARK, fontStyle: "bold" },
+  { token: "method", foreground: ACCENT_TEXT_DARK },
 ];
 
 const LIGHT_RULES: monaco.editor.ITokenThemeRule[] = [
@@ -59,6 +66,12 @@ const LIGHT_RULES: monaco.editor.ITokenThemeRule[] = [
   { token: "string.sql", foreground: "15803d" },
   { token: "predefined.sql", foreground: ACCENT_TEXT_LIGHT },
   { token: "operator.sql", foreground: "6b6b74" },
+  { token: "variable", foreground: "18181b" },
+  { token: "variable.readonly", foreground: "1d4ed8" },
+  { token: "parameter", foreground: "18181b", fontStyle: "italic" },
+  { token: "property", foreground: "475569" },
+  { token: "function", foreground: ACCENT_TEXT_LIGHT, fontStyle: "bold" },
+  { token: "method", foreground: ACCENT_TEXT_LIGHT },
 ];
 
 // Chrome colours — mirror tokens.ts scheme.dark.

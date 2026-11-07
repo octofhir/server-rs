@@ -2397,6 +2397,7 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             "/api/lsp/fhirpath",
             get(crate::lsp::fhirpath_lsp_websocket_handler),
         )
+        .route("/api/lsp/fml", get(crate::lsp::fml_lsp_websocket_handler))
         // Log stream WebSocket endpoint (authenticated, admin scope required)
         .route(
             "/api/logs/stream",

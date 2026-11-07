@@ -109,6 +109,15 @@ The **FML** page (`g k`) of the [web console](/server-rs/console/) is an editor 
 
 - Write a map or open a stored one. It is checked as you type, with syntax, compile and type problems at
   their place in the source.
+- The editor knows the map through a language server:
+  - completion: elements after `.` with their types, followed through the path; variables in scope;
+    groups after `then`; transforms after `=`; types after `:`;
+  - hover: types, group signatures, and transform descriptions;
+  - go to definition (`F12`), find references (`Shift+F12`) and rename (`F2`) for variables and groups;
+  - signature help for transforms and group calls;
+  - the outline (`Ctrl+Shift+O`);
+  - colours by meaning: variables, parameters, elements, groups, transforms and types each look
+    different.
 - Run it over a resource with `$transform`, with models of its own: logical models and ConceptMaps for
   this run only.
 - Run it over a CDA document, read into the CDA model. See [C-CDA](/server-rs/ccda/).
@@ -120,3 +129,11 @@ The **FML** page (`g k`) of the [web console](/server-rs/console/) is an editor 
 The editor works through `POST /api/fml/check`, `/api/fml/format`, `/api/fml/compile` (FML to a
 StructureMap in the server's release) and `/api/fml/print` (a StructureMap to FML), each with a `source`
 field except `print`, which takes the StructureMap. None of them reads or writes data.
+
+The language server is a WebSocket at `/api/lsp/fml`. It speaks the Language Server Protocol through
+the `fml-lsp` crate, and any user with a `user/*`, `system/*` or `admin/*` scope can connect. It
+checks maps against the core definitions of the server's FHIR release. For any other structure a
+map's `uses` names, it loads the StructureDefinition from the installed packages, along with the
+structures that one refers to; logical models and profiles are covered this way. Outside the
+console, `fml lsp` from [fml-rs](https://github.com/octofhir/fml-rs) runs the same server over
+standard input and output, for desktop editors.

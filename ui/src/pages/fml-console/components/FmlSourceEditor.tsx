@@ -1,5 +1,6 @@
 /**
- * Monaco editor for FML: highlighting, the server's problems as markers, and the range of the
+ * Monaco editor for FML: highlighting, the language server (completion, hover, go to definition,
+ * rename, outline, semantic colours), the server's problems as markers, and the range of the
  * trace event being replayed. Ctrl/Cmd+Enter runs the map.
  */
 
@@ -14,6 +15,7 @@ import {
   OCTOFHIR_THEME_LIGHT,
 } from "@/shared/monaco/lspClient";
 import { ensureFmlLanguageRegistered, FML_LANGUAGE_ID } from "../fmlLanguage";
+import { bindFmlModel } from "../fmlLspClient";
 import type { Problem } from "../types";
 import classes from "../FmlConsolePage.module.css";
 
@@ -48,6 +50,7 @@ export function FmlSourceEditor({
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decorations = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  const unbindLsp = useRef<(() => void) | null>(null);
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
   const { colorScheme } = useColorScheme();
@@ -59,7 +62,17 @@ export function FmlSourceEditor({
     bindEditorKey(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, "Run map", () => {
       onSubmitRef.current?.();
     });
+    const model = editor.getModel();
+    if (model) unbindLsp.current = bindFmlModel(model);
   }, []);
+
+  useEffect(
+    () => () => {
+      unbindLsp.current?.();
+      unbindLsp.current = null;
+    },
+    []
+  );
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -126,6 +139,7 @@ export function FmlSourceEditor({
         renderLineHighlight: "line",
         tabSize: 2,
         bracketPairColorization: { enabled: true },
+        "semanticHighlighting.enabled": true,
       }}
     />
   );

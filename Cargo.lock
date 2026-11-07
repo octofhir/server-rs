@@ -2392,9 +2392,9 @@ dependencies = [
 
 [[package]]
 name = "fml-check"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b23864a6e929534f172d1c956a631d1f560db3f3eaa2532de558efc4528dca6"
+checksum = "45ab3345fbaff3be3ff05b9864630867bf34f92fc68321e907b3e3a3be8e09a1"
 dependencies = [
  "fml-syntax",
  "octofhir-fhirschema",
@@ -2403,13 +2403,14 @@ dependencies = [
 
 [[package]]
 name = "fml-engine"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4cc400334cea9ed904823bb23f6a46740235cfe075e0421522892397540ff7f"
+checksum = "824bf8fd59e62e2dcbbaf0508c3a88daecc2cc31412b3c4b138f219ef8b805fb"
 dependencies = [
  "fml-check",
  "fml-model",
  "fml-syntax",
+ "jiff",
  "octofhir-fhir-model",
  "octofhir-fhirpath",
  "octofhir-fhirschema",
@@ -2418,10 +2419,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "fml-model"
-version = "0.2.4"
+name = "fml-lsp"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76c4a7df9f79f1c6eade76317808438e74c22426e410b7ccffa9bd4f7b3a326e"
+checksum = "e5bcae079b61e1907f8e591bf7e3ba9a6c2f43fa02ce613c5e8e05cb6738d351"
+dependencies = [
+ "fml-check",
+ "fml-model",
+ "fml-syntax",
+ "lsp-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fml-model"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b292ffdb28e966fb9d74c69c1d7424f0e2289b25d42921122ce5dfdc34d31f58"
 dependencies = [
  "fml-syntax",
  "serde",
@@ -2430,18 +2445,18 @@ dependencies = [
 
 [[package]]
 name = "fml-syntax"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53cc08895f5ea45b44a4b6688c1e19df3f4609066e83bfddc34c401fd86e720d"
+checksum = "6cf855bc9f5b0de05af1ec1849381eaa2672fb1294b8f1846befdec4b165e0f1"
 dependencies = [
  "rowan",
 ]
 
 [[package]]
 name = "fml-xml"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "303dc623ad11dab21a201e0a6455740b2d72000413286b5b4a21a3aae7b8ab22"
+checksum = "99db0fb72658d3ae264a0616d506ddeed004750713f5ee6820667a878174109a"
 dependencies = [
  "roxmltree",
  "serde_json",
@@ -3334,6 +3349,7 @@ dependencies = [
  "defmt",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb",
  "jiff-tzdb-platform",
  "log",
  "portable-atomic",
@@ -4777,6 +4793,7 @@ dependencies = [
  "flate2",
  "fml-check",
  "fml-engine",
+ "fml-lsp",
  "fml-model",
  "fml-syntax",
  "futures",

@@ -61,7 +61,7 @@ fn problems(text: &str, diagnostics: &[Diagnostic]) -> Vec<Problem> {
 }
 
 /// The core definitions of the server's release, built once.
-fn core(state: &AppState) -> Option<(Release, Arc<CoreDefinitions>)> {
+pub(crate) fn core(state: &AppState) -> Option<(Release, Arc<CoreDefinitions>)> {
     static CORE: OnceLock<Option<(Release, Arc<CoreDefinitions>)>> = OnceLock::new();
     CORE.get_or_init(|| {
         Release::parse(&state.fhir_version)

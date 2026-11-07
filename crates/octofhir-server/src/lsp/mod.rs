@@ -4,6 +4,7 @@
 //! - PostgreSQL SQL editing (pg-lsp), over the database or a SQL on FHIR
 //!   query's dependencies (`?mode=sof`)
 //! - FHIRPath expression editing
+//! - FHIR Mapping Language (FML) maps, with the `fml-lsp` server
 
 mod fhir_resolver;
 mod formatter_config;
@@ -17,8 +18,12 @@ mod sof_catalog;
 // FHIRPath LSP
 mod fhirpath_handler;
 
+// FML LSP
+mod fml_handler;
+
 pub use fhir_resolver::{ElementInfo, FhirResolver, LoadingState};
 pub use fhirpath_handler::fhirpath_lsp_websocket_handler;
+pub use fml_handler::fml_lsp_websocket_handler;
 pub use formatter_config::{
     CommaStyle, IdentifierCase, KeywordCase, LspFormatterConfig, PgFormatterStyleConfig,
     SqlStyleConfig,

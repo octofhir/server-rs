@@ -35,16 +35,32 @@ pub async fn fhirpath_lsp_websocket_handler(
     Query(params): Query<FhirPathLspQueryParams>,
     headers: HeaderMap,
 ) -> Result<Response, FhirPathLspError> {
+    authorize(&state, params.token, &headers, "FHIRPath")?;
+
+    // Upgrade to WebSocket
+    Ok(ws.on_upgrade(move |socket| {
+        tracing::debug!("FHIRPath WebSocket upgrade completed");
+        handle_fhirpath_lsp_connection(socket, state.model_provider.clone())
+    }))
+}
+
+/// Checks the token of a language server connection (the query's, or the console's cookie):
+/// any authenticated user with a `user/*`, `system/*` or `admin/*` scope may connect.
+pub(super) fn authorize(
+    state: &AppState,
+    token: Option<String>,
+    headers: &HeaderMap,
+    language: &str,
+) -> Result<AccessTokenClaims, FhirPathLspError> {
     let auth_state = &state.auth_state;
 
     // Prefer explicit query token, but fall back to the auth cookie for UI sessions.
-    let token = params
-        .token
+    let token = token
         .or_else(|| {
             if !auth_state.cookie_config.enabled {
                 return None;
             }
-            extract_cookie_token(&headers, auth_state.cookie_config.name.as_str())
+            extract_cookie_token(headers, auth_state.cookie_config.name.as_str())
         })
         .ok_or(FhirPathLspError::Unauthorized)?;
 
@@ -53,7 +69,7 @@ pub async fn fhirpath_lsp_websocket_handler(
         .jwt_service
         .decode::<AccessTokenClaims>(&token)
         .map_err(|e| {
-            tracing::warn!(error = %e, "FHIRPath LSP auth failed: invalid token");
+            tracing::warn!(error = %e, language, "LSP auth failed: invalid token");
             FhirPathLspError::Unauthorized
         })?;
     let claims = token_data.claims;
@@ -63,21 +79,14 @@ pub async fn fhirpath_lsp_websocket_handler(
         tracing::warn!(
             client_id = %claims.client_id,
             scope = %claims.scope,
-            "FHIRPath LSP auth failed: insufficient permissions"
+            language,
+            "LSP auth failed: insufficient permissions"
         );
         return Err(FhirPathLspError::Forbidden);
     }
 
-    tracing::debug!(
-        client_id = %claims.client_id,
-        "FHIRPath LSP WebSocket connection authenticated - upgrading to WebSocket"
-    );
-
-    // Upgrade to WebSocket
-    Ok(ws.on_upgrade(move |socket| {
-        tracing::debug!("FHIRPath WebSocket upgrade completed");
-        handle_fhirpath_lsp_connection(socket, state.model_provider.clone())
-    }))
+    tracing::debug!(client_id = %claims.client_id, language, "LSP connection authenticated");
+    Ok(claims)
 }
 
 fn extract_cookie_token(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
@@ -345,7 +354,7 @@ impl IntoResponse for FhirPathLspError {
                 .into_response(),
             FhirPathLspError::Forbidden => (
                 StatusCode::FORBIDDEN,
-                "Insufficient permissions for FHIRPath LSP access",
+                "Insufficient permissions for language server access",
             )
                 .into_response(),
         }
