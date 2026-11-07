@@ -1660,6 +1660,7 @@ async fn build_app_with_runtime(
         &fhir_operations,
         &operation_handlers,
         graphql_state.is_some(),
+        cfg.sql_on_fhir.enabled,
     )
     .await?;
     handlers::apply_declared_conformance(&mut capability_statement, &cfg.capability.instantiates)

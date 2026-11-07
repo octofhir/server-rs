@@ -395,7 +395,12 @@ pub async fn metadata(
 /// Canonical of the backport extension that names a supported topic.
 const TOPIC_CANONICAL_EXTENSION: &str = "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/capabilitystatement-subscriptiontopic-canonical";
 
-/// List `topics` on the Subscription resource of a CapabilityStatement (Subscriptions Backport).
+/// The profile a backport server's Subscriptions follow.
+const BACKPORT_SUBSCRIPTION_PROFILE: &str =
+    "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-subscription";
+
+/// List `topics` and the backport Subscription profile on the Subscription resource of a
+/// CapabilityStatement (Subscriptions Backport).
 fn advertise_topics(capability: &mut Value, topics: &[String]) {
     let resources = capability
         .get_mut("rest")
@@ -412,6 +417,14 @@ fn advertise_topics(capability: &mut Value, topics: &[String]) {
     let Some(subscription) = subscription.as_object_mut() else {
         return;
     };
+    let profiles = subscription
+        .entry("supportedProfile")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Some(profiles) = profiles.as_array_mut()
+        && !profiles.iter().any(|p| p == BACKPORT_SUBSCRIPTION_PROFILE)
+    {
+        profiles.push(json!(BACKPORT_SUBSCRIPTION_PROFILE));
+    }
     let extensions = subscription
         .entry("extension")
         .or_insert_with(|| Value::Array(Vec::new()));
@@ -467,6 +480,7 @@ pub async fn build_capability_statement(
     operations: &crate::operations::OperationRegistry,
     handlers: &HashMap<String, crate::operations::DynOperationHandler>,
     graphql_enabled: bool,
+    sql_on_fhir_enabled: bool,
 ) -> Result<Value, serde_json::Error> {
     use octofhir_api::CapabilityStatementBuilder;
 
@@ -507,11 +521,11 @@ pub async fn build_capability_statement(
         .collect();
 
     // SQL on FHIR: a server serving CRUD and search for ViewDefinition (an
-    // additional resource) declares it.
+    // additional resource) declares it, and only with SQL on FHIR on: outside R6 the type
+    // is not in the ResourceType value set, so a statement with it does not validate.
     let mut standard_resource_types = standard_resource_types;
-    if resource_types.iter().any(|rt| rt == "ViewDefinition")
-        && !standard_resource_types.contains(&"ViewDefinition")
-    {
+    standard_resource_types.retain(|rt| *rt != "ViewDefinition");
+    if sql_on_fhir_enabled && resource_types.iter().any(|rt| rt == "ViewDefinition") {
         standard_resource_types.push("ViewDefinition");
     }
     let interactions = if fhir_version == octofhir_core::fhir::FhirVersion::R6 {
@@ -10477,6 +10491,7 @@ mod tests {
                 &registry,
                 &operations,
                 &HashMap::new(),
+                false,
                 false,
             )
             .await

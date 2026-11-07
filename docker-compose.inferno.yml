@@ -23,6 +23,8 @@ services:
       OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD: admin123
       OCTOFHIR__AUTH__ISSUER: 'https://host.docker.internal:8443'
       OCTOFHIR__AUTH__SIGNING__ALGORITHM: 'RS256'
+      # The kits validate an R4 CapabilityStatement, where ViewDefinition is no resource type.
+      OCTOFHIR__SQL_ON_FHIR__ENABLED: 'false'
       RUST_LOG: info
     ports:
       - '8888:8888'

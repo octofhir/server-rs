@@ -13,13 +13,14 @@ locally before releases, not in CI: they are long runs. `just --list` shows the 
 | Bulk Data `$bulk-submit` consumer (4.0.0-ballot) | 15 | 3 | 0 |
 | US Core v6.1.0, FHIR API | 326 | 1 | 125 |
 | US Core v5.0.1, FHIR API | 299 | 2 | 105 |
-| Subscriptions R5 Backport (R4 server), each of `full-resource`, `id-only`, `empty` | 17 | 1 | 15 |
+| Subscriptions R5 Backport (R4 server), each of `full-resource`, `id-only`, `empty` | 18 | 0 | 15 |
 
 ## What did not pass
 
-**`ViewDefinition` in the CapabilityStatement** (both US Core runs and the Subscriptions run). With SQL on FHIR enabled the
-statement lists ViewDefinition, which is not in the R4 `ResourceType` value set. On R6 it is valid, as
-an additional resource.
+**`ViewDefinition` in the CapabilityStatement** (both US Core runs). With SQL on FHIR enabled the
+statement lists ViewDefinition, which is not in the R4 `ResourceType` value set; on R6 it is valid, as
+an additional resource. The kits run with `sql_on_fhir.enabled = false` (as `docker-compose.inferno.yml`
+sets it), which leaves it out; the Subscriptions run already did.
 
 **One Patient in the US Core v5.0.1 run**. The kit's validator reports that it has no
 `v3-AdministrativeGender` code system in version `2021-12-01`, which it needs for an extension of the
