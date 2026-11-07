@@ -111,7 +111,7 @@ fml-model = { version = "0.2.6" }
 fml-check = { version = "0.2.6", features = ["fhirschema"] }
 fml-engine = { version = "0.2.6", features = ["fhirpath"] }
 fml-lsp = { version = "0.2.6" }
-ccda-fhir = { version = "0.1.1", default-features = false }
+ccda-fhir = { version = "0.1.2", default-features = false }
 
 # Environment
 dotenvy = "0.15"

@@ -1253,9 +1253,9 @@ dependencies = [
 
 [[package]]
 name = "ccda-fhir"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b46f95006e8271edd7b8c98c6874a9472a90efa76233b6c8cf52763f319c88f"
+checksum = "61c175dabcdccf58ada6de3a256c8afb9900066937f262fadca5ef3cf2c23c6f"
 dependencies = [
  "base64 0.23.1",
  "fml-check",
@@ -2454,9 +2454,9 @@ dependencies = [
 
 [[package]]
 name = "fml-xml"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99db0fb72658d3ae264a0616d506ddeed004750713f5ee6820667a878174109a"
+checksum = "c8054495e99c4a23bbefa9e143ea229c9ae82b57d48fdc5751d8720a8e4f74cd"
 dependencies = [
  "roxmltree",
  "serde_json",
