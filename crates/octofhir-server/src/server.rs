@@ -1909,7 +1909,11 @@ async fn build_app_with_runtime(
         start_notification_delivery(&cfg.notifications, notification_store, &egress, &background);
     }
     // App subscriptions: matching changes go to their webhooks and become notifications.
-    match egress.client_builder().timeout(std::time::Duration::from_secs(30)).build() {
+    match egress
+        .client_builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
         Ok(client) => {
             let hook = crate::hooks::AppSubscriptionHook::new(
                 storage.clone(),
