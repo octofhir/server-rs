@@ -19,7 +19,6 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 
 | # | Item | Effort | Notes |
 |---|---|---|---|
-| 2.3 | Conformance evidence before releases (`just inferno-*`, not CI, SQL on FHIR off): rerun US Core and Bulk Data on the current build | S | Subscriptions: 38 of 38, none skipped. Results in `conformance.mdx` |
 | 2.4 | UDAP Tiered OAuth (`udap_to`), CRL distribution points and OCSP | M | |
 
 ## 3. Tools (own repos)

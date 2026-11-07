@@ -3,28 +3,29 @@ title: Conformance
 description: What was measured, with what, and what did not pass
 ---
 
-Results from local runs of the Inferno test kits against a debug build, on 2026-11-06 and, for
-Subscriptions, 2026-11-07. The kits run
-locally before releases, not in CI: they are long runs. `just --list` shows the `inferno-*` recipes.
+Results from local runs of the Inferno test kits against a debug build on 2026-11-07, with SQL on
+FHIR off. The kits run locally before releases, not in CI: they are long runs. `just --list` shows
+the `inferno-*` recipes.
 
 | Suite | Passed | Failed | Skipped |
 |---|---|---|---|
 | Bulk Data v2.0.0 (export, Group, Patient, system) | 48 | 0 | 0 |
 | Bulk Data `$bulk-submit` consumer (4.0.0-ballot) | 15 | 3 | 0 |
-| US Core v6.1.0, FHIR API | 326 | 1 | 125 |
+| US Core v6.1.0, FHIR API | 327 | 0 | 125 |
 | US Core v5.0.1, FHIR API | 299 | 2 | 105 |
 | Subscriptions R5 Backport (R4 server): workflow, rejection, `full-resource`, `id-only`, `empty` | 38 | 0 | 0 |
 
 ## What did not pass
 
-**`ViewDefinition` in the CapabilityStatement** (both US Core runs). With SQL on FHIR enabled the
-statement lists ViewDefinition, which is not in the R4 `ResourceType` value set; on R6 it is valid, as
-an additional resource. The kits run with `sql_on_fhir.enabled = false` (as `docker-compose.inferno.yml`
-sets it), which leaves it out; the Subscriptions run already did.
-
 **One Patient in the US Core v5.0.1 run**. The kit's validator reports that it has no
 `v3-AdministrativeGender` code system in version `2021-12-01`, which it needs for an extension of the
 test patient. The resource comes back as it was loaded.
+
+**One Observation search in the US Core v5.0.1 run**. For the `system|code` variant of
+`patient + code + date` the kit takes the code from one clinical-test Observation (a DXA scan with
+no date, only a data-absent reason) and the date from another (an EKG). No Observation has both, so
+the empty result is the right answer. Which Observation the kit picks first depends on the order of
+an earlier search result.
 
 **`$bulk-submit`** (three tests). They expect the manifest and its files to be fetched while the kit
 is at its waiting step. The server fetches them as soon as the submission arrives, before that step.
@@ -33,6 +34,15 @@ The Subscriptions run is `scripts/inferno/run-subscriptions.ts`, with a topic on
 creation, a 10-second heartbeat, a Subscription of each payload content, and for the rejection
 tests what this server does not implement: an unknown topic, the `message` channel, an `ftp:`
 endpoint, an XML payload, an unknown filter key, and `email` without a configured provider.
+
+The US Core runs need the US Core package (`hl7.fhir.us.core#6.1.0`) loaded and the server declaring
+it (`[capability] instantiates = ["http://hl7.org/fhir/us/core/CapabilityStatement/us-core-server|6.1.0"]`):
+without them the CapabilityStatement lists no US Core profiles and the US Core search parameters
+(`asserted-date`, `discharge-disposition`) are unknown. Bulk Data runs on a database of its own:
+the US Core test data has Immunizations with old CVX display names, which the export validation
+reports. `$bulk-submit` needs the kit's submitter in `[[bulk_submit.submitters]]`
+(`https://example.org/fhir/NamingSystem/inferno-bulk-submitter`, `inferno-demo-data-provider`)
+with `provider_client_id` for its `oauthMetadataUrl`.
 
 Skipped tests were not run, so they say nothing either way. The runs use one synthetic patient.
 
