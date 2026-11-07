@@ -64,6 +64,7 @@ function isLogoutResponse(value: unknown): value is LogoutResponse {
 export interface IdentityProviderLink {
 	id: string;
 	name: string;
+	logo?: string;
 }
 
 class AuthApiClient {

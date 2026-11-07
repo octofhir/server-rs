@@ -142,6 +142,11 @@ export function LoginPage() {
 										variant="outline"
 										size="xl"
 										width="max"
+										leftSection={
+											provider.logo ? (
+												<img src={provider.logo} alt="" width={16} height={16} />
+											) : undefined
+										}
 										href={`/auth/idp/${encodeURIComponent(provider.id)}/login?return_to=${returnTo}`}
 									>
 										Sign in with {provider.name}

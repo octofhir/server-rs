@@ -25,7 +25,9 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::federation::provider::{FhirUserType, IdentityProviderConfig, UserMappingConfig};
+use crate::federation::provider::{
+    ClaimMapping, FhirUserType, IdentityProviderConfig, UserMappingConfig,
+};
 
 /// IdentityProvider FHIR resource for external IdP configuration.
 ///
@@ -277,12 +279,19 @@ impl IdentityProviderResource {
             .map(UserMappingElement::to_user_mapping_config)
             .unwrap_or_default();
 
-        let mut config = IdentityProviderConfig::new(&id, &self.name, issuer, &self.client_id)
+        for rule in &user_mapping.claims_to_roles {
+            rule.pattern()
+                .map_err(|error| ConversionError::InvalidRule(rule.value.clone(), error))?;
+        }
+
+        let label = self.display_name.as_deref().unwrap_or(&self.name);
+        let mut config = IdentityProviderConfig::new(&id, label, issuer, &self.client_id)
             .with_enabled(self.active)
             .with_scopes(self.scopes.clone())
             .with_user_mapping(user_mapping);
 
         // Apply optional fields
+        config.logo_url.clone_from(&self.logo_url);
         if let Some(ref secret) = self.client_secret {
             config = config.with_client_secret(secret);
         }
@@ -341,6 +350,11 @@ pub struct UserMappingElement {
     /// Claim to use as subject identifier (default: "sub").
     #[serde(default = "default_subject_claim")]
     pub subject_claim: String,
+
+    /// Rules that turn values of claims into roles. With rules, the provider decides a user's
+    /// roles at every sign-in, and nobody signs in without one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claims_to_roles: Vec<ClaimMapping>,
 
     /// Claim containing the user's email address.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -419,10 +433,14 @@ impl UserMappingElement {
             })
             .unwrap_or(FhirUserType::Practitioner);
 
-        UserMappingConfig::new()
+        let mut config = UserMappingConfig::new()
             .with_subject_claim(&self.subject_claim)
             .with_fhir_resource_type(fhir_resource_type)
-            .with_auto_provision(self.auto_provision)
+            .with_auto_provision(self.auto_provision);
+        config.email_claim.clone_from(&self.email_claim);
+        config.roles_claim.clone_from(&self.roles_claim);
+        config.claims_to_roles.clone_from(&self.claims_to_roles);
+        config
     }
 }
 
@@ -448,6 +466,10 @@ pub enum ConversionError {
     /// URL parsing failed.
     #[error("Invalid URL: {0}")]
     InvalidUrl(#[from] url::ParseError),
+
+    /// A rule of `claimsToRoles` does not compile.
+    #[error("Invalid claim rule `{0}`: {1}")]
+    InvalidRule(String, regex::Error),
 }
 
 #[cfg(test)]

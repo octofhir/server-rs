@@ -316,6 +316,7 @@ mod tests {
 
     fn create_test_auth_result() -> IdpAuthResult {
         IdpAuthResult {
+            manages_roles: false,
             provider_id: "google".to_string(),
             external_subject: "google-user-123".to_string(),
             mapped_user: MappedUser {

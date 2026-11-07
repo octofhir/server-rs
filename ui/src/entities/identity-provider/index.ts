@@ -2,6 +2,7 @@ export {
 	getIdentityProviderStatusView,
 	getIdentityProviderTypeView,
 	identityProviderTypeOptions,
+	type ClaimToRoles,
 	type IdentityProviderResource,
 	type IdentityProviderStatusView,
 	type IdentityProviderType,

@@ -141,7 +141,9 @@ pub use identity::{
 };
 pub use jwks::{JwksError, ProviderJwksCache, ProviderJwksCacheConfig};
 pub use oidc::OidcDiscoveryDocument;
-pub use provider::{FhirUserType, IdentityProviderConfig, MappedUser, UserMappingConfig};
+pub use provider::{
+    ClaimMapping, FhirUserType, IdentityProviderConfig, MappedUser, UserMappingConfig,
+};
 pub use provisioning::{
     ProvisioningAction, ProvisioningConfig, ProvisioningError, ProvisioningResult,
     create_fhir_resource_json, create_identity_from_auth_result, create_user_from_auth_result,

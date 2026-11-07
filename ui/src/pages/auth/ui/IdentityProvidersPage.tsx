@@ -11,7 +11,6 @@ import {
   Modal,
   MultiSelect,
   PasswordInput,
-  Select,
   Skeleton,
   Switch,
   Text,
@@ -32,9 +31,8 @@ import { useState } from "react";
 import {
   getIdentityProviderStatusView,
   getIdentityProviderTypeView,
+  type ClaimToRoles,
   type IdentityProviderResource,
-  type IdentityProviderType,
-  identityProviderTypeOptions,
 } from "@/entities/identity-provider";
 import { getBundleResources } from "@/shared/api/guards";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
@@ -98,7 +96,7 @@ export function IdentityProvidersPage() {
   return (
     <WorkspacePageLayout
       title="Identity providers"
-      description="Manage external OIDC/OAuth2 authentication providers"
+      description="OpenID Connect providers people can sign in through"
       actions={
         <Button variant="filled" onClick={open}>
           <Button.Icon>
@@ -275,37 +273,115 @@ function DeleteIdpModal({
   );
 }
 
+interface ClaimRule {
+  claim: string;
+  value: string;
+  roles: string;
+}
+
 interface IdpFormValues {
   name: string;
-  title: string;
-  description: string;
-  type: IdentityProviderType;
+  displayName: string;
+  logoUrl: string;
   issuer: string;
   clientId: string;
   clientSecret: string;
-  authorizeUrl: string;
-  tokenUrl: string;
-  jwksUrl: string;
-  userInfoUrl: string;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  userinfoEndpoint: string;
   scopes: string[];
   active: boolean;
+  rules: ClaimRule[];
 }
 
 const IDP_DEFAULTS: IdpFormValues = {
   name: "",
-  title: "",
-  description: "",
-  type: "oidc",
+  displayName: "",
+  logoUrl: "",
   issuer: "",
   clientId: "",
   clientSecret: "",
-  authorizeUrl: "",
-  tokenUrl: "",
-  jwksUrl: "",
-  userInfoUrl: "",
+  authorizationEndpoint: "",
+  tokenEndpoint: "",
+  userinfoEndpoint: "",
   scopes: ["openid", "profile", "email"],
   active: true,
+  rules: [],
 };
+
+const toRules = (rules: ClaimToRoles[] = []): ClaimRule[] =>
+  rules.map((rule) => ({ ...rule, roles: rule.roles.join(", ") }));
+
+const fromRules = (rules: ClaimRule[]): ClaimToRoles[] =>
+  rules
+    .filter((rule) => rule.claim && rule.value && rule.roles)
+    .map((rule) => ({
+      claim: rule.claim.trim(),
+      value: rule.value.trim(),
+      roles: rule.roles
+        .split(",")
+        .map((role) => role.trim())
+        .filter(Boolean),
+    }));
+
+/** Rules that turn the groups a provider reports into roles. */
+function ClaimRules({
+  value,
+  onChange,
+}: {
+  value: ClaimRule[];
+  onChange: (rules: ClaimRule[]) => void;
+}) {
+  const edit = (index: number, change: Partial<ClaimRule>) =>
+    onChange(value.map((rule, at) => (at === index ? { ...rule, ...change } : rule)));
+  return (
+    <div className={classes.idpForm}>
+      <Text variant="caption-2" color="secondary">
+        With rules the provider decides roles at every sign-in, and nobody signs in without one.
+        Value: exact, with *, or ^regex$. $1 in a role stands for what was caught.
+      </Text>
+      {value.map((rule, index) => (
+        <div key={index} className={classes.ruleRow}>
+          <TextInput
+            placeholder="groups"
+            aria-label="Claim"
+            value={rule.claim}
+            onChange={(claim) => edit(index, { claim })}
+          />
+          <TextInput
+            placeholder="fhir-*"
+            aria-label="Value"
+            value={rule.value}
+            onChange={(value) => edit(index, { value })}
+          />
+          <TextInput
+            placeholder="$1, reader"
+            aria-label="Roles"
+            value={rule.roles}
+            onChange={(roles) => edit(index, { roles })}
+          />
+          <Button
+            variant="subtle"
+            type="button"
+            aria-label="Remove rule"
+            onClick={() => onChange(value.filter((_, at) => at !== index))}
+          >
+            <TrashBin size={14} />
+          </Button>
+        </div>
+      ))}
+      <div>
+        <Button
+          variant="outline"
+          type="button"
+          onClick={() => onChange([...value, { claim: "groups", value: "", roles: "" }])}
+        >
+          Add rule
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function validateIdp(values: IdpFormValues) {
   const errors: Partial<Record<keyof IdpFormValues, string>> = {};
@@ -331,27 +407,34 @@ function IdpModal({
   const initialValues: IdpFormValues = idp
     ? {
         name: idp.name,
-        title: idp.title ?? "",
-        description: idp.description ?? "",
-        type: idp.type ?? "oidc",
+        displayName: idp.displayName ?? "",
+        logoUrl: idp.logoUrl ?? "",
         issuer: idp.issuer,
         clientId: idp.clientId,
         clientSecret: "",
-        authorizeUrl: idp.authorizeUrl ?? "",
-        tokenUrl: idp.tokenUrl ?? "",
-        jwksUrl: idp.jwksUrl ?? "",
-        userInfoUrl: idp.userInfoUrl ?? "",
+        authorizationEndpoint: idp.authorizationEndpoint ?? "",
+        tokenEndpoint: idp.tokenEndpoint ?? "",
+        userinfoEndpoint: idp.userinfoEndpoint ?? "",
         scopes: idp.scopes ?? ["openid", "profile", "email"],
         active: idp.active,
+        rules: toRules(idp.userMapping?.claimsToRoles),
       }
     : IDP_DEFAULTS;
 
-  const handleSubmit = async (values: IdpFormValues) => {
+  const handleSubmit = async ({ rules, ...values }: IdpFormValues) => {
+    // An element the resource does not use is left out, not sent empty.
+    const filled = Object.fromEntries(
+      Object.entries(values).filter(([, value]) => value !== ""),
+    ) as Pick<IdentityProviderResource, "name" | "issuer" | "clientId" | "active" | "scopes">;
+    const claimsToRoles = fromRules(rules);
+    const { claimsToRoles: _replaced, ...mapping } = idp?.userMapping ?? {};
+    const userMapping = claimsToRoles.length > 0 ? { ...mapping, claimsToRoles } : mapping;
     const payload: IdentityProviderResource = {
       resourceType: "IdentityProvider",
-      ...values,
+      type: "oidc",
+      ...filled,
+      ...(Object.keys(userMapping).length > 0 ? { userMapping } : {}),
     };
-    if (isEditing && !values.clientSecret) delete payload.clientSecret;
     try {
       if (isEditing && idp?.id) {
         await update.mutateAsync({ ...payload, id: idp.id });
@@ -392,10 +475,11 @@ function IdpModal({
                     />
                   )}
                 </Field>
-                <Field<string> name="title">
+                <Field<string> name="displayName">
                   {({ input }) => (
                     <TextInput
-                      label="Display Title"
+                      label="Button Label"
+                      placeholder="Google"
                       value={input.value}
                       onChange={input.onChange}
                     />
@@ -403,16 +487,21 @@ function IdpModal({
                 </Field>
               </div>
 
-              <Field<string> name="type">
+              <Field<string> name="logoUrl">
                 {({ input }) => (
-                  <Select
-                    label="Type"
-                    data={identityProviderTypeOptions}
+                  <TextInput
+                    label="Logo URL"
+                    placeholder="https://example.org/logo.svg"
                     value={input.value}
                     onChange={input.onChange}
                   />
                 )}
               </Field>
+
+              <Text variant="caption-2" color="secondary">
+                Redirect URI to register at the provider: {window.location.origin}
+                /auth/idp/callback
+              </Text>
 
               <Field<string> name="issuer">
                 {({ input, meta }) => (
@@ -453,38 +542,38 @@ function IdpModal({
               </div>
 
               <div className={classes.formGrid}>
-                <Field<string> name="authorizeUrl">
+                <Field<string> name="authorizationEndpoint">
                   {({ input }) => (
                     <TextInput
-                      label="Authorize URL"
+                      label="Authorization Endpoint"
+                      placeholder="From discovery"
                       value={input.value}
                       onChange={input.onChange}
                     />
                   )}
                 </Field>
-                <Field<string> name="tokenUrl">
+                <Field<string> name="tokenEndpoint">
                   {({ input }) => (
-                    <TextInput label="Token URL" value={input.value} onChange={input.onChange} />
+                    <TextInput
+                      label="Token Endpoint"
+                      placeholder="From discovery"
+                      value={input.value}
+                      onChange={input.onChange}
+                    />
                   )}
                 </Field>
               </div>
 
-              <div className={classes.formGrid}>
-                <Field<string> name="jwksUrl">
-                  {({ input }) => (
-                    <TextInput label="JWKS URL" value={input.value} onChange={input.onChange} />
-                  )}
-                </Field>
-                <Field<string> name="userInfoUrl">
-                  {({ input }) => (
-                    <TextInput
-                      label="User Info URL"
-                      value={input.value}
-                      onChange={input.onChange}
-                    />
-                  )}
-                </Field>
-              </div>
+              <Field<string> name="userinfoEndpoint">
+                {({ input }) => (
+                  <TextInput
+                    label="Userinfo Endpoint"
+                    placeholder="From discovery"
+                    value={input.value}
+                    onChange={input.onChange}
+                  />
+                )}
+              </Field>
 
               <Field<string[]> name="scopes">
                 {({ input }) => (
@@ -496,6 +585,10 @@ function IdpModal({
                     onChange={input.onChange}
                   />
                 )}
+              </Field>
+
+              <Field<ClaimRule[]> name="rules">
+                {({ input }) => <ClaimRules value={input.value || []} onChange={input.onChange} />}
               </Field>
 
               <Field<boolean> name="active" type="checkbox">

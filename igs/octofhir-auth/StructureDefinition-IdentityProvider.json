@@ -161,6 +161,42 @@
         "type": [{ "code": "string" }]
       },
       {
+        "id": "IdentityProvider.userMapping.claimsToRoles",
+        "path": "IdentityProvider.userMapping.claimsToRoles",
+        "short": "Rules from claims to roles",
+        "definition": "Rules that turn values of claims into roles. With rules, the provider decides a user's roles at every sign-in, and nobody signs in without one.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.claimsToRoles.claim",
+        "path": "IdentityProvider.userMapping.claimsToRoles.claim",
+        "short": "Claim name",
+        "definition": "The claim; a dotted path reaches into objects",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.claimsToRoles.value",
+        "path": "IdentityProvider.userMapping.claimsToRoles.value",
+        "short": "Value to match",
+        "definition": "Compared with the whole value: a literal, a pattern with *, or a regular expression between ^ and $",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.claimsToRoles.roles",
+        "path": "IdentityProvider.userMapping.claimsToRoles.roles",
+        "short": "Roles to give",
+        "definition": "Roles given on a match; $1 stands for what * or a group caught",
+        "min": 1,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
         "id": "IdentityProvider.userMapping.fhirResourceType",
         "path": "IdentityProvider.userMapping.fhirResourceType",
         "short": "FHIR user resource type",

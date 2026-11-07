@@ -61,6 +61,12 @@
 	gap: var(--octo-spacing-md);
 }
 
+.ruleRow {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+	gap: var(--octo-spacing-sm);
+}
+
 .formGrid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));

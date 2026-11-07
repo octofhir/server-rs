@@ -21,6 +21,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use cookie::{Cookie, SameSite};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::error::AuthError;
@@ -109,15 +110,19 @@ impl FederatedState {
 
     /// The user behind what a provider said: already linked, linked now, or created.
     async fn user_of(&self, result: &IdpAuthResult) -> Result<User, Refusal> {
+        // When the provider decides roles, having none means having no business here.
+        if result.manages_roles && result.mapped_user.roles.is_empty() {
+            return Err(Refusal::NoRole);
+        }
         let users = &self.authorize.user_storage;
         let linked = users
             .find_by_external_identity(&result.provider_id, &result.external_subject)
             .await?;
         if let Some(user) = linked {
-            return active(user);
+            return self.with_roles_of(active(user)?, result).await;
         }
         if let Some(user) = self.link_by_email(result).await? {
-            return active(user);
+            return self.with_roles_of(active(user)?, result).await;
         }
         if !self.provisioning.auto_provision {
             return Err(Refusal::NoAccount);
@@ -136,6 +141,53 @@ impl FederatedState {
         Ok(user)
     }
 
+    /// A user's roles follow the provider that manages them, so leaving a group at the provider
+    /// takes the role away at the next sign-in.
+    async fn with_roles_of(&self, mut user: User, result: &IdpAuthResult) -> Result<User, Refusal> {
+        if !result.manages_roles {
+            return Ok(user);
+        }
+        let mut roles = self.provisioning.default_roles.clone();
+        for role in &result.mapped_user.roles {
+            if !roles.contains(role) {
+                roles.push(role.clone());
+            }
+        }
+        let same = roles.len() == user.roles.len() && roles.iter().all(|r| user.roles.contains(r));
+        if !same {
+            tracing::info!(
+                user_id = %user.id,
+                provider = %result.provider_id,
+                ?roles,
+                "Roles changed at federated sign-in"
+            );
+            self.store(&user, "roles", json!(roles)).await?;
+            user.roles = roles;
+        }
+        Ok(user)
+    }
+
+    /// Change an element of a user through the resource store, so that what reads it, the cache
+    /// of resources among them, hears of it.
+    async fn store(&self, user: &User, element: &str, value: Value) -> Result<(), AuthError> {
+        let storage = &self.authorize.fhir_storage;
+        let stored = storage
+            .read("User", &user.id)
+            .await
+            .map_err(|error| AuthError::internal(error.to_string()))?
+            .ok_or_else(|| AuthError::internal(format!("User {} is gone", user.id)))?;
+        let mut resource = stored.resource;
+        // Users are kept without these, and the store goes by them.
+        resource["resourceType"] = json!("User");
+        resource["id"] = json!(user.id);
+        resource[element] = value;
+        storage
+            .update(&resource, None)
+            .await
+            .map_err(|error| AuthError::internal(error.to_string()))?;
+        Ok(())
+    }
+
     async fn link_by_email(&self, result: &IdpAuthResult) -> Result<Option<User>, AuthError> {
         let mapped = &result.mapped_user;
         let email = mapped
@@ -150,7 +202,8 @@ impl FederatedState {
             return Ok(None);
         };
         add_identity(&mut user, create_identity_from_auth_result(result));
-        users.update(&user).await?;
+        self.store(&user, "attributes", json!(user.attributes))
+            .await?;
         tracing::info!(
             user_id = %user.id,
             provider = %result.provider_id,
@@ -163,6 +216,7 @@ impl FederatedState {
 /// Why someone the provider vouched for does not get in.
 enum Refusal {
     NoAccount,
+    NoRole,
     Inactive,
     Storage(AuthError),
 }
@@ -180,6 +234,11 @@ impl IntoResponse for Refusal {
                 StatusCode::FORBIDDEN,
                 "access_denied",
                 "This account is not known here. Ask an administrator for access.",
+            ),
+            Self::NoRole => error_page(
+                StatusCode::FORBIDDEN,
+                "access_denied",
+                "This account has no role here. Ask an administrator for access.",
             ),
             Self::Inactive => error_page(
                 StatusCode::FORBIDDEN,
@@ -231,6 +290,8 @@ pub(crate) fn federated_login_url(provider_id: &str, return_to: &str) -> String 
 pub struct ProviderLink {
     pub id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
 }
 
 /// `GET /auth/idp/providers`
@@ -243,6 +304,7 @@ pub async fn federated_providers(State(state): State<FederatedState>) -> Json<Ve
         .map(|provider| ProviderLink {
             id: provider.id,
             name: provider.name,
+            logo: provider.logo_url,
         })
         .collect();
     providers.sort_by(|a, b| a.name.cmp(&b.name));

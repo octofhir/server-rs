@@ -19,7 +19,9 @@
 //! .with_scopes(vec!["openid", "email", "profile"]);
 //! ```
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use url::Url;
 
 /// Configuration for an external identity provider.
@@ -74,6 +76,10 @@ pub struct IdentityProviderConfig {
     /// Optional additional parameters to include in the authorization URL.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_auth_params: Vec<(String, String)>,
+
+    /// A logo for its button on sign-in pages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo_url: Option<String>,
 }
 
 fn default_scopes() -> Vec<String> {
@@ -102,6 +108,7 @@ impl IdentityProviderConfig {
             scopes: default_scopes(),
             enabled: true,
             user_mapping: UserMappingConfig::default(),
+            logo_url: None,
             authorization_endpoint: None,
             token_endpoint: None,
             userinfo_endpoint: None,
@@ -216,6 +223,10 @@ pub struct UserMappingConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles_claim: Option<String>,
 
+    /// Rules that turn values of claims into roles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claims_to_roles: Vec<ClaimMapping>,
+
     /// The FHIR resource type to associate with users from this provider.
     #[serde(default)]
     pub fhir_resource_type: FhirUserType,
@@ -223,6 +234,80 @@ pub struct UserMappingConfig {
     /// Whether to auto-provision users on first login.
     #[serde(default = "default_true")]
     pub auto_provision: bool,
+}
+
+impl UserMappingConfig {
+    /// Whether roles come from the provider rather than from this server.
+    #[must_use]
+    pub fn manages_roles(&self) -> bool {
+        self.roles_claim.is_some() || !self.claims_to_roles.is_empty()
+    }
+}
+
+/// A rule that turns a value of a claim into roles.
+///
+/// `value` is compared with the whole value of the claim. It is a literal, a pattern with `*`, or
+/// a regular expression when it starts with `^` and ends with `$`. What `*` or a group matched
+/// can be used in `roles` as `$1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimMapping {
+    /// The claim; a dotted path reaches into objects, as in `realm_access.roles`.
+    pub claim: String,
+    pub value: String,
+    pub roles: Vec<String>,
+}
+
+impl ClaimMapping {
+    /// What `value` means as a regular expression.
+    pub fn pattern(&self) -> Result<Regex, regex::Error> {
+        if self.value.starts_with('^') && self.value.ends_with('$') {
+            return Regex::new(&self.value);
+        }
+        let parts: Vec<String> = self.value.split('*').map(regex::escape).collect();
+        Regex::new(&format!("^{}$", parts.join("(.*)")))
+    }
+
+    /// The roles this rule gives for `claims`.
+    pub fn roles_for(&self, claims: &Value) -> Vec<String> {
+        let Ok(pattern) = self.pattern() else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for value in claim_values(claims, &self.claim) {
+            let Some(captures) = pattern.captures(&value) else {
+                continue;
+            };
+            for role in &self.roles {
+                let mut expanded = String::new();
+                captures.expand(role, &mut expanded);
+                if !expanded.is_empty() {
+                    found.push(expanded);
+                }
+            }
+        }
+        found
+    }
+}
+
+/// The values of a claim: a list gives each of its items. A name is first looked up as it is, for
+/// claims that are URLs, then as a path.
+pub(crate) fn claim_values(claims: &Value, name: &str) -> Vec<String> {
+    let found = claims.get(name).or_else(|| {
+        name.split('.')
+            .try_fold(claims, |value, part| value.get(part))
+    });
+    let text = |value: &Value| match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    };
+    match found {
+        Some(Value::Array(items)) => items.iter().filter_map(text).collect(),
+        Some(value) => text(value).into_iter().collect(),
+        None => Vec::new(),
+    }
 }
 
 fn default_subject_claim() -> String {
@@ -238,6 +323,7 @@ impl Default for UserMappingConfig {
             given_name_claim: Some("given_name".to_string()),
             family_name_claim: Some("family_name".to_string()),
             roles_claim: None,
+            claims_to_roles: Vec::new(),
             fhir_resource_type: FhirUserType::default(),
             auto_provision: true,
         }
@@ -508,5 +594,74 @@ mod tests {
         let patient = FhirUserType::Patient;
         let json = serde_json::to_string(&patient).unwrap();
         assert_eq!(json, "\"Patient\"");
+    }
+
+    fn rule(claim: &str, value: &str, roles: &[&str]) -> ClaimMapping {
+        ClaimMapping {
+            claim: claim.to_owned(),
+            value: value.to_owned(),
+            roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_rule_matches_the_whole_value() {
+        let claims = serde_json::json!({"groups": ["fhir-admins", "not-fhir-admins"]});
+        assert_eq!(
+            rule("groups", "fhir-admins", &["admin"]).roles_for(&claims),
+            ["admin"]
+        );
+        assert!(
+            rule("groups", "fhir", &["admin"])
+                .roles_for(&claims)
+                .is_empty()
+        );
+        // A dot in a literal is a dot.
+        let claims = serde_json::json!({"groups": ["aXb"]});
+        assert!(
+            rule("groups", "a.b", &["admin"])
+                .roles_for(&claims)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn what_a_pattern_caught_goes_into_the_role() {
+        let claims = serde_json::json!({"groups": ["fhir-viewer", "fhir-editor", "other"]});
+        assert_eq!(
+            rule("groups", "fhir-*", &["$1"]).roles_for(&claims),
+            ["viewer", "editor"]
+        );
+        assert_eq!(
+            rule("groups", "^fhir-(view|edit)[eo]r$", &["can-${1}"]).roles_for(&claims),
+            ["can-view", "can-edit"]
+        );
+    }
+
+    #[test]
+    fn claims_can_be_nested_or_named_like_urls() {
+        let claims = serde_json::json!({
+            "realm_access": {"roles": ["clinician"]},
+            "https://example.org/claims/groups": ["team"],
+            "department": "cardiology",
+            "level": 3,
+        });
+        let roles = |name, value| rule(name, value, &["x"]).roles_for(&claims).len();
+        assert_eq!(roles("realm_access.roles", "clinician"), 1);
+        assert_eq!(roles("https://example.org/claims/groups", "team"), 1);
+        assert_eq!(roles("department", "cardiology"), 1);
+        assert_eq!(roles("level", "3"), 1);
+        assert_eq!(roles("missing", "*"), 0);
+    }
+
+    #[test]
+    fn a_rule_that_is_no_regular_expression_gives_nothing() {
+        let broken = rule("groups", "^(unclosed$", &["admin"]);
+        assert!(broken.pattern().is_err());
+        assert!(
+            broken
+                .roles_for(&serde_json::json!({"groups": ["a"]}))
+                .is_empty()
+        );
     }
 }

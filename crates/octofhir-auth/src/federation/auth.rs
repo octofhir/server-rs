@@ -52,7 +52,7 @@ use url::Url;
 use super::discovery::{DiscoveryCache, DiscoveryCacheConfig};
 use super::error::IdpError;
 use super::jwks::{ProviderJwksCache, ProviderJwksCacheConfig};
-use super::provider::{IdentityProviderConfig, MappedUser, UserMappingConfig};
+use super::provider::{IdentityProviderConfig, MappedUser, UserMappingConfig, claim_values};
 use crate::oauth::pkce::{PkceChallenge, PkceVerifier};
 
 /// Configuration for the IdP authentication service.
@@ -307,7 +307,22 @@ impl IdpAuthService {
             .await?;
 
         // Map user claims
-        let mapped_user = self.map_user_claims(&claims, &provider.user_mapping);
+        let mut mapped_user = self.map_user_claims(&claims, &provider.user_mapping);
+        let mapping = &provider.user_mapping;
+        if !mapping.claims_to_roles.is_empty() {
+            let known = self
+                .known_claims(&provider, &claims, &token_response.access_token)
+                .await?;
+            for role in mapping
+                .claims_to_roles
+                .iter()
+                .flat_map(|rule| rule.roles_for(&known))
+            {
+                if !mapped_user.roles.contains(&role) {
+                    mapped_user.roles.push(role);
+                }
+            }
+        }
 
         tracing::info!(
             "Successfully authenticated user {} via provider {}",
@@ -319,11 +334,50 @@ impl IdpAuthService {
             provider_id: provider_id.to_string(),
             external_subject: claims.sub.clone(),
             mapped_user,
+            manages_roles: mapping.manages_roles(),
             id_token: token_response.id_token,
             access_token: token_response.access_token,
             refresh_token: token_response.refresh_token,
             expires_in: token_response.expires_in,
         })
+    }
+
+    /// The claims rules can use: those of the ID token, and of userinfo when a rule names a
+    /// claim the ID token does not hold, as some providers keep groups there.
+    async fn known_claims(
+        &self,
+        provider: &IdentityProviderConfig,
+        claims: &IdTokenClaims,
+        access_token: &str,
+    ) -> Result<serde_json::Value, IdpError> {
+        let mut known = serde_json::to_value(claims)
+            .map_err(|error| IdpError::UserMappingFailed(error.to_string()))?;
+        let rules = &provider.user_mapping.claims_to_roles;
+        if rules
+            .iter()
+            .all(|rule| !claim_values(&known, &rule.claim).is_empty())
+        {
+            return Ok(known);
+        }
+        let info = match self.fetch_userinfo(&provider.id, access_token).await {
+            Ok(info) => info,
+            Err(error) => {
+                tracing::warn!(provider = %provider.id, %error, "No userinfo for claim rules");
+                return Ok(known);
+            }
+        };
+        // OpenID Connect Core 5.3.2: claims of another subject must not be used.
+        if info["sub"].as_str() != Some(claims.sub.as_str()) {
+            return Err(IdpError::UserMappingFailed(
+                "userinfo is about another subject".to_string(),
+            ));
+        }
+        if let (Some(known), Some(info)) = (known.as_object_mut(), info.as_object()) {
+            for (name, value) in info {
+                known.entry(name.clone()).or_insert_with(|| value.clone());
+            }
+        }
+        Ok(known)
     }
 
     /// Gets an enabled provider by ID, returning an error if not found or disabled.
@@ -591,6 +645,9 @@ pub struct IdpAuthResult {
 
     /// The mapped user information.
     pub mapped_user: MappedUser,
+
+    /// The provider decides the user's roles, at every sign-in.
+    pub manages_roles: bool,
 
     /// The raw ID token (JWT).
     pub id_token: String,

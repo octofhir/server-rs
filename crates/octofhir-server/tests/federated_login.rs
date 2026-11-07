@@ -30,6 +30,8 @@ const KID: &str = "test-key";
 #[derive(Clone, Default)]
 struct Person {
     claims: Value,
+    /// What only userinfo tells.
+    userinfo: Value,
     nonce: String,
 }
 
@@ -48,6 +50,7 @@ async fn discovery(State(provider): State<Provider>) -> Json<Value> {
         "authorization_endpoint": format!("{issuer}/authorize"),
         "token_endpoint": format!("{issuer}/token"),
         "jwks_uri": format!("{issuer}/jwks"),
+        "userinfo_endpoint": format!("{issuer}/userinfo"),
         "response_types_supported": ["code"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["ES256"],
@@ -56,6 +59,15 @@ async fn discovery(State(provider): State<Provider>) -> Json<Value> {
 
 async fn keys(State(provider): State<Provider>) -> Json<Value> {
     Json(json!({"keys": [provider.jwk]}))
+}
+
+async fn userinfo(State(provider): State<Provider>) -> Json<Value> {
+    let person = provider.person.lock().unwrap().clone();
+    let mut info = person.userinfo;
+    if info["sub"].is_null() {
+        info["sub"] = person.claims["sub"].clone();
+    }
+    Json(info)
 }
 
 async fn token(
@@ -106,6 +118,7 @@ async fn start_provider() -> Provider {
         .route("/.well-known/openid-configuration", get(discovery))
         .route("/jwks", get(keys))
         .route("/token", post(token))
+        .route("/userinfo", get(userinfo))
         .with_state(provider.clone());
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -192,7 +205,42 @@ impl Browser {
 }
 
 fn says(provider: &Provider, claims: Value) {
-    provider.person.lock().unwrap().claims = claims;
+    let mut person = provider.person.lock().unwrap();
+    person.claims = claims;
+    person.userinfo = json!({});
+}
+
+async fn admin_token(client: &Client, base: &str) -> String {
+    let token: Value = client
+        .post(format!("{base}/auth/token"))
+        .form(&[
+            ("grant_type", "password"),
+            ("client_id", "octofhir-ui"),
+            ("username", "admin"),
+            ("password", "admin-password"),
+            ("scope", "openid user/*.cruds system/*.cruds"),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    token["access_token"].as_str().unwrap().to_owned()
+}
+
+/// The roles of the user behind `subject`.
+async fn roles(client: &Client, base: &str, bearer: &str, subject: &str) -> Value {
+    let user: Value = client
+        .get(format!("{base}/User/{subject}"))
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    user["roles"].clone()
 }
 
 async fn sign_in(
@@ -243,22 +291,7 @@ async fn sign_in_through_an_external_provider() {
     assert_eq!(providers(&client, &strict).await, json!([]));
 
     // A provider made the way the console does it takes effect without a restart.
-    let token: Value = client
-        .post(format!("{strict}/auth/token"))
-        .form(&[
-            ("grant_type", "password"),
-            ("client_id", "octofhir-ui"),
-            ("username", "admin"),
-            ("password", "admin-password"),
-            ("scope", "openid user/*.cruds system/*.cruds"),
-        ])
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let bearer = token["access_token"].as_str().unwrap().to_owned();
+    let bearer = admin_token(&client, &strict).await;
     let created = client
         .post(format!("{strict}/IdentityProvider"))
         .bearer_auth(&bearer)
@@ -358,4 +391,90 @@ async fn sign_in_through_an_external_provider() {
         .unwrap();
     assert_ne!(impostor, admin["sub"].as_str().unwrap());
     assert_ne!(impostor, first);
+
+    // With rules the provider decides roles. A broken rule takes the provider off, not the rules.
+    let open_bearer = admin_token(&client, &open).await;
+    let replace = |rules: Value| {
+        client
+            .put(format!("{open}/IdentityProvider/{id}"))
+            .bearer_auth(&open_bearer)
+            .json(&json!({
+                "resourceType": "IdentityProvider",
+                "id": id,
+                "name": "Example",
+                "displayName": "Example SSO",
+                "type": "oidc",
+                "issuer": provider.issuer,
+                "clientId": CLIENT_ID,
+                "active": true,
+                "scopes": ["openid", "email"],
+                "userMapping": {"claimsToRoles": rules},
+            }))
+            .send()
+    };
+    let response = replace(json!([{"claim": "groups", "value": "^(broken$", "roles": ["admin"]}]))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut listed = providers(&client, &open).await;
+    for _ in 0..50 {
+        if listed == json!([]) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        listed = providers(&client, &open).await;
+    }
+    assert_eq!(listed, json!([]));
+
+    let response = replace(json!([
+        {"claim": "groups", "value": "fhir-*", "roles": ["$1"]},
+        {"claim": "groups", "value": "ops", "roles": ["operator", "auditor"]},
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut listed = providers(&client, &open).await;
+    for _ in 0..50 {
+        if listed != json!([]) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        listed = providers(&client, &open).await;
+    }
+    assert_eq!(listed, json!([{"id": id, "name": "Example SSO"}]));
+
+    // Groups can come from the ID token.
+    says(
+        &provider,
+        json!({"sub": "new-person", "email": "new@example.org", "groups": ["fhir-editor", "ops"]}),
+    );
+    let (_, response) = sign_in(&client, &open, &id, &provider, "/ui/").await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        roles(&client, &open, &open_bearer, &first).await,
+        json!(["editor", "operator", "auditor"])
+    );
+
+    // Or from userinfo only, and leaving a group takes its role away.
+    says(&provider, json!({"sub": "new-person"}));
+    provider.person.lock().unwrap().userinfo = json!({"groups": ["fhir-viewer"]});
+    let (_, response) = sign_in(&client, &open, &id, &provider, "/ui/").await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        roles(&client, &open, &open_bearer, &first).await,
+        json!(["viewer"])
+    );
+
+    // Userinfo about somebody else is not believed.
+    provider.person.lock().unwrap().userinfo = json!({"sub": "other", "groups": ["fhir-admin"]});
+    let (_, response) = sign_in(&client, &open, &id, &provider, "/ui/").await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // No group, no way in, for known and new people alike.
+    provider.person.lock().unwrap().userinfo = json!({"groups": ["unrelated"]});
+    let (_, response) = sign_in(&client, &open, &id, &provider, "/ui/").await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    says(&provider, json!({"sub": "another-stranger"}));
+    let (_, response) = sign_in(&client, &open, &id, &provider, "/ui/").await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }

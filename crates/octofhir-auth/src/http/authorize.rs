@@ -105,6 +105,7 @@ impl AuthorizeState {
                     .map(|provider| LoginProvider {
                         href: federated_login_url(&provider.id, &back),
                         name: provider.name,
+                        logo: provider.logo_url,
                     })
                     .collect()
             }

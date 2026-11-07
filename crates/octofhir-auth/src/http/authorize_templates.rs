@@ -161,6 +161,12 @@ body {
     text-decoration: none;
 }
 
+.btn-logo {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.5rem;
+}
+
 .btn-danger {
     background: transparent;
     border: 1px solid var(--border-subtle);
@@ -421,7 +427,13 @@ pub fn render_login_form(
     for provider in providers {
         content.push_str("<a class=\"btn btn-secondary\" href=\"");
         content.push_str(&html_escape(&provider.href));
-        content.push_str("\">Sign in with ");
+        content.push_str("\">");
+        if let Some(logo) = &provider.logo {
+            content.push_str("<img class=\"btn-logo\" alt=\"\" src=\"");
+            content.push_str(&html_escape(logo));
+            content.push_str("\">");
+        }
+        content.push_str("Sign in with ");
         content.push_str(&html_escape(&provider.name));
         content.push_str("</a>\n");
     }
@@ -439,6 +451,7 @@ pub struct LoginProvider {
     pub name: String,
     /// Where its button leads.
     pub href: String,
+    pub logo: Option<String>,
 }
 
 /// Scope information for consent display.
