@@ -13,7 +13,7 @@ locally before releases, not in CI: they are long runs. `just --list` shows the 
 | Bulk Data `$bulk-submit` consumer (4.0.0-ballot) | 15 | 3 | 0 |
 | US Core v6.1.0, FHIR API | 326 | 1 | 125 |
 | US Core v5.0.1, FHIR API | 299 | 2 | 105 |
-| Subscriptions R5 Backport (R4 server), each of `full-resource`, `id-only`, `empty` | 18 | 0 | 15 |
+| Subscriptions R5 Backport (R4 server): workflow, rejection, `full-resource`, `id-only`, `empty` | 38 | 0 | 0 |
 
 ## What did not pass
 
@@ -30,8 +30,9 @@ test patient. The resource comes back as it was loaded.
 is at its waiting step. The server fetches them as soon as the submission arrives, before that step.
 
 The Subscriptions run is `scripts/inferno/run-subscriptions.ts`, with a topic on Encounter
-creation and a 10-second heartbeat; the rejection tests that need a second, unsupported Subscription
-were among the skipped.
+creation, a 10-second heartbeat, a Subscription of each payload content, and for the rejection
+tests what this server does not implement: an unknown topic, the `message` channel, an `ftp:`
+endpoint, an XML payload, an unknown filter key, and `email` without a configured provider.
 
 Skipped tests were not run, so they say nothing either way. The runs use one synthetic patient.
 

@@ -1167,13 +1167,21 @@ async fn validate_write_content_with_resolver(
     profiles: &[String],
     resolver: Arc<crate::operations::validation_reference::ValidationReferenceResolver>,
 ) -> Result<(crate::validation::ValidationOutcome, LocalReferenceSet), ApiError> {
-    if payload["resourceType"] == "Subscription"
-        && let Some(url) = crate::subscriptions::backport::cross_version_extension(payload)
-    {
-        return Err(ApiError::unprocessable_entity(
-            format!("Subscription: cross-version extension {url} is not supported"),
-            None,
-        ));
+    if payload["resourceType"] == "Subscription" {
+        if let Some(url) = crate::subscriptions::backport::cross_version_extension(payload) {
+            return Err(ApiError::unprocessable_entity(
+                format!("Subscription: cross-version extension {url} is not supported"),
+                None,
+            ));
+        }
+        if let Some(problem) =
+            crate::subscriptions::acceptance::problem(&state.subscription_state, payload)
+        {
+            return Err(ApiError::unprocessable_entity(
+                format!("Subscription: {problem}"),
+                None,
+            ));
+        }
     }
     let mut references = local_reference_set(payload, state)?;
     if state.config.validation.skip_reference_validation {

@@ -343,7 +343,11 @@ impl From<&str> for PayloadContent {
 /// Filter applied by a subscriber.
 #[derive(Debug, Clone)]
 pub struct AppliedFilter {
-    /// Filter parameter name (from topic's canFilterBy)
+    /// The resource type the filter is for (`Encounter` of `Encounter?patient=…`); `None` when
+    /// the subscription does not say, and the filter applies to the topic's resource types.
+    pub resource_type: Option<String>,
+
+    /// Filter parameter name: a filter of the topic (`canFilterBy`) or a search parameter
     pub filter_parameter: String,
 
     /// Comparator (eq, ne, gt, etc.)

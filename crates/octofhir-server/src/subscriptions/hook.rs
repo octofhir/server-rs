@@ -105,21 +105,9 @@ impl SubscriptionHook {
                 .set_error(&subscription.id, &reason)
                 .await;
         }
-        // The delivery processor has no message transport, and email needs a provider in
-        // [subscriptions.email]; otherwise every notification on these channels would fail.
-        let unsupported = match subscription.channel {
-            SubscriptionChannel::Message { .. } => {
-                Some("The message channel is not supported".to_string())
-            }
-            SubscriptionChannel::Email { .. } if !self.email_configured => {
-                Some("Email delivery is not configured on this server".to_string())
-            }
-            SubscriptionChannel::Email { .. } | SubscriptionChannel::WebSocket { .. } => None,
-            SubscriptionChannel::RestHook { ref endpoint, .. } => {
-                rest_hook_problem(endpoint, &self.egress)
-            }
-        };
-        if let Some(reason) = unsupported {
+        if let Some(reason) =
+            channel_problem(&subscription.channel, self.email_configured, &self.egress)
+        {
             return self
                 .subscription_manager
                 .set_error(&subscription.id, &reason)
@@ -280,6 +268,26 @@ impl SubscriptionHook {
 
 /// Why a rest-hook endpoint can't be served: not an http(s) URL, or a private address the
 /// server is not allowed to call (see [`crate::egress`]).
+/// Why the server cannot deliver on `channel`: the delivery processor has no message transport,
+/// email needs a provider in `[subscriptions.email]`, and a rest-hook endpoint must be an http(s)
+/// URL the outbound policy allows. Otherwise every notification on the channel would fail.
+pub(crate) fn channel_problem(
+    channel: &SubscriptionChannel,
+    email_configured: bool,
+    egress: &EgressPolicy,
+) -> Option<String> {
+    match channel {
+        SubscriptionChannel::Message { .. } => {
+            Some("The message channel is not supported".to_string())
+        }
+        SubscriptionChannel::Email { .. } if !email_configured => {
+            Some("Email delivery is not configured on this server".to_string())
+        }
+        SubscriptionChannel::Email { .. } | SubscriptionChannel::WebSocket { .. } => None,
+        SubscriptionChannel::RestHook { endpoint, .. } => rest_hook_problem(endpoint, egress),
+    }
+}
+
 fn rest_hook_problem(endpoint: &str, egress: &EgressPolicy) -> Option<String> {
     let url = match reqwest::Url::parse(endpoint) {
         Ok(url) if matches!(url.scheme(), "http" | "https") => url,

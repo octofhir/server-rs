@@ -172,6 +172,109 @@ async fn subscriptions_in_the_r4_backport_form() {
     let (status, _) = api.post("Subscription", crossed).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
+    // What the server cannot serve is refused when the Subscription is created.
+    let refused = |change: &dyn Fn(&mut Value)| {
+        let mut unsupported = subscription.clone();
+        change(&mut unsupported);
+        unsupported
+    };
+    for (what, unsupported) in [
+        (
+            "unknown topic",
+            refused(&|s| s["criteria"] = json!("https://octofhir.io/topics/none")),
+        ),
+        (
+            "message channel",
+            refused(&|s| s["channel"]["type"] = json!("message")),
+        ),
+        (
+            "XML payload",
+            refused(&|s| s["channel"]["payload"] = json!("application/fhir+xml")),
+        ),
+        (
+            "unknown filter",
+            refused(&|s| {
+                s["_criteria"] = json!({"extension": [{
+                    "url": format!("{backport}/backport-filter-criteria"),
+                    "valueString": "Encounter?no-such-parameter=1",
+                }]})
+            }),
+        ),
+        (
+            "filter for a type the topic has no events for",
+            refused(&|s| {
+                s["_criteria"] = json!({"extension": [{
+                    "url": format!("{backport}/backport-filter-criteria"),
+                    "valueString": "Observation?patient=Patient/1",
+                }]})
+            }),
+        ),
+    ] {
+        let (status, outcome) = api.post("Subscription", unsupported).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{what}: {outcome}"
+        );
+    }
+
+    // A filter: only encounters of one patient are notified.
+    let (_, ada) = api
+        .post(
+            "Patient",
+            json!({"resourceType": "Patient", "gender": "female"}),
+        )
+        .await;
+    let (_, bo) = api
+        .post(
+            "Patient",
+            json!({"resourceType": "Patient", "gender": "male"}),
+        )
+        .await;
+    let ada = format!("Patient/{}", ada["id"].as_str().unwrap());
+    let bo = format!("Patient/{}", bo["id"].as_str().unwrap());
+    let filtered_hooks = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/filtered"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&filtered_hooks)
+        .await;
+    let mut filtered = subscription.clone();
+    filtered["channel"]["endpoint"] = json!(format!("{}/filtered", filtered_hooks.uri()));
+    filtered["channel"].as_object_mut().unwrap().remove("extension");
+    filtered["_criteria"] = json!({"extension": [{
+        "url": format!("{backport}/backport-filter-criteria"),
+        "valueString": format!("Encounter?patient={ada}"),
+    }]});
+    let (status, body) = api.post("Subscription", filtered).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    received(&filtered_hooks, 1).await;
+    for patient in [&bo, &ada] {
+        let (status, body) = api
+            .post(
+                "Encounter",
+                json!({"resourceType": "Encounter", "status": "in-progress",
+                    "class": {"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "IMP"},
+                    "subject": {"reference": patient}}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    received(&filtered_hooks, 2).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let notified: Vec<Value> = filtered_hooks
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|request| serde_json::from_slice(&request.body).unwrap())
+        .filter(|bundle: &Value| {
+            parameter(&bundle["entry"][0]["resource"], "type").unwrap()["valueCode"]
+                == "event-notification"
+        })
+        .collect();
+    assert_eq!(notified.len(), 1, "{notified:?}");
+
     let (status, created) = api.post("Subscription", subscription).await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let id = created["id"].as_str().unwrap().to_owned();

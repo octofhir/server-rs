@@ -1764,6 +1764,7 @@ async fn build_app_with_runtime(
         // Create event matcher with FHIRPath engine
         let event_matcher = Arc::new(crate::subscriptions::EventMatcher::new(
             fhirpath_engine.clone(),
+            search_config.clone(),
         ));
 
         // Create subscription hook

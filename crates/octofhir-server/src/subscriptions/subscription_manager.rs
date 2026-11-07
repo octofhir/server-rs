@@ -395,6 +395,10 @@ impl SubscriptionManager {
                     let value = f.get("value").and_then(|v| v.as_str())?;
 
                     Some(AppliedFilter {
+                        resource_type: f
+                            .get("resourceType")
+                            .and_then(|v| v.as_str())
+                            .map(|t| t.rsplit('/').next().unwrap_or(t).to_string()),
                         filter_parameter: filter_parameter.to_string(),
                         comparator: f
                             .get("comparator")
@@ -410,29 +414,60 @@ impl SubscriptionManager {
                 .collect();
         }
 
-        // R4 Backport: Parse from criteria URL query string
-        // e.g., "http://example.org/topic/patient-admission?patient=Patient/123"
-        if let Some(criteria) = resource.get("criteria").and_then(|v| v.as_str())
-            && let Some(query_start) = criteria.find('?')
+        // R4 Backport: `backport-filter-criteria` extensions on `criteria`, each
+        // `Type?key=value&…` ("Encounter?patient=Patient/123").
+        let mut filters = Vec::new();
+        for extension in resource["_criteria"]["extension"]
+            .as_array()
+            .into_iter()
+            .flatten()
         {
-            let query = &criteria[query_start + 1..];
-            return query
-                .split('&')
-                .filter_map(|param| {
-                    let (key, value) = param.split_once('=')?;
-
-                    Some(AppliedFilter {
-                        filter_parameter: key.to_string(),
-                        comparator: None,
-                        modifier: None,
-                        value: value.to_string(),
-                    })
-                })
-                .collect();
+            if extension["url"]
+                != "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-filter-criteria"
+            {
+                continue;
+            }
+            if let Some(criteria) = extension["valueString"].as_str() {
+                let (resource_type, query) = match criteria.split_once('?') {
+                    Some((resource_type, query)) => (Some(resource_type), query),
+                    None => (None, criteria),
+                };
+                filters.extend(query_filters(resource_type, query));
+            }
         }
-
-        Vec::new()
+        // Earlier drafts appended the query to the topic URL.
+        if let Some(criteria) = resource.get("criteria").and_then(|v| v.as_str())
+            && let Some((_, query)) = criteria.split_once('?')
+        {
+            filters.extend(query_filters(None, query));
+        }
+        filters
     }
+}
+
+/// The filters of a search-style query: `key[:modifier]=value` joined with `&`.
+fn query_filters(resource_type: Option<&str>, query: &str) -> Vec<AppliedFilter> {
+    let resource_type = resource_type
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned);
+    query
+        .split('&')
+        .filter_map(|param| {
+            let (key, value) = param.split_once('=')?;
+            let (key, modifier) = match key.split_once(':') {
+                Some((key, modifier)) => (key, Some(modifier.to_string())),
+                None => (key, None),
+            };
+            Some(AppliedFilter {
+                resource_type: resource_type.clone(),
+                filter_parameter: key.to_string(),
+                comparator: None,
+                modifier,
+                value: value.to_string(),
+            })
+        })
+        .collect()
 }
 
 /// The value of a Subscriptions Backport extension on `element`, by the end of its URL.

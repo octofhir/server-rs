@@ -43,6 +43,7 @@
 //! - `websocket` - WebSocket connection at `/fhir/Subscription/{id}/$events`
 //! - `email` - Email notifications (via configured SMTP)
 
+pub mod acceptance;
 pub mod api;
 pub mod backport;
 pub mod delivery;
@@ -51,6 +52,7 @@ pub mod event_matcher;
 pub mod handlers;
 pub mod hook;
 pub mod operations;
+pub mod search_match;
 pub mod storage;
 pub mod subscription_manager;
 pub mod topic_registry;
@@ -117,8 +119,11 @@ impl SubscriptionState {
         let subscription_manager =
             Arc::new(SubscriptionManager::new(storage.clone(), db_pool.clone()));
 
-        // Create event matcher with FHIRPath engine
-        let event_matcher = Arc::new(EventMatcher::new(fhirpath_engine));
+        // Create event matcher with FHIRPath engine and the server's search parameters
+        let event_matcher = Arc::new(EventMatcher::new(
+            fhirpath_engine,
+            app_state.search_config.clone(),
+        ));
 
         // Create WebSocket registry
         let websocket_registry = Arc::new(WebSocketRegistry::new());

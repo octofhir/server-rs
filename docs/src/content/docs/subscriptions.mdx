@@ -46,12 +46,21 @@ R5, `criteria` in the backport):
 }
 ```
 
-The server then decides, right after the write:
+A subscription the server cannot serve is refused with **422** and the reason, when it is created
+or updated as `requested` or `active`:
 
-| Outcome | When |
-|---------|------|
-| `active` | The topic exists and the channel can be delivered to. A rest-hook subscriber first receives a **handshake** notification. |
-| `error` | The topic URL matches no active topic, or the channel is one this server can't deliver to (see below). The reason is stored in `Subscription.error`. |
+- the topic URL matches no active topic;
+- the channel is one this server can't deliver to (see below), or a rest-hook endpoint is not an
+  http(s) URL the [outbound policy](/server-rs/configuration/) allows;
+- the payload type is not `application/fhir+json` (or `application/json`): the server writes JSON
+  only;
+- the payload content is not `empty`, `id-only` or `full-resource`;
+- a filter is for a resource type the topic has no events for, or its key is neither a filter of
+  the topic nor a search parameter of that type.
+
+Otherwise the subscription becomes `active` right after the write, and a rest-hook subscriber first
+receives a **handshake** notification. Should something change before it is activated (a topic
+retired in between), it goes to `error` with the reason in `Subscription.error`.
 
 To turn a subscription off, set its status to `off`. Setting it back to `requested` asks the
 server to check and activate it again (and re-sends the handshake).
@@ -62,8 +71,18 @@ server to check and activate it again (and re-sends the handshake).
 |---------|---------|
 | `rest-hook` | HTTP `POST` of a `subscription-notification` Bundle to `endpoint`, with the subscription's custom headers. |
 | `websocket` | Connect to `GET /fhir/Subscription/{id}/$events` with a WebSocket upgrade; the server sends a handshake, heartbeats every `heartbeatPeriod` seconds and notifications. |
-| `email` | Sent to the `mailto:` endpoint through the provider in [`[subscriptions.email]`](/server-rs/configuration/) (SMTP or SendGrid). Without a provider the subscription is put in `error`. |
-| `message` | Not supported; such subscriptions are put in `error`. |
+| `email` | Sent to the `mailto:` endpoint through the provider in [`[subscriptions.email]`](/server-rs/configuration/) (SMTP or SendGrid). Without a provider it is refused. |
+| `message` | Not supported; refused. |
+
+### Filters
+
+A subscription narrows a topic with filters: `filterBy` in R5, the `backport-filter-criteria`
+extension on `criteria` in the backport (`Encounter?patient=Patient/123`, several parameters joined
+with `&`). A key is a filter the topic defines (`canFilterBy`) or a search parameter of the
+resource type, and values compare as in FHIR search: tokens by `system|code`, references by
+`Type/id` or id, strings case-insensitively from the start (`:exact`, `:contains`), dates, numbers
+and quantities with `eq`, `ne`, `gt`, `lt`, `ge`, `le`, and `:not`, `:text`, `:missing`. A value with
+commas matches any of them. The same matching applies to a topic's `queryCriteria`.
 
 ## R4: the Backport form
 
@@ -77,6 +96,7 @@ On an R4 server everything follows the
 | `$status` | A `Bundle` of such `Parameters` |
 | Payload content | The `backport-payload-content` extension on `channel._payload`: `empty`, `id-only` or `full-resource` |
 | Heartbeat | The `backport-heartbeat-period` extension on `channel`, in seconds |
+| Filters | `backport-filter-criteria` extensions on `criteria`: `Encounter?patient=Patient/123` |
 | Topics | Listed on the Subscription resource of the CapabilityStatement (`capabilitystatement-subscriptiontopic-canonical`) |
 
 A Subscription with an extension of another FHIR version (`http://hl7.org/fhir/5.0/…`) is refused
