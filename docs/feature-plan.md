@@ -19,18 +19,18 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 
 | # | Item | Effort | Notes |
 |---|---|---|---|
-| 2.1 | Notifications end to end: delivery processor, providers and templates as resources, a way to queue, App subscriptions that notify | M | the crate, the queue table and `$resend`/`$stats`/`$cancel` exist; nothing starts the processor or queues |
+| 2.1 | App subscriptions that fire: `AppSubscription` triggers (type, event, FHIRPath) to their webhook channel and to notifications | M | reconcile stores them; nothing dispatches them yet. Notifications themselves (`$send`, delivery) work |
 | 2.2 | Inferno Subscriptions test kit, run locally and published | S | `$events`, `$status`, heartbeat exist |
 | 2.3 | Conformance evidence: Inferno US Core and Subscriptions before releases (`just inferno-*`, not CI), full CapabilityStatement | M | |
 | 2.4 | UDAP Tiered OAuth (`udap_to`), CRL distribution points and OCSP | M | |
-| 2.5 | `[mcp] toolbox`: the fhir-toolbox tools over the packages the server has loaded | S | needs fhir-toolbox on crates.io |
+| 2.5 | `[mcp] toolbox`: the fhir-toolbox tools over the packages the server has loaded | S | fhir-toolbox 0.1.0 is on crates.io |
 
 ## 3. Tools (own repos)
 
 | # | Tool | Next |
 |---|---|---|
 | 3.1 | fhir-diff | Impact on stored data as a bulk job; R4→R6 per resource; value set expansion diff |
-| 3.2 | fhir-toolbox | Publish; server integration (2.5) |
-| 3.3 | `@octofhir/wasm` | Publish; one FHIR version per build for a smaller module |
+| 3.2 | fhir-toolbox | Server integration (2.5) |
+| 3.3 | `@octofhir/wasm` | Publish to npm (release workflow ready, needs `NPM_TOKEN` and the `@octofhir` scope); one FHIR version per build for a smaller module |
 | 3.4 | ccda-fhir | Provenance for authors; health status, intervention and outcome observations; slices and terminology in the C-CDA conformance check |
 | 3.5 | fml-rs | LSP |
