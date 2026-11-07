@@ -11,6 +11,7 @@
 
 pub mod assertion;
 pub mod metadata;
+pub mod revocation;
 pub mod statement;
 pub mod tiered;
 pub mod trust;

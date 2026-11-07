@@ -35,6 +35,26 @@ revocation_lists = ["/etc/octofhir/udap/community.crl"]
 If a file cannot be read, or the certificate does not name the base URL, the server logs the
 reason and starts with UDAP off.
 
+### Revocation
+
+A certificate chain has to lead to a community anchor, be current and not be revoked. Revocation
+comes from two places:
+
+- the `revocation_lists` of the community, read at start;
+- the lists each certificate of the chain names in its CRL Distribution Points (http or https),
+  fetched before the chain is validated and kept until their `nextUpdate` (a day at most). A list
+  that cannot be fetched is not asked for again for five minutes.
+
+```toml
+[auth.udap]
+fetch_revocation_lists = true      # the default
+require_revocation_status = false  # the default
+```
+
+With `require_revocation_status = false`, a certificate no list covers, or whose list could not be
+fetched, is accepted, and the failed fetch is logged. With `true` it is refused. A list past its
+`nextUpdate` fails the certificates it covers either way: it says nothing about today.
+
 <Aside type="caution">
 A registration needs no one's approval: any certificate from a configured community gets a
 client. `scopes` bounds what it can ask for, and access policies decide what it reaches, as for
@@ -141,7 +161,6 @@ matched give `access_denied`, an answer that cannot be verified `invalid_idp`, a
 
 ## Not done
 
-- Revocation is read from the configured files. CRL distribution points and OCSP are not fetched,
-  and a list past its `nextUpdate` fails every certificate in that community until it is replaced.
+- OCSP is not asked; revocation comes from lists only.
 - Intermediates come from `x5c`; missing ones are not fetched through the certificate's AIA.
 - The experimental `jku` workflow.

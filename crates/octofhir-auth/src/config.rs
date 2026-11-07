@@ -218,6 +218,15 @@ pub struct UdapConfig {
     /// Tiered OAuth for User Authentication: a client app names the user's identity provider
     /// (`idp`, with the `udap` scope) and this server signs the user in there.
     pub tiered_oauth: TieredOAuthConfig,
+
+    /// Fetch the revocation lists certificates name in their CRL Distribution Points, on top of
+    /// the configured `revocation_lists`.
+    pub fetch_revocation_lists: bool,
+
+    /// Refuse a certificate whose revocation status cannot be determined: no list covers it,
+    /// or its list could not be fetched. Off, such a certificate is accepted and the failed
+    /// fetch is logged.
+    pub require_revocation_status: bool,
 }
 
 /// How this server presents itself when it registers with an identity provider for Tiered
@@ -244,6 +253,8 @@ impl Default for UdapConfig {
             private_key: None,
             communities: Vec::new(),
             tiered_oauth: TieredOAuthConfig::default(),
+            fetch_revocation_lists: true,
+            require_revocation_status: false,
             scopes: vec![
                 "openid".to_string(),
                 "fhirUser".to_string(),

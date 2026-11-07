@@ -40,7 +40,7 @@ pub struct B2bExtension {
 ///
 /// Trust failures are `invalid_client`; a bad signature and a missing `udap` parameter or
 /// extension are `invalid_request`, as the profile sets out.
-pub fn authenticate(
+pub async fn authenticate(
     trust: &Trust,
     client: &Client,
     binding: &UdapBinding,
@@ -54,6 +54,7 @@ pub fn authenticate(
     }
     let verified = trust
         .verify::<AuthenticationToken>(assertion, token_endpoint)
+        .await
         .map_err(|error| match error {
             TrustError::Malformed(_) | TrustError::Signature(_) => {
                 AuthError::invalid_request(error.to_string())

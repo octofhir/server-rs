@@ -141,6 +141,7 @@ pub async fn udap_register_handler(
     let verified: Verified<SoftwareStatement> = match state
         .trust
         .verify(&request.software_statement, &state.registration_url)
+        .await
     {
         Ok(verified) => verified,
         Err(error @ TrustError::Untrusted(_)) => {

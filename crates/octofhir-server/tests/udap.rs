@@ -12,14 +12,17 @@ use octofhir_auth::config::UdapCommunityConfig;
 use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DnType, IsCa, Issuer, KeyPair,
-    PKCS_ECDSA_P256_SHA256, PKCS_RSA_SHA256, SanType,
+    BasicConstraints, Certificate, CertificateParams, CertificateRevocationListParams,
+    CrlDistributionPoint, DnType, IsCa, Issuer, KeyIdMethod, KeyPair, PKCS_ECDSA_P256_SHA256,
+    PKCS_RSA_SHA256, RevocationReason, RevokedCertParams, SanType, SerialNumber,
 };
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use time::OffsetDateTime;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const COMMUNITY: &str = "urn:example:community";
 const APP: &str = "https://app.example.org/registered";
@@ -69,6 +72,78 @@ impl Member {
         header.x5c = Some(self.x5c.clone());
         encode(&header, claims, &self.key).unwrap()
     }
+}
+
+/// A member whose certificate, with this serial number, names a revocation list at `crl`.
+fn member_with_crl(authority: &Authority, uri: &str, serial: u64, crl: &str) -> Member {
+    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut params = CertificateParams::default();
+    params.distinguished_name.push(DnType::CommonName, "member");
+    params.subject_alt_names = vec![SanType::URI(uri.try_into().unwrap())];
+    params.serial_number = Some(SerialNumber::from(serial));
+    params.crl_distribution_points = vec![CrlDistributionPoint {
+        uris: vec![crl.to_owned()],
+    }];
+    let certificate = params.signed_by(&key, &authority.issuer).unwrap();
+    Member {
+        key: EncodingKey::from_ec_pem(key.serialize_pem().as_bytes()).unwrap(),
+        x5c: vec![STANDARD.encode(certificate.der())],
+    }
+}
+
+/// The community publishes a revocation list at the distribution point its certificates name:
+/// a revoked certificate cannot register, the one next to it can.
+async fn revoked_certificates(client: &Client, base: &str, ca: &Authority) {
+    let lists = MockServer::start().await;
+    let crl_url = format!("{}/community.crl", lists.uri());
+    let today = OffsetDateTime::now_utc();
+    let crl = CertificateRevocationListParams {
+        this_update: today - time::Duration::hours(1),
+        next_update: today + time::Duration::days(1),
+        crl_number: SerialNumber::from(1u64),
+        issuing_distribution_point: None,
+        revoked_certs: vec![RevokedCertParams {
+            serial_number: SerialNumber::from(7001u64),
+            revocation_time: today - time::Duration::hours(1),
+            reason_code: Some(RevocationReason::KeyCompromise),
+            invalidity_date: None,
+        }],
+        key_identifier_method: KeyIdMethod::Sha256,
+    }
+    .signed_by(&ca.issuer)
+    .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/community.crl"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(crl.der().to_vec()))
+        .mount(&lists)
+        .await;
+
+    let app = "https://revocation.example.org/app";
+    let registration = |member: &Member| {
+        let mut claims = statement(base, json!(["client_credentials"]));
+        claims["iss"] = json!(app);
+        claims["sub"] = json!(app);
+        member.sign(&claims)
+    };
+    let revoked = member_with_crl(ca, app, 7001, &crl_url);
+    let (status, body) = register(client, base, registration(&revoked)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "unapproved_software_statement");
+    assert!(
+        body["error_description"]
+            .as_str()
+            .is_some_and(|text| text.to_lowercase().contains("revoked")),
+        "{body}"
+    );
+
+    let current = member_with_crl(ca, app, 7002, &crl_url);
+    let (status, body) = register(client, base, registration(&current)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(
+        lists.received_requests().await.unwrap().len(),
+        1,
+        "the list is fetched once and kept until its nextUpdate"
+    );
 }
 
 fn now() -> i64 {
@@ -329,6 +404,7 @@ async fn udap_discovery_registration_and_token() {
 
     discovery(&client, &base, &ca).await;
     refused_registrations(&client, &base, &app, &ca).await;
+    revoked_certificates(&client, &base, &ca).await;
 
     // Registered, with the scopes this server offers.
     let claims = statement(&base, json!(["client_credentials"]));

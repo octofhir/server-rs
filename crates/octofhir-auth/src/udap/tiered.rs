@@ -154,6 +154,7 @@ impl TieredOAuth {
         let verified = self
             .trust
             .verify_metadata::<SignedMetadata>(signed, idp)
+            .await
             .map_err(|error| untrusted(error.to_string()))?;
         tracing::info!(idp, community = %verified.community, "Trusted a Tiered OAuth identity provider");
         Ok(verified.claims)

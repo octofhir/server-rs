@@ -1,5 +1,6 @@
 //! Whether a JWT comes from a member of a trust community.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
@@ -21,6 +22,7 @@ use x509_parser::prelude::FromDer;
 use x509_parser::public_key::PublicKey;
 
 use super::MAX_CLOCK_SKEW_SECONDS;
+use super::revocation::DistributionPoints;
 use crate::config::{UdapCommunityConfig, UdapConfig};
 
 /// Why a JWT was refused. The kinds map to different error codes on the wire.
@@ -96,16 +98,31 @@ impl Community {
         leaf: &EndEntityCert<'_>,
         intermediates: &[CertificateDer<'_>],
         now: UnixTime,
+        fetched: &[Arc<CertRevocationList<'static>>],
+        require_status: bool,
     ) -> Result<(), webpki::Error> {
-        let lists: Vec<&CertRevocationList<'_>> = self.revocations.iter().collect();
+        let lists: Vec<&CertRevocationList<'_>> = self
+            .revocations
+            .iter()
+            .chain(fetched.iter().map(|list| list.as_ref()))
+            .collect();
+        let status = if require_status {
+            UnknownStatusPolicy::Deny
+        } else {
+            UnknownStatusPolicy::Allow
+        };
         // A list that has run out says nothing about today, so it counts as a failure.
         let revocation = RevocationOptionsBuilder::new(&lists).ok().map(|builder| {
             builder
                 .with_depth(RevocationCheckDepth::Chain)
-                .with_status_policy(UnknownStatusPolicy::Allow)
+                .with_status_policy(status)
                 .with_expiration_policy(ExpirationPolicy::Enforce)
                 .build()
         });
+        if revocation.is_none() && require_status {
+            // No list at all: nothing can say the chain is not revoked.
+            return Err(webpki::Error::UnknownRevocationStatus);
+        }
         leaf.verify_for_usage(
             ALL_VERIFICATION_ALGS,
             &self.anchors,
@@ -122,6 +139,9 @@ impl Community {
 /// The trust communities this server belongs to.
 pub struct Trust {
     communities: Vec<Community>,
+    /// Lists named by the certificates themselves, when fetching them is on.
+    distribution_points: Option<Arc<DistributionPoints>>,
+    require_status: bool,
 }
 
 impl Trust {
@@ -136,7 +156,13 @@ impl Trust {
             .iter()
             .map(Community::load)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { communities })
+        Ok(Self {
+            communities,
+            distribution_points: config
+                .fetch_revocation_lists
+                .then(|| Arc::new(DistributionPoints::new())),
+            require_status: config.require_revocation_status,
+        })
     }
 
     /// Whether this URI names one of the communities.
@@ -153,12 +179,12 @@ impl Trust {
     /// # Errors
     ///
     /// Returns the [`TrustError`] kind of the first check that failed.
-    pub fn verify<C: DeserializeOwned>(
+    pub async fn verify<C: DeserializeOwned>(
         &self,
         token: &str,
         audience: &str,
     ) -> Result<Verified<C>, TrustError> {
-        self.verify_with(token, Some(audience), None)
+        self.verify_with(token, Some(audience), None).await
     }
 
     /// Validates the `signed_metadata` of a server at `issuer`: like [`Trust::verify`], with no
@@ -168,12 +194,12 @@ impl Trust {
     /// # Errors
     ///
     /// Returns the [`TrustError`] kind of the first check that failed.
-    pub fn verify_metadata<C: DeserializeOwned>(
+    pub async fn verify_metadata<C: DeserializeOwned>(
         &self,
         token: &str,
         issuer: &str,
     ) -> Result<Verified<C>, TrustError> {
-        let verified = self.verify_with(token, None, Some(issuer))?;
+        let verified = self.verify_with(token, None, Some(issuer)).await?;
         if !verified.subject_uris.iter().any(|uri| uri == issuer) {
             return Err(TrustError::Claims(format!(
                 "{issuer} is not a URI in the Subject Alternative Name of the certificate"
@@ -182,7 +208,7 @@ impl Trust {
         Ok(verified)
     }
 
-    fn verify_with<C: DeserializeOwned>(
+    async fn verify_with<C: DeserializeOwned>(
         &self,
         token: &str,
         audience: Option<&str>,
@@ -243,6 +269,9 @@ impl Trust {
             })?
             .claims;
 
+        if let Some(points) = &self.distribution_points {
+            points.fetch_for(&chain).await;
+        }
         let community = self.community_of(&chain)?;
         Ok(Verified {
             claims,
@@ -256,9 +285,14 @@ impl Trust {
             .map_err(|error| TrustError::Untrusted(format!("Invalid certificate: {error}")))?;
         let now = OffsetDateTime::now_utc().unix_timestamp().max(0);
         let now = UnixTime::since_unix_epoch(Duration::from_secs(now as u64));
+        let fetched = self
+            .distribution_points
+            .as_ref()
+            .map(|points| points.lists_for(chain))
+            .unwrap_or_default();
         let mut failure = None;
         for community in &self.communities {
-            match community.accepts(&leaf, &chain[1..], now) {
+            match community.accepts(&leaf, &chain[1..], now, &fetched, self.require_status) {
                 Ok(()) => return Ok(community.uri.clone()),
                 Err(error) => failure = Some(error),
             }

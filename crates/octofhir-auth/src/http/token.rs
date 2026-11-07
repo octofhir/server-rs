@@ -554,7 +554,8 @@ async fn authenticate_with_assertion(
             token_endpoint,
             request.udap.as_deref(),
             &request.grant_type,
-        )?;
+        )
+        .await?;
         let jti_storage = state
             .jti_storage
             .as_ref()
