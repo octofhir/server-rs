@@ -94,6 +94,11 @@ pub struct AuthorizationRequest {
     /// Used to associate a client session with an ID token for replay protection.
     #[serde(default)]
     pub nonce: Option<String>,
+
+    /// UDAP Tiered OAuth: the base URL of the identity provider to sign the user in at. Has a
+    /// meaning only with the `udap` scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idp: Option<String>,
 }
 
 /// Authorization response parameters.
@@ -255,6 +260,10 @@ pub enum AuthorizationErrorCode {
     /// The authorization server is currently unable to handle the request
     /// due to temporary overloading or maintenance.
     TemporarilyUnavailable,
+
+    /// UDAP Tiered OAuth: the identity provider in `idp` is not trusted, or this server could
+    /// not obtain a client id there.
+    InvalidIdp,
 }
 
 impl AuthorizationErrorCode {
@@ -269,6 +278,7 @@ impl AuthorizationErrorCode {
             Self::InvalidScope => "invalid_scope",
             Self::ServerError => "server_error",
             Self::TemporarilyUnavailable => "temporarily_unavailable",
+            Self::InvalidIdp => "invalid_idp",
         }
     }
 }

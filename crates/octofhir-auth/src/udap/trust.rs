@@ -158,6 +158,36 @@ impl Trust {
         token: &str,
         audience: &str,
     ) -> Result<Verified<C>, TrustError> {
+        self.verify_with(token, Some(audience), None)
+    }
+
+    /// Validates the `signed_metadata` of a server at `issuer`: like [`Trust::verify`], with no
+    /// audience (the document is for anyone), `iss` equal to `issuer`, and `issuer` among the
+    /// URIs of the certificate.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`TrustError`] kind of the first check that failed.
+    pub fn verify_metadata<C: DeserializeOwned>(
+        &self,
+        token: &str,
+        issuer: &str,
+    ) -> Result<Verified<C>, TrustError> {
+        let verified = self.verify_with(token, None, Some(issuer))?;
+        if !verified.subject_uris.iter().any(|uri| uri == issuer) {
+            return Err(TrustError::Claims(format!(
+                "{issuer} is not a URI in the Subject Alternative Name of the certificate"
+            )));
+        }
+        Ok(verified)
+    }
+
+    fn verify_with<C: DeserializeOwned>(
+        &self,
+        token: &str,
+        audience: Option<&str>,
+        issuer: Option<&str>,
+    ) -> Result<Verified<C>, TrustError> {
         let header = decode_header(token)
             .map_err(|error| TrustError::Malformed(format!("Invalid JWT: {error}")))?;
         if !matches!(
@@ -189,8 +219,19 @@ impl Trust {
 
         let mut validation = Validation::new(header.alg);
         validation.leeway = MAX_CLOCK_SKEW_SECONDS as u64;
-        validation.set_audience(&[audience]);
-        validation.set_required_spec_claims(&["iss", "sub", "aud", "exp"]);
+        match audience {
+            Some(audience) => {
+                validation.set_audience(&[audience]);
+                validation.set_required_spec_claims(&["iss", "sub", "aud", "exp"]);
+            }
+            None => {
+                validation.validate_aud = false;
+                validation.set_required_spec_claims(&["iss", "sub", "exp"]);
+            }
+        }
+        if let Some(issuer) = issuer {
+            validation.set_issuer(&[issuer]);
+        }
         let claims = decode::<C>(token, &key, &validation)
             .map_err(|error| match error.kind() {
                 ErrorKind::InvalidSignature

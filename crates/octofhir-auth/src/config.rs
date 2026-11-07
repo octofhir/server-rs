@@ -214,6 +214,26 @@ pub struct UdapConfig {
     /// certificate from the community alone gives read access at most by default; what a
     /// client can reach is still decided by access policies.
     pub scopes: Vec<String>,
+
+    /// Tiered OAuth for User Authentication: a client app names the user's identity provider
+    /// (`idp`, with the `udap` scope) and this server signs the user in there.
+    pub tiered_oauth: TieredOAuthConfig,
+}
+
+/// How this server presents itself when it registers with an identity provider for Tiered
+/// OAuth. UDAP Dynamic Client Registration asks an authorization code client for a name, a
+/// contact and a logo.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TieredOAuthConfig {
+    /// Accept the `idp` parameter and advertise the `udap` scope.
+    pub enabled: bool,
+    /// The name identity providers show for this server; the host of the base URL if unset.
+    pub client_name: Option<String>,
+    /// How to reach the operator, at least one `mailto:` URI.
+    pub contacts: Vec<String>,
+    /// An https URL of a PNG, JPG or GIF logo.
+    pub logo_uri: Option<String>,
 }
 
 impl Default for UdapConfig {
@@ -223,6 +243,7 @@ impl Default for UdapConfig {
             certificate: None,
             private_key: None,
             communities: Vec::new(),
+            tiered_oauth: TieredOAuthConfig::default(),
             scopes: vec![
                 "openid".to_string(),
                 "fhirUser".to_string(),

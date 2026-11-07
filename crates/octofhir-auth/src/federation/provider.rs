@@ -108,6 +108,9 @@ pub enum Protocol {
     Oauth2,
     /// SAML 2.0: the user comes in a signed assertion.
     Saml,
+    /// UDAP Tiered OAuth: OpenID Connect with a provider this server registered with by UDAP
+    /// Dynamic Client Registration; it authenticates with a signed JWT (`private_key_jwt`).
+    Udap,
 }
 
 fn default_scopes() -> Vec<String> {

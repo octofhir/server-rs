@@ -130,8 +130,8 @@ pub mod resources;
 pub mod saml;
 
 pub use auth::{
-    IdTokenClaims, IdpAuthRequest, IdpAuthResult, IdpAuthService, IdpAuthServiceConfig,
-    TokenResponse, result_from_claims,
+    ClientAssertion, IdTokenClaims, IdpAuthRequest, IdpAuthResult, IdpAuthService,
+    IdpAuthServiceConfig, TokenResponse, result_from_claims,
 };
 pub use client_jwks::{ClientJwksCache, JwksCacheConfig};
 pub use discovery::{DiscoveryCache, DiscoveryCacheConfig, DiscoveryError, OidcDiscoveryClient};

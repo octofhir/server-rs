@@ -48,6 +48,7 @@ use crate::storage::{
     AuthorizeSessionStorage, ClientStorage, ConsentStorage, SessionStorage, SsoSessionStorage,
     UserStorage,
 };
+use crate::udap::tiered::TieredOAuth;
 
 use super::authorize_templates::{
     LoginProvider, PatientInfo, render_consent_form, render_error_page, render_login_form,
@@ -85,6 +86,8 @@ pub struct AuthorizeState {
     pub secure_cookies: bool,
     /// External identity providers offered next to the password, when enabled.
     pub identity_providers: Option<Arc<IdpAuthService>>,
+    /// UDAP Tiered OAuth, when enabled: `idp` names the provider to sign the user in at.
+    pub tiered_oauth: Option<Arc<TieredOAuth>>,
 }
 
 impl AuthorizeState {
@@ -247,6 +250,29 @@ pub async fn authorize_get(
             "Only S256 code_challenge_method is supported",
             &params.state,
         );
+    }
+
+    // UDAP Tiered OAuth: the user signs in at the identity provider the client app names, and
+    // comes back to this request (without `idp`) with a session.
+    if let (Some(tiered), Some(idp)) = (&state.tiered_oauth, params.idp.as_deref())
+        && params.scope.split_whitespace().any(|scope| scope == "udap")
+    {
+        return match tiered.provider_for(idp).await {
+            Ok(provider) => {
+                let mut back = params.clone();
+                back.idp = None;
+                Redirect::to(&federated_login_url(&provider, &authorize_url(&back))).into_response()
+            }
+            Err(error) => {
+                tracing::warn!(idp, %error, "Tiered OAuth: identity provider refused");
+                redirect_with_error(
+                    &params.redirect_uri,
+                    AuthorizationErrorCode::InvalidIdp,
+                    "The identity provider is not trusted, or this server cannot register with it",
+                    &params.state,
+                )
+            }
+        };
     }
 
     // Check for SSO session first (persistent login across OAuth flows)
@@ -948,7 +974,7 @@ async fn fetch_patients(state: &AuthorizeState) -> Result<Vec<PatientInfo>, Stri
 }
 
 /// Create a redirect response with an OAuth error.
-fn redirect_with_error(
+pub(crate) fn redirect_with_error(
     redirect_uri: &str,
     error_code: AuthorizationErrorCode,
     description: &str,

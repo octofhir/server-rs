@@ -41,7 +41,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use jsonwebtoken::{Validation, decode_header};
@@ -110,6 +110,17 @@ impl IdpAuthServiceConfig {
 }
 
 /// Service for handling external IdP authentication flows.
+/// Signs the JWT a client authenticates with at a token endpoint (`private_key_jwt`), for
+/// providers this server registered with by UDAP Dynamic Client Registration.
+pub trait ClientAssertion: Send + Sync {
+    /// A client assertion for `client_id` at the token endpoint `audience`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description if the assertion cannot be signed.
+    fn client_assertion(&self, client_id: &str, audience: &str) -> Result<String, String>;
+}
+
 pub struct IdpAuthService {
     /// Discovery cache for fetching OIDC metadata.
     discovery_cache: Arc<DiscoveryCache>,
@@ -121,9 +132,17 @@ pub struct IdpAuthService {
     providers: Arc<RwLock<HashMap<String, IdentityProviderConfig>>>,
     /// Service configuration.
     config: IdpAuthServiceConfig,
+    /// Signs client assertions for UDAP providers; set once, when UDAP is configured.
+    assertions: Arc<OnceLock<Arc<dyn ClientAssertion>>>,
 }
 
 impl IdpAuthService {
+    /// Authenticate to UDAP providers' token endpoints with assertions from `signer`. The first
+    /// signer set stays.
+    pub fn set_client_assertion(&self, signer: Arc<dyn ClientAssertion>) {
+        let _ = self.assertions.set(signer);
+    }
+
     /// Creates a new IdP authentication service.
     #[must_use]
     pub fn new(config: IdpAuthServiceConfig) -> Self {
@@ -147,6 +166,7 @@ impl IdpAuthService {
             http_client,
             providers: Arc::new(RwLock::new(HashMap::new())),
             config,
+            assertions: Arc::default(),
         }
     }
 
@@ -169,6 +189,7 @@ impl IdpAuthService {
             http_client,
             providers: Arc::new(RwLock::new(HashMap::new())),
             config,
+            assertions: Arc::default(),
         }
     }
 
@@ -249,7 +270,7 @@ impl IdpAuthService {
             params.append_pair("redirect_uri", self.config.callback_url.as_str());
             params.append_pair("scope", &provider.scopes.join(" "));
             params.append_pair("state", state);
-            if provider.protocol == Protocol::Oidc {
+            if matches!(provider.protocol, Protocol::Oidc | Protocol::Udap) {
                 params.append_pair("nonce", nonce);
             }
             params.append_pair("code_challenge", pkce_challenge.as_str());
@@ -451,9 +472,24 @@ impl IdpAuthService {
             ("code_verifier", pkce_verifier.as_str()),
         ];
 
-        // Add client secret for confidential clients
+        // A UDAP provider takes a signed client assertion (UDAP JWT-based client
+        // authentication, with `udap=1`); the others a client secret, if they have one.
         let secret_binding;
-        if let Some(secret) = &provider.client_secret {
+        let assertion;
+        if provider.protocol == Protocol::Udap {
+            let signer = self.assertions.get().ok_or_else(|| {
+                IdpError::TokenExchangeFailed("UDAP client authentication is not set up".into())
+            })?;
+            assertion = signer
+                .client_assertion(&provider.client_id, token_endpoint.as_str())
+                .map_err(IdpError::TokenExchangeFailed)?;
+            params.push((
+                "client_assertion_type",
+                "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            ));
+            params.push(("client_assertion", &assertion));
+            params.push(("udap", "1"));
+        } else if let Some(secret) = &provider.client_secret {
             secret_binding = secret.clone();
             params.push(("client_secret", &secret_binding));
         }

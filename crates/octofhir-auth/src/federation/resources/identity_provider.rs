@@ -302,6 +302,7 @@ impl IdentityProviderResource {
             IdentityProviderType::Oidc => Protocol::Oidc,
             IdentityProviderType::Oauth2 => Protocol::Oauth2,
             IdentityProviderType::Saml => Protocol::Saml,
+            IdentityProviderType::Udap => Protocol::Udap,
         };
         if self.provider_type == IdentityProviderType::Saml {
             let metadata = self
@@ -316,13 +317,26 @@ impl IdentityProviderResource {
                 metadata,
             });
         }
-        // Without discovery these have to be named.
-        if self.provider_type == IdentityProviderType::Oauth2 {
-            for (element, value) in [
-                ("authorizationEndpoint", &self.authorization_endpoint),
-                ("tokenEndpoint", &self.token_endpoint),
-                ("userinfoEndpoint", &self.userinfo_endpoint),
-            ] {
+        // Without discovery these have to be named; a UDAP provider's come from its signed
+        // metadata.
+        if matches!(
+            self.provider_type,
+            IdentityProviderType::Oauth2 | IdentityProviderType::Udap
+        ) {
+            let required: &[(&str, &Option<String>)] =
+                if self.provider_type == IdentityProviderType::Udap {
+                    &[
+                        ("authorizationEndpoint", &self.authorization_endpoint),
+                        ("tokenEndpoint", &self.token_endpoint),
+                    ]
+                } else {
+                    &[
+                        ("authorizationEndpoint", &self.authorization_endpoint),
+                        ("tokenEndpoint", &self.token_endpoint),
+                        ("userinfoEndpoint", &self.userinfo_endpoint),
+                    ]
+                };
+            for (element, value) in required {
                 if value.is_none() {
                     return Err(ConversionError::MissingEndpoint(element));
                 }
@@ -362,6 +376,8 @@ pub enum IdentityProviderType {
     Oauth2,
     /// SAML 2.0.
     Saml,
+    /// UDAP Tiered OAuth: registered with by UDAP Dynamic Client Registration.
+    Udap,
 }
 
 impl IdentityProviderType {
@@ -372,6 +388,7 @@ impl IdentityProviderType {
             Self::Oidc => "oidc",
             Self::Oauth2 => "oauth2",
             Self::Saml => "saml",
+            Self::Udap => "udap",
         }
     }
 }

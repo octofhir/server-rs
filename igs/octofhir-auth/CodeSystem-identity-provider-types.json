@@ -10,7 +10,7 @@
   "description": "Types of external identity providers supported for federated authentication.",
   "caseSensitive": true,
   "content": "complete",
-  "count": 3,
+  "count": 4,
   "concept": [
     {
       "code": "oidc",
@@ -26,6 +26,11 @@
       "code": "saml",
       "display": "SAML 2.0",
       "definition": "SAML 2.0 identity provider"
+    },
+    {
+      "code": "udap",
+      "display": "UDAP Tiered OAuth",
+      "definition": "An identity provider this server registered with by UDAP Dynamic Client Registration, for UDAP Tiered OAuth: OpenID Connect with a signed client assertion at the token endpoint"
     }
   ]
 }

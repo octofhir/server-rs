@@ -16,6 +16,7 @@ use x509_parser::prelude::FromDer;
 
 use super::{B2B_EXTENSION, SIGNING_ALGORITHMS};
 use crate::config::UdapConfig;
+use crate::federation::ClientAssertion;
 
 /// How long a signed document stays valid, and from what age it is signed anew.
 const SIGNED_LIFETIME_SECONDS: i64 = 3600;
@@ -103,6 +104,24 @@ impl UdapMetadata {
         })
     }
 
+    /// The FHIR base URL this server's certificate names, which is its `iss` as a UDAP client.
+    #[must_use]
+    pub fn base_url(&self) -> &str {
+        &self.endpoints.base_url
+    }
+
+    /// Signs `claims` as this server, with its certificate chain in `x5c`: a software statement
+    /// when it registers with an identity provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description if signing fails.
+    pub fn sign_claims(&self, claims: &Value) -> Result<String, String> {
+        let mut header = Header::new(Algorithm::RS256);
+        header.x5c = Some(self.chain.clone());
+        encode(&header, claims, &self.key).map_err(|error| error.to_string())
+    }
+
     fn sign(&self, now: i64) -> Result<String, String> {
         let mut header = Header::new(Algorithm::RS256);
         header.x5c = Some(self.chain.clone());
@@ -159,6 +178,22 @@ impl UdapMetadata {
             "registration_endpoint": self.endpoints.registration,
             "registration_endpoint_jwt_signing_alg_values_supported": SIGNING_ALGORITHMS,
             "signed_metadata": self.signed_metadata()?,
+        }))
+    }
+}
+
+impl ClientAssertion for UdapMetadata {
+    /// UDAP JWT-based client authentication: `iss` and `sub` the client id, `aud` the token
+    /// endpoint, five minutes at most.
+    fn client_assertion(&self, client_id: &str, audience: &str) -> Result<String, String> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        self.sign_claims(&json!({
+            "iss": client_id,
+            "sub": client_id,
+            "aud": audience,
+            "iat": now,
+            "exp": now + super::MAX_TOKEN_LIFETIME_SECONDS,
+            "jti": Uuid::new_v4().to_string(),
         }))
     }
 }

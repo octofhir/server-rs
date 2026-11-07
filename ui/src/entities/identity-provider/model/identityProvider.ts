@@ -1,6 +1,6 @@
 import type { FhirResource } from "@/shared/api/types";
 
-export type IdentityProviderType = "oidc" | "oauth2" | "saml";
+export type IdentityProviderType = "oidc" | "oauth2" | "saml" | "udap";
 
 export interface ClaimToRoles {
 	claim: string;
@@ -49,12 +49,14 @@ export const identityProviderTypeOptions: Array<{
 	{ label: "OpenID Connect", value: "oidc" },
 	{ label: "OAuth 2.0", value: "oauth2" },
 	{ label: "SAML 2.0", value: "saml" },
+	{ label: "UDAP Tiered OAuth", value: "udap" },
 ];
 
 const typeViewById: Record<IdentityProviderType, IdentityProviderTypeView> = {
 	oidc: { label: "OIDC", color: "blue" },
 	oauth2: { label: "OAuth 2.0", color: "gray" },
 	saml: { label: "SAML", color: "gray" },
+	udap: { label: "UDAP", color: "gray" },
 };
 
 export function getIdentityProviderTypeView(

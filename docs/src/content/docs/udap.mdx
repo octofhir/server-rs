@@ -94,10 +94,53 @@ last 60 minutes at most.
 Authorization code applications use the usual `/auth/authorize` with PKCE, and the same JWT at the
 token endpoint, without the extension.
 
+## Tiered OAuth
+
+With Tiered OAuth for User Authentication, a client app names the identity provider its user signs
+in at, and this server signs the user in there as an OpenID Connect client. It needs
+[external identity providers](/server-rs/identity-providers/) enabled, since the sign-in goes
+through them:
+
+```toml
+[auth.udap.tiered_oauth]
+enabled = true
+# How this server presents itself when it registers with an identity provider.
+client_name = "Example FHIR server"           # the host of the base URL if unset
+contacts = ["mailto:fhir-ops@example.org"]
+logo_uri = "https://example.org/logo.png"
+```
+
+The metadata then lists `udap` in `scopes_supported`, and registrations may ask for it. A client
+app that registered with `udap` sends it in the authorization request with the provider's base URL
+in `idp`:
+
+```
+GET /auth/authorize?response_type=code&client_id=…&redirect_uri=…&state=…&aud=…
+    &scope=openid%20udap%20user/*.rs&idp=https://idp.example.org
+```
+
+1. The first time a provider is named, the server reads `{idp}/.well-known/udap`. It trusts the
+   provider when the `signed_metadata` validates up to an anchor of one of its communities, names
+   `idp` as its issuer and in its certificate, and `scopes_supported` has `openid` and `udap`.
+2. It registers with the provider by UDAP Dynamic Client Registration: a software statement signed
+   with this server's certificate, `iss` the FHIR base URL, scopes `openid udap`, its federation
+   callback as the redirect URI. The registration is kept as an `IdentityProvider` of type `udap`:
+   later requests reuse it, and its claim mapping and roles can be set like any other provider's.
+3. The browser goes to the provider with the server's own `state` and a `nonce`. Back at the
+   callback, the server checks the state, exchanges the code with a signed client assertion and
+   `udap=1`, validates the ID token as OpenID Connect requires (signature from the provider's
+   JWKS, `iss` the `idp`, `aud` the server's client id, the nonce), and finds the user by `iss` and
+   `sub` (or links or provisions one, as configured for federation).
+4. The authorization request then continues as for a user who signed in here: consent, then the
+   code to the app.
+
+A provider that is not trusted, or where the server cannot get a client id, is answered with
+`invalid_idp` at the app's redirect URI. A refusal at the provider and a user who cannot be
+matched give `access_denied`, an answer that cannot be verified `invalid_idp`, all with the app's
+`state`.
+
 ## Not done
 
-- Tiered OAuth (`udap_to`): the server does not act as a client of an identity provider through
-  UDAP, so the metadata does not list it.
 - Revocation is read from the configured files. CRL distribution points and OCSP are not fetched,
   and a list past its `nextUpdate` fails every certificate in that community until it is replaced.
 - Intermediates come from `x5c`; missing ones are not fetched through the certificate's AIA.

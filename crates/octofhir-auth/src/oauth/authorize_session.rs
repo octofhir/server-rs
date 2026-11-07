@@ -138,6 +138,7 @@ mod tests {
             aud: "https://fhir.example.com".to_string(),
             launch: None,
             nonce: None,
+            idp: None,
         }
     }
 

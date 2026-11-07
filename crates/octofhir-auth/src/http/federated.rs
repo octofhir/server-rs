@@ -35,9 +35,10 @@ use crate::federation::{
     IdpAuthResult, IdpAuthService, IdpError, ProvisioningConfig, add_identity,
     create_identity_from_auth_result, create_user_from_auth_result, result_from_claims,
 };
-use crate::http::authorize::{AuthorizeState, create_sso_session};
+use crate::http::authorize::{AuthorizeState, create_sso_session, redirect_with_error};
 use crate::http::authorize_templates::render_error_page;
 use crate::http::token::TokenState;
+use crate::oauth::authorize::AuthorizationErrorCode;
 use crate::oauth::pkce::PkceVerifier;
 use crate::storage::User;
 
@@ -435,6 +436,38 @@ pub async fn federated_login(
     (jar.add(cookie), Redirect::to(&redirect)).into_response()
 }
 
+/// When the sign-in was for an authorization request, the client app hears of a failure at its
+/// redirect URI, as UDAP Tiered OAuth requires (`access_denied`, `invalid_idp`). The redirect
+/// URI is checked against the client's own first: `return_to` came through the browser.
+async fn refuse_to_client(
+    state: &FederatedState,
+    return_to: &str,
+    code: AuthorizationErrorCode,
+    description: &str,
+) -> Option<Response> {
+    let query = return_to.strip_prefix("/auth/authorize?")?;
+    let fields: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect();
+    let (client_id, redirect_uri) = (fields.get("client_id")?, fields.get("redirect_uri")?);
+    let client = state
+        .authorize
+        .client_storage
+        .find_by_client_id(client_id)
+        .await
+        .ok()??;
+    if !client.redirect_uris.contains(redirect_uri) {
+        return None;
+    }
+    let client_state = fields.get("state").map_or("", String::as_str);
+    Some(redirect_with_error(
+        redirect_uri,
+        code,
+        description,
+        client_state,
+    ))
+}
+
 fn unverified() -> Response {
     error_page(
         StatusCode::UNAUTHORIZED,
@@ -553,6 +586,16 @@ pub async fn federated_callback(
             if let Some(error) = query.error {
                 let description = query.error_description.unwrap_or_default();
                 tracing::warn!(provider = %pending.provider_id, %error, %description, "Provider refused");
+                if let Some(response) = refuse_to_client(
+                    &state,
+                    &pending.return_to,
+                    AuthorizationErrorCode::AccessDenied,
+                    "The identity provider refused the sign-in",
+                )
+                .await
+                {
+                    return response;
+                }
                 return error_page(
                     StatusCode::FORBIDDEN,
                     "access_denied",
@@ -570,6 +613,16 @@ pub async fn federated_callback(
                 Ok(result) => result,
                 Err(error) => {
                     tracing::warn!(provider = %pending.provider_id, %error, "Federated sign-in failed");
+                    if let Some(response) = refuse_to_client(
+                        &state,
+                        &pending.return_to,
+                        AuthorizationErrorCode::InvalidIdp,
+                        "The identity provider's answer could not be verified",
+                    )
+                    .await
+                    {
+                        return response;
+                    }
                     return unverified();
                 }
             }
@@ -577,7 +630,19 @@ pub async fn federated_callback(
     };
     let user = match state.user_of(&result).await {
         Ok(user) => user,
-        Err(refusal) => return refusal.into_response(),
+        Err(refusal) => {
+            if let Some(response) = refuse_to_client(
+                &state,
+                &pending.return_to,
+                AuthorizationErrorCode::AccessDenied,
+                "The user could not be matched to an account here",
+            )
+            .await
+            {
+                return response;
+            }
+            return refusal.into_response();
+        }
     };
     if let Err(error) = state
         .authorize

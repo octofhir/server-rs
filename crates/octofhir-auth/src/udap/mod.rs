@@ -12,6 +12,7 @@
 pub mod assertion;
 pub mod metadata;
 pub mod statement;
+pub mod tiered;
 pub mod trust;
 
 pub use metadata::UdapMetadata;
