@@ -19,7 +19,7 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 
 | # | Item | Effort | Notes |
 |---|---|---|---|
-| 2.3 | Conformance evidence before releases (`just inferno-*`, not CI); the one failure left in every kit is `ViewDefinition` listed in an R4 CapabilityStatement | M | US Core, Bulk Data and Subscriptions results are in `conformance.mdx` |
+| 2.3 | Conformance evidence before releases (`just inferno-*`, not CI, SQL on FHIR off): rerun US Core and Bulk Data on the current build | S | Subscriptions: 18 of 18. Results in `conformance.mdx` |
 | 2.4 | UDAP Tiered OAuth (`udap_to`), CRL distribution points and OCSP | M | |
 
 ## 3. Tools (own repos)
@@ -27,6 +27,6 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 | # | Tool | Next |
 |---|---|---|
 | 3.1 | fhir-diff | Impact on stored data as a bulk job; R4→R6 per resource; value set expansion diff |
-| 3.3 | `@octofhir/wasm` | Publish to npm (release workflow ready, needs `NPM_TOKEN` and the `@octofhir` scope); one FHIR version per build for a smaller module |
+| 3.3 | `@octofhir/wasm` | Publish to npm (trusted publishing set up in the workflow; the `@octofhir` packages and their trusted publisher on npmjs.com are not there yet); one FHIR version per build for a smaller module |
 | 3.4 | ccda-fhir | Provenance for authors; health status, intervention and outcome observations; slices and terminology in the C-CDA conformance check |
 | 3.5 | fml-rs | LSP |
