@@ -27,6 +27,6 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 | # | Tool | Next |
 |---|---|---|
 | 3.1 | fhir-diff | Impact on stored data as a bulk job; R4→R6 per resource; value set expansion diff |
-| 3.3 | `@octofhir/wasm` | Publish to npm (trusted publishing set up in the workflow; the `@octofhir` packages and their trusted publisher on npmjs.com are not there yet); one FHIR version per build for a smaller module |
+| 3.3 | `@octofhir/wasm` | Published (`@octofhir/wasm`, `-r4`, `-r5`, tag-driven). Next: R4B and R6 single-version packages if asked |
 | 3.4 | ccda-fhir | Provenance for authors; health status, intervention and outcome observations; slices and terminology in the C-CDA conformance check |
 | 3.5 | fml-rs | LSP |
