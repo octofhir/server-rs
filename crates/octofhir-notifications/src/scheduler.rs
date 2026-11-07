@@ -10,8 +10,10 @@ use crate::adapters::{EmailAdapter, NotificationAdapter};
 use crate::adapters::{TelegramAdapter, WebhookAdapter};
 use crate::error::NotificationError;
 use crate::provider::{NotificationProvider, ProviderConfig};
-use crate::queue::{NotificationProviderStorage, NotificationQueueStorage};
-use crate::templates::TemplateRenderer;
+use crate::queue::{
+    NotificationProviderStorage, NotificationQueueStorage, NotificationTemplateStorage,
+};
+use crate::templates::render_template;
 use crate::types::{Notification, NotificationChannel, NotificationStatus};
 
 /// Decryption function type
@@ -26,7 +28,8 @@ where
 {
     queue: Arc<Q>,
     providers: Arc<P>,
-    templates: Arc<TemplateRenderer>,
+    templates: Arc<dyn NotificationTemplateStorage>,
+    batch_size: i32,
     email_adapter: EmailAdapter,
     #[cfg(feature = "http")]
     telegram_adapter: TelegramAdapter,
@@ -43,13 +46,14 @@ where
     pub fn new(
         queue: Arc<Q>,
         providers: Arc<P>,
-        templates: Arc<TemplateRenderer>,
+        templates: Arc<dyn NotificationTemplateStorage>,
         decrypt_fn: DecryptFn,
     ) -> Self {
         Self {
             queue,
             providers,
             templates,
+            batch_size: 10,
             email_adapter: EmailAdapter::new(),
             #[cfg(feature = "http")]
             telegram_adapter: TelegramAdapter::new(),
@@ -57,6 +61,22 @@ where
             webhook_adapter: WebhookAdapter::new(),
             decrypt_fn,
         }
+    }
+
+    /// Send HTTP requests (webhooks, Telegram, SendGrid) through `client`, which can enforce
+    /// where they may go.
+    #[cfg(feature = "http")]
+    pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
+        self.email_adapter = EmailAdapter::with_client(client.clone());
+        self.telegram_adapter = TelegramAdapter::with_client(client.clone());
+        self.webhook_adapter = WebhookAdapter::with_client(client);
+        self
+    }
+
+    /// How many notifications one poll takes.
+    pub fn with_batch_size(mut self, batch_size: i32) -> Self {
+        self.batch_size = batch_size.max(1);
+        self
     }
 
     /// Start processing loop
@@ -68,7 +88,7 @@ where
         loop {
             ticker.tick().await;
 
-            match self.process_batch(10).await {
+            match self.process_batch(self.batch_size).await {
                 Ok(processed) => {
                     if processed > 0 {
                         info!(count = processed, "Processed notifications");
@@ -157,9 +177,12 @@ where
         let decrypted_config = self.decrypt_config(&provider)?;
 
         // 3. Render template
-        let content = self
+        let template = self
             .templates
-            .render(&notification.template_id, &notification.template_data)?;
+            .template(&notification.template_id)
+            .await?
+            .ok_or_else(|| NotificationError::TemplateNotFound(notification.template_id.clone()))?;
+        let content = render_template(&template, &notification.template_data);
 
         // 4. Send via appropriate adapter
         let result = match notification.channel {

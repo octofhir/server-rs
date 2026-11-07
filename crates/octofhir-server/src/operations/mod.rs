@@ -293,6 +293,7 @@ pub fn register_core_operations_all(
         Arc::new(notifications::ResendAllOperation),
     );
     handlers.insert("stats".to_string(), Arc::new(notifications::StatsOperation));
+    handlers.insert("send".to_string(), Arc::new(notifications::SendOperation));
     handlers.insert(
         "cancel".to_string(),
         Arc::new(notifications::CancelOperation),
@@ -406,6 +407,26 @@ pub(crate) fn register_export_definitions(
         parameters: vec![],
         affects_state: false,
     });
+    // The notification queue: `Notification` is no FHIR resource, only where these live.
+    for (code, type_level, instance, affects_state) in [
+        ("send", true, false, true),
+        ("stats", true, false, false),
+        ("resend-all", true, false, true),
+        ("resend", false, true, true),
+        ("cancel", false, true, true),
+    ] {
+        registry.register(OperationDefinition {
+            code: code.into(),
+            url: format!("http://octofhir.org/OperationDefinition/notification-{code}"),
+            kind: OperationKind::Operation,
+            system: false,
+            type_level,
+            instance,
+            resource: vec!["Notification".into()],
+            parameters: vec![],
+            affects_state,
+        });
+    }
     if submit_enabled {
         for (code, affects_state) in [("bulk-submit", true), ("bulk-submit-status", true)] {
             registry.register(OperationDefinition {

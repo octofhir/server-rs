@@ -27,6 +27,12 @@ impl EmailAdapter {
         }
     }
 
+    /// Send API requests through `http_client`.
+    #[cfg(feature = "http")]
+    pub fn with_client(http_client: Client) -> Self {
+        Self { http_client }
+    }
+
     #[cfg(feature = "http")]
     async fn send_sendgrid(
         &self,

@@ -18,9 +18,12 @@ pub struct WebhookAdapter {
 
 impl WebhookAdapter {
     pub fn new() -> Self {
-        Self {
-            http_client: Client::new(),
-        }
+        Self::with_client(Client::new())
+    }
+
+    /// Send through `http_client`, which can enforce where requests may go.
+    pub fn with_client(http_client: Client) -> Self {
+        Self { http_client }
     }
 
     fn sign_payload(&self, payload: &str, secret: &str) -> String {
@@ -81,11 +84,8 @@ impl NotificationAdapter for WebhookAdapter {
             .post(url)
             .header("Content-Type", "application/json");
 
-        // Add custom headers
-        if let Some(headers) = &config.webhook_headers {
-            for (key, value) in headers {
-                request = request.header(key, value);
-            }
+        for header in &config.webhook_header {
+            request = request.header(&header.name, &header.value);
         }
 
         // Add HMAC signature if secret is configured

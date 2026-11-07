@@ -54,12 +54,128 @@
       {
         "id": "NotificationProvider.config",
         "path": "NotificationProvider.config",
-        "short": "Provider configuration",
-        "definition": "Provider-specific configuration as a JSON object",
+        "short": "Provider-specific settings; credentials are never returned",
+        "definition": "Provider-specific settings; credentials are never returned",
         "min": 0,
         "max": "1",
-        "type": [{ "code": "string" }],
-        "comment": "Stored as JSON. Contains api_key, from, smtp_host, smtp_port, bot_token, webhook_url, etc."
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "NotificationProvider.config.from",
+        "path": "NotificationProvider.config.from",
+        "short": "Sender address (email)",
+        "definition": "Sender address (email)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.apiKey",
+        "path": "NotificationProvider.config.apiKey",
+        "short": "API key (SendGrid)",
+        "definition": "API key (SendGrid)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.smtpHost",
+        "path": "NotificationProvider.config.smtpHost",
+        "short": "SMTP host",
+        "definition": "SMTP host",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.smtpPort",
+        "path": "NotificationProvider.config.smtpPort",
+        "short": "SMTP port",
+        "definition": "SMTP port",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "NotificationProvider.config.smtpUsername",
+        "path": "NotificationProvider.config.smtpUsername",
+        "short": "SMTP user name",
+        "definition": "SMTP user name",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.smtpPassword",
+        "path": "NotificationProvider.config.smtpPassword",
+        "short": "SMTP password",
+        "definition": "SMTP password",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.botToken",
+        "path": "NotificationProvider.config.botToken",
+        "short": "Telegram bot token",
+        "definition": "Telegram bot token",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.botUsername",
+        "path": "NotificationProvider.config.botUsername",
+        "short": "Telegram bot name",
+        "definition": "Telegram bot name",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.webhookUrl",
+        "path": "NotificationProvider.config.webhookUrl",
+        "short": "Webhook URL, unless a notification names its own",
+        "definition": "Webhook URL, unless a notification names its own",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "url" }]
+      },
+      {
+        "id": "NotificationProvider.config.webhookSecret",
+        "path": "NotificationProvider.config.webhookSecret",
+        "short": "Key of the HMAC-SHA256 signature of webhook bodies",
+        "definition": "Key of the HMAC-SHA256 signature of webhook bodies",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.webhookHeader",
+        "path": "NotificationProvider.config.webhookHeader",
+        "short": "A header sent with every webhook request",
+        "definition": "A header sent with every webhook request",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "NotificationProvider.config.webhookHeader.name",
+        "path": "NotificationProvider.config.webhookHeader.name",
+        "short": "Header name",
+        "definition": "Header name",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config.webhookHeader.value",
+        "path": "NotificationProvider.config.webhookHeader.value",
+        "short": "Header value",
+        "definition": "Header value",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
       },
       {
         "id": "NotificationProvider.active",

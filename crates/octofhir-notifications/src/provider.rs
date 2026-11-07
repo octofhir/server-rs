@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// NotificationProvider resource
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,8 +75,16 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook_secret: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub webhook_headers: Option<HashMap<String, String>>,
+    /// Headers sent with every webhook request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webhook_header: Vec<WebhookHeader>,
+}
+
+/// A header of webhook requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookHeader {
+    pub name: String,
+    pub value: String,
 }
 
 /// Fields that should be encrypted

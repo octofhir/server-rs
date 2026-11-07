@@ -12,7 +12,7 @@ use tracing::{debug, info, instrument};
 use octofhir_notifications::{
     Notification, NotificationChannel, NotificationError, NotificationProvider,
     NotificationProviderStorage, NotificationQueueStorage, NotificationRecipient,
-    NotificationStats, NotificationStatus,
+    NotificationStats, NotificationStatus, NotificationTemplateStorage, Template,
 };
 
 /// PostgreSQL implementation of notification storage.
@@ -62,18 +62,18 @@ impl PostgresNotificationStorage {
         .await
         .map_err(|e| NotificationError::Internal(e.to_string()))?;
 
-        // Create indexes
-        sqlx_core::query::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_notifications_status ON _notifications(status);
-            CREATE INDEX IF NOT EXISTS idx_notifications_scheduled ON _notifications(scheduled_at) WHERE scheduled_at IS NOT NULL;
-            CREATE INDEX IF NOT EXISTS idx_notifications_next_retry ON _notifications(next_retry_at) WHERE next_retry_at IS NOT NULL;
-            CREATE INDEX IF NOT EXISTS idx_notifications_provider ON _notifications(provider_id);
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NotificationError::Internal(e.to_string()))?;
+        // One statement each: a prepared statement takes only one.
+        for index in [
+            "CREATE INDEX IF NOT EXISTS idx_notifications_status ON _notifications(status)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_scheduled ON _notifications(scheduled_at) WHERE scheduled_at IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_next_retry ON _notifications(next_retry_at) WHERE next_retry_at IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_provider ON _notifications(provider_id)",
+        ] {
+            sqlx_core::query::query(index)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| NotificationError::Internal(e.to_string()))?;
+        }
 
         info!("Created notifications queue table");
         self.tables_created.insert("notifications".to_string());
@@ -549,7 +549,7 @@ impl NotificationProviderStorage for PostgresNotificationStorage {
             r#"
             SELECT resource
             FROM notificationprovider
-            WHERE id = $1
+            WHERE id = $1 AND status != 'deleted'
             "#,
         )
         .bind(id)
@@ -587,6 +587,7 @@ impl NotificationProviderStorage for PostgresNotificationStorage {
             r#"
             SELECT resource
             FROM notificationprovider
+            WHERE status != 'deleted'
             ORDER BY resource->>'name'
             "#,
         )
@@ -613,5 +614,23 @@ impl NotificationProviderStorage for PostgresNotificationStorage {
             }
         }
         Ok(providers)
+    }
+}
+
+#[async_trait]
+impl NotificationTemplateStorage for PostgresNotificationStorage {
+    async fn template(&self, id: &str) -> Result<Option<Template>, NotificationError> {
+        // The table appears with the first NotificationTemplate resource.
+        let row: Result<Option<(serde_json::Value,)>, _> = sqlx_core::query_as::query_as(
+            "SELECT resource FROM notificationtemplate WHERE id = $1 AND status != 'deleted'",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await;
+        match row {
+            Ok(row) => Ok(row.and_then(|(resource,)| Template::from_resource(id, &resource))),
+            Err(error) if error.to_string().contains("does not exist") => Ok(None),
+            Err(error) => Err(NotificationError::Internal(error.to_string())),
+        }
     }
 }

@@ -72,3 +72,13 @@ pub trait NotificationProviderStorage: Send + Sync {
     /// List all providers
     async fn list(&self) -> Result<Vec<crate::provider::NotificationProvider>, NotificationError>;
 }
+
+/// Storage of notification templates
+#[async_trait]
+pub trait NotificationTemplateStorage: Send + Sync {
+    /// The active template with this ID
+    async fn template(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::templates::Template>, NotificationError>;
+}

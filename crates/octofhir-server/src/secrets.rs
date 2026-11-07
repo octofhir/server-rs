@@ -33,6 +33,9 @@ static PASSWORD_KEY: LazyLock<memmem::Finder<'static>> =
 static SECRET_KEY: LazyLock<memmem::Finder<'static>> =
     LazyLock::new(|| memmem::Finder::new(b"ecret\""));
 
+/// Credentials of a `NotificationProvider`, inside its `config`.
+const PROVIDER_SECRETS: [&str; 4] = ["apiKey", "smtpPassword", "botToken", "webhookSecret"];
+
 /// Hashed credential fields per resource type.
 fn secret_fields(resource_type: &str) -> &'static [&'static str] {
     match resource_type {
@@ -63,8 +66,16 @@ pub fn scrub(value: &mut Value) -> bool {
             }
             // What the server presents to a provider cannot be hashed, so it has no mark of its
             // own; its resources do carry `resourceType`.
-            if object.get("resourceType").and_then(Value::as_str) == Some("IdentityProvider") {
-                changed |= object.remove("clientSecret").is_some();
+            match object.get("resourceType").and_then(Value::as_str) {
+                Some("IdentityProvider") => changed |= object.remove("clientSecret").is_some(),
+                Some("NotificationProvider") => {
+                    if let Some(Value::Object(config)) = object.get_mut("config") {
+                        for key in PROVIDER_SECRETS {
+                            changed |= config.remove(key).is_some();
+                        }
+                    }
+                }
+                _ => {}
             }
             // Auth entities are stored without `resourceType`, so match on the hashed value.
             for key in SECRET_KEYS {
@@ -89,6 +100,20 @@ pub fn scrub(value: &mut Value) -> bool {
 ///
 /// A new plain `password` on a User is hashed later by the write path, so it wins.
 pub fn carry_over_secrets(resource_type: &str, payload: &mut Value, stored: &Value) {
+    if resource_type == "NotificationProvider" {
+        if let (Some(Value::Object(incoming)), Some(Value::Object(kept))) =
+            (payload.get_mut("config"), stored.get("config"))
+        {
+            for key in PROVIDER_SECRETS {
+                if !incoming.contains_key(key)
+                    && let Some(value) = kept.get(key)
+                {
+                    incoming.insert(key.to_owned(), value.clone());
+                }
+            }
+        }
+        return;
+    }
     let fields = secret_fields(resource_type);
     let (Some(incoming), Some(stored)) = (payload.as_object_mut(), stored.as_object()) else {
         return;
@@ -105,7 +130,7 @@ pub fn carry_over_secrets(resource_type: &str, payload: &mut Value, stored: &Val
 
 /// Whether updates of this type need the stored version for [`carry_over_secrets`].
 pub fn has_secrets(resource_type: &str) -> bool {
-    !secret_fields(resource_type).is_empty()
+    resource_type == "NotificationProvider" || !secret_fields(resource_type).is_empty()
 }
 
 /// Re-serialized `json` without credential hashes, or `None` when it had none (or isn't JSON).
@@ -174,6 +199,27 @@ pub async fn scrub_credentials_middleware(request: Request, next: Next) -> Respo
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn credentials_of_a_notification_provider_stay_in() {
+        let mut provider = json!({
+            "resourceType": "NotificationProvider",
+            "config": {"webhookUrl": "https://example.org/hook", "webhookSecret": "s", "apiKey": "k"},
+        });
+        assert!(scrub(&mut provider));
+        assert_eq!(
+            provider["config"],
+            json!({"webhookUrl": "https://example.org/hook"})
+        );
+
+        let stored = json!({"config": {"webhookUrl": "https://a", "webhookSecret": "s"}});
+        let mut update = json!({"config": {"webhookUrl": "https://b"}});
+        carry_over_secrets("NotificationProvider", &mut update, &stored);
+        assert_eq!(
+            update["config"],
+            json!({"webhookUrl": "https://b", "webhookSecret": "s"})
+        );
+    }
 
     #[test]
     fn the_secret_of_an_identity_provider_stays_in() {

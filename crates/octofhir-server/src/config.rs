@@ -76,6 +76,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub subscriptions: SubscriptionsConfig,
 
+    /// Outbound messages: email, Telegram and webhooks through `NotificationProvider`s
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
+
     /// `/metrics` endpoint and the Prometheus server the console's dashboards read from
     #[serde(default)]
     pub metrics: MetricsConfig,
@@ -1278,6 +1282,28 @@ impl Default for BulkExportConfig {
             max_files_per_manifest: default_bulk_export_max_files_per_manifest(),
             min_poll_interval_ms: default_bulk_export_min_poll_interval_ms(),
             default_resource_types: Vec::new(),
+        }
+    }
+}
+
+/// Delivery of notifications.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationsConfig {
+    /// Deliver queued notifications.
+    pub enabled: bool,
+    /// How often the queue is looked at, in milliseconds.
+    pub poll_interval_ms: u64,
+    /// How many notifications one look takes.
+    pub batch_size: u16,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            poll_interval_ms: 5_000,
+            batch_size: 10,
         }
     }
 }

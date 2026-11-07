@@ -3,18 +3,16 @@ title: Notifications
 head: []
 ---
 
-import { Aside } from '@astrojs/starlight/components';
 
 The `octofhir-notifications` crate sends outbound messages by email, Telegram and webhook. It has a
 queue, provider adapters and templates.
 
-For notifications about resource changes, use [Subscriptions](/server-rs/subscriptions/).
+For notifications about resource changes, use [Subscriptions](/server-rs/subscriptions/). This
+page is about messages you send yourself: a reminder, a result is ready, a partner system is told.
 
-<Aside type="caution">
-Not connected end to end yet. The server does not start the delivery processor, and no endpoint adds
-a notification to the queue. The operations below have handlers, but no `OperationDefinition`
-registers them, so `/fhir/Notification/$stats` currently answers 404.
-</Aside>
+A message goes out in three steps: a `NotificationProvider` says how to deliver, a
+`NotificationTemplate` says what to write, and `$send` puts one into the queue. The server
+delivers the queue in the background and retries what fails.
 
 ## Providers
 
@@ -29,17 +27,67 @@ A `NotificationProvider` resource holds the settings of one channel:
   "active": true,
   "config": {
     "webhookUrl": "https://partner.example.org/hook",
-    "webhookSecret": "change-me"
+    "webhookSecret": "change-me",
+    "webhookHeader": [{ "name": "X-Partner", "value": "octofhir" }]
   }
 }
 ```
+
+Credentials (`apiKey`, `smtpPassword`, `botToken`, `webhookSecret`) are stored as they are,
+because the server presents them, and are never returned. An update without them keeps the
+stored ones.
 
 | `type` | `provider` | Settings in `config` |
 |--------|------------|----------------------|
 | `email` | `sendgrid` | `apiKey`, `from` |
 | `email` | `smtp` | `smtpHost`, `smtpPort`, `smtpUsername`, `smtpPassword`, `from` |
 | `telegram` | `telegram` | `botToken`, `botUsername` |
-| `webhook` | `generic` | `webhookUrl`, `webhookSecret`, `webhookHeaders` |
+| `webhook` | `generic` | `webhookUrl`, `webhookSecret`, `webhookHeader` (name and value) |
+
+## Templates
+
+```json
+{
+  "resourceType": "NotificationTemplate",
+  "name": "result-ready",
+  "channel": "email",
+  "subject": "Your results, {{name}}",
+  "body": "<p>{{count}} new results are ready.</p>",
+  "contentType": "text/html",
+  "active": true
+}
+```
+
+`{{name}}` is replaced by the value of `name` in the data of `$send`. With `contentType`
+`text/html` the body is HTML and the values are escaped, so data cannot add markup.
+
+## Sending
+
+```http
+POST /fhir/Notification/$send
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    { "name": "provider", "valueString": "<NotificationProvider id>" },
+    { "name": "template", "valueString": "<NotificationTemplate id>" },
+    { "name": "email", "valueString": "patient@example.org" },
+    { "name": "data", "part": [
+      { "name": "name", "valueString": "Ada" },
+      { "name": "count", "valueInteger": 3 }
+    ] },
+    { "name": "scheduledAt", "valueDateTime": "2026-12-01T09:00:00Z" }
+  ]
+}
+```
+
+The recipient goes with the provider's channel: `email`, `telegramChatId`, or `webhookUrl`
+(else the provider's own). `reference` may name the FHIR resource it is about. `scheduledAt` is
+optional. The answer is a `Parameters` with the notification's `id`. A provider or template that
+does not exist or is inactive, a missing recipient, or a webhook URL the
+[outbound policy](/server-rs/configuration/) does not allow is refused with 400; webhooks are
+delivered through the same policy.
 
 ## Webhook Signature
 
@@ -56,10 +104,21 @@ Compute the same value over the raw body and compare.
 A notification is `pending`, `sending`, `sent`, `failed` or `cancelled`. The processor retries a failed
 send up to 5 times, with a delay of `60 * 2^n` seconds, then marks it `failed`.
 
+```toml
+[notifications]
+enabled = true          # deliver the queue
+poll_interval_ms = 5000 # how often it is looked at
+batch_size = 10         # how many one look takes
+```
+
+A webhook request is a JSON body with `notification_id`, `channel`, `template_id`, `recipient`,
+`content` (`subject`, `body`), `data` and `timestamp`.
+
 ## Operations
 
 | Operation | Level | What it does |
 |-----------|-------|--------------|
+| `$send` | `Notification` | Queues a notification |
 | `$resend` | `Notification/{id}` | Queues a failed notification again |
 | `$resend-all` | `Notification` | Queues all failed notifications again |
 | `$stats` | `Notification` | Returns counts by status as `Parameters` |

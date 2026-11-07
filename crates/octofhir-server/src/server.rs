@@ -178,6 +178,8 @@ pub struct AppStateInner {
     pub basic_auth_storage: Arc<dyn BasicAuthStorage>,
     /// External identity providers, when sign-in through them is allowed.
     pub identity_providers: Option<Arc<octofhir_auth::federation::IdpAuthService>>,
+    /// Where outbound requests may go.
+    pub egress: Arc<crate::egress::EgressPolicy>,
     /// Notification queue storage (optional, for notification operations)
     pub notification_queue: Option<Arc<dyn octofhir_notifications::NotificationQueueStorage>>,
     /// PostgreSQL package store for FHIR Implementation Guide resources
@@ -249,6 +251,39 @@ impl FromRef<AppState> for GraphQLState {
             .clone()
             .expect("GraphQLState not initialized in AppState")
     }
+}
+
+/// Sends what is queued, over clients that keep to the egress policy. Secrets of providers are
+/// stored as they are, so there is nothing to decrypt.
+fn start_notification_delivery(
+    config: &crate::config::NotificationsConfig,
+    store: Arc<octofhir_db_postgres::PostgresNotificationStorage>,
+    egress: &Arc<crate::egress::EgressPolicy>,
+    background: &crate::lifecycle::BackgroundRuntime,
+) {
+    let client = match egress
+        .client_builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::error!(%error, "Notifications are not delivered: no HTTP client");
+            return;
+        }
+    };
+    let decrypt: octofhir_notifications::DecryptFn = Arc::new(|value| Ok(value.to_owned()));
+    let processor = octofhir_notifications::NotificationProcessor::new(
+        store.clone(),
+        store.clone(),
+        store,
+        decrypt,
+    )
+    .with_http_client(client)
+    .with_batch_size(i32::from(config.batch_size));
+    let interval = std::time::Duration::from_millis(config.poll_interval_ms.max(100));
+    background.spawn(async move { processor.run(interval).await });
+    tracing::info!("Notification delivery started");
 }
 
 impl FromRef<AppState> for crate::admin::AdminState {
@@ -1853,9 +1888,14 @@ async fn build_app_with_runtime(
     let basic_auth_storage = Arc::new(ArcBasicAuthStorage::new(db_pool.clone()));
 
     // Create notification queue storage
-    let notification_queue: Arc<dyn octofhir_notifications::NotificationQueueStorage> = Arc::new(
-        octofhir_db_postgres::PostgresNotificationStorage::new(db_pool.as_ref().clone()),
-    );
+    let notification_store = Arc::new(octofhir_db_postgres::PostgresNotificationStorage::new(
+        db_pool.as_ref().clone(),
+    ));
+    let notification_queue: Arc<dyn octofhir_notifications::NotificationQueueStorage> =
+        notification_store.clone();
+    if cfg.notifications.enabled {
+        start_notification_delivery(&cfg.notifications, notification_store, &egress, &background);
+    }
 
     let prometheus = cfg
         .metrics
@@ -1918,6 +1958,7 @@ async fn build_app_with_runtime(
         audit_service,
         basic_auth_storage,
         identity_providers,
+        egress: egress.clone(),
         notification_queue: Some(notification_queue),
         package_store,
         subscription_state,

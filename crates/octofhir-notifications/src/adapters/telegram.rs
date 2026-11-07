@@ -13,9 +13,12 @@ pub struct TelegramAdapter {
 
 impl TelegramAdapter {
     pub fn new() -> Self {
-        Self {
-            http_client: Client::new(),
-        }
+        Self::with_client(Client::new())
+    }
+
+    /// Send through `http_client`, which can enforce where requests may go.
+    pub fn with_client(http_client: Client) -> Self {
+        Self { http_client }
     }
 }
 
