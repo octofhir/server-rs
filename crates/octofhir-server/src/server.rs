@@ -180,6 +180,8 @@ pub struct AppStateInner {
     pub identity_providers: Option<Arc<octofhir_auth::federation::IdpAuthService>>,
     /// Where outbound requests may go.
     pub egress: Arc<crate::egress::EgressPolicy>,
+    /// MCP tools over the loaded packages, when `[mcp] toolbox` is on.
+    pub mcp_tools: Option<Arc<crate::mcp::PackageTools>>,
     /// Notification queue storage (optional, for notification operations)
     pub notification_queue: Option<Arc<dyn octofhir_notifications::NotificationQueueStorage>>,
     /// PostgreSQL package store for FHIR Implementation Guide resources
@@ -250,6 +252,16 @@ impl FromRef<AppState> for GraphQLState {
             .graphql_state
             .clone()
             .expect("GraphQLState not initialized in AppState")
+    }
+}
+
+/// The FHIR Schema release of a FHIR version.
+fn schema_version(release: octofhir_core::fhir::FhirVersion) -> octofhir_fhirschema::FhirVersion {
+    match release {
+        octofhir_core::fhir::FhirVersion::R4 => octofhir_fhirschema::FhirVersion::R4,
+        octofhir_core::fhir::FhirVersion::R4B => octofhir_fhirschema::FhirVersion::R4B,
+        octofhir_core::fhir::FhirVersion::R5 => octofhir_fhirschema::FhirVersion::R5,
+        octofhir_core::fhir::FhirVersion::R6 => octofhir_fhirschema::FhirVersion::R6,
     }
 }
 
@@ -1959,6 +1971,8 @@ async fn build_app_with_runtime(
         basic_auth_storage,
         identity_providers,
         egress: egress.clone(),
+        mcp_tools: (cfg.mcp.enabled && cfg.mcp.toolbox)
+            .then(|| crate::mcp::PackageTools::start(cfg, schema_version(release), &background)),
         notification_queue: Some(notification_queue),
         package_store,
         subscription_state,

@@ -772,6 +772,27 @@ pub enum PackageSpec {
     },
 }
 
+impl PackageSpec {
+    /// `name@version` or a folder, as package tools take it; `None` without either.
+    pub fn reference(&self) -> Option<String> {
+        match self {
+            Self::Simple(spec) => Some(spec.replacen('#', "@", 1)),
+            Self::Table {
+                path: Some(path), ..
+            } => Some(path.clone()),
+            Self::Table {
+                id: Some(id),
+                version,
+                ..
+            } => Some(match version {
+                Some(version) => format!("{id}@{version}"),
+                None => id.clone(),
+            }),
+            Self::Table { .. } => None,
+        }
+    }
+}
+
 /// Validation configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationSettings {
@@ -1137,6 +1158,10 @@ pub struct McpConfig {
     /// Offer `write_resource`, labelled and recorded as AI asserted. Default: false.
     #[serde(default)]
     pub allow_writes: bool,
+    /// Offer tools over the loaded packages: find profiles and extensions, describe a profile,
+    /// run a view over given resources. Loads the packages again in memory. Default: false.
+    #[serde(default)]
+    pub toolbox: bool,
 }
 
 fn default_mcp_enabled() -> bool {
@@ -1148,6 +1173,7 @@ impl Default for McpConfig {
         Self {
             enabled: default_mcp_enabled(),
             allow_writes: false,
+            toolbox: false,
         }
     }
 }

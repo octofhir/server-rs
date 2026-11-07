@@ -9,6 +9,7 @@
 //! are off unless `mcp.allow_writes` is set, and each one is recorded with the
 //! `AIAST` label and a Provenance per the AI Transparency IG.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
@@ -46,6 +47,60 @@ const AI_DEVICE_TYPES: &str = "http://hl7.org/fhir/uv/aitransparency/CodeSystem/
 const INSTRUCTIONS: &str = "FHIR server tools. Start from get_capabilities to see resource \
 types and search parameters. Prefer patient_summary over many searches when the question is \
 about one patient. Results are limited to what the access token may read.";
+
+/// Tools of fhir-toolbox this server has no way of its own to answer. Validation and FHIRPath
+/// stay with the server's own stack.
+const TOOLBOX_TOOLS: [&str; 4] = [
+    "find_profiles",
+    "find_extensions",
+    "describe_profile",
+    "run_view",
+];
+
+/// The package tools, built in the background; until they are ready they are not listed.
+pub struct PackageTools {
+    toolbox: tokio::sync::OnceCell<Arc<fhir_toolbox::Toolbox>>,
+}
+
+impl PackageTools {
+    /// Load the packages of `config` (core aside) for FHIR `version`.
+    pub(crate) fn start(
+        config: &crate::config::AppConfig,
+        version: octofhir_fhirschema::FhirVersion,
+        background: &crate::lifecycle::BackgroundRuntime,
+    ) -> Arc<Self> {
+        let tools = Arc::new(Self {
+            toolbox: tokio::sync::OnceCell::new(),
+        });
+        let packages: Vec<String> = config
+            .packages
+            .load
+            .iter()
+            .filter_map(crate::config::PackageSpec::reference)
+            .filter(|spec| !(spec.starts_with("hl7.fhir.r") && spec.contains(".core")))
+            .collect();
+        let ready = tools.clone();
+        background.spawn(async move {
+            let builder = packages
+                .iter()
+                .fold(fhir_toolbox::Toolbox::builder(version), |builder, spec| {
+                    builder.package(spec.clone())
+                });
+            match builder.build().await {
+                Ok(toolbox) => {
+                    tracing::info!(packages = ?toolbox.packages(), "MCP package tools ready");
+                    let _ = ready.toolbox.set(Arc::new(toolbox));
+                }
+                Err(error) => tracing::error!(%error, "MCP package tools are off"),
+            }
+        });
+        tools
+    }
+
+    fn ready(&self) -> Option<&fhir_toolbox::Toolbox> {
+        self.toolbox.get().map(Arc::as_ref)
+    }
+}
 
 fn tools(state: &AppState) -> Vec<Value> {
     let object = |properties: Value, required: &[&str]| json!({"type": "object", "properties": properties, "required": required});
@@ -124,6 +179,16 @@ and recorded with a Provenance naming this client.",
             "inputSchema": object(json!({
                 "resource": {"type": "object", "description": "FHIR resource; with an id it updates"},
             }), &["resource"])}));
+    }
+    if let Some(toolbox) = state.mcp_tools.as_ref().and_then(|tools| tools.ready()) {
+        tools.extend(
+            toolbox
+                .tools()
+                .into_iter()
+                .filter(|tool| TOOLBOX_TOOLS.iter().any(|name| tool["name"] == *name)),
+        );
+        // Sorted, so clients can cache the list.
+        tools.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     }
     tools
 }
@@ -419,6 +484,19 @@ async fn call_tool(
     name: &str,
     arguments: &Value,
 ) -> Result<ToolResult, String> {
+    if TOOLBOX_TOOLS.contains(&name) {
+        let toolbox = state
+            .mcp_tools
+            .as_ref()
+            .and_then(|tools| tools.ready())
+            .ok_or_else(|| format!("Unknown tool {name}"))?;
+        return Ok(match toolbox.call(name, arguments).await {
+            Ok(result) => ToolResult::Done(StatusCode::OK, result),
+            Err(error) => {
+                ToolResult::Done(StatusCode::BAD_REQUEST, json!({"error": error.to_string()}))
+            }
+        });
+    }
     let (method, path, body) = match name {
         "get_capabilities" => (
             Method::GET,

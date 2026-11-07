@@ -82,6 +82,7 @@ json-patch = { workspace = true }
 octofhir-fhirpath = { workspace = true, features = ["lsp", "sql-on-fhir"] }
 octofhir-fhir-model = { workspace = true }
 octofhir-fhirschema = { workspace = true }
+fhir-toolbox = { workspace = true }
 fhir-diff = { workspace = true }
 fml-syntax = { workspace = true }
 fml-model = { workspace = true }

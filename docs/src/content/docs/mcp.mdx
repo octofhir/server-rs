@@ -11,6 +11,7 @@ interaction. Each answer is a single JSON response.
 [mcp]
 enabled = true        # serve POST /mcp (default); when false the endpoint is 404
 allow_writes = false  # offer write_resource (default false)
+toolbox = false       # offer the package tools below (default false)
 ```
 
 ## How a tool call runs
@@ -129,6 +130,23 @@ The FHIR response is both `content` text and `structuredContent`. A FHIR error, 
 tool result with `isError: true` and the OperationOutcome in it, so the agent can read it. A missing or
 invalid argument, or an unknown tool, is a JSON-RPC error `-32602`. A response larger than
 `search.include_limits.max_bytes` is refused with the same code: narrow the request.
+
+## Package tools
+
+With `mcp.toolbox = true` four more tools come from
+[fhir-toolbox](https://github.com/octofhir/fhir-toolbox). They answer from the packages in
+`packages.load`, read again in memory at start; until that is done they are not listed.
+
+| Tool | Arguments | What |
+|---|---|---|
+| `find_profiles` | `query`, `limit` | Profiles by name, title or URL |
+| `find_extensions` | `query`, `context`, `limit` | Extensions, by where they may be used |
+| `describe_profile` | `profile` | The elements a profile constrains, flat |
+| `run_view` | `view`, `resources` | A ViewDefinition over resources given in the call, not over stored data |
+
+They do not go through the HTTP stack: they read no stored data, so access policies have
+nothing to decide. Validation and FHIRPath stay with `validate_resource` and `evaluate_fhirpath`
+above, over this server's own definitions.
 
 ## Writes
 

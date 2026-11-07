@@ -33,6 +33,7 @@ async fn start_server(postgres_url: &str) -> (String, ServerHandle) {
     });
     config.auth.policy.anonymous_access = true;
     config.mcp.allow_writes = true;
+    config.mcp.toolbox = true;
     config.cql.enabled = true;
     config.packages.load = vec![octofhir_server::config::PackageSpec::Table {
         id: Some("hl7.fhir.r4.core".into()),
@@ -420,7 +421,15 @@ async fn mcp(client: &Client, base: &str) {
     .await;
     assert_eq!(legacy["result"]["protocolVersion"], "2025-06-18");
 
-    let (_, listed) = mcp_call(client, base, "tools/list", json!({})).await;
+    // The package tools come once their packages are read.
+    let mut listed = Value::Null;
+    for _ in 0..100 {
+        listed = mcp_call(client, base, "tools/list", json!({})).await.1;
+        if listed.to_string().contains("\"run_view\"") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     let names: Vec<&str> = listed["result"]["tools"]
         .as_array()
         .unwrap()
@@ -429,6 +438,20 @@ async fn mcp(client: &Client, base: &str) {
         .collect();
     assert!(names.contains(&"patient_summary"));
     assert!(names.contains(&"write_resource"));
+    assert!(names.contains(&"run_view") && names.contains(&"find_profiles"));
+    let view = tool(
+        client,
+        base,
+        "run_view",
+        json!({
+            "view": {"resourceType": "ViewDefinition", "resource": "Patient", "status": "active",
+                "select": [{"column": [{"name": "id", "path": "id"}]}]},
+            "resources": [{"resourceType": "Patient", "id": "p1"}],
+        }),
+    )
+    .await;
+    assert_eq!(view["isError"], false, "{view}");
+    assert!(view.to_string().contains("p1"), "{view}");
     let mut sorted = names.clone();
     sorted.sort_unstable();
     assert_eq!(names, sorted, "a deterministic order lets clients cache");
