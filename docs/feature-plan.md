@@ -27,4 +27,4 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 | # | Tool | Next |
 |---|---|---|
 | 3.1 | fhir-diff | Impact on stored data as a bulk job; R4→R6 per resource; value set expansion diff |
-| 3.4 | ccda-fhir | Provenance for authors; health status, intervention and outcome observations; slices and terminology in the C-CDA conformance check |
+| 3.4 | ccda-fhir | Health status, intervention and outcome observations; slices and terminology in the C-CDA conformance check |
