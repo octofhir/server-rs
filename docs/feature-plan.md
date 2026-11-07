@@ -19,8 +19,7 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 
 | # | Item | Effort | Notes |
 |---|---|---|---|
-| 2.2 | Inferno Subscriptions test kit, run locally and published | S | `$events`, `$status`, heartbeat exist |
-| 2.3 | Conformance evidence: Inferno US Core and Subscriptions before releases (`just inferno-*`, not CI), full CapabilityStatement | M | |
+| 2.3 | Conformance evidence before releases (`just inferno-*`, not CI); the one failure left in every kit is `ViewDefinition` listed in an R4 CapabilityStatement | M | US Core, Bulk Data and Subscriptions results are in `conformance.mdx` |
 | 2.4 | UDAP Tiered OAuth (`udap_to`), CRL distribution points and OCSP | M | |
 
 ## 3. Tools (own repos)
