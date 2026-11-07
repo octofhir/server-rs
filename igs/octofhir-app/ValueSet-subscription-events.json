@@ -1,0 +1,16 @@
+{
+  "resourceType": "ValueSet",
+  "id": "subscription-events",
+  "url": "http://octofhir.io/ValueSet/subscription-events",
+  "name": "SubscriptionEvents",
+  "title": "App Subscription Events",
+  "status": "active",
+  "description": "The changes of a resource an App subscription is triggered by",
+  "compose": {
+    "include": [
+      {
+        "system": "http://octofhir.io/CodeSystem/subscription-events"
+      }
+    ]
+  }
+}

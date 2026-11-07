@@ -114,8 +114,31 @@ narrows it further:
 
 ## Subscriptions
 
-`App.subscriptions` become `AppSubscription` resources with a `trigger` (`resourceType`, `event` of
-`create`, `update` or `delete`, optional `fhirpath`), and a `channel` or `notification`.
+`App.subscriptions` become `AppSubscription` resources. Each has a `trigger`: a `resourceType`, an
+`event` (`create`, `update` or `delete`) and an optional `fhirpath` that has to give `true`. A
+change that matches goes to its `channel`, its `notification`, or both:
 
-The server stores them but delivers nothing for them yet. For event delivery, use
+```json
+{
+  "id": "new-results",
+  "trigger": {"resourceType": "Observation", "event": "create", "fhirpath": "status = 'final'"},
+  "channel": {"type": "webhook", "endpoint": "https://portal.example.org/events"},
+  "notification": {
+    "provider": "NotificationProvider/mail",
+    "channel": ["email"],
+    "template": "result-ready",
+    "recipient": {"fhirpath": "subject"},
+    "delay": {"relativeTo": "issued", "offset": "PT1H"}
+  }
+}
+```
+
+| Part | What happens |
+|---|---|
+| `channel` | `POST` to `endpoint` with `subscription`, `event` and `resource`, through the outbound policy |
+| `notification` | A [notification](/server-rs/notifications/) is queued per channel, with the resource's simple elements as template data |
+| `recipient.fhirpath` | Text (an email or URL), a ContactPoint, or a Reference whose `telecom` holds the address |
+| `delay` | Sends at the date `relativeTo` gives, moved by the ISO 8601 `offset` (`-PT24H` is a day before) |
+
+A delete is matched against the resource as it was. For FHIR topic-based subscriptions, see
 [Subscriptions](/server-rs/subscriptions/).

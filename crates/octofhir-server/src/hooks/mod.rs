@@ -4,6 +4,7 @@
 //! resource events for various server functionality:
 //!
 //! - [`PolicyReloadHook`] - Triggers policy cache reload on AccessPolicy changes
+//! - [`AppSubscriptionHook`] - Sends matching changes to App subscriptions
 //! - [`IdentityProviderHook`] - Keeps sign-in in step with the IdentityProvider resources
 //! - [`GatewayReloadHook`] - Triggers gateway router reload on App/CustomOperation changes
 //! - [`SearchParamHook`] - Updates search parameter registry on SearchParameter changes
@@ -38,6 +39,7 @@
 //! registry.start_dispatcher(broadcaster.subscribe());
 //! ```
 
+mod app_subscription;
 mod audit;
 mod gateway;
 mod graphql;
@@ -45,6 +47,7 @@ mod identity_provider;
 mod policy;
 mod search;
 
+pub use app_subscription::AppSubscriptionHook;
 pub use audit::AsyncAuditHook;
 pub use gateway::GatewayReloadHook;
 pub use graphql::GraphQLSubscriptionHook;

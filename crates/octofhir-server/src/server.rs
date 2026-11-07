@@ -1908,6 +1908,19 @@ async fn build_app_with_runtime(
     if cfg.notifications.enabled {
         start_notification_delivery(&cfg.notifications, notification_store, &egress, &background);
     }
+    // App subscriptions: matching changes go to their webhooks and become notifications.
+    match egress.client_builder().timeout(std::time::Duration::from_secs(30)).build() {
+        Ok(client) => {
+            let hook = crate::hooks::AppSubscriptionHook::new(
+                storage.clone(),
+                notification_queue.clone(),
+                fhirpath_engine.clone(),
+                client,
+            );
+            hook_registry.register_resource(Arc::new(hook)).await;
+        }
+        Err(error) => tracing::error!(%error, "App subscriptions stay off: no HTTP client"),
+    }
 
     let prometheus = cfg
         .metrics

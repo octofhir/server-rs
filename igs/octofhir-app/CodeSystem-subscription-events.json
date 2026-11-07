@@ -1,0 +1,28 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "subscription-events",
+  "url": "http://octofhir.io/CodeSystem/subscription-events",
+  "name": "SubscriptionEvents",
+  "title": "App Subscription Events",
+  "status": "active",
+  "content": "complete",
+  "description": "The changes of a resource an App subscription is triggered by",
+  "caseSensitive": true,
+  "concept": [
+    {
+      "code": "create",
+      "display": "Create",
+      "definition": "The resource was created"
+    },
+    {
+      "code": "update",
+      "display": "Update",
+      "definition": "The resource was updated"
+    },
+    {
+      "code": "delete",
+      "display": "Delete",
+      "definition": "The resource was deleted"
+    }
+  ]
+}

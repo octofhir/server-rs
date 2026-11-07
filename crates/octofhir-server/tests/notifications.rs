@@ -80,9 +80,13 @@ struct Api {
 
 impl Api {
     async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
+        self.post_at(&format!("fhir/{path}"), body).await
+    }
+
+    async fn post_at(&self, path: &str, body: Value) -> (StatusCode, Value) {
         let response = self
             .client
-            .post(format!("{}/fhir/{path}", self.base))
+            .post(format!("{}/{path}", self.base))
             .bearer_auth(&self.bearer)
             .header("content-type", "application/fhir+json")
             .json(&body)
@@ -272,6 +276,72 @@ async fn a_notification_goes_out_through_a_webhook() {
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(api.stats().await["cancelled"], 1);
+
+    // An App subscription: a matching change goes to its webhook and becomes a notification.
+    Mock::given(method("POST"))
+        .and(path("/app"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&hooks)
+        .await;
+    let (status, subscription) = api
+        .post_at(
+            "App",
+            json!({
+                "resourceType": "App",
+                "name": "Portal",
+                "status": "active",
+                "secret": "portal-secret",
+                "endpoint": {"url": format!("{}/backend", hooks.uri())},
+                "subscriptions": [{
+                    "id": "female-patients",
+                    "trigger": {"resourceType": "Patient", "event": "create", "fhirpath": "gender = 'female'"},
+                    "channel": {"type": "webhook", "endpoint": format!("{}/app", hooks.uri())},
+                    "notification": {
+                        "provider": format!("NotificationProvider/{provider}"),
+                        "channel": ["webhook"],
+                        "template": template,
+                    },
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{subscription}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    for gender in ["male", "female"] {
+        let (status, body) = api
+            .post(
+                "Patient",
+                json!({"resourceType": "Patient", "gender": gender, "name": [{"family": "Lovelace"}]}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    let mut app = Vec::new();
+    let mut hook = Vec::new();
+    for _ in 0..50 {
+        let received = hooks.received_requests().await.unwrap();
+        app = received
+            .iter()
+            .filter(|r| r.url.path() == "/app")
+            .cloned()
+            .collect();
+        hook = received
+            .iter()
+            .filter(|r| r.url.path() == "/hook")
+            .cloned()
+            .collect();
+        if !app.is_empty() && hook.len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(app.len(), 1, "only the female patient matches");
+    let body: Value = serde_json::from_slice(&app[0].body).unwrap();
+    assert_eq!(body["event"], "create");
+    assert_eq!(body["resource"]["gender"], "female");
+    assert_eq!(hook.len(), 2, "the subscription's notification went out");
+    let body: Value = serde_json::from_slice(&hook[1].body).unwrap();
+    assert_eq!(body["data"]["gender"], "female");
 
     // What cannot be delivered is not queued.
     for (extra, provider, template) in [

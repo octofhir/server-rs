@@ -203,6 +203,14 @@ pub const EMBEDDED_APP_RESOURCES: &[(&str, &str)] = &[
         "CodeSystem-app-status.json",
         include_str!("../../../igs/octofhir-app/CodeSystem-app-status.json"),
     ),
+    (
+        "ValueSet-subscription-events.json",
+        include_str!("../../../igs/octofhir-app/ValueSet-subscription-events.json"),
+    ),
+    (
+        "CodeSystem-subscription-events.json",
+        include_str!("../../../igs/octofhir-app/CodeSystem-subscription-events.json"),
+    ),
 ];
 
 /// Embedded SQL on FHIR compatibility resources

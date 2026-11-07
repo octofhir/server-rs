@@ -19,7 +19,6 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 
 | # | Item | Effort | Notes |
 |---|---|---|---|
-| 2.1 | App subscriptions that fire: `AppSubscription` triggers (type, event, FHIRPath) to their webhook channel and to notifications | M | reconcile stores them; nothing dispatches them yet. Notifications themselves (`$send`, delivery) work |
 | 2.2 | Inferno Subscriptions test kit, run locally and published | S | `$events`, `$status`, heartbeat exist |
 | 2.3 | Conformance evidence: Inferno US Core and Subscriptions before releases (`just inferno-*`, not CI), full CapabilityStatement | M | |
 | 2.4 | UDAP Tiered OAuth (`udap_to`), CRL distribution points and OCSP | M | |
