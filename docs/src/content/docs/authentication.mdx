@@ -239,58 +239,8 @@ client with its AccessPolicy.
 
 ## External Identity Providers
 
-People can sign in through any OpenID Connect provider, on the console's sign-in page and on the
-page of `/auth/authorize`. Register the server at the provider with this redirect URI:
-
-```
-https://your-server/auth/idp/callback
-```
-
-Then create an `IdentityProvider`, in **Auth → Identity Providers** or through the API. It takes
-effect at once:
-
-```http
-POST /IdentityProvider
-Content-Type: application/json
-
-{
-  "resourceType": "IdentityProvider",
-  "name": "Company SSO",
-  "type": "oidc",
-  "issuer": "https://sso.example.org/realms/main",
-  "clientId": "fhir-server",
-  "clientSecret": "secret-from-the-provider",
-  "active": true,
-  "scopes": ["openid", "email", "profile"]
-}
-```
-
-`clientSecret` is stored as it is, because the server has to present it, and it is never returned.
-An update without it keeps the stored one.
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /auth/idp/providers` | The active providers, for a sign-in page |
-| `GET /auth/idp/{id}/login?return_to=/ui/` | Sends the browser to the provider; `return_to` is a path on this server |
-| `GET /auth/idp/callback` | Where the provider sends the browser back |
-
-### Who gets in
-
-| Situation | Result |
-|---|---|
-| The provider's account is linked to a user | Signed in as that user |
-| `link_by_email` is on and a user has the same verified email | The account is linked, then as above |
-| `auto_provision_users` is on | A user is created with `default_roles` |
-| Otherwise | Refused with 403: the user has to exist first |
-
-A created user keeps the name the provider suggests only when it is free. Being signed in gives
-what the user's roles and access policies allow, as with a password, so a user without roles can
-reach nothing yet.
-
-`link_by_email` is off by default: a provider that vouches for an address it does not own could
-sign in as the user with that address. Turn it on only for providers you control.
-
-A console session started this way lasts as long as its access token, then asks to sign in again.
+People can sign in through OpenID Connect, OAuth 2.0 and SAML 2.0 providers, with roles from
+their groups. See [Identity Providers](/server-rs/identity-providers/).
 
 ## Interactive Authorization Flow
 

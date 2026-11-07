@@ -1,0 +1,215 @@
+---
+title: Identity Providers
+description: Sign-in through OpenID Connect, OAuth 2.0 and SAML 2.0 providers, and roles from their groups.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+People can sign in with an account they already have elsewhere. Each active provider gets a
+"Sign in with …" button on the console's sign-in page and on the page of `/auth/authorize`, so
+SMART apps get it too.
+
+| Protocol | Use it for | What vouches for the user |
+|---|---|---|
+| OpenID Connect | Google, GitLab, Microsoft Entra ID, Okta, any OIDC provider | A signed ID token, checked against the provider's keys |
+| OAuth 2.0 | Providers without OpenID Connect, such as GitHub | The provider's userinfo endpoint, over TLS |
+| SAML 2.0 | Corporate and campus single sign-on | A signed SAML response or assertion |
+
+## Set up a provider
+
+1. Register this server at the provider (the details per protocol are below).
+2. In the console, open **Auth → Identity providers** and add the provider. It takes effect at
+   once, without a restart. The same works through the API with an `IdentityProvider` resource.
+3. Decide who gets in and with which roles: see [Who gets in](#who-gets-in) and
+   [Roles from groups](#roles-from-groups).
+
+`clientSecret` is stored as it is, because the server presents it to the provider, and it never
+leaves the server. An update without it keeps the stored one.
+
+### OpenID Connect
+
+Register a web application at the provider with the redirect URI
+`https://your-server/auth/idp/callback`. Then:
+
+```json
+{
+  "resourceType": "IdentityProvider",
+  "name": "google",
+  "displayName": "Google",
+  "type": "oidc",
+  "issuer": "https://accounts.google.com",
+  "clientId": "…apps.googleusercontent.com",
+  "clientSecret": "…",
+  "scopes": ["openid", "email", "profile"],
+  "active": true
+}
+```
+
+The rest comes from the provider's discovery document. Endpoints set on the resource override it.
+
+| Provider | `issuer` | Notes |
+|---|---|---|
+| Google | `https://accounts.google.com` | Create an OAuth client of type *Web application*. Google reports no groups; `hd` holds the Workspace domain |
+| GitLab | `https://gitlab.com`, or your instance | Add an application with the scopes `openid`, `email`, `profile`. `groups_direct` is in the ID token, `groups` only in userinfo |
+| Your own provider | Its issuer URL | Add a mapper that puts groups into the ID token or userinfo, if roles should follow them |
+
+### OAuth 2.0
+
+A provider without OpenID Connect has no discovery and no ID token. Name its three endpoints,
+and say which userinfo fields identify the user. GitHub, for example:
+
+```json
+{
+  "resourceType": "IdentityProvider",
+  "name": "github",
+  "displayName": "GitHub",
+  "type": "oauth2",
+  "issuer": "https://github.com",
+  "clientId": "…",
+  "clientSecret": "…",
+  "scopes": ["read:user", "user:email"],
+  "authorizationEndpoint": "https://github.com/login/oauth/authorize",
+  "tokenEndpoint": "https://github.com/login/oauth/access_token",
+  "userinfoEndpoint": "https://api.github.com/user",
+  "userMapping": { "subjectClaim": "id", "usernameClaim": "login" },
+  "active": true
+}
+```
+
+The callback URL of the OAuth app is `https://your-server/auth/idp/callback`. Emails from such a
+provider are not verified, so they never link accounts.
+
+### SAML 2.0
+
+This server is the service provider:
+
+| Value at the provider | |
+|---|---|
+| Entity ID (SP issuer) | `https://your-server/auth/idp/saml/metadata` |
+| Assertion consumer service, HTTP-POST | `https://your-server/auth/idp/saml/acs` |
+| Metadata of this server | `GET https://your-server/auth/idp/saml/metadata` |
+
+Download the provider's metadata and paste it into the provider:
+
+```json
+{
+  "resourceType": "IdentityProvider",
+  "name": "campus",
+  "displayName": "Campus SSO",
+  "type": "saml",
+  "issuer": "https://sso.example.org/realms/main",
+  "samlMetadata": "<md:EntityDescriptor …>…</md:EntityDescriptor>",
+  "userMapping": { "emailClaim": "email" },
+  "active": true
+}
+```
+
+`issuer` is the provider's `entityID`, exactly as in its metadata. The NameID becomes the
+subject, so ask for a persistent or username NameID, not a transient one. Every attribute is a
+claim under its name; for attributes named by URL, put that URL in `emailClaim` or a rule.
+
+A response is accepted only when its `Response` or its `Assertion` is signed by a key from the
+metadata, its audience is this server, it answers a request this server made, and it was not
+used before. Requests go out with HTTP-Redirect, answers come back with HTTP-POST.
+
+Many providers want signed requests and say so in their metadata. Give the server a certificate
+for that:
+
+```toml
+[auth.federation]
+saml_certificate = "/etc/octofhir/saml.crt"
+saml_private_key = "/etc/octofhir/saml.key"
+```
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes -days 730 \
+  -subj "/CN=your-server" -keyout saml.key -out saml.crt
+```
+
+<Aside type="caution">
+SAML signatures are checked by the `saml-rs` crate, pure Rust and without native XML libraries.
+It is younger than 1.0 and has not had an external security audit.
+</Aside>
+
+## Who gets in
+
+| Situation | Result |
+|---|---|
+| The provider's account is linked to a user | Signed in as that user |
+| `link_by_email` is on and a user has the same verified email | The account is linked, then as above |
+| `auto_provision_users` is on | A user is created, with `default_roles` |
+| Otherwise | Refused with 403: the user has to exist first |
+
+A created user keeps the name the provider suggests only when it is free; otherwise the name
+is the provider's ID and the subject. Signing in gives what the user's roles and access policies
+allow, as a password does.
+
+`link_by_email` is off by default: a provider that vouches for an address it does not own could
+sign in as the user with that address. Turn it on only for providers you control.
+
+## Roles from groups
+
+Rules turn values of a claim into roles. With rules, the provider decides the roles at every
+sign-in: leaving a group at the provider takes its role away the next time, and someone no rule
+gives a role is refused.
+
+```json
+"userMapping": {
+  "claimsToRoles": [
+    { "claim": "groups", "value": "fhir-admins", "roles": ["admin"] },
+    { "claim": "groups", "value": "fhir-*", "roles": ["$1"] },
+    { "claim": "hd", "value": "example.org", "roles": ["reader"] }
+  ]
+}
+```
+
+| Part | Meaning |
+|---|---|
+| `claim` | The claim. A dotted path reaches into objects (`realm_access.roles`); a URL-like name is taken as it is |
+| `value` | Compared with the whole value: a literal, a pattern with `*`, or a regular expression between `^` and `$` |
+| `roles` | The roles to give. `$1` stands for what `*` or the first group caught |
+
+A claim with a list matches when any item does. When a rule names a claim the ID token does not
+hold, the userinfo endpoint is asked, and its claims count only when they are about the same
+subject. A rule that is not a valid expression takes the provider off until it is fixed; the
+server log says why. `rolesClaim` instead takes the roles from a claim as they are.
+
+Rules can give any role, `admin` included. Keep the patterns tight.
+
+## Configuration
+
+```toml
+[auth.federation]
+allow_external_idp = true      # offer the active providers on sign-in pages
+auto_provision_users = false   # create users the server does not know yet
+link_by_email = false          # link accounts by verified email; only for providers you control
+default_roles = []             # roles of created users, and of everyone whose roles rules decide
+jwks_cache_ttl = "1h"          # when a provider does not say; an unknown kid refetches at once
+allow_http = false             # providers without TLS, for local testing only
+saml_certificate = ""          # optional: sign SAML requests
+saml_private_key = ""
+```
+
+## Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /auth/idp/providers` | The active providers, for a sign-in page |
+| `GET /auth/idp/{id}/login?return_to=/ui/` | Starts a sign-in; `return_to` is a path on this server |
+| `GET /auth/idp/callback` | Where an OpenID Connect or OAuth 2.0 provider sends the browser back |
+| `POST /auth/idp/saml/acs` | Where a SAML provider posts its response |
+| `GET /auth/idp/saml/metadata` | This server's SAML metadata |
+
+A sign-in is single use, lasts ten minutes and is tied to the browser that started it, so an
+answer cannot be planted in another browser. A console session started this way lasts as long
+as its access token.
+
+## Troubleshooting
+
+| What you see | Why |
+|---|---|
+| "This account is not known here" | No linked user and `auto_provision_users` is off |
+| "This account has no role here" | Rules are set and none matched; check the groups the provider sends |
+| "could not be verified" | Wrong client secret, issuer or keys, or a SAML response that is unsigned, for another audience or changed |
+| "cannot be used yet" on SAML | Usually the provider wants signed requests: set `saml_certificate` |
+| The button is missing | The provider is inactive, or its resource has an error; the server log names it |

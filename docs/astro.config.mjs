@@ -42,6 +42,7 @@ export default defineConfig({
           items: [
             { label: 'Overview', link: 'authentication/' },
             { label: 'Auth Architecture', link: 'auth-architecture/' },
+            { label: 'Identity Providers', link: 'identity-providers/' },
             { label: 'Access Policies', link: 'access-policies/' },
             { label: 'UDAP Security', link: 'udap/' },
             { label: 'JWT Key Persistence', link: 'jwt-key-persistence/' },

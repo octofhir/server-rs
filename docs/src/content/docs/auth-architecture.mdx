@@ -74,10 +74,11 @@ cache that reloads when an `AccessPolicy` changes. See [Access Policies](/server
 
 ## External Identity Providers
 
-`IdentityProvider` resources name OpenID Connect providers. `http/federated.rs` runs the sign-in:
-it redirects with PKCE and a nonce, checks the ID token against the provider's keys, and finds or
-creates the user. The `IdentityProviderHook` keeps the registered providers in step with the
-resources, so a change needs no restart. See [Authentication](/server-rs/authentication/#external-identity-providers).
+`IdentityProvider` resources name OpenID Connect, OAuth 2.0 and SAML 2.0 providers.
+`http/federated.rs` runs the sign-in: PKCE and a nonce for OAuth, the ID token checked against the
+provider's keys, SAML responses checked in `federation/saml.rs`; then it finds or creates the user
+and applies the role rules. The `IdentityProviderHook` keeps the registered providers in step with the
+resources, so a change needs no restart. See [Identity Providers](/server-rs/identity-providers/).
 
 ## Audit
 

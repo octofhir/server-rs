@@ -241,7 +241,7 @@ duration = "5m"
 ### External Identity Providers
 
 Providers are `IdentityProvider` resources; these keys say what happens to the people who come
-through them. See [Authentication](/server-rs/authentication/#external-identity-providers).
+through them. See [Identity Providers](/server-rs/identity-providers/).
 
 ```toml
 [auth.federation]
@@ -251,6 +251,7 @@ link_by_email = false          # link accounts by verified email; only for provi
 default_roles = []             # roles of created users
 jwks_cache_ttl = "1h"          # when a provider does not say; an unknown kid refetches at once
 allow_http = false             # providers without TLS, for local testing
+saml_certificate = ""          # optional: sign SAML requests, with saml_private_key
 ```
 
 ### Sessions & Cookies
