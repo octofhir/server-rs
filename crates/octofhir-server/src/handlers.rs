@@ -369,6 +369,16 @@ pub async fn metadata(
     // Registry reloads must be reflected immediately, without rebuilding profiles
     // or querying canonical storage for every metadata request.
     refresh_capability_search(&mut body, &state.search_config.config().registry);
+    // Topics change at run time; the backport lists them on the Subscription resource.
+    if matches!(
+        state.config.fhir.release(),
+        Ok(octofhir_core::fhir::FhirVersion::R4 | octofhir_core::fhir::FhirVersion::R4B)
+    ) {
+        advertise_topics(
+            &mut body,
+            &state.subscription_state.topic_registry.topic_urls(),
+        );
+    }
 
     // Handle _summary parameter
     let response = match params.summary.as_deref() {
@@ -380,6 +390,42 @@ pub async fn metadata(
     };
 
     (StatusCode::OK, Json(response))
+}
+
+/// Canonical of the backport extension that names a supported topic.
+const TOPIC_CANONICAL_EXTENSION: &str = "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/capabilitystatement-subscriptiontopic-canonical";
+
+/// List `topics` on the Subscription resource of a CapabilityStatement (Subscriptions Backport).
+fn advertise_topics(capability: &mut Value, topics: &[String]) {
+    let resources = capability
+        .get_mut("rest")
+        .and_then(|rest| rest.get_mut(0))
+        .and_then(|rest| rest.get_mut("resource"))
+        .and_then(Value::as_array_mut);
+    let Some(subscription) = resources
+        .into_iter()
+        .flatten()
+        .find(|resource| resource["type"] == "Subscription")
+    else {
+        return;
+    };
+    let Some(subscription) = subscription.as_object_mut() else {
+        return;
+    };
+    let extensions = subscription
+        .entry("extension")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Some(extensions) = extensions.as_array_mut() {
+        extensions.retain(|extension| extension["url"] != TOPIC_CANONICAL_EXTENSION);
+        extensions.extend(
+            topics
+                .iter()
+                .map(|topic| json!({"url": TOPIC_CANONICAL_EXTENSION, "valueCanonical": topic})),
+        );
+        if extensions.is_empty() {
+            subscription.remove("extension");
+        }
+    }
 }
 
 /// Interactions of every release, then the codes only R6 has. `delete-conditional-multiple`
@@ -1107,6 +1153,14 @@ async fn validate_write_content_with_resolver(
     profiles: &[String],
     resolver: Arc<crate::operations::validation_reference::ValidationReferenceResolver>,
 ) -> Result<(crate::validation::ValidationOutcome, LocalReferenceSet), ApiError> {
+    if payload["resourceType"] == "Subscription"
+        && let Some(url) = crate::subscriptions::backport::cross_version_extension(payload)
+    {
+        return Err(ApiError::unprocessable_entity(
+            format!("Subscription: cross-version extension {url} is not supported"),
+            None,
+        ));
+    }
     let mut references = local_reference_set(payload, state)?;
     if state.config.validation.skip_reference_validation {
         let outcome = state

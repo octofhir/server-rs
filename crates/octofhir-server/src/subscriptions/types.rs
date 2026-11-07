@@ -564,10 +564,15 @@ impl NotificationBundleBuilder {
 
         let mut entries = vec![];
 
-        // Add SubscriptionStatus as first entry
-        let status = serde_json::json!({
+        // Add SubscriptionStatus as first entry. A handshake goes out before activation, while
+        // the subscription is still `requested`.
+        let state = match self.event_type {
+            SubscriptionEventType::Handshake => "requested",
+            _ => "active",
+        };
+        let mut status = serde_json::json!({
             "resourceType": "SubscriptionStatus",
-            "status": "active",
+            "status": state,
             "type": self.event_type.as_str(),
             "eventsSinceSubscriptionStart": self.event_number.to_string(),
             "notificationEvent": [{
@@ -579,6 +584,13 @@ impl NotificationBundleBuilder {
             },
             "topic": self.topic_url
         });
+        // The focus is referenced whatever the payload; `empty` drops it at delivery.
+        if let Some(focus) = &self.focus
+            && let (Some(kind), Some(id)) = (focus["resourceType"].as_str(), focus["id"].as_str())
+        {
+            status["notificationEvent"][0]["focus"] =
+                serde_json::json!({"reference": format!("{kind}/{id}")});
+        }
 
         entries.push(serde_json::json!({
             "fullUrl": format!("urn:uuid:{}", uuid::Uuid::new_v4()),
@@ -616,11 +628,11 @@ impl NotificationBundleBuilder {
             }));
         }
 
-        serde_json::json!({
+        super::backport::notification(serde_json::json!({
             "resourceType": "Bundle",
             "type": "subscription-notification",
             "timestamp": timestamp,
             "entry": entries
-        })
+        }))
     }
 }

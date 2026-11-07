@@ -120,6 +120,20 @@ impl SubscriptionEventStorage {
         .await
     }
 
+    /// Seconds since anything was queued for a subscription; `None` when nothing ever was.
+    pub async fn seconds_since_last_event(
+        &self,
+        subscription_id: &str,
+    ) -> SubscriptionResult<Option<i64>> {
+        let seconds: Option<f64> = query_scalar(
+            "SELECT EXTRACT(EPOCH FROM NOW() - MAX(created_at))::float8 FROM subscription_event WHERE subscription_id = $1",
+        )
+        .bind(subscription_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(seconds.map(|seconds| seconds as i64))
+    }
+
     /// Enqueue a heartbeat event.
     pub async fn enqueue_heartbeat(
         &self,

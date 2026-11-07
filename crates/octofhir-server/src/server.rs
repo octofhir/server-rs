@@ -1743,6 +1743,8 @@ async fn build_app_with_runtime(
             .map_err(|e| anyhow::anyhow!(e))?,
     );
 
+    // R4 has no SubscriptionStatus: the Backport IG carries it as Parameters.
+    crate::subscriptions::backport::use_r4_form(release == octofhir_core::fhir::FhirVersion::R4);
     let mut subscription_state = {
         // Create event storage
         let event_storage = Arc::new(crate::subscriptions::SubscriptionEventStorage::new(
@@ -1839,6 +1841,35 @@ async fn build_app_with_runtime(
             }
         });
         tracing::info!("Subscription delivery processor started");
+
+        // Heartbeats: a rest-hook subscription that asked for them hears from the server at
+        // least once a period.
+        let manager = subscription_state.subscription_manager.clone();
+        let events = subscription_state.event_storage.clone();
+        background.spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                ticker.tick().await;
+                let Ok(due) = manager.heartbeat_subscriptions().await else {
+                    continue;
+                };
+                for (subscription, period) in due {
+                    let quiet = events
+                        .seconds_since_last_event(&subscription.id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_none_or(|seconds| seconds >= i64::from(period));
+                    if quiet
+                        && let Err(error) = events
+                            .enqueue_heartbeat(&subscription.id, &subscription.topic_url)
+                            .await
+                    {
+                        tracing::warn!(subscription = %subscription.id, %error, "Heartbeat not queued");
+                    }
+                }
+            }
+        });
 
         shutdown_handle
     };

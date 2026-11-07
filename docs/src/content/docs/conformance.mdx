@@ -3,7 +3,8 @@ title: Conformance
 description: What was measured, with what, and what did not pass
 ---
 
-Results from local runs of the Inferno test kits against a debug build, on 2026-11-06. The kits run
+Results from local runs of the Inferno test kits against a debug build, on 2026-11-06 and, for
+Subscriptions, 2026-11-07. The kits run
 locally before releases, not in CI: they are long runs. `just --list` shows the `inferno-*` recipes.
 
 | Suite | Passed | Failed | Skipped |
@@ -12,10 +13,11 @@ locally before releases, not in CI: they are long runs. `just --list` shows the 
 | Bulk Data `$bulk-submit` consumer (4.0.0-ballot) | 15 | 3 | 0 |
 | US Core v6.1.0, FHIR API | 326 | 1 | 125 |
 | US Core v5.0.1, FHIR API | 299 | 2 | 105 |
+| Subscriptions R5 Backport (R4 server), each of `full-resource`, `id-only`, `empty` | 17 | 1 | 15 |
 
 ## What did not pass
 
-**`ViewDefinition` in the CapabilityStatement** (both US Core runs). With SQL on FHIR enabled the
+**`ViewDefinition` in the CapabilityStatement** (both US Core runs and the Subscriptions run). With SQL on FHIR enabled the
 statement lists ViewDefinition, which is not in the R4 `ResourceType` value set. On R6 it is valid, as
 an additional resource.
 
@@ -25,6 +27,10 @@ test patient. The resource comes back as it was loaded.
 
 **`$bulk-submit`** (three tests). They expect the manifest and its files to be fetched while the kit
 is at its waiting step. The server fetches them as soon as the submission arrives, before that step.
+
+The Subscriptions run is `scripts/inferno/run-subscriptions.ts`, with a topic on Encounter
+creation and a 10-second heartbeat; the rejection tests that need a second, unsupported Subscription
+were among the skipped.
 
 Skipped tests were not run, so they say nothing either way. The runs use one synthetic patient.
 

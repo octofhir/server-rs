@@ -270,7 +270,7 @@ pub async fn handle_subscription_websocket(
 
 /// Create a handshake notification bundle.
 fn create_handshake_bundle(subscription: &ActiveSubscription) -> serde_json::Value {
-    json!({
+    crate::subscriptions::backport::notification(json!({
         "resourceType": "Bundle",
         "type": "subscription-notification",
         "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -285,12 +285,12 @@ fn create_handshake_bundle(subscription: &ActiveSubscription) -> serde_json::Val
                 "topic": subscription.topic_url
             }
         }]
-    })
+    }))
 }
 
 /// Create a heartbeat notification bundle.
 fn create_heartbeat_bundle(subscription: &ActiveSubscription) -> serde_json::Value {
-    json!({
+    crate::subscriptions::backport::notification(json!({
         "resourceType": "Bundle",
         "type": "subscription-notification",
         "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -305,7 +305,7 @@ fn create_heartbeat_bundle(subscription: &ActiveSubscription) -> serde_json::Val
                 "topic": subscription.topic_url
             }
         }]
-    })
+    }))
 }
 
 /// Create a notification bundle for an event.

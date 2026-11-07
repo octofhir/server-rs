@@ -44,6 +44,7 @@
 //! - `email` - Email notifications (via configured SMTP)
 
 pub mod api;
+pub mod backport;
 pub mod delivery;
 pub mod error;
 pub mod event_matcher;

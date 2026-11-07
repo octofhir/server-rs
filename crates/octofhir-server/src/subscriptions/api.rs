@@ -162,7 +162,7 @@ pub async fn subscription_event_history(
         "timestamp": rfc3339(Some(OffsetDateTime::now_utc())),
         "entry": [{
             "fullUrl": format!("urn:uuid:{}", uuid::Uuid::new_v4()),
-            "resource": status,
+            "resource": crate::subscriptions::backport::status(status),
             "request": { "method": "GET", "url": format!("Subscription/{id}/$events") },
             "response": { "status": "200" }
         }]

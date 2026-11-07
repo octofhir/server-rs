@@ -65,6 +65,27 @@ server to check and activate it again (and re-sends the handshake).
 | `email` | Sent to the `mailto:` endpoint through the provider in [`[subscriptions.email]`](/server-rs/configuration/) (SMTP or SendGrid). Without a provider the subscription is put in `error`. |
 | `message` | Not supported; such subscriptions are put in `error`. |
 
+## R4: the Backport form
+
+On an R4 server everything follows the
+[Subscriptions Backport](http://hl7.org/fhir/uv/subscriptions-backport/), since R4 has no
+`SubscriptionStatus`:
+
+| What | R4 form |
+|---|---|
+| Status in a notification | A `Parameters` (`backport-subscription-status-r4`), first in a `Bundle` of type `history` |
+| `$status` | A `Bundle` of such `Parameters` |
+| Payload content | The `backport-payload-content` extension on `channel._payload`: `empty`, `id-only` or `full-resource` |
+| Heartbeat | The `backport-heartbeat-period` extension on `channel`, in seconds |
+| Topics | Listed on the Subscription resource of the CapabilityStatement (`capabilitystatement-subscriptiontopic-canonical`) |
+
+A Subscription with an extension of another FHIR version (`http://hl7.org/fhir/5.0/…`) is refused
+with 422: the backport describes those elements itself. R4B and later use `SubscriptionStatus`.
+
+A handshake is sent while the subscription is still `requested`. Every event names its focus;
+`id-only` leaves the resource out and `empty` sends the status alone. A rest-hook subscription with a
+heartbeat period gets a heartbeat whenever nothing was sent for that long.
+
 ## Delivery and Retries
 
 Notifications are queued and delivered in the background. A failed delivery is retried with

@@ -12,7 +12,9 @@ use super::DeliveryChannel;
 use crate::egress::EgressPolicy;
 use crate::subscriptions::SubscriptionEvent;
 use crate::subscriptions::error::{SubscriptionError, SubscriptionResult};
-use crate::subscriptions::types::{ActiveSubscription, DeliveryResult, SubscriptionChannel};
+use crate::subscriptions::types::{
+    ActiveSubscription, DeliveryResult, PayloadContent, SubscriptionChannel,
+};
 
 /// REST-hook delivery channel.
 pub struct RestHookChannel {
@@ -52,6 +54,56 @@ impl Default for RestHookChannel {
     }
 }
 
+/// A notification bundle with what the subscriber asked for: `full-resource` as it is,
+/// `id-only` without the resources, `empty` with the status alone and no focus.
+fn with_payload(bundle: &serde_json::Value, payload: &PayloadContent) -> serde_json::Value {
+    let mut bundle = bundle.clone();
+    let Some(entries) = bundle["entry"].as_array_mut() else {
+        return bundle;
+    };
+    match payload {
+        PayloadContent::FullResource => {}
+        PayloadContent::IdOnly => {
+            for entry in entries.iter_mut().skip(1) {
+                if let Some(entry) = entry.as_object_mut() {
+                    entry.remove("resource");
+                }
+            }
+        }
+        PayloadContent::Empty => {
+            entries.truncate(1);
+            let status = entries
+                .first_mut()
+                .and_then(|entry| entry.get_mut("resource"));
+            if let Some(status) = status {
+                // R5 SubscriptionStatus, or the R4 backport Parameters. `get_mut`, not
+                // indexing: an index would add the missing member as null.
+                if let Some(events) = status
+                    .get_mut("notificationEvent")
+                    .and_then(|events| events.as_array_mut())
+                {
+                    for event in events.iter_mut().filter_map(|event| event.as_object_mut()) {
+                        event.remove("focus");
+                    }
+                }
+                if let Some(parameters) = status
+                    .get_mut("parameter")
+                    .and_then(|parameters| parameters.as_array_mut())
+                {
+                    for parts in parameters
+                        .iter_mut()
+                        .filter_map(|parameter| parameter.get_mut("part"))
+                        .filter_map(|parts| parts.as_array_mut())
+                    {
+                        parts.retain(|part| part["name"] != "focus");
+                    }
+                }
+            }
+        }
+    }
+    bundle
+}
+
 #[async_trait]
 impl DeliveryChannel for RestHookChannel {
     fn name(&self) -> &str {
@@ -67,7 +119,7 @@ impl DeliveryChannel for RestHookChannel {
             ref endpoint,
             ref headers,
             ref content_type,
-            ..
+            ref payload_content,
         } = subscription.channel
         else {
             return Err(SubscriptionError::DeliveryError(
@@ -95,7 +147,8 @@ impl DeliveryChannel for RestHookChannel {
         }
 
         // Send notification bundle
-        let body = serde_json::to_string(&event.notification_bundle).map_err(|e| {
+        let bundle = with_payload(&event.notification_bundle, payload_content);
+        let body = serde_json::to_string(&bundle).map_err(|e| {
             SubscriptionError::DeliveryError(format!("Failed to serialize bundle: {e}"))
         })?;
 
@@ -144,6 +197,46 @@ impl DeliveryChannel for RestHookChannel {
                 Ok(DeliveryResult::failure(e.to_string(), elapsed))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn bundle() -> serde_json::Value {
+        json!({"resourceType": "Bundle", "type": "history", "entry": [
+            {"resource": {"resourceType": "Parameters", "parameter": [
+                {"name": "status", "valueCode": "active"},
+                {"name": "notification-event", "part": [
+                    {"name": "event-number", "valueString": "1"},
+                    {"name": "focus", "valueReference": {"reference": "Encounter/e"}},
+                ]},
+            ]}},
+            {"fullUrl": "Encounter/e", "resource": {"resourceType": "Encounter", "id": "e"}},
+        ]})
+    }
+
+    #[test]
+    fn a_payload_keeps_what_was_asked_for() {
+        let empty = with_payload(&bundle(), &PayloadContent::Empty);
+        assert_eq!(empty["entry"].as_array().unwrap().len(), 1);
+        let parameters = &empty["entry"][0]["resource"];
+        assert!(parameters.get("notificationEvent").is_none());
+        assert!(parameters["parameter"][0].get("part").is_none());
+        assert_eq!(
+            parameters["parameter"][1]["part"].as_array().unwrap().len(),
+            1
+        );
+
+        let id_only = with_payload(&bundle(), &PayloadContent::IdOnly);
+        assert!(id_only["entry"][1].get("resource").is_none());
+        assert_eq!(id_only["entry"][1]["fullUrl"], "Encounter/e");
+        assert_eq!(
+            with_payload(&bundle(), &PayloadContent::FullResource),
+            bundle()
+        );
     }
 }
 

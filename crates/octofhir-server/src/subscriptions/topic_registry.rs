@@ -127,6 +127,13 @@ impl TopicRegistry {
             .collect()
     }
 
+    /// The canonical URLs of the topics, sorted.
+    pub fn topic_urls(&self) -> Vec<String> {
+        let mut urls: Vec<String> = self.topics.read().keys().cloned().collect();
+        urls.sort_unstable();
+        urls
+    }
+
     /// Get a topic by URL.
     pub fn get_topic(&self, url: &str) -> Option<ParsedSubscriptionTopic> {
         self.topics.read().get(url).cloned()

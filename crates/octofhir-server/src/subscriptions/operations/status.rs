@@ -107,9 +107,7 @@ impl OperationHandler for StatusOperation {
             .await
             .map_err(|e| OperationError::Internal(e.to_string()))?;
 
-        // Build SubscriptionStatus resource
-        // Note: SubscriptionStatus is an R5 resource. For R4 with Backport IG,
-        // we return a Parameters resource with equivalent information.
+        // Built as an R5 SubscriptionStatus; `backport::status` gives the R4 form.
         let mut status_resource = json!({
             "resourceType": "SubscriptionStatus",
             "id": format!("{}-status", id),
@@ -134,11 +132,17 @@ impl OperationHandler for StatusOperation {
             status_resource["error"] = json!([{ "text": error }]);
         }
 
-        // TODO: In R5, we would return SubscriptionStatus directly.
-        // For R4 compatibility, we could wrap in Parameters if needed.
-        // For now, we return the SubscriptionStatus-like structure.
-
-        Ok(status_resource)
+        // The operation returns a Bundle of statuses; R4 carries each as backport Parameters.
+        Ok(json!({
+            "resourceType": "Bundle",
+            "type": "searchset",
+            "total": 1,
+            "entry": [{
+                "fullUrl": format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+                "resource": crate::subscriptions::backport::status(status_resource),
+                "search": {"mode": "match"},
+            }],
+        }))
     }
 }
 

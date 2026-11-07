@@ -76,6 +76,29 @@ impl SubscriptionManager {
         Ok(subscriptions)
     }
 
+    /// Active rest-hook subscriptions that asked for heartbeats, with their period in seconds.
+    pub async fn heartbeat_subscriptions(
+        &self,
+    ) -> SubscriptionResult<Vec<(ActiveSubscription, u32)>> {
+        let rows: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
+            "SELECT resource FROM subscription WHERE status != 'deleted' AND resource->>'status' = 'active'",
+        )
+        .fetch_all(&self.db_pool)
+        .await
+        .map_err(|e| SubscriptionError::Storage(e.to_string()))?;
+        Ok(rows
+            .iter()
+            .filter_map(|(resource,)| self.parse_subscription(resource).ok())
+            .filter(|subscription| {
+                matches!(subscription.channel, SubscriptionChannel::RestHook { .. })
+            })
+            .filter_map(|subscription| {
+                let period = subscription.heartbeat_period.filter(|period| *period > 0)?;
+                Some((subscription, period))
+            })
+            .collect())
+    }
+
     /// Get a subscription by ID.
     pub async fn get_subscription(
         &self,
@@ -213,13 +236,17 @@ impl SubscriptionManager {
             OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
         });
 
-        // Parse heartbeat period (R4 channel.heartbeatPeriod, R5 heartbeatPeriod)
-        let heartbeat_period = resource
-            .get("channel")
-            .and_then(|c| c.get("heartbeatPeriod"))
-            .or_else(|| resource.get("heartbeatPeriod"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
+        // Parse heartbeat period (R4 backport extension on the channel, R5 heartbeatPeriod)
+        let heartbeat_period =
+            backport_extension(&resource["channel"], "backport-heartbeat-period")
+                .or_else(|| {
+                    resource
+                        .get("channel")
+                        .and_then(|c| c.get("heartbeatPeriod"))
+                })
+                .or_else(|| resource.get("heartbeatPeriod"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
 
         // Parse max count
         let max_count = resource
@@ -300,19 +327,28 @@ impl SubscriptionManager {
                     })
                     .unwrap_or_default();
 
-                // Parse payload content
-                let payload_content = channel
-                    .get("payload")
-                    .and_then(|v| v.as_str())
-                    .map(PayloadContent::from)
-                    .unwrap_or_default();
+                // R4 backport: `payload` is the MIME type and the content rides on its
+                // `backport-payload-content` extension.
+                let payload_content =
+                    backport_extension(&channel["_payload"], "backport-payload-content")
+                        .and_then(|value| value.as_str())
+                        .or_else(|| {
+                            channel
+                                .get("payload")
+                                .and_then(|v| v.as_str())
+                                .filter(|value| !value.contains('/'))
+                        })
+                        .map(PayloadContent::from)
+                        .unwrap_or_default();
 
                 // Parse content type
                 let content_type = channel
                     .get("payload")
                     .and_then(|p| {
-                        // R5: payload.contentType
-                        p.get("contentType").and_then(|v| v.as_str())
+                        // R5: payload.contentType; R4: payload itself
+                        p.get("contentType")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| p.as_str().filter(|value| value.contains('/')))
                     })
                     .or_else(|| {
                         // R4: header with Content-Type
@@ -397,6 +433,27 @@ impl SubscriptionManager {
 
         Vec::new()
     }
+}
+
+/// The value of a Subscriptions Backport extension on `element`, by the end of its URL.
+fn backport_extension<'a>(
+    element: &'a serde_json::Value,
+    name: &str,
+) -> Option<&'a serde_json::Value> {
+    element["extension"]
+        .as_array()?
+        .iter()
+        .find(|extension| {
+            extension["url"].as_str().is_some_and(|url| {
+                url.starts_with(
+                    "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/",
+                ) && url.ends_with(name)
+            })
+        })?
+        .as_object()?
+        .iter()
+        .find(|(key, _)| key.starts_with("value"))
+        .map(|(_, value)| value)
 }
 
 /// Channel of an R5 Subscription: `channelType` (a Coding), `endpoint`, headers as
