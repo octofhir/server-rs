@@ -17,8 +17,8 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 
 ## 2. Server
 
-| # | Item | Effort | Notes |
-|---|---|---|---|
+Nothing open right now. Conformance runs (`just inferno-*`, local) before releases; results in
+`conformance.mdx`.
 
 ## 3. Tools (own repos)
 
