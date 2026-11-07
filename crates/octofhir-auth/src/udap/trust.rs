@@ -22,6 +22,7 @@ use x509_parser::prelude::FromDer;
 use x509_parser::public_key::PublicKey;
 
 use super::MAX_CLOCK_SKEW_SECONDS;
+use super::ocsp::{Ocsp, Status};
 use super::revocation::DistributionPoints;
 use crate::config::{UdapCommunityConfig, UdapConfig};
 
@@ -55,12 +56,15 @@ pub struct Verified<C> {
 struct Community {
     uri: String,
     anchors: Vec<TrustAnchor<'static>>,
+    /// The anchors as certificates: the issuer of a leaf issued by an anchor, for OCSP.
+    anchor_certificates: Vec<CertificateDer<'static>>,
     revocations: Vec<CertRevocationList<'static>>,
 }
 
 impl Community {
     fn load(config: &UdapCommunityConfig) -> Result<Self, String> {
         let mut anchors = Vec::new();
+        let mut anchor_certificates = Vec::new();
         for path in &config.anchors {
             for certificate in CertificateDer::pem_file_iter(path)
                 .map_err(|error| format!("{}: {error}", path.display()))?
@@ -70,6 +74,7 @@ impl Community {
                 let anchor = anchor_from_trusted_cert(&certificate)
                     .map_err(|error| format!("{}: {error}", path.display()))?;
                 anchors.push(anchor.to_owned());
+                anchor_certificates.push(certificate.into_owned());
             }
         }
         if anchors.is_empty() {
@@ -89,6 +94,7 @@ impl Community {
         Ok(Self {
             uri: config.uri.clone(),
             anchors,
+            anchor_certificates,
             revocations,
         })
     }
@@ -141,6 +147,8 @@ pub struct Trust {
     communities: Vec<Community>,
     /// Lists named by the certificates themselves, when fetching them is on.
     distribution_points: Option<Arc<DistributionPoints>>,
+    /// OCSP responders named by leaf certificates, when asking them is on.
+    ocsp: Option<Arc<Ocsp>>,
     require_status: bool,
 }
 
@@ -161,6 +169,7 @@ impl Trust {
             distribution_points: config
                 .fetch_revocation_lists
                 .then(|| Arc::new(DistributionPoints::new())),
+            ocsp: config.check_ocsp.then(|| Arc::new(Ocsp::new())),
             require_status: config.require_revocation_status,
         })
     }
@@ -273,11 +282,57 @@ impl Trust {
             points.fetch_for(&chain).await;
         }
         let community = self.community_of(&chain)?;
+        self.check_ocsp(&chain).await?;
         Ok(Verified {
             claims,
             subject_uris,
             community,
         })
+    }
+
+    /// Asks the leaf's OCSP responder, once the chain is known to be good. A revoked leaf is
+    /// refused; no answer refuses it only when the status is required.
+    async fn check_ocsp(&self, chain: &[CertificateDer<'_>]) -> Result<(), TrustError> {
+        let Some(ocsp) = &self.ocsp else {
+            return Ok(());
+        };
+        let Some(issuer) = self.issuer_of(chain) else {
+            return Ok(());
+        };
+        let unknown = |reason: String| {
+            if self.require_status {
+                Err(TrustError::Untrusted(format!(
+                    "The revocation status of the certificate is unknown: {reason}"
+                )))
+            } else {
+                tracing::warn!(%reason, "OCSP gave no status; the certificate is accepted");
+                Ok(())
+            }
+        };
+        match ocsp.status(&chain[0], &issuer).await {
+            None | Some(Ok(Status::Good)) => Ok(()),
+            Some(Ok(Status::Revoked(reason))) => Err(TrustError::Untrusted(format!(
+                "The certificate is revoked (OCSP: {reason})"
+            ))),
+            Some(Ok(Status::Unknown)) => unknown("the responder does not know it".into()),
+            Some(Err(error)) => unknown(error),
+        }
+    }
+
+    /// The certificate that issued the leaf: the next in the chain, or the anchor it names.
+    fn issuer_of(&self, chain: &[CertificateDer<'_>]) -> Option<CertificateDer<'static>> {
+        if let Some(issuer) = chain.get(1) {
+            return Some(issuer.clone().into_owned());
+        }
+        let (_, leaf) = X509Certificate::from_der(chain[0].as_ref()).ok()?;
+        self.communities
+            .iter()
+            .flat_map(|community| &community.anchor_certificates)
+            .find(|anchor| {
+                X509Certificate::from_der(anchor.as_ref())
+                    .is_ok_and(|(_, anchor)| anchor.subject().as_raw() == leaf.issuer().as_raw())
+            })
+            .cloned()
     }
 
     fn community_of(&self, chain: &[CertificateDer<'_>]) -> Result<String, TrustError> {

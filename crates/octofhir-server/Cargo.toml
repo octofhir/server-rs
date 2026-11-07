@@ -167,6 +167,8 @@ tempfile = { workspace = true }
 [dev-dependencies]
 jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+x509-ocsp = { version = "0.2", default-features = false }
+x509-cert = { version = "0.2", default-features = false }
 saml-rs = { version = "0.6.1", default-features = false, features = ["crypto-aws-lc"] }
 aws-lc-rs = "1"
 pem = "4"

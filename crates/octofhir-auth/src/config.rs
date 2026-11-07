@@ -223,6 +223,9 @@ pub struct UdapConfig {
     /// the configured `revocation_lists`.
     pub fetch_revocation_lists: bool,
 
+    /// Ask the OCSP responder a leaf certificate names in its Authority Information Access.
+    pub check_ocsp: bool,
+
     /// Refuse a certificate whose revocation status cannot be determined: no list covers it,
     /// or its list could not be fetched. Off, such a certificate is accepted and the failed
     /// fetch is logged.
@@ -254,6 +257,7 @@ impl Default for UdapConfig {
             communities: Vec::new(),
             tiered_oauth: TieredOAuthConfig::default(),
             fetch_revocation_lists: true,
+            check_ocsp: true,
             require_revocation_status: false,
             scopes: vec![
                 "openid".to_string(),

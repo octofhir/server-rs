@@ -13,8 +13,9 @@ use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, CertificateRevocationListParams,
-    CrlDistributionPoint, DnType, IsCa, Issuer, KeyIdMethod, KeyPair, PKCS_ECDSA_P256_SHA256,
-    PKCS_RSA_SHA256, RevocationReason, RevokedCertParams, SanType, SerialNumber,
+    CrlDistributionPoint, CustomExtension, DnType, IsCa, Issuer, KeyIdMethod, KeyPair,
+    PKCS_ECDSA_P256_SHA256, PKCS_RSA_SHA256, RevocationReason, RevokedCertParams, SanType,
+    SerialNumber, SigningKey,
 };
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
@@ -22,7 +23,15 @@ use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use time::OffsetDateTime;
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
+use x509_cert::der::asn1::{BitString, GeneralizedTime, OctetString};
+use x509_cert::der::{DateTime, Decode, Encode};
+use x509_cert::spki::{AlgorithmIdentifierOwned, ObjectIdentifier};
+use x509_ocsp::{
+    BasicOcspResponse, CertStatus, OcspGeneralizedTime, OcspRequest, OcspResponse,
+    OcspResponseStatus, ResponderId, ResponseBytes, ResponseData, RevokedInfo, SingleResponse,
+    Version,
+};
 
 const COMMUNITY: &str = "urn:example:community";
 const APP: &str = "https://app.example.org/registered";
@@ -30,6 +39,8 @@ const APP: &str = "https://app.example.org/registered";
 struct Authority {
     issuer: Issuer<'static, KeyPair>,
     pem: String,
+    /// The key, to sign OCSP answers with.
+    key_pem: String,
 }
 
 fn authority(name: &str) -> Authority {
@@ -40,6 +51,7 @@ fn authority(name: &str) -> Authority {
     let certificate = params.self_signed(&key).unwrap();
     Authority {
         pem: certificate.pem(),
+        key_pem: key.serialize_pem(),
         issuer: Issuer::new(params, key),
     }
 }
@@ -144,6 +156,147 @@ async fn revoked_certificates(client: &Client, base: &str, ca: &Authority) {
         1,
         "the list is fetched once and kept until its nextUpdate"
     );
+}
+
+/// A member whose certificate, with this serial number, names an OCSP responder at `ocsp`
+/// (Authority Information Access).
+fn member_with_ocsp(authority: &Authority, uri: &str, serial: u64, ocsp: &str) -> Member {
+    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut params = CertificateParams::default();
+    params.distinguished_name.push(DnType::CommonName, "member");
+    params.subject_alt_names = vec![SanType::URI(uri.try_into().unwrap())];
+    params.serial_number = Some(SerialNumber::from(serial));
+    // AuthorityInfoAccessSyntax: one AccessDescription, id-ad-ocsp and a URI.
+    let mut description = vec![
+        0x06,
+        0x08,
+        0x2b,
+        0x06,
+        0x01,
+        0x05,
+        0x05,
+        0x07,
+        0x30,
+        0x01,
+        0x86,
+        ocsp.len() as u8,
+    ];
+    description.extend_from_slice(ocsp.as_bytes());
+    let mut access = vec![0x30, description.len() as u8];
+    access.extend(description);
+    let mut content = vec![0x30, access.len() as u8];
+    content.extend(access);
+    params.custom_extensions = vec![CustomExtension::from_oid_content(
+        &[1, 3, 6, 1, 5, 5, 7, 1, 1],
+        content,
+    )];
+    let certificate = params.signed_by(&key, &authority.issuer).unwrap();
+    Member {
+        key: EncodingKey::from_ec_pem(key.serialize_pem().as_bytes()).unwrap(),
+        x5c: vec![STANDARD.encode(certificate.der())],
+    }
+}
+
+/// An OCSP responder of the community: answers about the certificate it is asked about,
+/// signed with the community's key.
+struct Responder {
+    key: KeyPair,
+    revoked: Vec<u64>,
+}
+
+fn ocsp_time(seconds: i64) -> OcspGeneralizedTime {
+    let time =
+        DateTime::from_unix_duration(std::time::Duration::from_secs(seconds as u64)).unwrap();
+    OcspGeneralizedTime(GeneralizedTime::from_date_time(time))
+}
+
+impl Respond for Responder {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let asked = OcspRequest::from_der(&request.body).unwrap();
+        let cert_id = asked.tbs_request.request_list[0].req_cert.clone();
+        let serial = cert_id
+            .serial_number
+            .as_bytes()
+            .iter()
+            .fold(0u64, |value, byte| (value << 8) | u64::from(*byte));
+        let cert_status = if self.revoked.contains(&serial) {
+            CertStatus::Revoked(RevokedInfo {
+                revocation_time: ocsp_time(now() - 3600),
+                revocation_reason: None,
+            })
+        } else {
+            CertStatus::Good(x509_cert::der::asn1::Null)
+        };
+        let tbs = ResponseData {
+            version: Version::V1,
+            responder_id: ResponderId::ByKey(OctetString::new(vec![0u8; 20]).unwrap()),
+            produced_at: ocsp_time(now()),
+            responses: vec![SingleResponse {
+                cert_id,
+                cert_status,
+                this_update: ocsp_time(now() - 60),
+                next_update: Some(ocsp_time(now() + 3600)),
+                single_extensions: None,
+            }],
+            response_extensions: None,
+        };
+        let signature = self.key.sign(&tbs.to_der().unwrap()).unwrap();
+        let basic = BasicOcspResponse {
+            tbs_response_data: tbs,
+            // ecdsa-with-SHA256
+            signature_algorithm: AlgorithmIdentifierOwned {
+                oid: ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2"),
+                parameters: None,
+            },
+            signature: BitString::from_bytes(&signature).unwrap(),
+            certs: None,
+        };
+        let response = OcspResponse {
+            response_status: OcspResponseStatus::Successful,
+            response_bytes: Some(ResponseBytes {
+                response_type: ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.48.1.1"),
+                response: OctetString::new(basic.to_der().unwrap()).unwrap(),
+            }),
+        };
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "application/ocsp-response")
+            .set_body_bytes(response.to_der().unwrap())
+    }
+}
+
+/// The certificate names an OCSP responder: the one it says is revoked cannot register, the
+/// good one can.
+async fn ocsp_revocation(client: &Client, base: &str, ca: &Authority) {
+    let responder = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/ocsp"))
+        .respond_with(Responder {
+            key: KeyPair::from_pem(&ca.key_pem).unwrap(),
+            revoked: vec![8001],
+        })
+        .mount(&responder)
+        .await;
+    let ocsp = format!("{}/ocsp", responder.uri());
+    let app = "https://ocsp.example.org/app";
+    let registration = |member: &Member| {
+        let mut claims = statement(base, json!(["client_credentials"]));
+        claims["iss"] = json!(app);
+        claims["sub"] = json!(app);
+        member.sign(&claims)
+    };
+    let revoked = member_with_ocsp(ca, app, 8001, &ocsp);
+    let (status, body) = register(client, base, registration(&revoked)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "unapproved_software_statement");
+    assert!(
+        body["error_description"]
+            .as_str()
+            .is_some_and(|text| text.contains("OCSP")),
+        "{body}"
+    );
+    let good = member_with_ocsp(ca, app, 8002, &ocsp);
+    let (status, body) = register(client, base, registration(&good)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }
 
 fn now() -> i64 {
@@ -405,6 +558,7 @@ async fn udap_discovery_registration_and_token() {
     discovery(&client, &base, &ca).await;
     refused_registrations(&client, &base, &app, &ca).await;
     revoked_certificates(&client, &base, &ca).await;
+    ocsp_revocation(&client, &base, &ca).await;
 
     // Registered, with the scopes this server offers.
     let claims = statement(&base, json!(["client_credentials"]));

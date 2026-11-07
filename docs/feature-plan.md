@@ -19,7 +19,6 @@ Multi-year priority; nothing open right now. Spec baseline: [`sql-on-fhir-plan.m
 
 | # | Item | Effort | Notes |
 |---|---|---|---|
-| 2.4 | UDAP certificate revocation: CRL distribution points and OCSP (Tiered OAuth done) | S | |
 
 ## 3. Tools (own repos)
 

@@ -104,8 +104,12 @@ fn trust(directory: &Path, anchor: &Authority, lists: &[PathBuf]) -> Trust {
 }
 
 fn verify(trust: &Trust, token: &str) -> Result<Vec<String>, TrustError> {
-    trust
-        .verify::<Value>(token, AUDIENCE)
+    // These chains name no revocation list or responder: nothing is fetched.
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(trust.verify::<Value>(token, AUDIENCE))
         .map(|verified| verified.subject_uris)
 }
 

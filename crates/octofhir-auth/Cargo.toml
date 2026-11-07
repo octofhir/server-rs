@@ -37,6 +37,9 @@ pem = "4"
 rustls-pki-types = { version = "1", features = ["std"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["std", "aws-lc-rs"] }
 x509-parser = "0.18"
+# OCSP request and response formats (RFC 6960); signatures are checked with webpki.
+x509-ocsp = { version = "0.2", default-features = false }
+x509-cert = { version = "0.2", default-features = false }
 rand = "0.10"
 # SAML 2.0 sign-in: XML-DSig through pure Rust, with aws-lc as elsewhere in the server.
 saml-rs = { version = "0.6.1", default-features = false, features = ["crypto-aws-lc"] }

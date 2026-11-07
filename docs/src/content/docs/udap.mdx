@@ -38,22 +38,30 @@ reason and starts with UDAP off.
 ### Revocation
 
 A certificate chain has to lead to a community anchor, be current and not be revoked. Revocation
-comes from two places:
+comes from three places:
 
 - the `revocation_lists` of the community, read at start;
 - the lists each certificate of the chain names in its CRL Distribution Points (http or https),
-  fetched before the chain is validated and kept until their `nextUpdate` (a day at most). A list
-  that cannot be fetched is not asked for again for five minutes.
+  fetched before the chain is validated and kept until their `nextUpdate` (a day at most);
+- the OCSP responder the leaf certificate names in its Authority Information Access, asked once
+  the chain is good. The request identifies the certificate by SHA-1 hashes of its issuer's name
+  and key and its serial number (RFC 6960, RFC 5019). An answer counts when the issuer signed it,
+  or a responder certificate the issuer issued for OCSP signing, and when it is current; it is kept
+  until its `nextUpdate`.
+
+A list or responder that cannot be reached is not asked again for five minutes.
 
 ```toml
 [auth.udap]
 fetch_revocation_lists = true      # the default
+check_ocsp = true                  # the default
 require_revocation_status = false  # the default
 ```
 
-With `require_revocation_status = false`, a certificate no list covers, or whose list could not be
-fetched, is accepted, and the failed fetch is logged. With `true` it is refused. A list past its
-`nextUpdate` fails the certificates it covers either way: it says nothing about today.
+With `require_revocation_status = false`, a certificate whose status cannot be determined (no list
+covers it, a list or responder cannot be reached, the responder does not know it) is accepted, and
+the failure is logged. With `true` it is refused. A list past its `nextUpdate` fails the
+certificates it covers either way: it says nothing about today.
 
 <Aside type="caution">
 A registration needs no one's approval: any certificate from a configured community gets a
@@ -161,6 +169,6 @@ matched give `access_denied`, an answer that cannot be verified `invalid_idp`, a
 
 ## Not done
 
-- OCSP is not asked; revocation comes from lists only.
+- OCSP is asked about the leaf only; intermediates are checked against revocation lists.
 - Intermediates come from `x5c`; missing ones are not fetched through the certificate's AIA.
 - The experimental `jku` workflow.
