@@ -31,12 +31,13 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use cookie::{Cookie, SameSite};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::config::SessionConfig;
 use crate::device::{extract_ip_address, extract_user_agent, generate_device_name};
+use crate::federation::IdpAuthService;
 use crate::lockout::Lockout;
 use crate::oauth::authorize::{
     AuthorizationError, AuthorizationErrorCode, AuthorizationRequest, AuthorizationResponse,
@@ -49,8 +50,10 @@ use crate::storage::{
 };
 
 use super::authorize_templates::{
-    PatientInfo, render_consent_form, render_error_page, render_login_form, render_patient_picker,
+    LoginProvider, PatientInfo, render_consent_form, render_error_page, render_login_form,
+    render_patient_picker,
 };
+use super::federated::federated_login_url;
 
 /// Session cookie name.
 const SESSION_COOKIE_NAME: &str = "oauth_session";
@@ -80,6 +83,48 @@ pub struct AuthorizeState {
     pub session_config: SessionConfig,
     /// Whether to use secure cookies (true in production).
     pub secure_cookies: bool,
+    /// External identity providers offered next to the password, when enabled.
+    pub identity_providers: Option<Arc<IdpAuthService>>,
+}
+
+impl AuthorizeState {
+    /// The sign-in page of an authorize session.
+    async fn login_page(
+        &self,
+        session: &AuthorizeSession,
+        client_name: &str,
+        error: Option<&str>,
+    ) -> String {
+        let providers = match &self.identity_providers {
+            Some(service) => {
+                let back = authorize_url(&session.authorization_request);
+                service
+                    .list_enabled_providers()
+                    .await
+                    .into_iter()
+                    .map(|provider| LoginProvider {
+                        href: federated_login_url(&provider.id, &back),
+                        name: provider.name,
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        render_login_form(client_name, &session.id.to_string(), error, &providers)
+    }
+}
+
+/// The authorize request again, as a local URL: a provider's sign-in comes back to it.
+fn authorize_url(request: &AuthorizationRequest) -> String {
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    if let Ok(Value::Object(fields)) = serde_json::to_value(request) {
+        for (name, value) in &fields {
+            if let Some(value) = value.as_str() {
+                query.append_pair(name, value);
+            }
+        }
+    }
+    format!("/auth/authorize?{}", query.finish())
 }
 
 /// Form data for authorize POST.
@@ -350,7 +395,7 @@ pub async fn authorize_get(
     let jar = jar.add(cookie);
 
     // Render login form
-    let html = render_login_form(&client.name, &session_id.to_string(), None);
+    let html = state.login_page(&session, &client.name, None).await;
 
     (jar, Html(html)).into_response()
 }
@@ -455,11 +500,15 @@ async fn handle_login(
     if username.is_empty() || password.is_empty() {
         return (
             StatusCode::OK,
-            Html(render_login_form(
-                client_name,
-                &session.id.to_string(),
-                Some("Username and password are required"),
-            )),
+            Html(
+                state
+                    .login_page(
+                        session,
+                        client_name,
+                        Some("Username and password are required"),
+                    )
+                    .await,
+            ),
         )
             .into_response();
     }
@@ -468,11 +517,15 @@ async fn handle_login(
     if state.lockout.remaining(&name).is_some() {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            Html(render_login_form(
-                client_name,
-                &session.id.to_string(),
-                Some("Too many failed attempts, try again later"),
-            )),
+            Html(
+                state
+                    .login_page(
+                        session,
+                        client_name,
+                        Some("Too many failed attempts, try again later"),
+                    )
+                    .await,
+            ),
         )
             .into_response();
     }
@@ -495,11 +548,11 @@ async fn handle_login(
             state.lockout.failed(&name);
             return (
                 StatusCode::OK,
-                Html(render_login_form(
-                    client_name,
-                    &session.id.to_string(),
-                    Some("Invalid username or password"),
-                )),
+                Html(
+                    state
+                        .login_page(session, client_name, Some("Invalid username or password"))
+                        .await,
+                ),
             )
                 .into_response();
         }
@@ -507,11 +560,11 @@ async fn handle_login(
             tracing::error!(username = %username, error = %e, "Failed to find user");
             return (
                 StatusCode::OK,
-                Html(render_login_form(
-                    client_name,
-                    &session.id.to_string(),
-                    Some("Authentication failed"),
-                )),
+                Html(
+                    state
+                        .login_page(session, client_name, Some("Authentication failed"))
+                        .await,
+                ),
             )
                 .into_response();
         }
@@ -578,11 +631,11 @@ async fn handle_login(
             state.lockout.failed(&name);
             (
                 StatusCode::OK,
-                Html(render_login_form(
-                    client_name,
-                    &session.id.to_string(),
-                    Some("Invalid username or password"),
-                )),
+                Html(
+                    state
+                        .login_page(session, client_name, Some("Invalid username or password"))
+                        .await,
+                ),
             )
                 .into_response()
         }
@@ -590,11 +643,11 @@ async fn handle_login(
             tracing::error!(user_id = %user.id, error = %e, "Failed to verify password");
             (
                 StatusCode::OK,
-                Html(render_login_form(
-                    client_name,
-                    &session.id.to_string(),
-                    Some("Authentication failed"),
-                )),
+                Html(
+                    state
+                        .login_page(session, client_name, Some("Authentication failed"))
+                        .await,
+                ),
             )
                 .into_response()
         }
@@ -924,7 +977,7 @@ fn create_session_cookie(session_id: Uuid, secure: bool) -> Cookie<'static> {
 }
 
 /// Create an SSO session and return the updated cookie jar.
-async fn create_sso_session(
+pub(crate) async fn create_sso_session(
     state: &AuthorizeState,
     user_id: &str,
     headers: &HeaderMap,

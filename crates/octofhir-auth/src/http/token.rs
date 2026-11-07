@@ -53,7 +53,7 @@ use crate::oauth::client_assertion::{ClientAssertionConfig, extract_client_id_un
 use crate::oauth::token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};
 use crate::storage::session::SessionStorage;
 use crate::storage::{
-    ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, UserStorage,
+    ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, User, UserStorage,
 };
 use crate::token::jwt::{AccessTokenClaims, JwtService};
 use crate::token::service::{TokenConfig, TokenService};
@@ -85,6 +85,33 @@ pub struct TokenState {
 }
 
 impl TokenState {
+    /// The cookie that signs `user` in to `client`, a first-party client, when someone else
+    /// vouched for them. `None` when cookies are off.
+    pub async fn login_cookie(
+        &self,
+        user: &User,
+        client_id: &str,
+        scope: &str,
+    ) -> Result<Option<String>, AuthError> {
+        let client = self
+            .client_storage
+            .find_by_client_id(client_id)
+            .await?
+            .ok_or_else(|| AuthError::invalid_client(format!("Unknown client {client_id}")))?;
+        if let Some(scope) = scope
+            .split_whitespace()
+            .find(|s| !client.is_scope_allowed(s))
+        {
+            return Err(AuthError::invalid_scope(format!(
+                "Scope '{scope}' not allowed for this client"
+            )));
+        }
+        let response = issue_access_token(self, user, &client, scope).await?;
+        Ok(self
+            .cookie_config
+            .build_cookie(&response.access_token, response.expires_in as i64))
+    }
+
     /// Share the configured service with revocation and introspection endpoints.
     pub fn token_service(&self) -> Arc<TokenService> {
         Arc::clone(&self.token_service)
@@ -706,7 +733,40 @@ async fn password_grant(
         }
     }
 
-    // 8. Create AuthSession if FHIR storage is available
+    // 8. Create the session and the access token
+    let mut response = issue_access_token(state, &user, client, scope).await?;
+
+    // 11. Issue refresh token if:
+    //     - offline_access scope is requested, OR
+    //     - client has refresh_token grant type allowed
+    let has_offline_access = scope.split_whitespace().any(|s| s == "offline_access");
+    let client_supports_refresh = client.is_grant_type_allowed(GrantType::RefreshToken);
+
+    if has_offline_access || client_supports_refresh {
+        let refresh_token = state
+            .token_service
+            .issue_refresh_token_for_user(&user.id, client, scope)
+            .await?;
+
+        info!(
+            user_id = %user.id,
+            client_id = %client.client_id,
+            "Refresh token issued for password grant"
+        );
+
+        response = response.with_refresh_token(refresh_token);
+    }
+
+    Ok(response)
+}
+
+/// An AuthSession and an access token for a user who has just proved who they are.
+async fn issue_access_token(
+    state: &TokenState,
+    user: &User,
+    client: &Client,
+    scope: &str,
+) -> Result<TokenResponse, AuthError> {
     let now = OffsetDateTime::now_utc();
     let access_lifetime = Duration::hours(1); // Default 1 hour for password grant
     let expires_at = now + access_lifetime;
@@ -751,7 +811,7 @@ async fn password_grant(
         None
     };
 
-    // 9. Generate access token
+    // Generate access token
     let access_claims = AccessTokenClaims {
         iss: state.token_service.issuer().to_string(),
         sub: user.id.to_string(),
@@ -773,35 +833,11 @@ async fn password_grant(
         .encode_access_token(&access_claims)
         .map_err(|e| AuthError::internal(format!("Failed to encode access token: {}", e)))?;
 
-    // 10. Build response
-    let mut response = TokenResponse::new(
+    Ok(TokenResponse::new(
         access_token,
         access_lifetime.whole_seconds() as u64,
         scope.to_string(),
-    );
-
-    // 11. Issue refresh token if:
-    //     - offline_access scope is requested, OR
-    //     - client has refresh_token grant type allowed
-    let has_offline_access = scope.split_whitespace().any(|s| s == "offline_access");
-    let client_supports_refresh = client.is_grant_type_allowed(GrantType::RefreshToken);
-
-    if has_offline_access || client_supports_refresh {
-        let refresh_token = state
-            .token_service
-            .issue_refresh_token_for_user(&user.id, client, scope)
-            .await?;
-
-        info!(
-            user_id = %user.id,
-            client_id = %client.client_id,
-            "Refresh token issued for password grant"
-        );
-
-        response = response.with_refresh_token(refresh_token);
-    }
-
-    Ok(response)
+    ))
 }
 
 /// Build a successful token response.

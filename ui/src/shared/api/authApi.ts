@@ -61,6 +61,11 @@ function isLogoutResponse(value: unknown): value is LogoutResponse {
 	);
 }
 
+export interface IdentityProviderLink {
+	id: string;
+	name: string;
+}
+
 class AuthApiClient {
 	private baseUrl: string;
 	private clientId: string;
@@ -236,6 +241,13 @@ class AuthApiClient {
 	async checkAuth(): Promise<boolean> {
 		const user = await this.getCurrentUser();
 		return user !== null;
+	}
+
+	/** External identity providers people can sign in through. */
+	async identityProviders(): Promise<IdentityProviderLink[]> {
+		const response = await fetch(`${this.baseUrl}/auth/idp/providers`);
+		// The endpoints are not there when the server does not allow external sign-in.
+		return response.ok ? ((await response.json()) as IdentityProviderLink[]) : [];
 	}
 
 	setBaseUrl(baseUrl: string): void {

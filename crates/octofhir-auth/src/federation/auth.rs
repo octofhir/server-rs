@@ -177,6 +177,11 @@ impl IdpAuthService {
         providers.insert(provider.id.clone(), provider);
     }
 
+    /// Forgets an identity provider.
+    pub async fn unregister_provider(&self, provider_id: &str) {
+        self.providers.write().await.remove(provider_id);
+    }
+
     /// Gets a provider by ID.
     pub async fn get_provider(&self, provider_id: &str) -> Option<IdentityProviderConfig> {
         let providers = self.providers.read().await;

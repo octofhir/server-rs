@@ -176,6 +176,8 @@ pub struct AppStateInner {
     pub audit_service: Arc<AuditService>,
     /// Basic authentication storage (Client and App authentication via HTTP Basic Auth)
     pub basic_auth_storage: Arc<dyn BasicAuthStorage>,
+    /// External identity providers, when sign-in through them is allowed.
+    pub identity_providers: Option<Arc<octofhir_auth::federation::IdpAuthService>>,
     /// Notification queue storage (optional, for notification operations)
     pub notification_queue: Option<Arc<dyn octofhir_notifications::NotificationQueueStorage>>,
     /// PostgreSQL package store for FHIR Implementation Guide resources
@@ -251,7 +253,11 @@ impl FromRef<AppState> for GraphQLState {
 
 impl FromRef<AppState> for crate::admin::AdminState {
     fn from_ref(state: &AppState) -> Self {
-        crate::admin::AdminState::new(state.db_pool.clone())
+        let admin = crate::admin::AdminState::new(state.db_pool.clone());
+        match &state.identity_providers {
+            Some(service) => admin.with_idp_auth_service(service.clone()),
+            None => admin,
+        }
     }
 }
 
@@ -1646,6 +1652,13 @@ async fn build_app_with_runtime(
     let policy_hook = PolicyReloadHook::new(policy_notifier.clone());
     hook_registry.register_resource(Arc::new(policy_hook)).await;
 
+    // IdentityProviderHook: sign-in follows the IdentityProvider resources
+    let identity_providers = crate::oauth::identity_providers(cfg, &db_pool).await;
+    if let Some(service) = &identity_providers {
+        let hook = crate::hooks::IdentityProviderHook::new(service.clone());
+        hook_registry.register_resource(Arc::new(hook)).await;
+    }
+
     // GatewayReloadHook: triggers gateway route reload on App/CustomOperation changes
     let gateway_hook = GatewayReloadHook::new(gateway_router.clone(), storage.clone())
         .with_operation_registry(operation_registry.clone())
@@ -1904,6 +1917,7 @@ async fn build_app_with_runtime(
         config_manager: Some(config_manager),
         audit_service,
         basic_auth_storage,
+        identity_providers,
         notification_queue: Some(notification_queue),
         package_store,
         subscription_state,
@@ -2581,6 +2595,10 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
     let smart_config_router =
         crate::oauth::smart_config_route(oauth_state.smart_config_state.clone());
     let userinfo_router = crate::oauth::userinfo_route(auth_state.clone());
+    let federated_router = oauth_state
+        .federated_state
+        .clone()
+        .map(crate::oauth::federated_route);
     let authorize_router = crate::oauth::authorize_route(oauth_state.authorize_state);
     let launch_router = crate::oauth::launch_route(oauth_state.launch_state);
     let udap_router = oauth_state.udap_state.map(crate::oauth::udap_route);
@@ -2602,6 +2620,10 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
         .merge(launch_router);
     let router = match udap_router {
         Some(udap) => router.merge(udap),
+        None => router,
+    };
+    let router = match federated_router {
+        Some(federated) => router.merge(federated),
         None => router,
     };
 

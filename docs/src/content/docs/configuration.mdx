@@ -238,6 +238,21 @@ max_failed_attempts = 5   # 0 turns it off
 duration = "5m"
 ```
 
+### External Identity Providers
+
+Providers are `IdentityProvider` resources; these keys say what happens to the people who come
+through them. See [Authentication](/server-rs/authentication/#external-identity-providers).
+
+```toml
+[auth.federation]
+allow_external_idp = true      # offer the active providers on sign-in pages
+auto_provision_users = false   # create users the server does not know yet
+link_by_email = false          # link accounts by verified email; only for providers you control
+default_roles = []             # roles of created users
+jwks_cache_ttl = "1h"          # when a provider does not say; an unknown kid refetches at once
+allow_http = false             # providers without TLS, for local testing
+```
+
 ### Sessions & Cookies
 
 ```toml

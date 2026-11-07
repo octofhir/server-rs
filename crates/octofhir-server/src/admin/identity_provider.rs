@@ -302,9 +302,9 @@ pub async fn delete_identity_provider(
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    // Note: IdP service cache will need to be invalidated separately
-    // since IdpAuthService doesn't have an unregister method
-    let _ = &state.idp_auth_service; // Suppress unused field warning
+    if let Some(service) = &state.idp_auth_service {
+        service.unregister_provider(&id).await;
+    }
 
     tracing::info!(id = %id, "Deleted identity provider");
 

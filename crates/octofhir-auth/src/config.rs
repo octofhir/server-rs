@@ -57,6 +57,9 @@ pub struct AuthConfig {
 
     /// UDAP Security (FAST Security STU2).
     pub udap: UdapConfig,
+
+    /// Sign-in through external identity providers.
+    pub federation: FederationConfig,
 }
 
 impl Default for AuthConfig {
@@ -72,6 +75,7 @@ impl Default for AuthConfig {
             session: SessionConfig::default(),
             lockout: LockoutConfig::default(),
             udap: UdapConfig::default(),
+            federation: FederationConfig::default(),
         }
     }
 }
@@ -346,6 +350,49 @@ impl Default for QuickJsConfig {
             max_stack_size_kb: 256,
             timeout_ms: 100,
             pool_size: num_cpus::get().max(1),
+        }
+    }
+}
+
+/// Sign-in through external OpenID Connect providers.
+///
+/// The providers themselves are `IdentityProvider` resources; this says what happens to the
+/// people who come through them.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FederationConfig {
+    /// Offer the active identity providers on the sign-in pages.
+    pub allow_external_idp: bool,
+
+    /// Create a user for someone the server does not know yet. Off, users have to exist.
+    pub auto_provision_users: bool,
+
+    /// Link a provider's account to the user with the same verified email. A provider that
+    /// vouches for emails it does not own could then sign in as that user, so this is only for
+    /// providers the deployment controls.
+    pub link_by_email: bool,
+
+    /// Roles of users created at sign-in, on top of what the provider's mapping gives.
+    pub default_roles: Vec<String>,
+
+    /// How long the keys of a provider are kept when it does not say. An unknown `kid` fetches
+    /// them again at once.
+    #[serde(with = "humantime_serde")]
+    pub jwks_cache_ttl: Duration,
+
+    /// Accept providers without TLS. For local testing only.
+    pub allow_http: bool,
+}
+
+impl Default for FederationConfig {
+    fn default() -> Self {
+        Self {
+            allow_external_idp: true,
+            auto_provision_users: false,
+            link_by_email: false,
+            default_roles: Vec::new(),
+            jwks_cache_ttl: Duration::from_secs(3600),
+            allow_http: false,
         }
     }
 }

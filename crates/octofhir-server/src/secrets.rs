@@ -1,7 +1,8 @@
 //! Credential hashes stored inside resources.
 //!
 //! `User.passwordHash`, `Client.clientSecret` and `App.secret` live in the resource JSON
-//! because the auth layer verifies credentials against them. They must never leave the
+//! because the auth layer verifies credentials against them, and
+//! `IdentityProvider.clientSecret` because the server presents it. They must never leave the
 //! server, so every HTTP response is scrubbed on the way out ([`scrub_credentials_middleware`])
 //! and bulk export scrubs each line it writes. An update that sends a resource back without
 //! the hash keeps the stored one ([`carry_over_secrets`]); otherwise reading a user and
@@ -36,7 +37,7 @@ static SECRET_KEY: LazyLock<memmem::Finder<'static>> =
 fn secret_fields(resource_type: &str) -> &'static [&'static str] {
     match resource_type {
         "User" => &PASSWORD_HASH_KEYS,
-        "Client" => &["clientSecret"],
+        "Client" | "IdentityProvider" => &["clientSecret"],
         "App" => &["secret"],
         _ => &[],
     }
@@ -59,6 +60,11 @@ pub fn scrub(value: &mut Value) -> bool {
             let mut changed = false;
             for key in PASSWORD_HASH_KEYS {
                 changed |= object.remove(key).is_some();
+            }
+            // What the server presents to a provider cannot be hashed, so it has no mark of its
+            // own; its resources do carry `resourceType`.
+            if object.get("resourceType").and_then(Value::as_str) == Some("IdentityProvider") {
+                changed |= object.remove("clientSecret").is_some();
             }
             // Auth entities are stored without `resourceType`, so match on the hashed value.
             for key in SECRET_KEYS {
@@ -168,6 +174,16 @@ pub async fn scrub_credentials_middleware(request: Request, next: Next) -> Respo
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_secret_of_an_identity_provider_stays_in() {
+        let mut bundle = json!({"entry": [{"resource": {
+            "resourceType": "IdentityProvider",
+            "clientSecret": "plain-and-needed-by-the-server",
+        }}]});
+        assert!(scrub(&mut bundle));
+        assert!(bundle["entry"][0]["resource"].get("clientSecret").is_none());
+    }
 
     #[test]
     fn scrubs_password_hashes_inside_bundles() {

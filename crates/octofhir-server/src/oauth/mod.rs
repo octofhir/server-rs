@@ -20,7 +20,14 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
-use octofhir_auth::federation::{ClientJwksCache, JwksCacheConfig};
+use octofhir_auth::federation::resources::IdentityProviderResource;
+use octofhir_auth::federation::{
+    ClientJwksCache, DiscoveryCache, DiscoveryCacheConfig, IdpAuthService, IdpAuthServiceConfig,
+    JwksCacheConfig, ProviderJwksCache, ProviderJwksCacheConfig, ProvisioningConfig,
+};
+use octofhir_auth::http::federated::{
+    FederatedState, federated_callback, federated_login, federated_providers,
+};
 use octofhir_auth::http::introspect::{IntrospectionState, introspect_handler};
 use octofhir_auth::http::revoke::{RevocationState, revoke_handler};
 use octofhir_auth::http::udap::{UdapState, udap_metadata_handler, udap_register_handler};
@@ -62,6 +69,8 @@ pub struct OAuthState {
     pub audit_service: Arc<AuditService>,
     /// Set when UDAP is enabled and its files could be read.
     pub udap_state: Option<UdapState>,
+    /// Set when sign-in through external identity providers is allowed.
+    pub federated_state: Option<FederatedState>,
 }
 
 /// Combined state for auditing token handler.
@@ -199,7 +208,23 @@ impl OAuthState {
             sso_session_storage,
             session_config: config.auth.session.clone(),
             fhir_storage: app_state.storage.clone(),
+            identity_providers: app_state.identity_providers.clone(),
         };
+
+        let federation = &config.auth.federation;
+        let federated_state = app_state.identity_providers.clone().map(|service| {
+            let provisioning = ProvisioningConfig::new()
+                .with_auto_provision(federation.auto_provision_users)
+                .with_link_by_email(federation.link_by_email)
+                .with_default_roles(federation.default_roles.clone());
+            FederatedState::new(
+                service,
+                authorize_state.clone(),
+                token_state.clone(),
+                provisioning,
+                crate::bootstrap::DEFAULT_UI_CLIENT_ID,
+            )
+        });
 
         Some(Self {
             token_state,
@@ -212,8 +237,64 @@ impl OAuthState {
             launch_state,
             audit_service: app_state.audit_service.clone(),
             udap_state,
+            federated_state,
         })
     }
+}
+
+/// The identity providers people can sign in through: the active `IdentityProvider` resources.
+/// `None` when the configuration does not allow it.
+pub async fn identity_providers(
+    config: &crate::config::AppConfig,
+    pool: &sqlx_postgres::PgPool,
+) -> Option<Arc<IdpAuthService>> {
+    let federation = &config.auth.federation;
+    if !federation.allow_external_idp {
+        return None;
+    }
+    let base = config.base_url();
+    let callback = format!("{}/auth/idp/callback", base.trim_end_matches('/'));
+    let callback = match url::Url::parse(&callback) {
+        Ok(callback) => callback,
+        Err(error) => {
+            tracing::error!(%error, "External identity providers stay off: bad base URL");
+            return None;
+        }
+    };
+    let settings = IdpAuthServiceConfig::new(callback).with_allow_http(federation.allow_http);
+    let discovery = DiscoveryCacheConfig::default()
+        .with_request_timeout(settings.request_timeout)
+        .with_allow_http(federation.allow_http);
+    let keys = ProviderJwksCacheConfig::default()
+        .with_default_ttl(federation.jwks_cache_ttl)
+        .with_request_timeout(settings.request_timeout)
+        .with_allow_http(federation.allow_http);
+    let service = IdpAuthService::with_caches(
+        settings,
+        Arc::new(DiscoveryCache::new(discovery)),
+        Arc::new(ProviderJwksCache::new(keys)),
+    );
+    let rows = octofhir_auth_postgres::IdentityProviderStorage::new(pool)
+        .list_active()
+        .await;
+    match rows {
+        Ok(rows) => {
+            for row in rows {
+                let provider = serde_json::from_value::<IdentityProviderResource>(row.resource)
+                    .map_err(|error| error.to_string())
+                    .and_then(|resource| resource.to_config().map_err(|error| error.to_string()));
+                match provider {
+                    Ok(provider) => service.register_provider(provider).await,
+                    // One bad resource does not take the others down.
+                    Err(error) => {
+                        tracing::error!(id = %row.id, %error, "Skipping identity provider")
+                    }
+                }
+            }
+        }
+        Err(error) => tracing::error!(%error, "Cannot read the identity providers"),
+    }
+    Some(Arc::new(service))
 }
 
 /// The UDAP endpoints. A misconfiguration leaves them off and says why: nothing here may
@@ -255,6 +336,15 @@ fn udap_state(
             None
         }
     }
+}
+
+/// Sign-in through external identity providers.
+pub fn federated_route(state: FederatedState) -> Router {
+    Router::new()
+        .route("/auth/idp/providers", get(federated_providers))
+        .route("/auth/idp/callback", get(federated_callback))
+        .route("/auth/idp/{provider}/login", get(federated_login))
+        .with_state(state)
 }
 
 /// Creates OAuth routes that are NOT subject to FHIR content negotiation.

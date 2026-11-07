@@ -13,6 +13,7 @@
 //! - [`logout`] - Logout endpoint (revokes token and clears cookie)
 //! - [`launch`] - SMART on FHIR launch context creation
 //! - [`discovery`] - SMART configuration endpoint
+//! - [`federated`] - Sign-in through external identity providers
 //! - [`jwks`] - JWKS endpoint (RFC 7517)
 //! - [`userinfo`] - OpenID Connect UserInfo endpoint
 //!
@@ -24,6 +25,7 @@ pub mod admin;
 pub mod authorize;
 pub mod authorize_templates;
 pub mod discovery;
+pub mod federated;
 pub mod introspect;
 pub mod jwks;
 pub mod launch;
@@ -39,6 +41,7 @@ pub use admin::{
 };
 pub use authorize::{AuthorizeFormData, AuthorizeState, authorize_get, authorize_post};
 pub use discovery::{SmartConfigState, openid_configuration_handler, smart_configuration_handler};
+pub use federated::{FederatedState, federated_callback, federated_login, federated_providers};
 pub use introspect::introspect_handler;
 pub use jwks::{JwksState, jwks_handler};
 pub use launch::{CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler};

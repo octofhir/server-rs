@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
 	Alert,
@@ -10,6 +11,7 @@ import {
 	TextInput,
 	useColorScheme,
 } from "@octofhir/ui-kit";
+import { authApi } from "@/shared/api/authApi";
 import { useAuth } from "@/shared/api/hooks";
 import classes from "./LoginPage.module.css";
 
@@ -28,6 +30,15 @@ export function LoginPage() {
 	const from =
 		(location.state as { from?: { pathname: string } } | null)?.from
 			?.pathname ?? "/";
+
+	const { data: providers = [] } = useQuery({
+		queryKey: ["auth", "identity-providers"],
+		queryFn: () => authApi.identityProviders(),
+		staleTime: 60_000,
+	});
+	const returnTo = encodeURIComponent(
+		`${import.meta.env.BASE_URL}${from.replace(/^\//, "")}`,
+	);
 
 	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -122,6 +133,22 @@ export function LoginPage() {
 						>
 							Sign in
 						</Button>
+
+						{providers.length > 0 ? (
+							<div className={classes.providers}>
+								{providers.map((provider) => (
+									<Button
+										key={provider.id}
+										variant="outline"
+										size="xl"
+										width="max"
+										href={`/auth/idp/${encodeURIComponent(provider.id)}/login?return_to=${returnTo}`}
+									>
+										Sign in with {provider.name}
+									</Button>
+								))}
+							</div>
+						) : null}
 					</form>
 				</Card>
 			</div>

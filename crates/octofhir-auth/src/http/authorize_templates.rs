@@ -153,6 +153,14 @@ body {
     transform: none;
 }
 
+.btn-secondary {
+    margin-top: 0.75rem;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
 .btn-danger {
     background: transparent;
     border: 1px solid var(--border-subtle);
@@ -353,7 +361,12 @@ fn html_page(title: &str, content: &str) -> String {
 /// * `client_name` - Display name of the OAuth client
 /// * `session_id` - Session ID for the hidden form field
 /// * `error` - Optional error message to display
-pub fn render_login_form(client_name: &str, session_id: &str, error: Option<&str>) -> String {
+pub fn render_login_form(
+    client_name: &str,
+    session_id: &str,
+    error: Option<&str>,
+    providers: &[LoginProvider],
+) -> String {
     let mut content = String::with_capacity(4096);
 
     // Logo section
@@ -404,11 +417,28 @@ pub fn render_login_form(client_name: &str, session_id: &str, error: Option<&str
     content.push_str("<button type=\"submit\" class=\"btn btn-primary\">Sign in</button>\n");
     content.push_str("</form>\n\n");
 
+    // External identity providers
+    for provider in providers {
+        content.push_str("<a class=\"btn btn-secondary\" href=\"");
+        content.push_str(&html_escape(&provider.href));
+        content.push_str("\">Sign in with ");
+        content.push_str(&html_escape(&provider.name));
+        content.push_str("</a>\n");
+    }
+
     // Hint
     content.push_str("<div class=\"hint\">Use your server credentials to continue</div>\n");
     content.push_str("</div>");
 
     html_page("Sign In", &content)
+}
+
+/// An external identity provider on the sign-in page.
+#[derive(Debug, Clone)]
+pub struct LoginProvider {
+    pub name: String,
+    /// Where its button leads.
+    pub href: String,
 }
 
 /// Scope information for consent display.
@@ -695,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_render_login_form_with_error() {
-        let html = render_login_form("Test App", "session-123", Some("Invalid credentials"));
+        let html = render_login_form("Test App", "session-123", Some("Invalid credentials"), &[]);
         assert!(html.contains("Invalid credentials"));
         assert!(html.contains("alert-error"));
     }
