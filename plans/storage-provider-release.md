@@ -21,7 +21,7 @@ PACS. General Binary/Attachment S3 storage remains a separate deferred draft.
 - [x] Rust formatting/lint/tests, UI checks/browser verification and documentation build.
 - [ ] Verify Docker runtime and release automation; native Linux/macOS binaries,
       embedded console, checksums and amd64/arm64 Docker images.
-- [ ] Review and commit task-owned changes, publish v0.0.4, verify downloadable
+- [ ] Review and commit task-owned changes, publish v0.0.5, verify downloadable
       assets and versioned container images. Preserve unrelated README, devcontainer
       and report changes.
 
@@ -35,7 +35,7 @@ uses a snapshot; later acquisitions reread settings. Verified cache hits require
 no credentials. Current package registry references protect configured providers
 from deletion and follow package configuration reloads.
 
-v0.0.3 is the preceding source-only GitHub release. v0.0.4 adds downloadable
+v0.0.3 is the preceding source-only GitHub release. v0.0.5 adds downloadable
 binaries and a reproducible release workflow. Prepare, native binary and native
 container jobs and main CI for the exact source commit must pass before
 publication. CI and native builds may run concurrently; publication waits for both. Explicit DICOM/backend support limits
@@ -52,3 +52,9 @@ are recorded in the guides and release notes.
   production build, browser create/persistence and 40-page docs build passed.
 - Release workflow passes actionlint. Publication requires the same commit's main
   CI plus all four native binaries and both native Docker builds with smoke checks.
+
+The v0.0.4 candidate was stopped by full CI before publication. Its tag remains
+an audit record; v0.0.5 includes the SQL IG selection and bootstrap stack fixes.
+
+Corrected bootstrap acceptance: all four previously failing SQL test binaries,
+federated OIDC/SAML sign-in on 2 MiB stacks and RuCore passed locally.

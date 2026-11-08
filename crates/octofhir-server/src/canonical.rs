@@ -97,14 +97,14 @@ pub fn with_registry<R>(f: impl FnOnce(&CanonicalRegistry) -> R) -> Option<R> {
 pub async fn init_from_config_async(
     cfg: &AppConfig,
 ) -> Result<Arc<RwLock<CanonicalRegistry>>, String> {
-    let reg = build_registry_with_manager(cfg).await?;
+    let reg = Box::pin(build_registry_with_manager(cfg)).await?;
     Ok(Arc::new(RwLock::new(reg)))
 }
 
 /// Rebuild the registry from configuration and atomically swap its contents.
 /// If a global registry is not yet set, this initializes it.
 pub async fn rebuild_from_config_async(cfg: &AppConfig) -> Result<(), String> {
-    let new_val = build_registry_with_manager(cfg).await?;
+    let new_val = Box::pin(build_registry_with_manager(cfg)).await?;
     // Update lock-free manager cache first
     update_manager_cache(new_val.manager.clone());
     if let Some(global) = get_registry() {
@@ -606,7 +606,18 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         .await
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter(|package| parse_fhir_version(&package.fhir_version) == Some(desired))
+        // Explicit non-core IG roots may intentionally supply cross-release
+        // definitions (for example additional resources with embedded backports).
+        // Dependency core packages must never replace the active release's types.
+        .filter(|package| {
+            let is_core = package.name.starts_with("hl7.fhir.") && package.name.ends_with(".core");
+            parse_fhir_version(&package.fhir_version) == Some(desired)
+                || !is_core
+                    && install_specs.iter().any(|root| {
+                        root.id == package.name
+                            && root.version.as_deref() == Some(package.version.as_str())
+                    })
+        })
         .collect();
     let conversion_count = schema_packages.len();
     tracing::info!(

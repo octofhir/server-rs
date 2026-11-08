@@ -713,11 +713,13 @@ pub async fn build_app(
     cfg: &AppConfig,
     config_manager: Arc<octofhir_config::ConfigurationManager>,
 ) -> Result<Router, anyhow::Error> {
-    build_app_with_runtime(
+    // Keep the startup state machine on the heap: embedders and Tokio workers
+    // must be able to initialize a server with their ordinary thread stack.
+    Box::pin(build_app_with_runtime(
         cfg,
         config_manager,
         crate::lifecycle::BackgroundRuntime::default(),
-    )
+    ))
     .await
 }
 
@@ -2838,8 +2840,12 @@ impl ServerBuilder {
     /// Builds the server asynchronously.
     pub async fn build(self) -> Result<OctofhirServer, anyhow::Error> {
         let background = crate::lifecycle::BackgroundRuntime::default();
-        let app =
-            build_app_with_runtime(&self.config, self.config_manager, background.clone()).await?;
+        let app = Box::pin(build_app_with_runtime(
+            &self.config,
+            self.config_manager,
+            background.clone(),
+        ))
+        .await?;
 
         Ok(OctofhirServer {
             addr: self.addr,
