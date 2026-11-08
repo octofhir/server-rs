@@ -13,6 +13,21 @@ fn main() {
         return;
     }
 
+    println!("cargo:rerun-if-env-changed=OCTOFHIR_BUILD_GIT_COMMIT");
+    println!("cargo:rerun-if-env-changed=OCTOFHIR_BUILD_GIT_TIMESTAMP");
+    // Container build contexts omit .git; release automation supplies the exact source identity.
+    if let Ok(commit) = std::env::var("OCTOFHIR_BUILD_GIT_COMMIT")
+        && commit.len() == 40
+        && commit.bytes().all(|c| c.is_ascii_hexdigit())
+    {
+        println!("cargo:rustc-env=GIT_COMMIT={commit}");
+        let timestamp =
+            std::env::var("OCTOFHIR_BUILD_GIT_TIMESTAMP").unwrap_or_else(|_| "unknown".into());
+        assert!(!timestamp.contains(['\r', '\n']), "Invalid build timestamp");
+        println!("cargo:rustc-env=GIT_COMMIT_TIMESTAMP={timestamp}");
+        return;
+    }
+
     // Get git commit hash
     if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output() {
         if output.status.success() {

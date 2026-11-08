@@ -1,4 +1,12 @@
 //! Trusted identity and resource access for a named operation invocation.
+//!
+//! # Contents
+//! Invocation identity, authorized reads/searches and metadata updates. Primary
+//! reads supply authoritative snapshots to operations that subsequently write.
+//!
+//! # Invariants
+//! Selecting a primary pool never bypasses SQL grant predicates or resource policy
+//! checks. Ordinary reads keep their existing replica behavior.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -107,6 +115,62 @@ impl FromRequestParts<AppState> for OperationContext {
 }
 
 impl OperationContext {
+    /// Administrator-selected backend identity. No HTTP request or PACS token may
+    /// select its scopes; current client registration and resource policies apply.
+    pub(crate) async fn for_service(
+        state: &AppState,
+        client_id: &str,
+        scopes: &[String],
+    ) -> Result<Self, OperationError> {
+        use octofhir_auth::{middleware::AuthContext, token::AccessTokenClaims, types::GrantType};
+        let client = state
+            .auth_state
+            .client_storage
+            .find_by_client_id(client_id)
+            .await
+            .map_err(|_| ApiError::internal("Cannot resolve DICOM service identity"))?
+            .filter(|client| {
+                client.active && client.is_grant_type_allowed(GrantType::ClientCredentials)
+            })
+            .ok_or_else(|| {
+                ApiError::forbidden("DICOM backend client is inactive or unavailable")
+            })?;
+        if scopes.is_empty()
+            || scopes
+                .iter()
+                .any(|scope| !scope.starts_with("system/") || !client.is_scope_allowed(scope))
+        {
+            return Err(ApiError::forbidden(
+                "DICOM service scopes exceed current client registration",
+            )
+            .into());
+        }
+        let auth = Arc::new(AuthContext {
+            token_claims: Arc::new(
+                AccessTokenClaims::builder(&state.config.auth.issuer, client_id, client_id)
+                    .audience(vec![state.fhir_base_url()])
+                    .scope(scopes.join(" "))
+                    .build(),
+            ),
+            client,
+            user: None,
+            patient: None,
+            encounter: None,
+        });
+        Ok(Self {
+            auth: Some(auth),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            if_match: None,
+            request_url: format!("{}/$dicom-sync", state.fhir_base_url()),
+            respond_async: false,
+            lenient: false,
+            separate_status: false,
+            is_get: false,
+            accept: None,
+            content_type: None,
+        })
+    }
+
     pub(crate) async fn for_job(
         state: &AppState,
         job_id: uuid::Uuid,
@@ -182,7 +246,7 @@ impl OperationContext {
         .map_err(Into::into)
     }
 
-    pub(super) fn policy_context(
+    pub(crate) fn policy_context(
         &self,
         state: &AppState,
         operation: FhirOperation,
@@ -292,13 +356,31 @@ impl OperationContext {
         resource_type: &str,
         params: &SearchParams,
     ) -> Result<octofhir_storage::RawSearchResult, OperationError> {
+        self.query_raw_on(state, resource_type, params, false).await
+    }
+
+    async fn query_raw_on(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        params: &SearchParams,
+        primary: bool,
+    ) -> Result<octofhir_storage::RawSearchResult, OperationError> {
         let cfg = state.search_config.config();
         octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
-            &state.read_db_pool,
+            if primary {
+                &state.db_pool
+            } else {
+                &state.read_db_pool
+            },
             resource_type,
             params,
             Some(&cfg.registry),
-            state.query_cache.as_deref(),
+            if primary {
+                None
+            } else {
+                state.query_cache.as_deref()
+            },
             state.terminology_provider.as_ref(),
             Self::raw_search_options(state),
         )
@@ -476,11 +558,86 @@ impl OperationContext {
         operation: FhirOperation,
         error_on_hidden_reference: bool,
     ) -> Result<Option<StoredResource>, OperationError> {
+        self.read_for_on(
+            state,
+            resource_type,
+            id,
+            operation,
+            error_on_hidden_reference,
+            false,
+        )
+        .await
+    }
+
+    /// Admit an external command against a currently readable, update-authorized
+    /// resource. This does not substitute for the worker's ordinary FHIR writes.
+    pub(crate) async fn command_target(
+        &self,
+        state: &AppState,
+        kind: &str,
+        id: &str,
+    ) -> Result<StoredResource, OperationError> {
+        let visible = self
+            .read_primary(state, kind, id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Command target is unavailable"))?;
+        let current = self
+            .read_for_on(state, kind, id, FhirOperation::Update, false, true)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Command target is unavailable"))?;
+        if current.version_id != visible.version_id {
+            return Err(ApiError::conflict("Command target changed; retry the operation").into());
+        }
+        if let Some(mut context) = self.policy_context(
+            state,
+            FhirOperation::Update,
+            kind,
+            Some(id),
+            &SearchParams::new(),
+        )? {
+            context.resource = Some(ResourceContext::from_resource(current.resource.clone()));
+            context.request.body = Some(current.resource.clone());
+            Self::evaluate(state, &context).await?;
+        }
+        Ok(current)
+    }
+
+    /// Authorize the authoritative snapshot before composing a conditional write.
+    /// Replica lag must never turn an existing resource into an unguarded upsert.
+    pub(crate) async fn read_primary(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<StoredResource>, OperationError> {
+        self.read_for_on(state, resource_type, id, FhirOperation::Read, false, true)
+            .await
+    }
+
+    async fn read_for_on(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        id: &str,
+        operation: FhirOperation,
+        error_on_hidden_reference: bool,
+        primary: bool,
+    ) -> Result<Option<StoredResource>, OperationError> {
         octofhir_core::validate_id(id).map_err(|error| ApiError::bad_request(error.to_string()))?;
         let mut params = SearchParams::new().with_count(1).with_param("_id", id);
         let Some(mut context) =
             self.policy_context(state, operation, resource_type, Some(id), &params)?
         else {
+            if primary {
+                return self
+                    .query_raw_on(state, resource_type, &params, true)
+                    .await?
+                    .entries
+                    .into_iter()
+                    .next()
+                    .map(stored_resource)
+                    .transpose();
+            }
             return state
                 .storage
                 .read(resource_type, id)
@@ -494,11 +651,13 @@ impl OperationContext {
             &state.base_url,
         )?;
         let stored = self
-            .query(state, resource_type, &params)
+            .query_raw_on(state, resource_type, &params, primary)
             .await?
             .entries
             .into_iter()
-            .next();
+            .next()
+            .map(stored_resource)
+            .transpose()?;
         if error_on_hidden_reference && params.constraint.is_some() && stored.is_none() {
             return Err(ApiError::not_found("Referenced resource is unavailable").into());
         }
@@ -696,6 +855,40 @@ impl OperationContext {
                 })
             }
         }
+    }
+
+    /// Primary-backed search for identity resolution immediately before writes.
+    pub(crate) async fn search_primary(
+        &self,
+        state: &AppState,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<SearchResult, OperationError> {
+        let result = match self.plan_search(state, resource_type, params).await? {
+            SearchPlan::Direct(params) => {
+                self.query_raw_on(state, resource_type, &params, true)
+                    .await?
+            }
+            SearchPlan::Snapshots(params, prepared) => {
+                prepared
+                    .execute(
+                        state,
+                        &[resource_type],
+                        &params,
+                        Self::raw_search_options(state),
+                    )
+                    .await?
+            }
+        };
+        Ok(SearchResult {
+            entries: result
+                .entries
+                .into_iter()
+                .map(stored_resource)
+                .collect::<Result<_, _>>()?,
+            total: result.total,
+            has_more: result.has_more,
+        })
     }
 
     /// [`OperationContext::search`] keeping each resource as the JSON text the database

@@ -1,0 +1,252 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_BUILD_JOBS: '2'
+  CARGO_PROFILE_RELEASE_DEBUG: '0'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      timestamp: ${{ steps.version.outputs.timestamp }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release identity
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if existing=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            test "$existing" = true || { echo 'This release is already published'; exit 1; }
+          fi
+          python3 - <<'PY'
+          import os, re, pathlib
+          text = pathlib.Path('Cargo.toml').read_text()
+          version = re.search(r'\[workspace.package\]\s*\nversion = "([^"]+)"', text)[1]
+          if os.environ['RELEASE_TAG'] != 'v' + version:
+              raise SystemExit('Run releases from a tag matching workspace.package.version')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('version=' + version, file=output)
+          PY
+          printf 'timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C ui typecheck && pnpm -C ui lint && pnpm -C ui test && pnpm -C ui build
+      - run: pnpm -C docs build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ui
+          path: ui/dist
+          if-no-files-found: error
+
+  quality:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 95
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require successful main CI for this exact source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 180); do
+            outcome=$(gh run list --workflow ci.yml --branch main --event push \
+              --commit "$SOURCE_SHA" --limit 1 --json status,conclusion \
+              --jq 'if length == 0 then "pending" elif .[0].status == "completed" then .[0].conclusion else "pending" end')
+            if test "$outcome" = success; then
+              echo "CI passed for $SOURCE_SHA"
+              exit 0
+            fi
+            if test "$outcome" != pending; then
+              echo "CI for $SOURCE_SHA ended with $outcome"
+              exit 1
+            fi
+            echo "Waiting for main CI ($attempt/180)"
+            sleep 30
+          done
+          echo 'Timed out waiting for the source commit CI'
+          exit 1
+
+  binaries:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            name: linux-x86_64
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: linux-aarch64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            name: macos-x86_64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            name: macos-aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev cmake perl
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-ui
+          path: ui/dist
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Build binary with embedded console
+        run: cargo build --locked --release --target ${{ matrix.target }} -p octofhir-server --features vendored-openssl --bin octofhir-server
+      - name: Smoke test and package
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          binary="target/$RELEASE_TARGET/release/octofhir-server"
+          "$binary" --help
+          package="octofhir-server-$RELEASE_VERSION-$RELEASE_NAME"
+          mkdir -p "dist/$package"
+          cp "$binary" LICENSE octofhir.example.toml "dist/$package/"
+          cp docs/src/content/docs/storage-providers.mdx docs/src/content/docs/dicom.mdx "dist/$package/"
+          tar -C dist -czf "dist/$package.tar.gz" "$package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.name }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  images:
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reclaim disposable runner build space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          platforms: linux/${{ matrix.arch }}
+          tags: ghcr.io/octofhir/octofhir-server:build-${{ github.sha }}-${{ matrix.arch }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            BUILD_TIMESTAMP=${{ needs.prepare.outputs.timestamp }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,mode=min,scope=release-${{ matrix.arch }}
+      - name: Smoke test runtime and publish candidate
+        env:
+          IMAGE: ghcr.io/octofhir/octofhir-server:build-${{ github.sha }}-${{ matrix.arch }}
+        run: |
+          docker run --rm --entrypoint octofhir-server "$IMAGE" --help
+          docker push "$IMAGE"
+
+  publish:
+    needs: [prepare, quality, binaries, images]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: assets
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: assets
+        run: sha256sum *.tar.gz > SHA256SUMS
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish verified image index
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IMAGE: ghcr.io/octofhir/octofhir-server
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "$IMAGE:$VERSION" --tag "$IMAGE:latest" \
+            "$IMAGE:build-$SOURCE_SHA-amd64" "$IMAGE:build-$SOURCE_SHA-arm64"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+      - name: Publish downloadable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+            gh release upload "$RELEASE_TAG" assets/* --clobber
+            gh release edit "$RELEASE_TAG" --notes-file "releases/$VERSION.md"
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "OctoFHIR server $RELEASE_TAG" --notes-file "releases/$VERSION.md" assets/*
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false --latest

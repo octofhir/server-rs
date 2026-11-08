@@ -73,14 +73,21 @@ enabled = false
 # environment = "dev"
 
 [packages]
+# Disable registry and direct package URL requests. Supply every dependency locally,
+# in the exact-version archive cache, or already installed in PostgreSQL.
+offline = false
 # Packages to load from FHIR registry or local filesystem
 load = [
     "hl7.fhir.r4.core#4.0.1",
     # "hl7.terminology#5.5.0",
+    # { path = "./packages/my-ig/package.tgz" },
+    # S3 remains available when offline=true; sha256 must be the archive's digest.
+    # { s3 = { provider = "private-igs", bucket = "private-igs", key = "my-ig/1.0.0/package.tgz", sha256 = "<64 hexadecimal digits>" } },
     # { id = "my.package", version = "1.0.0", path = "/path/to/package" }
 ]
 # Optional: Custom package cache directory
-# path = "/custom/path/to/package/cache"
+# Paths are relative to this configuration file (absolute paths also work).
+# path = "./.fhir"
 
 [auth]
 enabled = false
@@ -230,3 +237,46 @@ allow_writes = false
 # CapabilityStatements of loaded packages this deployment has tested against. They go into
 # CapabilityStatement.instantiates, and their supportedProfile lists join each resource.
 # instantiates = ["http://hl7.org/fhir/us/core/CapabilityStatement/us-core-server"]
+
+# Optional DICOMweb metadata import. Image bytes remain in PACS.
+# [dicom.connections.hospital]
+# wado_url = "https://pacs.example.org/dicom-web"
+# bearer_token_env = "PACS_BEARER_TOKEN"
+# timeout_seconds = 30
+# max_metadata_bytes = 8388608
+# max_instances = 10000
+# [dicom.connections.hospital.patient_identifier_systems]
+# HOSPITAL = "https://hospital.example.org/mrn"
+
+# Optional authorized DICOMweb gateway and UPS Requestor/Watcher.
+# See the DICOM Integration guide for permissions and result mappings.
+# [dicom.connections.hospital.gateway]
+# max_stream_bytes = 8589934592
+# stream_seconds = 300
+# idle_seconds = 30
+#
+# [dicom.connections.hospital.ups]
+# url = "https://pacs.example.org/ups"
+# client_id = "imaging-worker"
+# scopes = ["system/Task.ru", "system/Patient.r", "system/ImagingStudy.cru", "system/Endpoint.cru", "system/Provenance.cru"]
+# ae_title = "OCTOFHIR"
+# notifications = true
+# poll_seconds = 30
+# retry_seconds = 5
+# [dicom.connections.hospital.ups.coding_schemes]
+# "https://hospital.example.org/procedures" = "99HOSPITAL"
+# Add explicit result_mappings and corresponding scopes for DICOM outputs.
+# Processing and STOW remain external.
+
+# Initial provider resource; inserted only when missing. Later database edits win.
+# [[storage_providers]]
+# id = "private-igs"
+# name = "Private IG storage"
+# type = "s3"
+# region = "eu-central-1"
+# addressingStyle = "virtual_hosted"
+# # endpoint = "https://objects.example.org"  # omit for regional AWS S3
+# [storage_providers.credentials]
+# type = "environment"
+# accessKeyIdEnv = "IG_S3_ACCESS_KEY_ID"
+# secretAccessKeyEnv = "IG_S3_SECRET_ACCESS_KEY"

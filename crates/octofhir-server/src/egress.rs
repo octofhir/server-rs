@@ -155,6 +155,34 @@ impl EgressPolicy {
         }
     }
 
+    /// Resolve and connect a WebSocket transport without allowing its client
+    /// library to re-resolve an unchecked address. TLS still uses the original
+    /// hostname. Redirects and proxies are not involved in this TCP boundary.
+    pub(crate) async fn connect_tcp(&self, url: &Url) -> Result<tokio::net::TcpStream, String> {
+        self.check_url(url)?;
+        let host = url.host_str().ok_or("Outbound host is missing")?;
+        let port = url
+            .port_or_known_default()
+            .ok_or("Outbound port is missing")?;
+        let addresses = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|_| "Outbound DNS resolution failed")?;
+        for address in addresses
+            .filter(|address| self.allows_host(host) || self.allows_ip(address.ip()))
+            .take(16)
+        {
+            if let Ok(Ok(stream)) = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::net::TcpStream::connect(address),
+            )
+            .await
+            {
+                return Ok(stream);
+            }
+        }
+        Err("No permitted outbound address is reachable".into())
+    }
+
     /// A client builder whose connections only reach addresses this policy allows.
     pub fn client_builder(self: &Arc<Self>) -> reqwest::ClientBuilder {
         let builder = reqwest::Client::builder();

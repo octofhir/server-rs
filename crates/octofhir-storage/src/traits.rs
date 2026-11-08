@@ -559,6 +559,17 @@ pub trait Transaction: Send + Sync {
         ))
     }
 
+    /// Save a trusted DICOM projection alongside ordinary resource writes.
+    /// Implementations must reject a change to a previously pinned patient/source.
+    async fn save_dicom_manifest(
+        &mut self,
+        _manifest: &crate::DicomManifest,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::transaction_error(
+            "Atomic DICOM manifests are unsupported",
+        ))
+    }
+
     /// Commits all operations in this transaction.
     ///
     /// After commit, the transaction is consumed and cannot be used again.

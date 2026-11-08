@@ -1,0 +1,7 @@
+.card { padding: 0; border: none; background: transparent; }
+.form { display: flex; flex-direction: column; gap: var(--octo-spacing-md); }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--octo-spacing-md); }
+.actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--octo-spacing-sm); }
+@media (max-width: 640px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+.identity { display: flex; flex-direction: column; gap: 2px; }

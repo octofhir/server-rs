@@ -78,3 +78,72 @@ max_count = 10
     let err = load_config(invalid_path.to_str()).expect_err("expected validation error");
     assert!(err.contains("default_count must be <="));
 }
+
+#[test]
+fn local_package_paths_are_relative_to_the_configuration_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_dir = dir.path().join("deployment");
+    fs::create_dir(&config_dir).unwrap();
+    let path = config_dir.join("server.toml");
+    fs::write(
+        &path,
+        r#"
+[storage.postgres]
+url = "postgres://localhost/test"
+[packages]
+offline = true
+path = "cache"
+load = [{ path = "ig/package.tgz" }, { path = "/opt/ig/readonly" }]
+"#,
+    )
+    .unwrap();
+    let config = load_config(path.to_str()).unwrap();
+    assert!(config.packages.offline);
+    assert_eq!(
+        config.packages.path.as_deref(),
+        config_dir.join("cache").to_str()
+    );
+    assert_eq!(
+        config.packages.load[0].reference().unwrap(),
+        config_dir.join("ig/package.tgz").display().to_string()
+    );
+    assert_eq!(
+        config.packages.load[1].reference().unwrap(),
+        "/opt/ig/readonly"
+    );
+    // Reload preserves the same base without requiring a process-wide chdir.
+    let reloaded = load_config(path.to_str()).unwrap();
+    assert_eq!(
+        config.packages.load[0].reference(),
+        reloaded.packages.load[0].reference()
+    );
+}
+
+#[test]
+fn private_s3_package_config_parses_and_requires_integrity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s3.toml");
+    let toml = r#"
+[storage.postgres]
+url = "postgres://localhost/test"
+[packages]
+offline = true
+load = [{ s3 = { provider = "private-igs", bucket = "private-igs", key = "private/package.tgz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }]
+"#;
+    fs::write(&path, toml).unwrap();
+    let config = load_config(path.to_str()).unwrap();
+    assert!(config.packages.offline);
+    assert_eq!(
+        config.packages.load[0].reference().unwrap(),
+        "s3://private-igs/private/package.tgz"
+    );
+    fs::write(
+        &path,
+        toml.replace(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "wrong",
+        ),
+    )
+    .unwrap();
+    assert!(load_config(path.to_str()).unwrap_err().contains("sha256"));
+}

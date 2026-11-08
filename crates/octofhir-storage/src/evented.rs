@@ -478,6 +478,13 @@ impl Transaction for EventedTransaction {
             .await
     }
 
+    async fn save_dicom_manifest(
+        &mut self,
+        manifest: &crate::DicomManifest,
+    ) -> Result<(), StorageError> {
+        self.inner.save_dicom_manifest(manifest).await
+    }
+
     async fn commit(self: Box<Self>) -> Result<(), StorageError> {
         // Destructure self to get ownership of all fields
         let EventedTransaction {

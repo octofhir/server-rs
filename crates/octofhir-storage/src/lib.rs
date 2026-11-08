@@ -52,6 +52,8 @@
 //! }
 //! ```
 
+mod dicom;
+pub use dicom::DicomManifest;
 mod error;
 #[cfg(feature = "events")]
 pub mod evented;

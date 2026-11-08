@@ -186,6 +186,25 @@ impl Transaction for PostgresTransaction {
         Ok(())
     }
 
+    async fn save_dicom_manifest(
+        &mut self,
+        manifest: &octofhir_storage::DicomManifest,
+    ) -> Result<(), StorageError> {
+        let mut guard = self.tx.lock().await;
+        let tx = guard
+            .as_deref_mut()
+            .ok_or_else(|| StorageError::transaction_error("Transaction already completed"))?;
+        let result = sqlx_core::query::query("INSERT INTO dicom_manifests(connection_name,study_uid,resource_id,patient_id,source_hash,manifest_hash) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(connection_name,study_uid) DO UPDATE SET manifest_hash=EXCLUDED.manifest_hash,updated_at=clock_timestamp() WHERE dicom_manifests.patient_id=EXCLUDED.patient_id AND dicom_manifests.source_hash=EXCLUDED.source_hash AND dicom_manifests.resource_id=EXCLUDED.resource_id")
+            .bind(&manifest.connection).bind(&manifest.study_uid).bind(&manifest.resource_id).bind(&manifest.patient_id).bind(&manifest.source_hash).bind(&manifest.manifest_hash).execute(&mut **tx).await
+            .map_err(|_|StorageError::transaction_error("Cannot save DICOM manifest"))?;
+        if result.rows_affected() != 1 {
+            return Err(StorageError::transaction_error(
+                "DICOM source or patient binding cannot change",
+            ));
+        }
+        Ok(())
+    }
+
     async fn commit(mut self: Box<Self>) -> Result<(), StorageError> {
         if let Some(tx) = self.tx.lock().await.take() {
             tx.commit().await.map_err(|e| {

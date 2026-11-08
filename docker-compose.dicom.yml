@@ -1,0 +1,59 @@
+# Isolated interoperability environment with synthetic fixtures only.
+# See docs/src/content/docs/dicom.mdx. All published APIs bind to loopback.
+services:
+  orthanc:
+    profiles: [orthanc]
+    image: orthancteam/orthanc:latest@sha256:06b8baab0c63cd58de5474a74b64096a82ea3f7eab2aa471e217cc48c9ae11bf
+    ports: ["127.0.0.1:${ORTHANC_HTTP_PORT:-8042}:8042"]
+    environment:
+      ORTHANC__AUTHENTICATION_ENABLED: "false"
+      ORTHANC__REMOTE_ACCESS_ALLOWED: "true"
+      DICOM_WEB_PLUGIN_ENABLED: "true"
+      ORTHANC__DICOM_WEB__ROOT: /dicom-web/
+    volumes: [orthanc-data:/var/lib/orthanc/db]
+
+  dicom-ldap:
+    profiles: [dcm4chee]
+    image: dcm4che/slapd-dcm4chee:2.6.15-35.2@sha256:a9c28ec51052979844158eacf78458a3438f7f4b6cfe4d4d4f458642ddda8417
+    environment:
+      LDAP_ROOTPASS: ${DICOM_TEST_LDAP_PASSWORD:?Set a local LDAP password}
+    volumes:
+      - ldap-data:/var/lib/openldap/openldap-data
+      - ldap-config:/etc/openldap/slapd.d
+    networks:
+      default:
+        aliases: [ldap]
+
+  dicom-db:
+    profiles: [dcm4chee]
+    image: dcm4che/postgres-dcm4chee:17.9-35@sha256:28bcc74f4fe0328563d41b8468465b78d10ffc53166bb7f7ca34530e42421791
+    environment:
+      POSTGRES_DB: pacsdb
+      POSTGRES_USER: pacs
+      POSTGRES_PASSWORD: ${DICOM_TEST_DB_PASSWORD:?Set a local PACS database password}
+    volumes: [pacsdb-data:/var/lib/postgresql/data]
+    networks:
+      default:
+        aliases: [db]
+
+  dcm4chee:
+    profiles: [dcm4chee]
+    image: dcm4che/dcm4chee-arc-psql:5.35.2@sha256:eb348a2a1d0eece6dd85b7f047acbd70b6c5b47f59896464d371e9b42313b536
+    depends_on: [dicom-ldap, dicom-db]
+    ports: ["127.0.0.1:${DCM4CHEE_HTTP_PORT:-8090}:8080"]
+    environment:
+      POSTGRES_DB: pacsdb
+      POSTGRES_USER: pacs
+      POSTGRES_PASSWORD: ${DICOM_TEST_DB_PASSWORD:?Set a local PACS database password}
+      LDAP_ROOTPASS: ${DICOM_TEST_LDAP_PASSWORD:?Set a local LDAP password}
+      WILDFLY_WAIT_FOR: "ldap:389 db:5432"
+      JAVA_OPTS: "-Xms128m -Xmx1024m -Djava.net.preferIPv4Stack=true"
+    volumes: [arc-data:/opt/wildfly/standalone]
+    mem_limit: 2g
+
+volumes:
+  orthanc-data:
+  ldap-data:
+  ldap-config:
+  pacsdb-data:
+  arc-data:

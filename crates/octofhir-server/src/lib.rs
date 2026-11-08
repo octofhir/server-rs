@@ -22,6 +22,7 @@ pub mod compartments;
 pub mod config;
 pub mod config_manager;
 pub mod db_metrics;
+pub mod dicom;
 pub mod egress;
 pub mod events;
 pub mod gateway;
@@ -43,6 +44,7 @@ pub mod observability;
 pub mod operation_registry;
 pub mod operations;
 pub mod package_diff;
+mod package_source;
 pub mod patch;
 pub mod prometheus;
 pub mod reconcile;
@@ -140,3 +142,5 @@ pub async fn create_cache_backend(config: &RedisConfig) -> CacheBackend {
         }
     }
 }
+
+pub mod storage_providers;

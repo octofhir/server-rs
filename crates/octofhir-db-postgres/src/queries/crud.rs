@@ -20,6 +20,13 @@ use crate::schema::SchemaManager;
 fn mutation_error(error: sqlx_core::error::Error, context: &str) -> StorageError {
     if error
         .as_database_error()
+        .and_then(|error| error.constraint())
+        == Some("dicom_ups_task_binding")
+    {
+        return StorageError::WriteConflict{message:"Managed UPS Task inputs are immutable; cancel and reconcile before deleting an active Task".into()};
+    }
+    if error
+        .as_database_error()
         .and_then(|error| error.code())
         .as_deref()
         == Some("40001")

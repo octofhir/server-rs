@@ -522,12 +522,14 @@ impl AsyncJobManager {
                 let import_permit = self.import_semaphore.clone().try_acquire_owned().ok();
                 match self.claim_job_matching(import_permit.is_some()).await {
                     Ok(Some(job)) => {
-                        let import_permit =
-                            if matches!(job.request_type.as_str(), "bulk_import" | "bulk_submit") {
-                                import_permit
-                            } else {
-                                None
-                            };
+                        let import_permit = if matches!(
+                            job.request_type.as_str(),
+                            "bulk_import" | "bulk_submit" | "dicom-sync" | "dicom-ups"
+                        ) {
+                            import_permit
+                        } else {
+                            None
+                        };
                         let manager = self.clone();
                         self.background.spawn_tracked(async move {
                             manager.execute_job(executor, job).await;
@@ -561,7 +563,7 @@ impl AsyncJobManager {
                error_message = 'Execution was interrupted; automatic write replay is unavailable' \
                WHERE status = 'in_progress' AND expires_at > clock_timestamp() \
                AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()) \
-               AND request_type NOT IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status', 'bulk_import')",
+               AND request_type NOT IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status', 'bulk_import', 'dicom-sync', 'dicom-ups')",
         )
         .execute(self.db_pool.as_ref())
         .await?;
@@ -569,9 +571,9 @@ impl AsyncJobManager {
         let row = query(
             "WITH candidate AS (SELECT id FROM async_jobs \
              WHERE expires_at > clock_timestamp() AND request_headers->'authorization' IS NOT NULL \
-             AND ($2 OR request_type NOT IN ('bulk_import', 'bulk_submit')) \
+             AND ($2 OR request_type NOT IN ('bulk_import', 'bulk_submit', 'dicom-sync', 'dicom-ups')) \
              AND (status = 'queued' OR (status = 'in_progress' \
-             AND request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status', 'bulk_import') \
+             AND request_type IN ('bulk_export', 'viewdefinition_export', 'bundle-transaction', 'bulk_submit', 'bulk_submit_revert', 'bulk_submit_status', 'bulk_import', 'dicom-sync', 'dicom-ups') \
              AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()))) \
              ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED) \
              UPDATE async_jobs j SET status = 'in_progress', execution_id = $1, \
@@ -600,6 +602,16 @@ impl AsyncJobManager {
 
     /// Submit a new async job
     pub async fn submit_job(&self, request: AsyncJobRequest) -> Result<Uuid, AsyncJobError> {
+        let mut connection = self.db_pool.acquire().await?;
+        self.submit_job_on(request, &mut connection).await
+    }
+
+    /// Enqueue atomically with an integration cursor or deduplication record.
+    pub(crate) async fn submit_job_on(
+        &self,
+        request: AsyncJobRequest,
+        connection: &mut sqlx_postgres::PgConnection,
+    ) -> Result<Uuid, AsyncJobError> {
         if !self.config.enabled {
             return Err(AsyncJobError::ExecutionFailed(
                 "Asynchronous jobs are disabled".into(),
@@ -635,7 +647,7 @@ impl AsyncJobManager {
         .bind(&headers)
         .bind(request.authorization.client_id())
         .bind(&ttl_hours)
-        .fetch_one(self.db_pool.as_ref())
+        .fetch_one(connection)
         .await?;
 
         let job_id: Uuid = row.try_get("id")?;

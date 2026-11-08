@@ -543,3 +543,253 @@ enabled = true
 endpoint = "https://otel.example.com:4318"
 sample_ratio = 0.01
 ```
+
+
+## Local implementation guide packages
+
+A `packages.load` table with `path` loads a published FHIR package from an
+unpacked directory, its `package/` subdirectory, or a local gzip tar archive such as
+`package.tgz`. A plain local path works for a standalone server; a read-only volume
+mount works in a container. The source is never modified.
+
+Identity is read from `package.json`; optional `id` and `version` must agree with
+that manifest. Configured local packages must declare the server's FHIR release.
+Both `fhirVersions` and the older published `fhir-version-list` declaration are
+accepted, as described in the [FHIR package specification](https://hl7.org/fhir/R5/packages.html).
+Build FSH source trees before loading them. Use immutable package versions;
+replacing installed content under the same name and version requires explicit
+package reinstallation.
+
+```toml
+[fhir]
+version = "R4B"
+
+[packages]
+path = "./.fhir"
+load = [
+  "hl7.fhir.r4b.core#4.3.0",
+  { path = "./packages/ru-core/package.tgz" },
+  { path = "/opt/fhir/private-terminology" }
+]
+```
+
+Paths in a TOML configuration, including `packages.path`, resolve against the
+configuration file's directory. Absolute paths remain absolute. When embedding
+the server and constructing `AppConfig` directly, relative paths use the process
+working directory.
+
+### Offline package installation
+
+```toml
+[packages]
+offline = true
+path = "./.fhir"
+load = [
+  { path = "./packages/fhir-core/package.tgz" },
+  { path = "./packages/private-ig" },
+  { path = "./packages/private-dependency/package.tgz" }
+]
+```
+
+Set `packages.offline = true` to disable package-registry metadata preflight,
+registry downloads, direct package-URL downloads and runtime registry operations.
+This setting controls package acquisition; terminology servers and other configured
+integrations have their own network settings.
+
+Every requested package and its transitive dependencies must already be installed,
+be supplied by a configured local source, or have an exact-version archive in
+`<packages.path>/cache/<name>-<version>.tgz`. Supply the automatically requested
+HL7 terminology package too (and SQL on FHIR when enabled). Installed packages do
+not require their original downloaded archives on restart. Explicit local paths
+must still exist and pass manifest validation on every startup.
+
+For a missing dependency, startup reports its exact `name@version` and the package
+that requires it. A private IG is never silently omitted. Archive expansion has
+compressed/expanded size, per-file size, count and depth limits; escaping paths,
+links, special files, duplicate entries and invalid index paths are rejected.
+Configured source installation and schema preparation failures stop startup.
+
+The interoperability suite includes the published `ru.core#1` package (FHIR R4B
+4.3.0): a read-only directory, a cold offline bootstrap from its unmodified archive
+and cached dependencies, profile slicing checks and package-local terminology.
+S3 package acquisition is described below and remains separate from clinical file storage.
+
+### Private S3 package objects
+
+S3 sources reference an enabled database-backed `StorageProvider`. Connection
+settings and credentials belong to that reusable provider, not to each package.
+See [Storage providers](/server-rs/storage-providers/) for administrator API/UI,
+bootstrap, encryption, addressing and examples for AWS S3, R2, Backblaze, Garage
+and RustFS.
+
+```toml
+[packages]
+offline = true
+path = "./.fhir"
+load = [
+  { path = "./packages/fhir-core/package.tgz" },
+  { s3 = { provider = "private-igs", bucket = "private-igs", key = "igs/private.core/1.0.0/package.tgz", sha256 = "<64 hexadecimal digits>" } }
+]
+```
+
+Mandatory `sha256` pins the compressed object bytes. Optional `version_id` selects
+and verifies a specific object version. `timeout_ms` defaults to 60000 (maximum
+300000); `max_archive_bytes` defaults to 256 MiB (also its maximum). Archives stream
+into a verified atomic content-addressed cache. Registry-offline mode permits these
+explicit S3 sources; all transitive dependencies must be supplied or already cached.
+
+### Local RustFS verification
+
+The repository includes `docker-compose.s3.yml` with a digest-pinned RustFS 1.0.4
+image. Start it with locally chosen credentials:
+
+```sh
+export RUSTFS_ACCESS_KEY="<local-access-key>"
+export RUSTFS_SECRET_KEY="<local-secret-key>"
+docker compose -f docker-compose.s3.yml up -d
+curl --fail http://127.0.0.1:9000/health
+```
+
+The S3 API listens on loopback port 9000. Create a bucket and upload `package.tgz`
+with an S3 client. Create a StorageProvider with endpoint `http://127.0.0.1:9000`,
+set `allowHttp = true`, reference these credential environment variables, and add
+`127.0.0.1` to `server.outbound_allowlist`. Stop the local instance with
+`docker compose -f docker-compose.s3.yml down`; its named volume retains test data.
+
+#### Start OctoFHIR with an IG stored in RustFS
+
+Run the following from the repository root. This local example requires Docker,
+AWS CLI and the Rust toolchain. It uses the pinned RuCore fixture (FHIR R4B), a
+local PostgreSQL container and RustFS. Package dependencies are downloaded on first
+startup; see the offline section above to supply them locally instead.
+
+Start object storage and a separate example database. The password stays in the
+process environment and is not written into the TOML file:
+
+```sh
+export RUSTFS_ACCESS_KEY="octofhir-local-ig"
+export RUSTFS_SECRET_KEY="$(openssl rand -hex 16)"
+export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+export AWS_ACCESS_KEY_ID="$RUSTFS_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$RUSTFS_SECRET_KEY"
+export AWS_DEFAULT_REGION="us-east-1"
+
+docker compose -f docker-compose.s3.yml up -d
+# Wait for HTTP 200 before uploading the package.
+curl --retry 30 --retry-all-errors --retry-delay 1 --fail http://127.0.0.1:9000/health
+
+docker run --detach --rm --name octofhir-s3-example-pg \
+  --publish 127.0.0.1:5433:5432 \
+  --env POSTGRES_PASSWORD postgres:18-alpine
+```
+
+Create a private bucket and upload the published archive. Explicit environment
+credentials above keep this example separate from any AWS CLI profile:
+
+```sh
+export IG_TGZ="$PWD/crates/octofhir-server/tests/fixtures/ru-core/package.tgz"
+export IG_SHA256="$(shasum -a 256 "$IG_TGZ" | awk '{print $1}')"
+
+aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket private-igs
+aws --endpoint-url http://127.0.0.1:9000 s3 cp \
+  "$IG_TGZ" s3://private-igs/igs/ru.core/1/package.tgz
+```
+
+Generate a complete server configuration. The checksum is substituted into the
+file; credential fields remain names of environment variables. Its relative cache
+path is resolved against this configuration file's directory:
+
+```sh
+mkdir -p /tmp/octofhir-s3-example
+cat > /tmp/octofhir-s3-example/octofhir.toml <<EOF
+[fhir]
+version = "R4B"
+
+[server]
+host = "127.0.0.1"
+port = 8080
+outbound_allowlist = ["127.0.0.1/32"]
+
+[storage.postgres]
+host = "127.0.0.1"
+port = 5433
+database = "postgres"
+username = "postgres"
+
+[auth.policy]
+anonymous_access = true
+
+[[storage_providers]]
+id = "local-rustfs"
+name = "Local IG storage"
+type = "s3"
+endpoint = "http://127.0.0.1:9000"
+region = "us-east-1"
+addressingStyle = "path"
+allowHttp = true
+
+[storage_providers.credentials]
+type = "environment"
+accessKeyIdEnv = "RUSTFS_ACCESS_KEY"
+secretAccessKeyEnv = "RUSTFS_SECRET_KEY"
+
+[packages]
+path = "./.fhir"
+offline = false
+load = [
+  { id = "hl7.fhir.r4b.core", version = "4.3.0", url = "https://hl7.org/fhir/R4B/hl7.fhir.r4b.core.tgz" },
+  { s3 = { provider = "local-rustfs", bucket = "private-igs", key = "igs/ru.core/1/package.tgz", sha256 = "$IG_SHA256" } }
+]
+EOF
+
+export OCTOFHIR__STORAGE__POSTGRES__PASSWORD="$POSTGRES_PASSWORD"
+OCTOFHIR_CONFIG=/tmp/octofhir-s3-example/octofhir.toml \
+  cargo run -p octofhir-server --bin octofhir-server
+```
+
+This example binds the API to loopback and allows anonymous requests for local
+verification. Use the deployment's normal authentication policy outside the demo.
+In another terminal, inspect `http://127.0.0.1:8080/fhir/metadata` or validate a
+Patient against the loaded RuCore profile:
+
+```sh
+curl --fail-with-body http://127.0.0.1:8080/fhir/Patient/\$validate \
+  --header 'Content-Type: application/fhir+json' \
+  --data '{"resourceType":"Parameters","parameter":[{"name":"profile","valueUri":"https://fhir.ru/ig/core/StructureDefinition/core-patient"},{"name":"resource","resource":{"resourceType":"Patient","identifier":[{"system":"http://fhir.ru/core/systems/snils","value":"123-456-789 00","type":{"coding":[{"code":"SB"}]}}]}}]}'
+```
+
+The result is an `OperationOutcome`. Removing `identifier.type` makes this
+otherwise base-FHIR-valid example violate the RuCore profile. The fixture tests
+exercise this positive/negative pair and package-local terminology. The fixture is
+an interoperability test package, not a claim of national conformance.
+
+To stop these example services:
+
+```sh
+docker stop octofhir-s3-example-pg
+docker compose -f docker-compose.s3.yml down
+```
+
+The database container is ephemeral. The RustFS volume and
+`/tmp/octofhir-s3-example/.fhir` cache remain available for the next example run.
+
+The integration test starts its own RustFS and PostgreSQL containers on temporary
+ports, creates a private bucket, uploads and versions the actual RuCore archive,
+then boots into an empty database with registry access disabled. It verifies
+profile and terminology enforcement, rejects invalid signatures/checksums, and
+restarts from a verified cache without credentials:
+
+```sh
+cargo test -p octofhir-server --test s3_packages -- --nocapture
+```
+
+Docker is required. The test prepares genuine dependency archives from the package
+registry first, so its preparation phase needs network access. Package installation
+in the S3 acceptance phase uses the S3 object and prepared archives only. The
+pinned image and startup settings follow the [RustFS Docker documentation](https://docs.rustfs.com/en/installation/container/docker).
+
+## DICOMweb connections
+
+See [DICOM Integration](../dicom/) for named PACS connections and metadata-only
+`Patient/$dicom-import`. DICOM objects and pixel data stay in PACS. Optional S3
+storage for general Binary/Attachment payloads is a separate planned driver.

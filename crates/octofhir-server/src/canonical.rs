@@ -1,3 +1,14 @@
+//! Canonical package bootstrap, schema preparation and runtime installation.
+//!
+//! # Contents
+//! Registry publication, configured registry/URL/local sources, FHIR release checks,
+//! embedded packages and conversion into database-backed validation schemas.
+//!
+//! # Invariants
+//! Local sources use their published manifest and are required when configured.
+//! Package resources and compiled schemas remain on the existing canonical-manager
+//! boundary; incompatible core releases are not compiled into the active model.
+
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::config::{AppConfig, PackageSpec};
@@ -22,6 +33,8 @@ pub struct LoadedPackage {
 #[derive(Debug, Default, Clone)]
 pub struct CanonicalRegistry {
     packages: Vec<LoadedPackage>,
+    offline: bool,
+    storage_provider_ids: std::collections::BTreeSet<String>,
     manager: Option<std::sync::Arc<octofhir_canonical_core::CanonicalManager>>,
 }
 
@@ -29,6 +42,8 @@ impl CanonicalRegistry {
     pub fn new() -> Self {
         Self {
             packages: Vec::new(),
+            offline: false,
+            storage_provider_ids: Default::default(),
             manager: None,
         }
     }
@@ -77,9 +92,8 @@ pub fn with_registry<R>(f: impl FnOnce(&CanonicalRegistry) -> R) -> Option<R> {
 
 /// Initialize the canonical registry from configuration. This performs
 /// best-effort loading: it logs failures but keeps successfully loaded packages.
-///
-/// In a future phase, this function will call into the real
-/// `octofhir-canonical-manager` to load packages by id/version or path.
+/// Configured local packages must install and prepare all their schemas; failures
+/// in those required sources prevent startup.
 pub async fn init_from_config_async(
     cfg: &AppConfig,
 ) -> Result<Arc<RwLock<CanonicalRegistry>>, String> {
@@ -103,8 +117,24 @@ pub async fn rebuild_from_config_async(cfg: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn configured_storage_provider_ids(cfg: &AppConfig) -> std::collections::BTreeSet<String> {
+    cfg.packages
+        .load
+        .iter()
+        .filter_map(|spec| match spec {
+            PackageSpec::S3 { s3, .. } => Some(s3.provider.clone()),
+            _ => None,
+        })
+        .collect()
+}
+pub(crate) fn storage_provider_referenced(id: &str) -> bool {
+    with_registry(|registry| registry.storage_provider_ids.contains(id)).unwrap_or(false)
+}
+
 fn build_registry(cfg: &AppConfig) -> CanonicalRegistry {
     let mut registry = CanonicalRegistry::new();
+    registry.offline = cfg.packages.offline;
+    registry.storage_provider_ids = configured_storage_provider_ids(cfg);
     for item in &cfg.packages.load {
         match normalize_spec(item) {
             Ok(pkg) => registry.add(pkg),
@@ -137,7 +167,8 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     // Start with default FCM config; allow env overrides and quick init flags
     let mut fcm_cfg = FcmConfig::default();
     fcm_cfg.apply_env_overrides();
-    // Determine base directory for manager storage
+    let desired = parse_fhir_version(&cfg.fhir.version)
+        .ok_or_else(|| format!("unsupported fhir.version: {}", cfg.fhir.version))?;
     let base_dir = cfg
         .packages
         .path
@@ -146,6 +177,30 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     let base = std::path::PathBuf::from(&base_dir);
     fcm_cfg.storage.packages_dir = base.join("packages");
     fcm_cfg.storage.cache_dir = base.join("cache");
+    let policy = Arc::new(crate::egress::EgressPolicy::from_server_config(
+        &cfg.server,
+    )?);
+    // Initialize PostgreSQL storage FIRST to check for already-installed packages
+    let pg_cfg = cfg
+        .storage
+        .postgres
+        .as_ref()
+        .ok_or_else(|| "storage.postgres configuration is required".to_string())?;
+
+    // Create PostgreSQL pool for FCM (separate from main storage pool)
+    let pg_pool = create_fcm_postgres_pool(pg_cfg)
+        .await
+        .map_err(|e| format!("failed to create FCM PostgreSQL pool: {e}"))?;
+
+    crate::storage_providers::store::bootstrap(&pg_pool, &cfg.storage_providers, &policy).await?;
+    let mut sources = crate::package_source::PreparedSources::load(
+        cfg.packages.load.clone(),
+        desired,
+        fcm_cfg.storage.cache_dir.clone(),
+        policy,
+        &pg_pool,
+    )
+    .await?;
 
     tracing::info!(
         base_dir = %base_dir,
@@ -178,23 +233,30 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Collect installable specs (require id and version)
     let mut install_specs: Vec<LoadedPackage> = Vec::new();
-    for item in &cfg.packages.load {
+    for (index, item) in cfg.packages.load.iter().enumerate() {
         match normalize_spec(item) {
-            Ok(pkg) => {
+            Ok(mut pkg) => {
+                if let Some(local) = sources.configured(index) {
+                    pkg.id = local.name.clone();
+                    pkg.version = Some(local.version.clone());
+                }
                 if let (id, Some(ver)) = (pkg.id.clone(), pkg.version.clone()) {
                     fcm_cfg.add_package(&id, &ver, Some(1));
                     install_specs.push(pkg);
+                } else if cfg.packages.offline {
+                    return Err(format!(
+                        "Offline package {} requires an exact version",
+                        pkg.id
+                    ));
                 } else {
                     tracing::warn!("skipping package without version for canonical manager");
                 }
             }
+            Err(e) if cfg.packages.offline => return Err(e),
             Err(e) => tracing::error!(error.kind = "package-parse", message = %e),
         }
     }
 
-    // Resolve desired FHIR version from config
-    let desired = parse_fhir_version(&cfg.fhir.version)
-        .ok_or_else(|| format!("unsupported fhir.version: {}", cfg.fhir.version))?;
     tracing::info!(fhir.version = %display_fhir(desired), configured = %cfg.fhir.version, "FHIR version resolved");
 
     // If no packages configured, add the default FHIR core package for the chosen version
@@ -271,18 +333,6 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     // (see load_embedded_package calls below). The external hl7.fhir.uv.subscriptions-backport
     // IG only provides profiles/extensions, not the base SubscriptionTopic resource definition.
 
-    // Initialize PostgreSQL storage FIRST to check for already-installed packages
-    let pg_cfg = cfg
-        .storage
-        .postgres
-        .as_ref()
-        .ok_or_else(|| "storage.postgres configuration is required".to_string())?;
-
-    // Create PostgreSQL pool for FCM (separate from main storage pool)
-    let pg_pool = create_fcm_postgres_pool(pg_cfg)
-        .await
-        .map_err(|e| format!("failed to create FCM PostgreSQL pool: {e}"))?;
-
     // Package install and schema conversion check-then-write shared tables;
     // other instances booting against this database wait until we finish.
     let _bootstrap_lock = octofhir_db_postgres::BootstrapLock::acquire(&pg_pool)
@@ -299,19 +349,49 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                 .iter()
                 .map(|p| format!("{}@{}", p.name, p.version))
                 .collect(),
+            Err(e) if cfg.packages.offline => {
+                return Err(format!(
+                    "Cannot list installed packages in offline mode: {e}"
+                ));
+            }
             Err(e) => {
                 tracing::warn!("failed to list installed packages: {}", e);
                 std::collections::HashSet::new()
             }
         };
 
+    if cfg.packages.offline {
+        let roots = install_specs.clone();
+        let installed = installed_packages.clone();
+        let cache = fcm_cfg.storage.cache_dir.clone();
+        sources = tokio::task::spawn_blocking(move || {
+            sources.prepare_offline(&roots, &installed, &cache, desired)?;
+            Ok::<_, String>(sources)
+        })
+        .await
+        .map_err(|e| format!("Offline package preparation failed: {e}"))??;
+        // URL origins may be cached/installed, but offline installation never uses HTTP.
+        for spec in &mut install_specs {
+            spec.url = None;
+        }
+    }
+    fcm_cfg.local_packages = sources.local_packages();
+    let local_packages = fcm_cfg.local_packages.clone();
+
     // Filter out already-installed packages from preflight check
     // Skip preflight for URL-based packages as they don't come from registry
     let packages_to_validate: Vec<(String, String)> = install_specs
         .iter()
         .filter(|pkg| {
-            if pkg.url.is_some() {
-                // Skip validation for URL-based packages
+            if cfg.packages.offline
+                || pkg.url.is_some()
+                || pkg.path.is_some()
+                || local_packages.iter().any(|local| {
+                    local.name == pkg.id && pkg.version.as_deref() == Some(&local.version)
+                })
+            {
+                // Local manifests were validated before manager construction; private
+                // package names must never be looked up in the public registry.
                 return false;
             }
             if let Some(ref version) = pkg.version {
@@ -331,33 +411,28 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Only do network preflight for packages that aren't already installed
     let storage = fcm_cfg.get_expanded_storage_config();
-    let registry_client = octofhir_canonical_core::registry::RegistryClient::new(
-        &fcm_cfg.registry,
-        storage.cache_dir.clone(),
-    )
-    .await
-    .map_err(|e| format!("registry init error: {e}"))?;
-
-    if !packages_to_validate.is_empty() {
-        preflight_validate_all(&registry_client, &packages_to_validate, desired).await?;
-        tracing::info!(
-            packages = %packages_to_validate.iter().map(|(n,v)| format!("{n}@{v}")).collect::<Vec<_>>().join(", "),
-            count = packages_to_validate.len(),
-            "FHIR package preflight passed"
-        );
+    let registry_client = if cfg.packages.offline {
+        tracing::info!("Package registry access disabled (offline)");
+        None
     } else {
-        tracing::info!(
-            packages = %install_specs.iter().filter_map(|pkg| pkg.version.as_ref().map(|v| format!("{}@{}", pkg.id, v))).collect::<Vec<_>>().join(", "),
-            count = install_specs.len(),
-            "all packages already installed, skipping preflight"
-        );
-    }
+        let client = octofhir_canonical_core::registry::RegistryClient::new(
+            &fcm_cfg.registry,
+            storage.cache_dir.clone(),
+        )
+        .await
+        .map_err(|e| format!("registry init error: {e}"))?;
+        if !packages_to_validate.is_empty() {
+            preflight_validate_all(&client, &packages_to_validate, desired).await?;
+        }
+        Some(client)
+    };
+    let source_registry = crate::package_source::SourceRegistry::new(registry_client, sources);
 
     // Create manager with PostgreSQL storage
     let manager: std::sync::Arc<CanonicalManager> = match CanonicalManager::new_with_components(
         fcm_cfg,
         postgres_store.clone(),
-        Arc::new(registry_client),
+        Arc::new(source_registry),
         postgres_store.clone(),
     )
     .await
@@ -368,6 +443,11 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         }
         Err(e) => {
             tracing::error!("failed to initialize canonical manager: {}", e);
+            if cfg.packages.offline || !local_packages.is_empty() {
+                return Err(format!(
+                    "Cannot initialize required local package manager: {e}"
+                ));
+            }
             return Ok(build_registry(cfg));
         }
     };
@@ -448,6 +528,11 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                     successfully_installed.extend(spec_names);
                 }
                 Err(e) => {
+                    if cfg.packages.offline || !local_packages.is_empty() {
+                        return Err(format!(
+                            "Required local package dependency installation failed: {e}"
+                        ));
+                    }
                     tracing::error!(
                         error = %e,
                         "Parallel pipeline failed; falling back to per-package install"
@@ -486,6 +571,9 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                     successfully_installed.extend(url_names);
                 }
                 Err(e) => {
+                    if cfg.packages.offline || !local_packages.is_empty() {
+                        return Err(format!("Required package URL installation failed: {e}"));
+                    }
                     tracing::error!(
                         error = %e,
                         "URL-pinned package batch install failed"
@@ -495,40 +583,83 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         }
     }
 
+    // Configured local packages are required: startup must not silently omit a private IG.
+    for local in &local_packages {
+        if !manager
+            .storage()
+            .has_package(&local.name, &local.version)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            return Err(format!(
+                "Required local package {}@{} failed to install",
+                local.name, local.version
+            ));
+        }
+    }
+
     // Convert schemas for all packages concurrently
     let conversion_start = std::time::Instant::now();
-    let conversion_count = install_specs.len();
+    let schema_packages: Vec<_> = manager
+        .storage()
+        .list_packages()
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|package| parse_fhir_version(&package.fhir_version) == Some(desired))
+        .collect();
+    let conversion_count = schema_packages.len();
     tracing::info!(
         count = conversion_count,
         "converting schemas for all packages concurrently"
     );
 
-    let conversion_futures: Vec<_> = install_specs
+    let conversion_futures: Vec<_> = schema_packages
         .iter()
-        .filter_map(|pkg| {
-            pkg.version.as_ref().map(|version| {
-                let store = postgres_store.clone();
-                let pkg_id = pkg.id.clone();
-                let version = version.clone();
-                let fhir_ver = fhir_version_str.to_string();
-                async move {
-                    if let Err(e) =
-                        convert_and_store_package_schemas(&store, &pkg_id, &version, &fhir_ver)
-                            .await
-                    {
-                        tracing::warn!(
-                            package = %pkg_id,
-                            version = %version,
-                            error = %e,
-                            "failed to convert schemas for package"
-                        );
-                    }
+        .map(|pkg| {
+            let store = postgres_store.clone();
+            let pkg_id = pkg.name.clone();
+            let version = pkg.version.clone();
+            let fhir_ver = fhir_version_str.to_string();
+            async move {
+                if let Err(e) =
+                    convert_and_store_package_schemas(&store, &pkg_id, &version, &fhir_ver).await
+                {
+                    tracing::warn!(
+                        package = %pkg_id,
+                        version = %version,
+                        error = %e,
+                        "failed to convert schemas for package"
+                    );
                 }
-            })
+            }
         })
         .collect();
 
     futures::future::join_all(conversion_futures).await;
+    for local in local_packages.iter().filter(|local| {
+        schema_packages
+            .iter()
+            .any(|package| package.name == local.name && package.version == local.version)
+    }) {
+        let definitions = postgres_store
+            .find_resources_by_package_and_type(&local.name, &local.version, "StructureDefinition")
+            .await
+            .map_err(|e| e.to_string())?;
+        let converted = postgres_store
+            .count_fhirschemas_for_package_version(&local.name, &local.version, fhir_version_str)
+            .await
+            .map_err(|e| e.to_string())?;
+        if converted as usize != definitions.len() {
+            return Err(format!(
+                "Local package {}@{} has unconverted StructureDefinitions ({}/{})",
+                local.name,
+                local.version,
+                converted,
+                definitions.len()
+            ));
+        }
+    }
     tracing::info!(
         count = conversion_count,
         elapsed_ms = conversion_start.elapsed().as_millis(),
@@ -777,6 +908,8 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     }
     reg.packages = pkgs_vec;
     reg.manager = Some(manager);
+    reg.offline = cfg.packages.offline;
+    reg.storage_provider_ids = configured_storage_provider_ids(cfg);
     tracing::info!(packages_loaded = %reg.packages.len(), storage = "PostgreSQL", "canonical manager initialized with packages");
     Ok(reg)
 }
@@ -1010,6 +1143,12 @@ fn determine_schema_type(sd: &StructureDefinition) -> String {
 fn normalize_spec(spec: &PackageSpec) -> Result<LoadedPackage, String> {
     match spec {
         PackageSpec::Simple(s) => parse_simple_spec(s),
+        PackageSpec::S3 { id, version, s3 } => Ok(LoadedPackage {
+            id: id.clone().unwrap_or_default(),
+            version: version.clone(),
+            path: Some(format!("s3://{}/{}", s3.bucket, s3.key)),
+            url: None,
+        }),
         PackageSpec::Table {
             id,
             version,
@@ -1621,6 +1760,10 @@ pub async fn download_registry_package(
     version: &str,
 ) -> Result<std::path::PathBuf, String> {
     use octofhir_canonical_core::{FcmConfig, PackageSpec};
+
+    if cfg.packages.offline || with_registry(|registry| registry.offline).unwrap_or(false) {
+        return Err("Package downloads disabled by packages.offline".into());
+    }
 
     let mut fcm_cfg = FcmConfig::default();
     fcm_cfg.apply_env_overrides();

@@ -6403,6 +6403,8 @@ async fn process_transaction(
     )
     .await?;
 
+    crate::dicom::attestation::save(&mut *tx).await?;
+
     // Resource writes and the async outcome commit together.
     tx.commit()
         .await

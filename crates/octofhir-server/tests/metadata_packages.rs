@@ -14,6 +14,7 @@ async fn start_server_with_packages() -> (String, tokio::sync::oneshot::Sender<(
                 octofhir_server::config::PackageSpec::Simple("hl7.terminology#5.5.0".into()),
             ],
             path: None,
+            ..Default::default()
         },
         ..AppConfig::default()
     };

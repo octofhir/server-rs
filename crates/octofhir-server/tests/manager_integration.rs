@@ -27,6 +27,7 @@ async fn manager_loads_packages_when_online_opt_in() {
                 "hl7.fhir.r4b.core#4.3.0".into(),
             )],
             path: None,
+            ..Default::default()
         },
         ..AppConfig::default()
     };

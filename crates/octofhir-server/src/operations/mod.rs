@@ -50,6 +50,9 @@ pub mod cql;
 pub mod data_requirements;
 pub mod db_console_api;
 pub mod definition;
+pub mod dicom;
+pub(crate) mod dicom_sync;
+pub(crate) mod dicom_ups;
 pub mod evaluate_measure;
 pub mod everything;
 pub mod expunge;
@@ -196,6 +199,15 @@ pub fn register_core_operations_all(
     fml_config: crate::config::FmlConfig,
 ) -> HashMap<String, DynOperationHandler> {
     let mut handlers: HashMap<String, DynOperationHandler> = HashMap::new();
+
+    handlers.insert("dicom-import".into(), Arc::new(dicom::DicomImportOperation));
+    handlers.insert("dicom-ups".into(), Arc::new(dicom_ups::DicomUpsOperation));
+    handlers.insert("dicom-notify".into(), Arc::new(dicom_sync::DicomNotify));
+    handlers.insert("dicom-discover".into(), Arc::new(dicom_sync::DicomDiscover));
+    handlers.insert(
+        "dicom-sync-status".into(),
+        Arc::new(dicom_sync::DicomSyncStatus),
+    );
 
     // $validate operation
     handlers.insert(

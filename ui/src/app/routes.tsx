@@ -23,6 +23,7 @@ const AuditTrailPage = page(() => import("@/pages/audit"), "AuditTrailPage");
 const BulkDataPage = page(() => import("@/pages/bulk-data"), "BulkDataPage");
 const AccessPoliciesPage = page(() => import("@/pages/auth"), "AccessPoliciesPage");
 const ClientsPage = page(() => import("@/pages/auth"), "ClientsPage");
+const StorageProvidersPage = page(() => import("@/pages/storage-providers/StorageProvidersPage"), "StorageProvidersPage");
 const IdentityProvidersPage = page(() => import("@/pages/auth"), "IdentityProvidersPage");
 const RolesPage = page(() => import("@/pages/auth"), "RolesPage");
 const UserDetailPage = page(() => import("@/pages/auth"), "UserDetailPage");
@@ -126,6 +127,7 @@ export function AppRoutes() {
         <Route path="/fml" element={<FmlConsolePage />} />
         <Route path="/notebooks" element={<NotebookListPage />} />
         <Route path="/notebooks/:id" element={<NotebookEditorPage />} />
+        <Route path="/storage-providers" element={<StorageProvidersPage />} />
         <Route path="/settings" element={<SettingsPage />} />
 
         {/* Other */}

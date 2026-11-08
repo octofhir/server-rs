@@ -21,6 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Environment loading
+clap = { workspace = true }
 dotenvy = { workspace = true }
 
 # Local dependencies
@@ -109,7 +110,7 @@ reqwest = { workspace = true }
 lettre = { version = "0.11", features = ["tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }
 
 # WebSocket client for proxy
-tokio-tungstenite = "0.30"
+tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
 
 # Database
 # Note: Use sqlx-postgres/sqlx-core directly for database operations
@@ -158,6 +159,10 @@ base64 = "0.23"
 
 # Cron scheduling for automation
 # croner = "2.0"
+
+# AWS SigV4 signing for explicitly configured private S3 package sources
+aws-sigv4 = { version = "1.6", default-features = false, features = ["sign-http", "http1"] }
+aws-credential-types = "1.2"
 
 # Package extraction for Implementation Guide uploads
 tar = "0.4"

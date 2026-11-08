@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>OctoFHIR DICOMweb fixture viewer</title>
+<style>body{font:16px system-ui;background:#101820;color:#e9f3f8;padding:3rem;max-width:50rem}canvas{width:320px;height:320px;image-rendering:pixelated;border:1px solid #6e8a9c}p{line-height:1.5}code{color:#9ed9ec}</style>
+<h1>DICOMweb fixture viewer</h1><p>Synthetic Secondary Capture · 16 × 16 pixels · no patient data</p>
+<canvas width="16" height="16"></canvas><p id="status" data-phase="loading">Loading metadata and frame through the authorized OctoFHIR gateway…</p>
+<script type="module">
+const status=document.querySelector('#status');
+try {
+ const root='/dicomweb/pacs/studies/__STUDY__';
+ const headers={Authorization:'Bearer __TOKEN__'};
+ const metadataResponse=await fetch(`${root}/metadata`,{headers});
+ if(!metadataResponse.ok)throw new Error(`Metadata: ${metadataResponse.status}`);
+ const [dataset]=await metadataResponse.json();
+ const series=dataset['0020000E'].Value[0],instance=dataset['00080018'].Value[0];
+ const response=await fetch(`${root}/series/${series}/instances/${instance}/frames/1`,{headers:{...headers,Accept:'multipart/related; type="application/octet-stream"; transfer-syntax=*'}});
+ if(!response.ok)throw new Error(`Frame: ${response.status}`);
+ const bytes=new Uint8Array(await response.arrayBuffer());
+ let start=-1;
+ for(let i=0;i<bytes.length-3;i++){if(bytes[i]===13&&bytes[i+1]===10&&bytes[i+2]===13&&bytes[i+3]===10){start=i+4;break;}}
+ if(start<0||bytes.length<start+256)throw new Error('Incomplete multipart frame');
+ const canvas=document.querySelector('canvas'),context=canvas.getContext('2d'),image=context.createImageData(16,16);
+ for(let i=0;i<256;i++){const pixel=bytes[start+i];if(pixel!==i)throw new Error('Unexpected fixture pixel');image.data.set([pixel,pixel,pixel,255],i*4);}
+ context.putImageData(image,0,0);
+ status.textContent='Loaded through OctoFHIR: 256 verified pixels from PACS. Synthetic gradient rendered.';
+ status.dataset.phase='loaded';
+} catch(error){status.textContent=String(error);status.dataset.phase='failed';}
+</script></html>

@@ -60,6 +60,10 @@ COPY --from=ui-builder /app/ui/dist ./ui/dist
 ARG RELEASE_LTO=fat
 ARG RELEASE_CODEGEN_UNITS=1
 ARG TARGETPLATFORM
+ARG VCS_REF=unknown
+ARG BUILD_TIMESTAMP=unknown
+ENV OCTOFHIR_BUILD_GIT_COMMIT=${VCS_REF}
+ENV OCTOFHIR_BUILD_GIT_TIMESTAMP=${BUILD_TIMESTAMP}
 
 # Build release binary with cached cargo registry and target dir.
 # `find … -exec touch` refreshes mtimes — BuildKit's deterministic COPY
@@ -246,4 +250,4 @@ CMD ["octofhir-server"]
 
 LABEL org.opencontainers.image.source="https://github.com/octofhir/server-rs"
 LABEL org.opencontainers.image.description="OctoFHIR - High-performance FHIR server"
-LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
+LABEL org.opencontainers.image.licenses="Apache-2.0"

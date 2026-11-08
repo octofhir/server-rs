@@ -1,3 +1,4 @@
+import { isStorageProvider, type StorageProvider } from "./storageProvider";
 import type {
   ActiveQueriesResponse,
   BuildInfo,
@@ -714,6 +715,27 @@ class ServerApiClient {
     }
 
     return result;
+  }
+
+  async getStorageProviders(): Promise<StorageProvider[]> {
+    const response = await this.request("/admin/StorageProvider?limit=1000");
+    if (!isRecord(response.data) || !Array.isArray(response.data.entry)) throw new Error("Invalid storage provider response");
+    return response.data.entry.map((entry: unknown) => {
+      if (!isRecord(entry) || !isStorageProvider(entry.resource)) throw new Error("Invalid storage provider resource");
+      return entry.resource;
+    });
+  }
+  async saveStorageProvider(provider: StorageProvider, create: boolean): Promise<StorageProvider> {
+    const response = await this.request(`/admin/StorageProvider${create ? "" : `/${encodeURIComponent(provider.id)}`}`, {
+      method: create ? "POST" : "PUT", body: JSON.stringify(provider),
+      ...(!create ? { headers: { "If-Match": `W/"${provider.meta?.versionId}"` } } : {}),
+    });
+    return assertResponse(response.data, isStorageProvider, "saveStorageProvider");
+  }
+  async deleteStorageProvider(provider: StorageProvider): Promise<void> {
+    await this.request(`/admin/StorageProvider/${encodeURIComponent(provider.id)}`, {
+      method: "DELETE", headers: { "If-Match": `W/"${provider.meta?.versionId}"` },
+    });
   }
 
   async getHealth(): Promise<HealthResponse> {

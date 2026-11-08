@@ -1131,7 +1131,7 @@ pub async fn auth_middleware(
     };
 
     // --- Authorization phase ---
-    if is_owned_job_request(&req) {
+    if is_owned_job_request(&req) || is_dicom_gateway_request(&req) {
         // These handlers authorize persisted job ownership and delegated grants;
         // the path's _async-status/_bulk-files segment is not a resource type.
         return next.run(req).await;
@@ -1383,7 +1383,7 @@ async fn handle_basic_auth_then_authorize(
 
     req.extensions_mut().insert(auth_context.clone());
 
-    if is_owned_job_request(&req) {
+    if is_owned_job_request(&req) || is_dicom_gateway_request(&req) {
         return next.run(req).await;
     }
 
@@ -1430,6 +1430,10 @@ async fn handle_basic_auth_then_authorize(
 /// Check if a request should skip both authentication and authorization.
 ///
 /// Uses the operation registry's public paths cache plus static UI paths.
+fn is_dicom_gateway_request(req: &Request<Body>) -> bool {
+    req.method() == axum::http::Method::GET && req.uri().path().starts_with("/dicomweb/")
+}
+
 fn is_owned_job_request(req: &Request<Body>) -> bool {
     let path = req
         .extensions()

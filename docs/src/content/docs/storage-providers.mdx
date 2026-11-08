@@ -1,0 +1,165 @@
+---
+title: Storage Providers
+description: Reusable database-backed S3 connections for private IG packages.
+---
+
+A `StorageProvider` is an administrative resource describing an S3 connection.
+AWS S3, Cloudflare R2, Backblaze B2, Garage and RustFS use the same S3/SigV4 client.
+The selected endpoint, signing region, bucket addressing and credentials determine
+the connection. There are no vendor-specific runtime drivers. Binary/Attachment
+blob storage is still a separate planned consumer; DICOM objects remain in PACS.
+
+## Create a provider
+
+Open **System → Storage providers** in the console. An administrator can create,
+edit, disable or delete connections and rotate stored keys. API clients use
+`/admin/StorageProvider`; these operational resources are not standard FHIR resources.
+All routes require a current authenticated administrative user, including deployments
+that allow anonymous clinical requests. A PACS or backend client credential grants
+no provider-administration privileges.
+
+Example creation request:
+
+```http
+POST /admin/StorageProvider
+Authorization: Bearer <administrator-user-token>
+Content-Type: application/json
+
+{
+  "resourceType": "StorageProvider",
+  "id": "private-igs",
+  "name": "Private implementation guides",
+  "enabled": true,
+  "type": "s3",
+  "endpoint": "https://objects.example.org",
+  "region": "eu-central-1",
+  "addressingStyle": "path",
+  "allowHttp": false,
+  "credentials": {
+    "type": "environment",
+    "accessKeyIdEnv": "IG_S3_ACCESS_KEY_ID",
+    "secretAccessKeyEnv": "IG_S3_SECRET_ACCESS_KEY"
+  }
+}
+```
+
+A missing endpoint selects `https://s3.{region}.amazonaws.com` (or the regional
+China partition domain for `cn-` regions). Explicit endpoints must be HTTP(S)
+origins, without a bucket, path, credentials, query or fragment. HTTPS/TLS
+verification is enabled. HTTP requires `allowHttp = true`. Private endpoints must
+be included in `server.outbound_allowlist`; virtual-hosted addressing also checks
+the final bucket hostname. Redirects and environment HTTP proxies are disabled.
+
+`path` sends `https://endpoint/bucket/key`; `virtual_hosted` sends
+`https://bucket.endpoint/key`. Virtual-hosted connections require a DNS endpoint
+and working bucket DNS/TLS; use path addressing for an IP-based local endpoint.
+Bucket names containing dots require an appropriate TLS certificate when using
+virtual-hosted addressing.
+
+Provider examples below describe configuration, not independent interoperability
+certification for each vendor. RustFS has a real container acceptance test; URL
+construction, addressing and signing have protocol tests.
+
+| Service | Endpoint | Region | Addressing |
+| --- | --- | --- | --- |
+| AWS S3 | Omit, or use the bucket's regional S3 origin | Actual bucket region | `virtual_hosted` or `path` |
+| Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `auto` | `path` |
+| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | Actual bucket region | `path` or `virtual_hosted` |
+| Garage | Deployment's S3 API origin | Deployment's configured S3 region | `path`, or `virtual_hosted` with bucket DNS |
+| RustFS | Deployment's S3 API origin; local `http://127.0.0.1:9000` | Deployment's signing region; local `us-east-1` | `path` |
+
+See [AWS addressing](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html),
+[R2 S3 configuration](https://developers.cloudflare.com/r2/get-started/s3/) and
+[Backblaze endpoints](https://www.backblaze.com/docs/cloud-storage-call-the-s3-compatible-api).
+
+## Credentials
+
+Environment references default to `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+Set `sessionTokenEnv` for temporary credentials. When using the standard AWS key
+variable names, `AWS_SESSION_TOKEN` is also read automatically. Custom provider
+variables do not accidentally inherit an unrelated AWS session token.
+Shared AWS profile files, IMDS, ECS and web-identity discovery are not implemented.
+
+For encrypted database credentials, configure the existing server key through
+`OCTOFHIR_CONFIG_KEY` (32 bytes encoded as 64 hex digits or base64), then submit:
+
+```json
+{
+  "type": "stored",
+  "accessKeyId": "<access-key>",
+  "secretAccessKey": "<secret-key>",
+  "sessionToken": "<optional-temporary-token>"
+}
+```
+
+This is the `credentials` field of a provider resource. Omit `sessionToken` for
+permanent keys. Key material is encrypted with the existing AES-256-GCM `Secrets`
+component before SQL. Public resources, update responses and history return only
+`{"type":"stored"}`. Ciphertext is stored separately from public metadata and
+never returned by the provider API. A missing encryption key rejects secret writes;
+it does not fall back to plaintext. Keep the encryption key outside the database
+and consistent across replicas and restarts.
+
+To retain existing stored credentials, send only `{"type":"stored"}`. To rotate,
+send both access key and secret key together, with a new optional session token.
+Rotation without a session token removes the previous token. Switching to environment
+credentials removes the stored key material.
+
+## Reference a provider from packages
+
+```toml
+[packages]
+path = "./.fhir"
+load = [
+  { s3 = { provider = "private-igs", bucket = "implementation-guides", key = "ru.core/1/package.tgz", sha256 = "<64 hexadecimal digits>" } }
+]
+```
+
+The object must be a published `package.tgz`. Its manifest supplies the FHIR
+package ID/version; optional explicit package ID/version must match. Pin the exact
+compressed bytes using `shasum -a 256 package.tgz`. Optional `version_id` selects an
+object version and verifies the response version header. Not every S3-compatible
+provider supports versioned objects; omit that field when it does not.
+
+`packages.offline = true` disables registry/direct URL acquisition, while explicitly
+configured S3 sources remain allowed. Supply all dependencies locally, through S3,
+as installed packages or as exact-version cached archives. Provider records are read
+before downloading, and disabled/missing providers fail explicitly. Each acquisition
+uses one provider snapshot; the next acquisition sees database edits without a
+server restart. Verified content-addressed cache hits need no credentials or network.
+Installed content is not silently replaced by changing a provider: publish a new
+package version and pin a new checksum when package content changes.
+
+## Bootstrap and lifecycle
+
+For a fresh installation, seed resources through TOML before IG acquisition:
+
+```toml
+[[storage_providers]]
+id = "private-igs"
+name = "Private implementation guides"
+type = "s3"
+region = "eu-central-1"
+addressingStyle = "virtual_hosted"
+
+[storage_providers.credentials]
+type = "environment"
+accessKeyIdEnv = "IG_S3_ACCESS_KEY_ID"
+secretAccessKeyEnv = "IG_S3_SECRET_ACCESS_KEY"
+```
+
+Startup order is PostgreSQL migrations → create missing providers → acquire IGs →
+initialize clinical models and routes. The provider schema does not depend on an IG.
+Seeds are create-only: existing database settings and keys win over TOML on restart.
+An API-deleted provider stays deleted even if its old seed remains; explicitly
+recreate it through the API to reuse the alias with a new version.
+Bootstrap is not a second continuously synchronized configuration source.
+
+Reads include `meta.versionId`, `meta.lastUpdated` and an ETag. PUT and DELETE
+require `If-Match: W/"<version>"`; stale writes return a conflict. Metadata mutations
+and redacted history commit in one transaction. GET
+`/admin/StorageProvider/{id}/_history` lists administrative changes. Disabling a
+provider blocks new acquisitions. Deleting one referenced by this deployment's
+configured IG packages is rejected; remove the references first.
+
+For a runnable local setup, see [RustFS and S3 package startup](/server-rs/configuration/#start-octofhir-with-an-ig-stored-in-rustfs).

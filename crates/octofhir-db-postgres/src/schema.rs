@@ -46,6 +46,8 @@ const META_PROFILES_FN_SQL: &str = r#"
 
 const RESOURCE_WRITE_METADATA_FN_SQL: &str = include_str!("../sql/resource_write_metadata.sql");
 
+const DICOM_TASK_GUARD_SQL: &str = include_str!("../sql/dicom_task_guard.sql");
+
 const RESOURCE_WRITE_GATE_FN_SQL: &str = include_str!("../sql/resource_write_gate.sql");
 
 /// Switches `resource` of `table` to lz4 TOAST compression.
@@ -272,6 +274,10 @@ impl SchemaManager {
              FOR EACH STATEMENT EXECUTE FUNCTION octofhir_guard_resource_write();\n"
         ));
 
+        if table == "task" {
+            sql.push_str("DROP TRIGGER IF EXISTS dicom_ups_guard ON task; CREATE TRIGGER dicom_ups_guard BEFORE INSERT OR UPDATE OR DELETE ON task FOR EACH ROW EXECUTE FUNCTION octofhir_dicom_task_guard();\n");
+        }
+
         // Update trigger (drop + create)
         let update_trigger = format!("{}_update_timestamp", table);
         let insert_trigger = format!("{}_insert_metadata", table);
@@ -422,6 +428,10 @@ impl SchemaManager {
     /// `octofhir_meta_profiles` backs the generated `profile` column, so it must
     /// be in place before any table referencing it is created.
     pub async fn ensure_archive_function(pool: &PgPool) -> Result<()> {
+        sqlx_core::raw_sql::raw_sql(AssertSqlSafe(DICOM_TASK_GUARD_SQL.to_string()))
+            .execute(pool)
+            .await
+            .map_err(PostgresError::from)?;
         sqlx_core::query::query(AssertSqlSafe((ARCHIVE_FN_SQL).to_string()))
             .execute(pool)
             .await

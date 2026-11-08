@@ -1,0 +1,484 @@
+//! Opt-in interoperability against an isolated external PACS with a synthetic image.
+//! Set DICOM_TEST_PACS and DICOM_TEST_UPLOAD; run this test with --ignored.
+use axum::{response::Html, routing::get};
+use futures_util::{SinkExt, StreamExt};
+use octofhir_config::ConfigurationManager;
+use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
+use serde_json::{Value, json};
+use std::sync::Arc;
+use testcontainers::{ImageExt, runners::AsyncRunner};
+use testcontainers_modules::postgres::Postgres;
+const STUDY: &str = "1.2.826.0.1.3680043.10.999.1";
+const DICOM: &[u8] = include_bytes!("fixtures/dicom/synthetic-secondary-capture.dcm");
+#[test]
+#[ignore = "requires isolated DICOM_TEST_PACS and DICOM_TEST_UPLOAD endpoints"]
+fn real_pacs_metadata_frame_and_viewer_retrieval() {
+    std::thread::Builder::new()
+        .name("dicom-real-pacs".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(Box::pin(scenario()))
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+async fn scenario() {
+    let pacs = std::env::var("DICOM_TEST_PACS").expect("DICOM_TEST_PACS");
+    let upload = std::env::var("DICOM_TEST_UPLOAD").expect("DICOM_TEST_UPLOAD");
+    // This test must never upload a synthetic fixture to a clinical/public archive.
+    for address in [&pacs, &upload] {
+        let url = url::Url::parse(address).unwrap();
+        assert!(
+            matches!(url.host_str(), Some("127.0.0.1" | "localhost")),
+            "Use an isolated loopback PACS"
+        );
+    }
+    let http = reqwest::Client::new();
+    let response = if upload.ends_with("/instances") {
+        http.post(&upload)
+            .header("content-type", "application/dicom")
+            .body(DICOM)
+            .send()
+            .await
+            .unwrap()
+    } else {
+        let mut body = b"--octofhir-fixture\r\nContent-Type: application/dicom\r\n\r\n".to_vec();
+        body.extend_from_slice(DICOM);
+        body.extend_from_slice(b"\r\n--octofhir-fixture--\r\n");
+        http.post(&upload)
+            .header(
+                "content-type",
+                "multipart/related; type=\"application/dicom\"; boundary=octofhir-fixture",
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+    };
+    assert!(
+        response.status().is_success(),
+        "Fixture upload: {} {}",
+        response.status(),
+        response.text().await.unwrap()
+    );
+    let pg = Postgres::default()
+        .with_tag("18-alpine")
+        .start()
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base = format!("http://127.0.0.1:{port}");
+    let mut cfg = AppConfig::default();
+    cfg.fhir.version = "R4".into();
+    cfg.server.host = "127.0.0.1".into();
+    cfg.server.port = port;
+    cfg.storage.postgres = Some(PostgresStorageConfig {
+        url: Some(format!(
+            "postgres://postgres:postgres@127.0.0.1:{}/postgres",
+            pg.get_host_port_ipv4(5432).await.unwrap()
+        )),
+        pool_size: 8,
+        ..Default::default()
+    });
+    cfg.packages.load = vec![octofhir_server::config::PackageSpec::Table {
+        id: Some("hl7.fhir.r4.core".into()),
+        version: Some("4.0.1".into()),
+        path: None,
+        url: Some("https://hl7.org/fhir/R4/hl7.fhir.r4.core.tgz".into()),
+    }];
+    cfg.auth.policy.anonymous_access = true;
+    cfg.bootstrap.backend_client = Some(octofhir_server::config::BackendClientConfig {
+        client_id: "pacs-test".into(),
+        client_secret: Some("isolated-pacs-secret".into()),
+        scopes: vec!["system/*.cruds".into()],
+        name: None,
+        description: None,
+    });
+    cfg.server.outbound_allowlist = vec!["127.0.0.1/32", "localhost"]
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    cfg.dicom=serde_json::from_value(json!({"connections":{"pacs":{"wado_url":pacs,"qido_url":pacs,"allow_http":true,"patient_identifier_systems":{"HOSPITAL":"urn:test:mrn"},"gateway":{},"sync":{"client_id":"pacs-test","scopes":["system/*.cruds"],"discovery":"notifications"}}}})).unwrap();
+    let ups = std::env::var("DICOM_TEST_UPS").ok();
+    if let Some(url) = &ups {
+        assert_eq!(url::Url::parse(url).unwrap().host_str(), Some("127.0.0.1"));
+        let notification = std::env::var("DICOM_TEST_UPS_WS").expect("DICOM_TEST_UPS_WS");
+        let connection = cfg.dicom.connections.get_mut("pacs").unwrap();
+        connection.ups = Some(serde_json::from_value(json!({
+            "url":url,"notification_url":notification,"client_id":"pacs-test","scopes":["system/*.cruds"],
+            "ae_title":"OCTOFHIR","poll_seconds":1,"retry_seconds":1,
+            "coding_schemes":{"urn:test:procedure":"99OCTOFHIR","http://unitsofmeasure.org":"UCUM"},
+            "result_mappings":{"1.2.840.10008.5.1.4.1.1.7":{"kind":"document_reference","system":"urn:test:result","code":"synthetic-output"}}
+        })).unwrap());
+    }
+    let viewer_token = Arc::new(tokio::sync::RwLock::new(String::new()));
+    let viewer_identity = viewer_token.clone();
+    let app = build_app(
+        &cfg,
+        Arc::new(ConfigurationManager::builder().build().await.unwrap()),
+    )
+    .await
+    .unwrap()
+    .route(
+        "/__dicom_viewer",
+        get(move || {
+            let identity = viewer_identity.clone();
+            async move {
+                let html = include_str!("fixtures/dicom/viewer.html")
+                    .replace("__TOKEN__", &identity.read().await)
+                    .replace("__STUDY__", STUDY);
+                Html(html)
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let token: Value = http
+        .post(format!("{base}/auth/token"))
+        .basic_auth("pacs-test", Some("isolated-pacs-secret"))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("scope", "system/*.cruds"),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let token = token["access_token"].as_str().expect("backend token");
+    *viewer_token.write().await = token.into();
+    let mut auth = reqwest::header::HeaderMap::new();
+    auth.insert("authorization", format!("Bearer {token}").parse().unwrap());
+    let client = reqwest::Client::builder()
+        .default_headers(auth)
+        .build()
+        .unwrap();
+    let patient:Value=client.post(format!("{base}/fhir/Patient")).json(&json!({"resourceType":"Patient","identifier":[{"system":"urn:test:mrn","value":"OCTOFHIR-DICOM-TEST"}]})).send().await.unwrap().json().await.unwrap();
+    let patient_id = patient["id"].as_str().unwrap();
+    let response=client.post(format!("{base}/fhir/Patient/{patient_id}/$dicom-discover")).json(&json!({"resourceType":"Parameters","parameter":[{"name":"connection","valueString":"pacs"}]})).send().await.unwrap();
+    let status = response.status();
+    let result: Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "{result}");
+    assert!(result.to_string().contains(STUDY));
+    let response=client.post(format!("{base}/fhir/Patient/{patient_id}/$dicom-import")).json(&json!({"resourceType":"Parameters","parameter":[{"name":"connection","valueString":"pacs"},{"name":"study","valueString":STUDY}]})).send().await.unwrap();
+    let status = response.status();
+    let result: Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "{result}");
+    let study_ref = result["parameter"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|p| {
+            p["valueReference"]["reference"]
+                .as_str()
+                .filter(|r| r.starts_with("ImagingStudy/"))
+        })
+        .unwrap()
+        .to_owned();
+    let endpoint_ref = result["parameter"][1]["valueReference"]["reference"]
+        .as_str()
+        .unwrap();
+    let endpoint: Value = client
+        .get(format!("{base}/fhir/{endpoint_ref}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(endpoint["address"], format!("{base}/dicomweb/pacs"));
+    let root = format!("{base}/dicomweb/pacs/studies/{STUDY}");
+    let qido: Value = client
+        .get(format!("{root}/series/{STUDY}.1/instances"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(qido[0]["00080016"]["Value"][0], "1.2.840.10008.5.1.4.1.1.7");
+    let response = client.get(format!("{root}/metadata")).send().await.unwrap();
+    let status = response.status();
+    let metadata: Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "{metadata}");
+    assert_eq!(metadata.as_array().unwrap().len(), 1);
+    let instance = format!("{root}/series/{STUDY}.1/instances/{STUDY}.1.1");
+    let response = client
+        .get(format!("{instance}/frames/1"))
+        .header(
+            "accept",
+            "multipart/related; type=\"application/octet-stream\"; transfer-syntax=*",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let content_type = response.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let body = response.bytes().await.unwrap();
+    let boundary = content_type
+        .split(';')
+        .find_map(|v| v.trim().strip_prefix("boundary="))
+        .unwrap()
+        .trim_matches('"');
+    let start = body.windows(4).position(|b| b == b"\r\n\r\n").unwrap() + 4;
+    let end_marker = format!("\r\n--{boundary}");
+    let end = body
+        .windows(end_marker.len())
+        .rposition(|b| b == end_marker.as_bytes())
+        .unwrap();
+    assert_eq!(&body[start..end], &(0u8..=255).collect::<Vec<_>>());
+    // Both pass-through DICOM objects and rewritten pixel references are real PACS requests.
+    if let Some(uri) = metadata[0]["7FE00010"]["BulkDataURI"].as_str() {
+        let response = client
+            .get(format!("{base}{uri}"))
+            .header(
+                "accept",
+                "multipart/related; type=\"application/octet-stream\"",
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert!(!response.bytes().await.unwrap().is_empty());
+    }
+    let response = client
+        .get(&instance)
+        .header(
+            "accept",
+            "multipart/related; type=\"application/dicom\"; transfer-syntax=*",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(
+        response
+            .bytes()
+            .await
+            .unwrap()
+            .windows(4)
+            .any(|s| s == b"DICM")
+    );
+    if let Some(ups) = ups {
+        real_ups(&client, &http, &base, &ups, patient_id, &study_ref).await;
+    }
+    if let Ok(file) = std::env::var("DICOM_VIEWER_READY_FILE") {
+        std::fs::write(file, format!("{base}/__dicom_viewer")).unwrap();
+        let seconds = std::env::var("DICOM_VIEWER_HOLD_SECONDS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(120)
+            .min(300);
+        tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+    }
+    server.abort();
+}
+
+async fn ups_command(client: &reqwest::Client, base: &str, task: &str, action: &str) -> Value {
+    let response = client.post(format!("{base}/fhir/Task/{task}/$dicom-ups"))
+        .json(&json!({"resourceType":"Parameters","parameter":[{"name":"connection","valueString":"pacs"},{"name":"action","valueString":action}]}))
+        .send().await.unwrap();
+    let status = response.status();
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "UPS {action}: {body}");
+    body
+}
+async fn wait_real_task(client: &reqwest::Client, base: &str, task: &str, wanted: &str) -> Value {
+    let mut last = json!(null);
+    for _ in 0..200 {
+        last = client
+            .get(format!("{base}/fhir/Task/{task}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if last["status"] == wanted {
+            return last;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let diagnostic = ups_command(client, base, task, "status").await;
+    panic!("Task did not reach {wanted}: {last}; {diagnostic}");
+}
+async fn real_ups(
+    client: &reqwest::Client,
+    performer: &reqwest::Client,
+    base: &str,
+    ups: &str,
+    patient: &str,
+    study: &str,
+) {
+    let task: Value = client.post(format!("{base}/fhir/Task")).json(&json!({
+        "resourceType":"Task","status":"draft","intent":"order",
+        "for":{"reference":format!("Patient/{patient}")},"focus":{"reference":study},
+        "code":{"coding":[{"system":"urn:test:procedure","code":"TEST","display":"Synthetic interoperability procedure"}]},
+        "input":[{"type":{"coding":[{"system":"urn:test:procedure","code":"PARAM","display":"Synthetic parameter"}]},"valueQuantity":{"value":0.7,"system":"http://unitsofmeasure.org","code":"1","unit":"ratio"}}]
+    })).send().await.unwrap().json().await.unwrap();
+    let id = task["id"].as_str().unwrap();
+    let submitted = ups_command(client, base, id, "submit").await;
+    let workitem = submitted["parameter"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "workitem")
+        .unwrap()["valueUri"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(workitem.starts_with(ups));
+    for _ in 0..200 {
+        let response = performer
+            .get(&workitem)
+            .header("accept", "application/dicom+json")
+            .send()
+            .await
+            .unwrap();
+        if response.status().is_success() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let ws = std::env::var("DICOM_TEST_UPS_WS").unwrap();
+    let (mut notifications, _) = tokio_tungstenite::connect_async(
+        ws.strip_suffix("OCTOFHIR")
+            .expect("Test WS URL must end with OCTOFHIR")
+            .to_owned()
+            + "OCTOPERFORMER",
+    )
+    .await
+    .unwrap();
+    let notification_task = tokio::spawn(async move {
+        while let Some(Ok(message)) = notifications.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Ping(bytes) = message
+                && notifications
+                    .send(tokio_tungstenite::tungstenite::Message::Pong(bytes))
+                    .await
+                    .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let subscription = performer
+        .post(format!(
+            "{workitem}/subscribers/OCTOPERFORMER?deletionlock=false"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(subscription.status().is_success());
+    let transaction = format!("2.25.{}", uuid::Uuid::new_v4().as_u128());
+    let attr = |vr: &str, value: &str| json!({"vr":vr,"Value":[value]});
+    // This test acts as the external performer. Production code never claims this transaction UID.
+    let response = performer
+        .put(format!("{workitem}/state?requester=OCTOPERFORMER"))
+        .header("content-type", "application/dicom+json")
+        .json(&json!([{"00081195":attr("UI",&transaction),"00741000":attr("CS","IN PROGRESS")}]))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "Performer claim: {} {}",
+        response.status(),
+        response.text().await.unwrap()
+    );
+    wait_real_task(client, base, id, "in-progress").await;
+    ups_command(client, base, id, "cancel").await;
+    let mut delivered = false;
+    for _ in 0..100 {
+        let status = ups_command(client, base, id, "status").await;
+        if status["parameter"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "cancelDelivered" && p["valueBoolean"] == true)
+        {
+            delivered = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(delivered, "Task Manager did not accept the cancel request");
+    let response = performer
+        .get(&workitem)
+        .header("accept", "application/dicom+json")
+        .send()
+        .await
+        .unwrap();
+    let remote: Value = response.json().await.unwrap();
+    assert_eq!(
+        remote[0]["00741000"]["Value"][0], "IN PROGRESS",
+        "Cancel is only a request"
+    );
+    let now = chrono::Utc::now().format("%Y%m%d%H%M%S+0000").to_string();
+    let response=performer.post(format!("{workitem}?Transaction-uid={transaction}&requester=OCTOPERFORMER")).header("content-type","application/dicom+json")
+        .json(&json!([{"00081195":attr("UI",&transaction),"00741216":{"vr":"SQ","Value":[{
+            "00404050":attr("DT",&now),"00404051":attr("DT",&now),
+            "00404028":{"vr":"SQ","Value":[{"00080100":attr("SH","TEST-STATION"),"00080102":attr("SH","99OCTOFHIR"),"00080104":attr("LO","Isolated synthetic performer")}]},"00404019":{"vr":"SQ","Value":[{"00080100":attr("SH","TEST"),"00080102":attr("SH","99OCTOFHIR"),"00080104":attr("LO","Synthetic interoperability procedure")}]},"00404033":{"vr":"SQ","Value":[{"0040E020":attr("CS","DICOM"),"0020000D":attr("UI",STUDY),"0020000E":attr("UI",&format!("{STUDY}.1")),"00081199":{"vr":"SQ","Value":[{"00081150":attr("UI","1.2.840.10008.5.1.4.1.1.7"),"00081155":attr("UI",&format!("{STUDY}.1.1"))}]}}]}
+        }]}}])).send().await.unwrap();
+    assert!(
+        response.status().is_success(),
+        "Performer update: {} {}",
+        response.status(),
+        response.text().await.unwrap()
+    );
+    let response = performer
+        .put(format!("{workitem}/state?requester=OCTOPERFORMER"))
+        .header("content-type", "application/dicom+json")
+        .json(&json!([{"00081195":attr("UI",&transaction),"00741000":attr("CS","COMPLETED")}]))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "Performer completion: {} {}",
+        response.status(),
+        response.text().await.unwrap()
+    );
+    let completed = wait_real_task(client, base, id, "completed").await;
+    assert_eq!(completed["output"].as_array().unwrap().len(), 1);
+    let reference = completed["output"][0]["valueReference"]["reference"]
+        .as_str()
+        .unwrap();
+    let result: Value = client
+        .get(format!("{base}/fhir/{reference}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(result["resourceType"], "DocumentReference");
+    let object = result["content"][0]["attachment"]["url"].as_str().unwrap();
+    let response = client
+        .get(object)
+        .header(
+            "accept",
+            "multipart/related; type=\"application/dicom\"; transfer-syntax=*",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(
+        response
+            .bytes()
+            .await
+            .unwrap()
+            .windows(4)
+            .any(|bytes| bytes == b"DICM")
+    );
+    notification_task.abort();
+}

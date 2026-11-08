@@ -37,6 +37,29 @@ macro_rules! embedded_migrations {
                 "client_assertion_jti",
                 include_str!("../../migrations/20261106000001_client_assertion_jti.sql"),
             ),
+            (
+                20261108000001i64,
+                "dicom_sync",
+                include_str!("../../migrations/20261108000001_dicom_sync.sql"),
+            ),
+            (
+                20261108000002i64,
+                "dicom_manifests",
+                include_str!("../../migrations/20261108000002_dicom_manifests.sql"),
+            ),
+            (
+                20261108000003i64,
+                "dicom_ups",
+                concat!(
+                    include_str!("../../sql/dicom_task_guard.sql"),
+                    include_str!("../../migrations/20261108000003_dicom_ups.sql")
+                ),
+            ),
+            (
+                20261108000004i64,
+                "storage_providers",
+                include_str!("../../migrations/20261108000004_storage_providers.sql"),
+            ),
         ]
     };
 }

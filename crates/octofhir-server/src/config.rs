@@ -1,3 +1,4 @@
+pub use crate::package_source::S3PackageSource;
 use octofhir_auth::config::AuthConfig;
 use octofhir_search::TerminologyConfig;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,12 @@ pub struct AppConfig {
     pub otel: OtelConfig,
     #[serde(default)]
     pub packages: PackagesConfig,
+    /// Named DICOMweb metadata connections; empty disables integration.
+    #[serde(default)]
+    pub dicom: crate::dicom::DicomConfig,
+    /// Create missing provider resources before acquiring packages; existing DB records win.
+    #[serde(default)]
+    pub storage_providers: Vec<crate::storage_providers::StorageProvider>,
     /// Authentication and authorization configuration
     #[serde(default)]
     pub auth: AuthConfig,
@@ -89,7 +96,21 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
-        crate::egress::EgressPolicy::from_server_config(&self.server)?;
+        let egress = crate::egress::EgressPolicy::from_server_config(&self.server)?;
+        self.dicom.validate(&egress, &self.fhir.version)?;
+        let mut provider_ids = std::collections::BTreeSet::new();
+        for provider in &self.storage_providers {
+            // Existing database resources win; validate seed connection settings only if inserted.
+            crate::storage_providers::model::validate_id(&provider.id)?;
+            if !provider_ids.insert(&provider.id) {
+                return Err("Duplicate bootstrap storage provider id".into());
+            }
+        }
+        for source in &self.packages.load {
+            if let PackageSpec::S3 { s3, .. } = source {
+                s3.validate()?;
+            }
+        }
         if let Some(email) = &self.subscriptions.email
             && email.smtp_host.is_none()
             && email.sendgrid_api_key.is_none()
@@ -738,6 +759,11 @@ impl Default for FhirSettings {
 /// Canonical package configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PackagesConfig {
+    /// Never contact package registries or direct package URLs.
+    /// Explicit pinned S3 sources remain allowed. Exact dependency versions must
+    /// be installed, supplied by configured sources, or present in the archive cache.
+    #[serde(default)]
+    pub offline: bool,
     /// List of package specs to load. Shorthand examples:
     /// - "hl7.fhir.r4b.core#4.3.0"
     /// - "hl7.terminology#5.5.0"
@@ -745,8 +771,8 @@ pub struct PackagesConfig {
     ///   When specified as tables, fields: { id = "...", version = "...", path = "..." }
     #[serde(default)]
     pub load: Vec<PackageSpec>,
-    /// Optional directory for package cache (downloads from registry).
-    /// If unset, canonical manager defaults are used (~/.fcm/packages).
+    /// Optional base directory for package caches. Defaults to `.fhir`.
+    /// Relative paths resolve against the configuration file directory.
     /// Note: Package data is stored in PostgreSQL's 'fcm' schema.
     #[serde(default)]
     pub path: Option<String>,
@@ -755,8 +781,14 @@ pub struct PackagesConfig {
 // Default derived
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum PackageSpec {
+    /// Pinned object acquisition, including private S3-compatible endpoints.
+    S3 {
+        id: Option<String>,
+        version: Option<String>,
+        s3: S3PackageSource,
+    },
     /// Shorthand: "package_id#version" or just "package_id"
     Simple(String),
     /// Expanded form for clarity, filesystem path loading, or URL-based downloads
@@ -777,6 +809,7 @@ impl PackageSpec {
     pub fn reference(&self) -> Option<String> {
         match self {
             Self::Simple(spec) => Some(spec.replacen('#', "@", 1)),
+            Self::S3 { s3, .. } => Some(format!("s3://{}/{}", s3.bucket, s3.key)),
             Self::Table {
                 path: Some(path), ..
             } => Some(path.clone()),
@@ -1934,7 +1967,30 @@ pub mod loader {
                 }
             }
         }
-        // Validate
+        // Make source paths independent of the launch directory and preserve this
+        // interpretation on reload. Programmatically constructed configs use cwd.
+        let config_file = PathBuf::from(path.unwrap_or("octofhir.toml"));
+        let absolute_file = std::path::absolute(&config_file)
+            .map_err(|e| format!("cannot resolve configuration path: {e}"))?;
+        let base = absolute_file
+            .parent()
+            .ok_or("configuration has no parent directory")?;
+        for spec in &mut merged.packages.load {
+            if let super::PackageSpec::Table {
+                path: Some(source), ..
+            } = spec
+                && Path::new(source).is_relative()
+            {
+                *source = base.join(&*source).to_string_lossy().into_owned();
+            }
+        }
+        if let Some(cache) = &mut merged.packages.path {
+            if Path::new(cache).is_relative() {
+                *cache = base.join(&*cache).to_string_lossy().into_owned();
+            }
+        } else {
+            merged.packages.path = Some(base.join(".fhir").to_string_lossy().into_owned());
+        }
         merged.validate()?;
         Ok(merged)
     }

@@ -19,6 +19,7 @@ async fn rebuild_from_config_swaps_registry_contents() {
                 "hl7.fhir.r4b.core#4.3.0".into(),
             )],
             path: None,
+            ..Default::default()
         },
         ..AppConfig::default()
     };
@@ -37,6 +38,7 @@ async fn rebuild_from_config_swaps_registry_contents() {
                 octofhir_server::config::PackageSpec::Simple("custom.package".into()),
             ],
             path: None,
+            ..Default::default()
         },
         ..AppConfig::default()
     };

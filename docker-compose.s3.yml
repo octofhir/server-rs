@@ -1,0 +1,17 @@
+# Local S3 compatibility environment. This digest is RustFS 1.0.4.
+services:
+  rustfs:
+    image: rustfs/rustfs:latest@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set a local RustFS access key}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set a local RustFS secret key}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_OBS_LOGGER_LEVEL: "error"
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - rustfs-ig-data:/data
+volumes:
+  rustfs-ig-data:

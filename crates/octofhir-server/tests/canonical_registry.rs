@@ -21,6 +21,7 @@ async fn registry_initializes_from_packages_config() {
                 octofhir_server::config::PackageSpec::Simple("".into()),
             ],
             path: None,
+            ..Default::default()
         },
         ..AppConfig::default()
     };

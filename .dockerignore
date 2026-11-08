@@ -20,6 +20,7 @@ docs/dist/
 *.md
 !README.md
 .env
+octofhir.toml
 .env.*
 *.pem
 .k6-secret

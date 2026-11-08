@@ -123,6 +123,10 @@ pub struct AppStateInner {
     pub gateway_router: crate::gateway::GatewayRouter,
     /// PostgreSQL connection pool for SQL handler (primary / write)
     pub db_pool: Arc<sqlx_postgres::PgPool>,
+    /// Separate bounded sessions for DICOM import locks, outside the FHIR pool.
+    pub(crate) dicom_lock_pool: sqlx_postgres::PgPool,
+    pub(crate) dicom_streams: Arc<tokio::sync::Semaphore>,
+    pub(crate) dicom_watch_pool: sqlx_postgres::PgPool,
     /// Read replica pool (falls back to db_pool if no replica configured)
     pub read_db_pool: Arc<sqlx_postgres::PgPool>,
     /// Custom handler registry for gateway operations
@@ -723,6 +727,11 @@ async fn build_app_with_runtime(
     background: crate::lifecycle::BackgroundRuntime,
 ) -> Result<Router, anyhow::Error> {
     let owner = background.owner();
+    let dicom_egress =
+        crate::egress::EgressPolicy::from_server_config(&cfg.server).map_err(anyhow::Error::msg)?;
+    cfg.dicom
+        .validate(&dicom_egress, &cfg.fhir.version)
+        .map_err(anyhow::Error::msg)?;
     let release = cfg.fhir.release().map_err(anyhow::Error::msg)?;
     let fhir_version_key = release.release_name();
     let fhir_version = match release {
@@ -734,6 +743,9 @@ async fn build_app_with_runtime(
 
     let body_limit = cfg.server.body_limit_bytes;
     let (pg_storage, db_pool, read_db_pool) = create_storage(cfg).await?;
+    crate::storage_providers::store::bootstrap(&db_pool, &cfg.storage_providers, &dicom_egress)
+        .await
+        .map_err(anyhow::Error::msg)?;
 
     if crate::canonical::get_manager().is_none() && cfg.storage.postgres.is_some() {
         let registry = crate::canonical::init_from_config_async(cfg)
@@ -1137,6 +1149,15 @@ async fn build_app_with_runtime(
                 affects_state: false,
             });
             tracing::info!("Registered $validate at system level");
+            crate::operations::dicom::register_definition(
+                &mut registry,
+                !cfg.dicom.connections.is_empty(),
+            );
+            crate::operations::dicom_sync::register(&mut registry, &cfg.dicom);
+            crate::operations::dicom_ups::register_definition(
+                &mut registry,
+                cfg.dicom.connections.values().any(|c| c.ups.is_some()),
+            );
             // SQL on FHIR operations, independent of the IG package download
             crate::operations::sof::register_operation_definitions(&mut registry);
             // FML operations ($transform, SDC $extract)
@@ -1241,6 +1262,15 @@ async fn build_app_with_runtime(
                 parameters: vec![],
                 affects_state: false,
             });
+            crate::operations::dicom::register_definition(
+                &mut registry,
+                !cfg.dicom.connections.is_empty(),
+            );
+            crate::operations::dicom_sync::register(&mut registry, &cfg.dicom);
+            crate::operations::dicom_ups::register_definition(
+                &mut registry,
+                cfg.dicom.connections.values().any(|c| c.ups.is_some()),
+            );
             // SQL on FHIR operations, independent of the IG package download
             crate::operations::sof::register_operation_definitions(&mut registry);
             // FML operations ($transform, SDC $extract)
@@ -1986,6 +2016,24 @@ async fn build_app_with_runtime(
         operation_handlers,
         validation_service,
         gateway_router: (*gateway_router).clone(),
+        dicom_streams: Arc::new(tokio::sync::Semaphore::new(
+            cfg.dicom.max_concurrent_streams as usize,
+        )),
+        dicom_watch_pool: sqlx_postgres::PgPoolOptions::new()
+            .max_connections(
+                cfg.dicom
+                    .connections
+                    .values()
+                    .filter(|c| c.ups.as_ref().is_some_and(|u| u.notifications))
+                    .count()
+                    .max(1) as u32,
+            )
+            .acquire_timeout(std::time::Duration::from_secs(5))
+            .connect_lazy_with((*db_pool.connect_options()).clone()),
+        dicom_lock_pool: sqlx_postgres::PgPoolOptions::new()
+            .max_connections(cfg.dicom.max_concurrent_imports)
+            .acquire_timeout(std::time::Duration::from_secs(5))
+            .connect_lazy_with((*db_pool.connect_options()).clone()),
         db_pool,
         read_db_pool,
         handler_registry,
@@ -2105,6 +2153,17 @@ async fn build_app_with_runtime(
                         .map_err(|error| error.to_string())?;
                         serde_json::from_slice(&bytes).map_err(|error| error.to_string())
                     }
+                    crate::dicom::ups::JOB => {
+                        crate::dicom::ups::execute(state, body.ok_or("Missing UPS work request")?)
+                            .await
+                    }
+                    crate::dicom::sync::JOB => {
+                        crate::dicom::sync::execute(
+                            state,
+                            body.ok_or("Missing DICOM work request")?,
+                        )
+                        .await
+                    }
                     "bulk_export" => {
                         // Extract job parameters from body
                         let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
@@ -2147,6 +2206,12 @@ async fn build_app_with_runtime(
     );
 
     state.async_job_manager.set_executor(executor);
+    crate::dicom::ups::start(&state, &background)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    crate::dicom::sync::start(&state, &background)
+        .await
+        .map_err(anyhow::Error::msg)?;
     tracing::info!("Async job executor configured for bulk export and ViewDefinition export");
 
     let internal_router = state.internal_router.clone();
@@ -2450,11 +2515,13 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             "/admin",
             if state.config_manager.is_some() {
                 Router::new()
+                    .merge(crate::storage_providers::api::routes())
                     .merge(crate::admin::admin_routes())
                     .merge(crate::admin::config_routes())
                     .merge(crate::admin::audit_routes())
             } else {
                 Router::new()
+                    .merge(crate::storage_providers::api::routes())
                     .merge(crate::admin::admin_routes())
                     .merge(crate::admin::audit_routes())
             },
@@ -2625,6 +2692,7 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
     }
 
     router = router.nest("/fhir", fhir_router);
+    router = router.merge(crate::dicom::gateway::routes());
 
     // Add root-level gateway fallback for custom App operations.
     // This handles paths not matched by explicit routes (e.g., /myapp/users/123/profile).

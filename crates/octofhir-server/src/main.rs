@@ -1,3 +1,5 @@
+mod cli;
+use clap::Parser;
 use std::{env, path::PathBuf, sync::Arc};
 
 // Use mimalloc as the global allocator for better performance
@@ -25,29 +27,9 @@ const STARTUP_BANNER: &str = r#"
 d8'          `8b  88888888P"       88       8P        Y8  `"Y8888Y"'    88      `888
 "#;
 
-/// How the configuration path was determined.
-#[derive(Debug, Clone, Copy)]
-enum ConfigSource {
-    /// From --config CLI argument
-    CliArgument,
-    /// From OCTOFHIR_CONFIG environment variable
-    EnvironmentVariable,
-    /// Default path (octofhir.toml)
-    Default,
-}
-
-impl std::fmt::Display for ConfigSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CliArgument => write!(f, "CLI argument (--config)"),
-            Self::EnvironmentVariable => write!(f, "environment variable (OCTOFHIR_CONFIG)"),
-            Self::Default => write!(f, "default"),
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() {
+    let args = cli::Cli::parse();
     let startup_start = std::time::Instant::now();
     let mut phase_ms: Vec<(&'static str, u128)> = Vec::new();
 
@@ -71,7 +53,7 @@ async fn main() {
     octofhir_server::metrics::init_metrics();
 
     // Parse config path from CLI, environment, or use default
-    let (config_path, source) = resolve_config_path();
+    let (config_path, source) = args.config_path(env::var("OCTOFHIR_CONFIG").ok());
 
     // Load initial configuration
     let phase_start = std::time::Instant::now();
@@ -175,34 +157,6 @@ async fn main() {
     }
 
     shutdown_tracing();
-}
-
-/// Resolve the configuration file path.
-///
-/// Priority order:
-/// 1. CLI argument: --config <path>
-/// 2. Environment variable: OCTOFHIR_CONFIG
-/// 3. Default: octofhir.toml
-fn resolve_config_path() -> (String, ConfigSource) {
-    // 1. Check CLI: --config <path>
-    let mut args = env::args().skip(1);
-    while let Some(arg) = args.next() {
-        if arg == "--config"
-            && let Some(path) = args.next()
-        {
-            return (path, ConfigSource::CliArgument);
-        }
-    }
-
-    // 2. Check environment variable
-    if let Ok(path) = env::var("OCTOFHIR_CONFIG")
-        && !path.is_empty()
-    {
-        return (path, ConfigSource::EnvironmentVariable);
-    }
-
-    // 3. Default to octofhir.toml
-    ("octofhir.toml".to_string(), ConfigSource::Default)
 }
 
 /// Create a small dedicated PostgreSQL pool for configuration persistence.

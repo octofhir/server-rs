@@ -1,0 +1,444 @@
+---
+title: DICOM Integration
+description: Import PACS metadata into FHIR without storing medical images in PostgreSQL.
+---
+
+OctoFHIR's built-in DICOMweb connector imports **metadata only** from an external
+PACS. DICOM objects, frames and pixel data stay in PACS. The server stores an
+`ImagingStudy` and a credential-free `Endpoint` pointing to the WADO-RS service.
+FHIR R4, R4B and R5 are supported. No connection is enabled by default.
+
+## Configure a connection
+
+`dicom.max_concurrent_imports` defaults to 2 (range 1..16). Imports reserve
+separate PostgreSQL advisory-lock sessions, outside the FHIR connection pool.
+Allow this many additional database connections when sizing a deployment.
+Concurrent imports of the same connection/study return a retryable conflict.
+
+```toml
+[dicom.connections.hospital]
+wado_url = "https://pacs.example.org/dicom-web"
+bearer_token_env = "PACS_BEARER_TOKEN" # optional when the PACS needs no credential
+timeout_seconds = 30
+max_metadata_bytes = 8388608
+max_instances = 10000
+
+[dicom.connections.hospital.patient_identifier_systems]
+HOSPITAL = "https://hospital.example.org/mrn"
+```
+
+The mapping translates DICOM **Issuer of Patient ID** to the FHIR identifier
+system used by an existing Patient. If an archive omits the issuer, explicitly
+set `default_patient_issuer = "HOSPITAL"` in the connection table. Unmapped or
+missing authorities fail import. Patient names are never used for identity.
+
+Use `server.outbound_allowlist` for a PACS on a private network. HTTPS is the
+default; `allow_http = true` explicitly allows HTTP for a trusted deployment.
+URLs cannot contain credentials, query strings or fragments. Redirects and
+environment HTTP proxies are disabled. Credentials never enter FHIR resources.
+Changing connections requires a server restart.
+
+## Import or refresh one study
+
+```http
+POST /fhir/Patient/patient-123/$dicom-import
+Authorization: Bearer <FHIR access token>
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "connection", "valueString": "hospital"},
+    {"name": "study", "valueString": "1.2.840.113619.2.1"}
+  ]
+}
+```
+
+`study` is the raw Study Instance UID, without `urn:oid:`. The operation requests
+only `GET {wado_url}/studies/{uid}/metadata` using `application/dicom+json`. The
+response must be a bounded JSON array of consistent instance datasets.
+
+The caller must be allowed to read the selected Patient and imported resources,
+and create/update the generated Endpoint and ImagingStudy. SMART interaction
+scopes and resource policies still apply. A PACS credential never grants FHIR
+privileges. This operation does not accept arbitrary destination URLs or a
+skip-validation flag.
+
+Every instance's PatientID and assigning authority must match an identifier of
+the selected Patient. Endpoint and ImagingStudy changes commit in one normal
+FHIR transaction, including validation, reference integrity and resource events.
+An import failure does not commit half of that transaction.
+
+The response contains references, not images:
+
+```json
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "imagingStudy", "valueReference": {"reference": "ImagingStudy/dicom-..."}},
+    {"name": "endpoint", "valueReference": {"reference": "Endpoint/dicom-..."}},
+    {"name": "changed", "valueBoolean": true}
+  ]
+}
+```
+
+## Identity and repeat imports
+
+Resource IDs are stable per connection and study. Identical re-imports return
+`changed: false` without adding history versions. Changed projections use ETags
+to protect against concurrent updates. Existing resources must carry the
+connector's ownership tag; an occupied ID is not silently adopted. Patient
+reassignment is rejected.
+
+The connector owns study status, subject, endpoint, counts, modality, series,
+description and started date. Other clinical fields, metadata and security labels
+are preserved. Series and instances are sorted by UID. Counts describe the
+returned metadata snapshot; `available` does not mean acquisition or reporting
+is complete. Study Date is imported with date precision, without inventing a
+timezone for a DICOM local clock.
+
+Separate connections produce separate archive representations, even for the same
+Study UID. Renaming a connection therefore changes generated identities.
+
+## Discovery and durable synchronization
+
+QIDO discovery is configured separately from WADO retrieval. Enable it with an
+explicit registered backend client; the connector never derives FHIR permissions
+from its PACS credential. For a fresh local deployment, bootstrap can create that
+client before synchronization starts:
+
+```toml
+[bootstrap.backend_client]
+client_id = "dicom-sync"
+# Supply OCTOFHIR__BOOTSTRAP__BACKEND_CLIENT__CLIENT_SECRET in the environment.
+scopes = ["system/Patient.rs", "system/ImagingStudy.cru", "system/Endpoint.cru"]
+
+[dicom.connections.hospital]
+wado_url = "https://pacs.example.org/dicom-web"
+qido_url = "https://pacs.example.org/dicom-web"
+bearer_token_env = "PACS_BEARER_TOKEN"
+patient_identifier_systems = { HOSPITAL = "https://hospital.example.org/mrn" }
+
+[dicom.connections.hospital.sync]
+client_id = "dicom-sync"
+scopes = ["system/Patient.rs", "system/ImagingStudy.cru", "system/Endpoint.cru"]
+discovery = "scan" # or "notifications" for an external event adapter
+rescan_seconds = 300
+page_size = 100
+pages_per_run = 4
+max_studies_per_scan = 1000000
+retry_seconds = 5
+```
+
+Provision the same scopes on an existing active client in an established database.
+Startup checks the client and its grants. Background work rechecks registration
+and applies ordinary resource policies. Revoking the client stops useful work.
+Use a distinct connection name when changing the PACS URL, assigning authorities
+or synchronization identity/scopes: persisted source identity cannot silently move
+to another archive. Credential rotation and polling limits can change on restart.
+
+`scan` performs bounded repeated QIDO pages with `offset` and `limit`, continuing
+until an empty page even if PACS returns fewer records than requested. **StudyDate
+is never a change cursor**: a prior imported today may have a decades-old date.
+Offset scans converge on a stable archive; they are not a snapshot guarantee while
+the archive is changing. A page limit failure remains visible for administrator
+attention. Replayable vendor feeds and Repository Query cursors are not assumed;
+an external source adapter can use the ordered notification interface below.
+
+Each page and its queue entries commit together. Per-study revisions coalesce;
+workers re-read current WADO metadata, write through normal FHIR transactions and
+save their checkpoint atomically with those writes. Existing async-job leases
+fence competing server instances. Failed work remains queued with exponential
+retry, capped at one hour. No-op reconciliation does not add FHIR versions.
+
+An unknown or ambiguous patient identifier requires manual reconciliation. The
+connector never creates a Patient. Its pinned patient does not change after
+correction, deletion/recreation of the FHIR representation, or process restart.
+An incomplete metadata response or a QIDO count larger than the returned manifest
+preserves the last complete representation and retries.
+
+### Ordered source notifications
+
+Only the configured backend client, authenticated with all configured sync scopes,
+may submit control-plane requests. Anonymous development access does not enable
+them. Send a strictly increasing, nonnegative integer sequence **per study** (a
+source-wide monotonic sequence is also suitable). Keep it as a decimal string to
+avoid JSON number precision loss:
+
+```http
+POST /fhir/$dicom-notify
+Authorization: Bearer <configured backend token>
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name":"connection","valueString":"hospital"},
+    {"name":"study","valueString":"1.2.840.113619.2.1"},
+    {"name":"sequence","valueString":"1042"},
+    {"name":"change","valueString":"changed"}
+  ]
+}
+```
+
+Changes are `changed`, `deleted`, `rejected` or `restored`. The response's
+`accepted` boolean is false for a duplicate/stale sequence. Retransmit until an
+acknowledgment is received; a response acknowledges durable enqueue, not completion
+of the FHIR write. Requests for different studies can proceed independently.
+
+Explicit deletion/rejection sets ImagingStudy `status` to `unknown` and the
+connector's `dicom-availability` extension to `deleted`/`rejected`, retaining its
+manifest and clinical annotations. Only a newer `restored` notification clears
+that override. Scans, timeouts, HTTP failures and disappearing query results never
+infer deletion or silently restore rejected images. A successful fresh import
+sets the extension to `available`; that is source availability, not clinical
+completion.
+
+`POST /fhir/$dicom-sync-status` with a single `connection` valueString returns
+study/pending/failed counts, scan offset, last scan and a bounded error code.
+`POST /fhir/Patient/{id}/$dicom-discover` with `connection` and optional `issuer`,
+`offset`, `limit` valueStrings returns a patient-specific QIDO page. It verifies
+every response identity before returning UIDs. Follow `nextOffset` until `complete`
+is true. Discovery returns metadata and does not itself enqueue those studies;
+use notifications or the configured scanner for reconciliation. Both operations
+require the configured service identity.
+
+## Optional authorized DICOMweb gateway
+
+Direct PACS access remains the default. To publish a gateway Endpoint for one
+connection, add the following table and re-import/reconcile its studies:
+
+```toml
+[dicom]
+max_concurrent_streams = 16 # shared across connections; range 1..256
+
+[dicom.connections.hospital.gateway]
+max_stream_bytes = 8589934592 # 8 GiB per response; enforced for chunked bodies too
+stream_seconds = 300         # total stream lifetime, up to 3600
+idle_seconds = 30            # maximum wait for the next PACS chunk
+```
+
+The Endpoint then points to `{server-base}/dicomweb/hospital`. Every gateway GET
+requires an authenticated FHIR identity and current, primary-backed read access
+to both the ImagingStudy and its Patient. It checks an independent connector
+manifest recorded in the same transaction as FHIR writes. Creating or editing
+ownership tags, instance UIDs or a subject through FHIR CRUD cannot forge this
+proof. Re-import repairs an altered projection; clinical notes and current
+security-label policies remain effective without expanding membership.
+
+Supported routes under that service root:
+
+| Resource | GET path |
+| --- | --- |
+| One known study | `/studies?StudyInstanceUID={uid}` |
+| Known series / instances | `/studies/{uid}/series`, `/studies/{uid}/series/{series}/instances` |
+| Metadata | `/studies/{uid}/metadata`, series or individual instance `/metadata` |
+| Individual DICOM object | `/studies/{uid}/series/{series}/instances/{instance}` |
+| Frames | Instance path + `/frames/1,2` |
+| Rendered instance/frames | Instance or frame path + `/rendered` |
+| Instance/frame thumbnail | Instance or frame path + `/thumbnail` |
+| Pixel data | Instance path + `/pixeldata` |
+| Other bulk data | Rewritten `BulkDataURI` returned in metadata |
+
+This is a constrained retrieval service, not an unrestricted QIDO archive or full
+WADO-RS implementation. It does not expose STOW, worklists, study/series binary
+exports, study/series rendering, or an arbitrary URL fetch endpoint. Query results
+are synthesized from the authorized manifest. Unindexed new instances remain
+unavailable until reconciliation. Metadata is filtered to the same membership;
+fresh per-instance metadata verifies patient identity before any binary retrieval.
+
+`Accept`, including Transfer Syntax parameters, and a single byte `Range` are
+forwarded; supported upstream multipart bodies remain byte-for-byte streams.
+Rendering accepts `viewport`, `window`, `quality`, `iccprofile` and `annotation`.
+Caller credentials/cookies are never forwarded to PACS, and upstream cookies,
+redirects and HTML error bodies are not forwarded to the viewer. Bulk references
+are resolved from fresh metadata, bound to the configured origin and exact
+instance, and rewritten as tag-path tokens. A deployment whose PACS returns bulk
+URLs outside its instance path must use direct PACS access for that representation.
+
+Backpressure reaches the PACS connection. Disconnecting the downstream caller
+cancels its upstream body and releases the concurrency slot. Only bounded metadata
+is buffered; image bytes are never saved in PostgreSQL, job bodies, Binary or S3.
+Responses use `Cache-Control: no-store`. A midstream timeout/limit interrupts the
+body; an error OperationOutcome cannot replace a body whose headers were sent.
+
+## UPS-RS Requestor and Watcher
+
+The optional UPS client submits an existing FHIR Task to an external UPS-RS Task
+Manager. Processing and inference run in an external **Performer**. OctoFHIR never
+claims the performer's transaction UID, executes inference or stores its DICOM
+outputs. UPS events describe workitems; study arrival still uses discovery/sync.
+
+```toml
+[dicom.connections.hospital.ups]
+url = "https://pacs.example.org/ups"
+client_id = "imaging-worker"
+scopes = ["system/Task.ru", "system/Patient.r", "system/ImagingStudy.cru", "system/Endpoint.cru", "system/DiagnosticReport.cru", "system/DocumentReference.cru", "system/Provenance.cru"]
+ae_title = "OCTOFHIR"
+# bearer_token_env = "UPS_BEARER_TOKEN"
+notifications = true
+poll_seconds = 30
+retry_seconds = 5
+max_references = 10000
+# Defaults to {url}/subscribers/{ae_title}; set the declared same-origin WS endpoint if different.
+# notification_url = "wss://pacs.example.org/ups/subscribers/OCTOFHIR"
+# Optional destination advertised to the external performer, without credentials:
+# output_stow_url = "https://pacs.example.org/dicom-web"
+
+[dicom.connections.hospital.ups.coding_schemes]
+"https://hospital.example.org/procedures" = "99HOSPITAL"
+"http://unitsofmeasure.org" = "UCUM"
+
+[dicom.connections.hospital.ups.result_mappings."1.2.840.10008.5.1.4.1.1.88.22"]
+kind = "diagnostic_report"
+system = "https://hospital.example.org/results"
+code = "imaging-sr"
+report_status = "unknown" # explicit clinical policy; COMPLETED never implies final
+
+[dicom.connections.hospital.ups.result_mappings."1.2.840.10008.5.1.4.1.1.66.4"]
+kind = "document_reference"
+system = "https://hospital.example.org/results"
+code = "segmentation"
+```
+
+Provision and enable the configured backend Client with those scopes. Caller and
+worker permissions are independent and checked through the normal FHIR policies.
+Use a distinct AE title for each independent deployment/database sharing a Task
+Manager. Replicas sharing the same OctoFHIR database share its AE and source
+leadership; separate databases must not overwrite each other's filtered subscription.
+Allow one additional PostgreSQL connection per notification-enabled source for
+watch leadership, in addition to the import-lock capacity. Credentials, private
+network allowlists and HTTPS rules follow the connection rules above. UPS can
+have its own credential reference. A notification URL must share the UPS origin.
+
+Create a Task with `status: draft` (or `requested`), `intent: order`, a local
+`for.reference: Patient/{id}`, and `focus.reference: ImagingStudy/{id}` imported
+from this connection. `code` must contain one supported Coding with a display;
+map its system to a DICOM Coding Scheme Designator explicitly. All attested input
+instances become UPS inputs. Optional Task inputs support String, dateTime,
+CodeableConcept and exact Quantity with explicitly mapped units. Unsupported
+value types, routing fields, repetitions and unknown modifier extensions fail
+admission. `doNotPerform: true` (including its standard modifier extension) cannot
+be submitted as positive work. R5 `requestedPeriod`, or a supported restriction
+period, supplies the scheduled interval; it is not an actual execution period.
+
+```http
+POST /fhir/Task/task-123/$dicom-ups
+Authorization: Bearer <FHIR access token>
+Content-Type: application/fhir+json
+
+{"resourceType":"Parameters","parameter":[
+  {"name":"connection","valueString":"hospital"},
+  {"name":"action","valueString":"submit"}
+]}
+```
+
+Actions are `submit`, `cancel`, `refresh` and `status`, all via POST. Status exposes
+the stable workitem URI, source state, desired/applied revisions, pending job,
+creation/cancellation flags and a bounded error code/message. Callers supply no
+DICOM dataset, remote URL, credential, patient override or workitem UID.
+Submission binds the patient's identity and Task input projection permanently;
+ordinary FHIR updates cannot reassign them. Clinical notes and security labels
+remain editable under the normal resource policies. Active bindings block deletion.
+
+Commands use the existing durable job executor and PostgreSQL leases/checkpoints.
+The stable `2.25.…` UID is saved before any remote create. A lost create response
+is recovered by retrieving that same UID; an already confirmed item is never
+recreated after disappearance. Fresh input metadata rechecks the patient and exact
+instance membership before creation. Cancellation that wins before any create
+attempt completes locally with `cancelledBeforeSubmission`; an uncertain earlier
+POST remains explicitly uncertain until reconciliation. An accepted cancel request
+alone never changes the Task to cancelled: only the Task Manager's CANCELED state
+can do so.
+
+| UPS state | FHIR Task status |
+| --- | --- |
+| SCHEDULED | requested |
+| IN PROGRESS | in-progress |
+| COMPLETED | completed |
+| CANCELED | cancelled |
+
+The Watcher opens its WebSocket before creating a filtered global subscription
+with deletion locks. Its persistent source-label namespace selects only its own
+workitems. Bounded event messages only wake reconciliation: every state/result is
+retrieved afresh, including comparison of the requested processing parameters.
+Restart, reconnect and periodic polling recover missed events;
+WebSocket transport is not treated as a replay log. `notifications = false` is an
+explicit polling-only mode, without Watcher/deletion-lock guarantees. On permanent
+source retirement, drain outstanding work, verify applied terminal checkpoints,
+then remove that AE's filtered global subscription through the Task Manager's
+administrative procedure. Simply disconnecting a WebSocket does not release locks.
+
+Completed output references are read from the Performed Procedure Sequence, checked
+against newly imported PACS metadata and the pinned Patient, then published with
+the Task and Provenance in a normal FHIR transaction. Results may be in another
+Study. Configured SOP Class mappings produce DiagnosticReport or DocumentReference
+with retrieval URLs under the configured Endpoint. An unmapped output SOP Class
+blocks completion until an explicit result mapping is configured.
+No SR content is interpreted into measurements or conclusions. Whole-object
+references are supported; frame/segment subset references are rejected explicitly.
+Clinical annotations survive reconciliation. Patient/study security labels are
+inherited without removing operator labels. Only after the final FHIR checkpoint
+is applied does the Watcher release the workitem's deletion lock.
+
+## Reproduce PACS interoperability locally
+
+The repository provides pinned, loopback-only Docker profiles and a synthetic
+16×16 Secondary Capture fixture. Use an isolated test archive with no clinical data.
+The normal metadata/gateway tests run without an external PACS. The opt-in test
+uploads the fixture to the explicitly selected archive and starts a disposable
+PostgreSQL-backed OctoFHIR instance.
+
+```bash
+export DICOM_TEST_DB_PASSWORD=local-pacs-db
+export DICOM_TEST_LDAP_PASSWORD=local-pacs-ldap
+# Start either profile; dcm4chee needs a few minutes for its first boot.
+docker compose -p octofhir-dicom-local -f docker-compose.dicom.yml --profile orthanc up -d orthanc
+curl --retry 30 --retry-all-errors --retry-delay 1 --fail http://127.0.0.1:8042/system
+DICOM_TEST_PACS=http://127.0.0.1:8042/dicom-web \
+DICOM_TEST_UPLOAD=http://127.0.0.1:8042/instances \
+cargo test -p octofhir-server --test dicom_pacs -- --ignored
+
+# Independent PACS, with its separate Worklist AE for UPS:
+docker compose -p octofhir-dicom-local -f docker-compose.dicom.yml --profile dcm4chee up -d dcm4chee
+curl --retry 120 --retry-all-errors --retry-delay 2 --fail \
+  'http://127.0.0.1:8090/dcm4chee-arc/aets/DCM4CHEE/rs/studies?limit=1'
+DICOM_TEST_PACS=http://127.0.0.1:8090/dcm4chee-arc/aets/DCM4CHEE/rs \
+DICOM_TEST_UPLOAD=http://127.0.0.1:8090/dcm4chee-arc/aets/DCM4CHEE/rs/studies \
+DICOM_TEST_UPS=http://127.0.0.1:8090/dcm4chee-arc/aets/WORKLIST/rs \
+DICOM_TEST_UPS_WS=ws://127.0.0.1:8090/dcm4chee-arc/aets/WORKLIST/ws/subscribers/OCTOFHIR \
+cargo test -p octofhir-server --test dicom_pacs -- --ignored
+
+# Removes only this disposable project's containers and synthetic-data volumes:
+docker compose -p octofhir-dicom-local -f docker-compose.dicom.yml --profile orthanc --profile dcm4chee down --volumes
+```
+
+The retrieval scenario covers QIDO discovery, FHIR import, rewritten metadata,
+multipart object/frame retrieval and bulk data against Orthanc 1.13.0 and dcm4chee
+5.35.2. A small test-only browser viewer additionally verifies the 256 source pixels.
+UPS Requestor/Watcher is checked against dcm4chee and an independent protocol test
+peer exercising ambiguous creates, lost notifications, immutable inputs, result
+publication and cancellation races. Orthanc is a retrieval peer, not a UPS Task
+Manager. These checks do not claim broad UPS interoperability or complete
+OHIF/Stone viewer compatibility.
+
+## Retrieval and optional file storage
+
+Without the gateway, a viewer follows the Endpoint and retrieves objects directly
+from PACS with its own authorization. OctoFHIR does not expose its PACS service
+credential. STOW-RS and Task Performer execution belong to the external imaging
+services.
+
+Optional S3 storage for general Binary/Attachment payloads remains a separate
+planned driver. It does not change PACS ownership of images. Private IG packages
+already support local directories, local archives, registry-offline dependency
+resolution and pinned S3 objects; see the [configuration guide](/server-rs/configuration/#local-implementation-guide-packages).
+
+See the repository's [implementation plan](https://github.com/octofhir/server-rs/blob/main/plans/dicom-integration.md).
+
+## References
+
+- [FHIR R4 ImagingStudy](https://hl7.org/fhir/R4/imagingstudy.html)
+- [FHIR R5 Endpoint](https://hl7.org/fhir/R5/endpoint.html)
+- [DICOM PS3.18](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/PS3.18.html)
+- [IHE Radiology profiles](https://profiles.ihe.net/RAD/)
