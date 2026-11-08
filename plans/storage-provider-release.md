@@ -58,3 +58,13 @@ an audit record; v0.0.5 includes the SQL IG selection and bootstrap stack fixes.
 
 Corrected bootstrap acceptance: all four previously failing SQL test binaries,
 federated OIDC/SAML sign-in on 2 MiB stacks and RuCore passed locally.
+
+## Portable standard API acceptance
+
+- [x] Publish the server-neutral FHIR/DICOMweb client and reproducible two-server
+      scenario; preserve built-in custom operations.
+- [x] Verify the same standard R4 transaction/search/Task/Endpoint/WADO workflow
+      against OctoFHIR and digest-pinned HAPI with request validation enabled.
+
+Standard API acceptance passed on OctoFHIR 0.0.5 and HAPI FHIR R4 with strict
+request validation, using the same unmodified client and synthetic Orthanc frame.

@@ -1,0 +1,19 @@
+# Isolated standard FHIR/DICOMweb interoperability fixture; no clinical data.
+services:
+  hapi-fhir:
+    image: hapiproject/hapi@sha256:0ff86aac4c7bd13a1ee226444a70263bb46ed1c28ef543c30a44f865b80ca04e
+    ports: ["127.0.0.1:${HAPI_HTTP_PORT:-18080}:8080"]
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx1024m"
+      hapi.fhir.fhir_version: R4
+      hapi.fhir.server_address: "http://127.0.0.1:${HAPI_HTTP_PORT:-18080}/fhir"
+      hapi.fhir.validation.requests_enabled: "true"
+    mem_limit: 2g
+  orthanc:
+    image: orthancteam/orthanc:latest@sha256:06b8baab0c63cd58de5474a74b64096a82ea3f7eab2aa471e217cc48c9ae11bf
+    ports: ["127.0.0.1:${ORTHANC_HTTP_PORT:-8042}:8042"]
+    environment:
+      ORTHANC__AUTHENTICATION_ENABLED: "false"
+      ORTHANC__REMOTE_ACCESS_ALLOWED: "true"
+      DICOM_WEB_PLUGIN_ENABLED: "true"
+      ORTHANC__DICOM_WEB__ROOT: /dicom-web/

@@ -8,6 +8,90 @@ PACS. DICOM objects, frames and pixel data stay in PACS. The server stores an
 `ImagingStudy` and a credential-free `Endpoint` pointing to the WADO-RS service.
 FHIR R4, R4B and R5 are supported. No connection is enabled by default.
 
+## Portable FHIR API and clients
+
+The interoperable data contract is ordinary FHIR REST. External tools can publish
+and consume Patient, ImagingStudy, Endpoint, Task, DocumentReference,
+DiagnosticReport and Provenance on a FHIR server supporting the required
+resources and interactions. Images remain in the DICOMweb archive referenced by
+Endpoint; a consumer uses that address with its PACS credentials.
+
+| Action | Standard HTTP interface |
+| --- | --- |
+| Find a Patient by an assigning authority and identifier | `GET [fhir-base]/Patient?identifier=system\|value` |
+| Publish linked resources atomically | `POST [fhir-base]` with a transaction Bundle |
+| Find a patient's studies | `GET [fhir-base]/ImagingStudy?patient=Patient/id` |
+| Discover the DICOMweb service | `GET [fhir-base]/Endpoint/id` |
+| Create/read an imaging task | `POST [fhir-base]/Task`, `GET [fhir-base]/Task/id` |
+| Record worker progress | `PUT [fhir-base]/Task/id` with `If-Match` |
+| Publish result references and provenance | a transaction containing Task, DocumentReference/DiagnosticReport and Provenance |
+| Retrieve a frame | WADO-RS `GET [dicom-base]/studies/{study}/series/{series}/instances/{instance}/frames/1` |
+
+### Typical usage
+
+1. Configure the FHIR base URL and obtain a FHIR access token with the required
+   resource permissions. Configure the PACS base URL and its credential separately.
+2. A data publisher supplies Patient/Endpoint/ImagingStudy resources. If another
+   integration already publishes them, start by querying those resources. Otherwise
+   an external converter can send a standard transaction Bundle, or OctoFHIR's
+   configured built-in importer can populate them. The publisher maps PACS PatientID
+   and issuer to Patient.identifier; Patient.id is not assumed to equal PatientID.
+3. Find the Patient through ordinary FHIR search, then retrieve its ImagingStudy.
+   Resolve the study/series Endpoint and use its WADO-RS address to retrieve an
+   instance or a frame. Use the raw Study/Series/SOP UIDs for DICOMweb URLs.
+4. For processing, create a normal Task linked to the Patient and ImagingStudy.
+   The authorized worker records accepted/in-progress states and publishes actual
+   result references together with Task completion and Provenance.
+
+For example, an external worker can accept this ordinary FHIR request after the
+referenced resources exist. Replace the example IDs with the server's real IDs:
+
+```http
+POST [fhir-base]/Task
+Authorization: Bearer <FHIR token>
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Task",
+  "status": "requested",
+  "intent": "order",
+  "code": {"text": "Review imaging study"},
+  "for": {"reference": "Patient/patient-123"},
+  "focus": {"reference": "ImagingStudy/study-123"}
+}
+```
+
+Task codes, ownership and processing semantics are agreed with the worker. Read
+progress through `GET [fhir-base]/Task/id`; resolve its output references through
+normal FHIR reads. DocumentReference/DiagnosticReport contain metadata and DICOM
+retrieval references. Image bytes remain in PACS.
+
+The [walkthrough](https://github.com/octofhir/server-rs/tree/main/examples/dicom)
+provides copyable client commands for capability discovery, publishing a Bundle,
+finding studies, reading a Task and downloading one frame. Local/private IG setup
+is documented in [Local implementation guide packages](../configuration/#local-implementation-guide-packages).
+
+FHIR Task creation records a request. An authorized processing worker performs
+the actual work and records its confirmed states/results. A generic FHIR server
+is not required to execute Tasks or submit them to UPS merely because they were
+created. Cancellation requests and confirmed cancellation must remain distinct
+in that processing contract.
+
+The repository includes a [server-neutral Python client and walkthrough](https://github.com/octofhir/server-rs/tree/main/examples/dicom)
+and `scripts/test-dicom-standard-api.py`. The same R4 scenario runs against
+OctoFHIR and an independent HAPI FHIR instance with request validation enabled.
+It covers standard transactions, reference resolution, search, ETags, exact
+synthetic WADO-RS frame bytes, and Task/result/Provenance publication. The dedicated
+`docker-compose.fhir-interop.yml` file provides pinned HAPI/Orthanc images for
+reproduction.
+
+These clients require no OctoFHIR operations, ownership tags, StorageProvider
+resources or database access. The built-in `$dicom-*` operations below remain
+available as additional server-side automation through the
+[FHIR extended operation framework](https://hl7.org/fhir/R4/operations.html).
+They are implementation-defined operations, rather than universally defined
+DICOM/FHIR operation names.
+
 ## Configure a connection
 
 `dicom.max_concurrent_imports` defaults to 2 (range 1..16). Imports reserve

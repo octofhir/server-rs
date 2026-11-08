@@ -578,6 +578,77 @@ configuration file's directory. Absolute paths remain absolute. When embedding
 the server and constructing `AppConfig` directly, relative paths use the process
 working directory.
 
+### Quick start: a local binary or a read-only mount
+
+For a standalone server, a normal filesystem path is sufficient. For example,
+with `/srv/octofhir/octofhir.toml` use:
+
+```toml
+[fhir]
+version = "R4B"
+
+[packages]
+path = "./.fhir"
+load = [
+  "hl7.fhir.r4b.core#4.3.0",
+  { path = "./igs/ru.core/package.tgz" }
+]
+```
+
+```bash
+./octofhir-server --config /srv/octofhir/octofhir.toml
+```
+
+This resolves the archive to `/srv/octofhir/igs/ru.core/package.tgz`. An unpacked
+package directory works in the same `path` field. The local IG is loaded from
+that path; ordinary dependency acquisition remains enabled by default.
+
+For Docker, mount the directory containing the packages read-only, for example
+`./igs:/opt/igs:ro`, then use `{ path = "/opt/igs/ru.core/package.tgz" }` in the
+mounted server configuration. The operator supplies an existing built package,
+not an FSH source tree. The cache path remains writable and separate from the
+read-only source. See the offline section below when registry access must be
+completely disabled, including transitive dependencies.
+
+### Validate resources against an installed custom profile
+
+Loading an IG makes its definitions available. A resource declares its applicable
+profiles through `meta.profile`; an installed IG does not automatically apply
+every profile to every resource. Use the canonical URL from the profile's
+StructureDefinition, rather than the package name or filesystem path.
+
+This is the same synthetic RuCore Patient shape exercised by the interoperability
+test. The identifier is a test value:
+
+```json
+{
+  "resourceType": "Patient",
+  "meta": {
+    "profile": ["https://fhir.ru/ig/core/StructureDefinition/core-patient"]
+  },
+  "identifier": [{
+    "system": "http://fhir.ru/core/systems/snils",
+    "value": "123-456-789 00",
+    "type": {"coding": [{"code": "SB"}]}
+  }]
+}
+```
+
+Send it through the normal `POST [fhir-base]/Patient` interaction. The loaded
+profile participates in ordinary write validation; the test verifies that a
+missing mandatory SNILS slice type is rejected with HTTP 422.
+
+For a validation-only request, call `POST [fhir-base]/Patient/$validate` with a
+Parameters resource containing `resource` (the Patient) and `profile.valueUri`
+(the same canonical URL). The result is an OperationOutcome: inspect issue
+severity for `error`/`fatal`, because HTTP 200 alone does not mean the resource
+passed validation. The [RustFS example](#local-rustfs-verification) includes a
+complete curl request using this profile.
+
+RuCore appears in `crates/octofhir-server/tests/ru_core_validation.rs` and a pinned test fixture to check
+real-world interoperability. Runtime package acquisition, profile validation and
+terminology use the common implementation for any IG.
+
 ### Offline package installation
 
 ```toml
