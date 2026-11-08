@@ -1,7 +1,7 @@
 //! Exact, closed gateway route grammar; a request can never supply a target URL.
 //!
 //! # Invariants
-//! Only canonical UIDs and bounded positive frame lists reach PACS path segments.
+//! Only canonical UIDs and strictly ascending bounded frame lists reach PACS.
 use octofhir_api::ApiError;
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -10,6 +10,7 @@ pub(super) enum Kind {
     Instances,
     Metadata,
     Object,
+    Collection,
     Bulk(String),
 }
 #[derive(Debug)]
@@ -25,15 +26,27 @@ fn invalid() -> ApiError {
 }
 impl Target {
     pub fn parse(path: &str, study_query: Option<&str>) -> Result<Self, ApiError> {
+        if path.len() > 16384 {
+            return Err(invalid());
+        }
         let p: Vec<_> = path.split('/').collect();
         let (study, series, instance, suffix, kind) = match p.as_slice() {
-            ["studies"] => (
-                study_query.ok_or_else(invalid)?,
+            ["studies"] => (study_query.unwrap_or(""), None, None, vec![], Kind::Studies),
+            ["series"] => (study_query.unwrap_or(""), None, None, vec![], Kind::Series),
+            ["instances"] => (
+                study_query.unwrap_or(""),
                 None,
                 None,
                 vec![],
-                Kind::Studies,
+                Kind::Instances,
             ),
+            ["studies", s, "instances"] => (*s, None, None, vec![], Kind::Instances),
+            ["studies", s] => (*s, None, None, vec![], Kind::Collection),
+            [
+                "studies",
+                s,
+                suffix @ ("rendered" | "thumbnail" | "pixeldata"),
+            ] => (*s, None, None, vec![(*suffix).into()], Kind::Collection),
             ["studies", s, "series"] => (*s, None, None, vec![], Kind::Series),
             ["studies", s, "metadata"] => (*s, None, None, vec![], Kind::Metadata),
             ["studies", s, "series", se, "instances"] => {
@@ -42,6 +55,20 @@ impl Target {
             ["studies", s, "series", se, "metadata"] => {
                 (*s, Some(*se), None, vec![], Kind::Metadata)
             }
+            ["studies", s, "series", se] => (*s, Some(*se), None, vec![], Kind::Collection),
+            [
+                "studies",
+                s,
+                "series",
+                se,
+                suffix @ ("rendered" | "thumbnail" | "pixeldata"),
+            ] => (
+                *s,
+                Some(*se),
+                None,
+                vec![(*suffix).into()],
+                Kind::Collection,
+            ),
             ["studies", s, "series", se, "instances", i, tail @ ..] => {
                 let kind = match tail {
                     [] => Kind::Object,
@@ -70,6 +97,9 @@ impl Target {
             _ => return Err(invalid()),
         };
         for uid in [Some(study), series, instance].into_iter().flatten() {
+            if uid.is_empty() && matches!(kind, Kind::Studies | Kind::Series | Kind::Instances) {
+                continue;
+            }
             super::super::validate_uid(uid).map_err(|_| invalid())?;
         }
         Ok(Self {
@@ -80,25 +110,23 @@ impl Target {
             kind,
         })
     }
-    pub fn instance_path(&self) -> Vec<&str> {
-        vec![
-            "studies",
-            &self.study,
-            "series",
-            self.series.as_deref().expect("instance series"),
-            "instances",
-            self.instance.as_deref().expect("instance UID"),
-        ]
-    }
 }
 fn frames(value: &str) -> bool {
+    if value.len() > 10999 {
+        return false;
+    }
     let parts: Vec<_> = value.split(',').collect();
+    let mut previous = 0;
     parts.len() <= 1000
         && parts.iter().all(|v| {
             v.len() <= 10
                 && !v.starts_with('0')
                 && v.bytes().all(|c| c.is_ascii_digit())
-                && v.parse::<u32>().is_ok_and(|n| n > 0)
+                && v.parse::<u32>().is_ok_and(|n| {
+                    let valid = n > previous;
+                    previous = n;
+                    valid
+                })
         })
 }
 #[cfg(test)]
@@ -107,8 +135,8 @@ mod tests {
     #[test]
     fn rejects_arbitrary_targets_and_frame_traversal() {
         for path in [
-            "studies/1.2",
-            "studies/1.2/series/1.3",
+            "studies/1.2/series/1.3/instances/1.4/frames/2,1",
+            "studies/1.2/series/1.3/instances/1.4/frames/1,1",
             "studies/1.2/series/1.3/instances/1.4/frames/0",
             "studies/1.2/series/1.3/instances/1.4/frames/1%2f..",
             "studies/1.2/series/1.3/instances/1.4/bulkdata/https:evil",

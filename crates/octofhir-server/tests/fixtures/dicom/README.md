@@ -7,3 +7,15 @@ Pixel values are 0 through 255 in row order. PatientID is
 UIDs use a test-only fixture namespace and must not enter clinical archives.
 The file is uploaded only to isolated test PACS; OctoFHIR stores its FHIR
 manifest and references, never these DICOM bytes.
+
+The gateway matrix additionally includes `synthetic-multiframe.dcm` (two 16×16
+uncompressed grayscale frames, forward/reversed 0..255) and
+`synthetic-jpeg-baseline.dcm` (one synthetic 64×64 JPEG Baseline grayscale frame).
+Their Study UIDs end in `.999.2` and `.999.3`; they use the same artificial patient.
+They exercise framing, compressed transfer syntax and gateway streaming, not
+clinical modality or diagnostic validation.
+
+Regenerate the additional files in a private Python environment with
+`pydicom==3.0.1` and `Pillow==12.0.0`, then run
+`python scripts/generate-dicom-gateway-fixtures.py`. These are developer-only
+dependencies. The normal server and portable client do not require them.

@@ -19,9 +19,9 @@ PACS. General Binary/Attachment S3 storage remains a separate deferred draft.
 - [x] Complete DICOM release acceptance within the implemented Requestor/Watcher
       and constrained authenticated retrieval scope; do not imply full PACS/IHE/viewer conformance.
 - [x] Rust formatting/lint/tests, UI checks/browser verification and documentation build.
-- [ ] Verify Docker runtime and release automation; native Linux/macOS binaries,
+- [x] Verify Docker runtime and release automation; native Linux/macOS binaries,
       embedded console, checksums and amd64/arm64 Docker images.
-- [ ] Review and commit task-owned changes, publish v0.0.5, verify downloadable
+- [x] Review and commit task-owned changes, publish v0.0.5, verify downloadable
       assets and versioned container images. Preserve unrelated README, devcontainer
       and report changes.
 
@@ -68,3 +68,38 @@ federated OIDC/SAML sign-in on 2 MiB stacks and RuCore passed locally.
 
 Standard API acceptance passed on OctoFHIR 0.0.5 and HAPI FHIR R4 with strict
 request validation, using the same unmodified client and synthetic Orthanc frame.
+
+## Published v0.0.5 record
+
+Release source: `3b17db326b931c5918145e463e0159434e46ed59`. Its exact-source full CI
+and release workflow passed. All four public archives were downloaded and their
+SHA-256 sums and contents verified. Downloaded macOS ARM64 and Linux ARM64 binaries
+passed help/version startup; both Docker architectures passed runtime smoke checks.
+The release is available at https://github.com/octofhir/server-rs/releases/tag/v0.0.5.
+
+## Gateway completion follow-up (v0.0.6)
+
+The 2026-11-08 specification audit identified gaps in the first constrained
+gateway. The user requested completing that gateway before the next delivery.
+
+- [x] Implement QIDO routes/projections/matching/inclusion and bounded pagination.
+- [x] JSON/XML, Accept/query/charset handling, frame-list validation and capabilities.
+- [x] Safe study/series multipart retrieval, renderings and all thumbnail levels.
+- [x] Opaque source bulk references and bounded native InlineBinary handling.
+- [x] Add protocol checks, multiframe/JPEG fixtures and implementation statement.
+- [x] Finish focused/full server validation, strict lint, docs and two-PACS matrix.
+- [x] Prepare the v0.0.6 source change for commit/push.
+- [ ] Publish Docker/native v0.0.6 and verify downloads/images: explicitly deferred
+      by the user; no new tag or release is part of this commit.
+
+The v0.0.5 release remains the historical first delivery. The expanded gateway
+surface is a subsequent source change; no published tag or binary is overwritten.
+
+Gateway acceptance: 593 full library tests plus 10 focused gateway tests passed
+(including the added native-inline case). All five DICOM integration binaries,
+Orthanc and dcm4chee scenarios passed. The real-PACS matrix now covers the
+uncompressed single-frame, multiframe and JPEG Baseline fixtures, collection
+retrieval/rendering, thumbnails, XML/capabilities and the existing UPS scenario.
+Strict workspace/all-target/all-feature Clippy, formatting and the 41-page docs
+build passed. The version is 0.0.6; the user's final instruction is commit/push
+only, with publication left for later.

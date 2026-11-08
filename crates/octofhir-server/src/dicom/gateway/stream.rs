@@ -1,5 +1,8 @@
 //! Backpressured PACS bodies with bounded lifetime, size and idle time.
 //!
+//! # Contents
+//! Guarded retrieval, sanitized status/header handling and bounded body streaming.
+//!
 //! # Invariants
 //! Only selected negotiation/range headers cross the boundary. No buffering task
 //! or unbounded channel exists; dropping the downstream body drops the PACS request
@@ -20,7 +23,7 @@ pub(super) async fn retrieve(
     url: url::Url,
     incoming: &HeaderMap,
     config: &DicomGatewayConfig,
-    permit: OwnedSemaphorePermit,
+    permit: Option<OwnedSemaphorePermit>,
 ) -> Result<Response, ApiError> {
     let mut request = HeaderMap::new();
     if incoming.get_all(header::ACCEPT).iter().count() > 1
@@ -37,6 +40,9 @@ pub(super) async fn retrieve(
         return Err(ApiError::bad_request("Invalid DICOMweb Accept"));
     }
     request.insert(header::ACCEPT, accept);
+    if let Some(charset) = incoming.get(header::ACCEPT_CHARSET) {
+        request.insert(header::ACCEPT_CHARSET, charset.clone());
+    }
     let range = incoming.get(header::RANGE);
     if let Some(range) = range {
         let valid = range
@@ -118,6 +124,9 @@ pub(super) async fn retrieve(
         .get(header::CONTENT_TYPE)
         .cloned()
         .ok_or_else(|| ApiError::internal("PACS media type is missing"))?;
+    if content_type.as_bytes().len() > 4096 {
+        return Err(ApiError::internal("Invalid PACS media type"));
+    }
     let media = content_type
         .to_str()
         .unwrap_or("")
@@ -133,15 +142,21 @@ pub(super) async fn retrieve(
             | "application/octet-stream"
             | "application/pdf"
             | "text/plain"
+            | "text/html"
+            | "text/xml"
+            | "text/rtf"
     ) || matches!(
         media.as_str(),
         "image/jpeg"
+            | "image/gif"
+            | "image/jxl"
             | "image/png"
             | "image/jp2"
             | "image/jls"
             | "image/jph"
             | "video/mp4"
             | "video/mpeg"
+            | "video/h265"
     )) {
         return Err(ApiError::internal("Unsupported PACS media type"));
     }
@@ -177,6 +192,10 @@ pub(super) async fn retrieve(
     headers.insert(
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        "content-security-policy",
+        HeaderValue::from_static("default-src 'none'; sandbox"),
     );
     let max = config.max_stream_bytes;
     let idle = Duration::from_secs(config.idle_seconds);

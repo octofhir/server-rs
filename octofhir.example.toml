@@ -254,6 +254,8 @@ allow_writes = false
 # max_stream_bytes = 8589934592
 # stream_seconds = 300
 # idle_seconds = 30
+# max_query_studies = 100
+# max_query_bytes = 33554432
 #
 # [dicom.connections.hospital.ups]
 # url = "https://pacs.example.org/ups"

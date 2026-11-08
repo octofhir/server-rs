@@ -1791,8 +1791,14 @@ pub async fn dynamic_cors_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // Handle preflight OPTIONS requests immediately
-    if request.method() == Method::OPTIONS {
+    // Only a CORS preflight terminates here. Ordinary OPTIONS may carry a
+    // protocol capability response, including DICOM Retrieve Capabilities.
+    if request.method() == Method::OPTIONS
+        && origin.is_some()
+        && request
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
+    {
         return Ok(build_preflight_response(origin.as_deref()));
     }
 
@@ -1819,7 +1825,7 @@ pub async fn dynamic_cors_middleware(
         // Expose headers that the client can access
         headers.insert(
             header::ACCESS_CONTROL_EXPOSE_HEADERS,
-            HeaderValue::from_static("content-type, x-request-id, location"),
+            HeaderValue::from_static("content-type, x-request-id, location, content-range, accept-ranges, warning, link, etag"),
         );
     }
 
@@ -1863,7 +1869,7 @@ fn build_preflight_response(origin: Option<&str>) -> Response {
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         HeaderValue::from_static(
-            "content-type, authorization, accept, x-request-id, x-skip-validation",
+            "content-type, authorization, accept, accept-charset, range, x-request-id, x-skip-validation",
         ),
     );
 

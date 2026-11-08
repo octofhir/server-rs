@@ -226,64 +226,43 @@ validation. Package presence alone is insufficient.
 Protocol and conformance tests should precede claims for each stage. No stage
 advertises an operation or backend before its implementation is available.
 
-## Open specification gaps (2026-11-08 audit)
+## Specification audit and gateway completion (2026-11-08)
 
-The delivery stages above describe implemented, tested scenarios. They do not
-constitute a claim of complete DICOMweb origin-server or IHE profile conformance.
-The following source review compared the current gateway and UPS client with
-DICOM PS3.18/PS3.4 2026d. These findings remain open; the existing PACS integration
-tests do not exercise every malformed request, resource or media negotiation case.
+The audit of published v0.0.5 found a constrained gateway rather than a complete
+Search/Retrieve surface. HTTP probes confirmed an ignored unsupported Accept,
+a rejected valid accept query and incomplete includefield responses. Those findings
+are addressed on the v0.0.6 development branch; publication is explicitly deferred.
 
-HTTP probes against the exact v0.0.5 Docker candidate and isolated pinned Orthanc
-confirmed three of these gaps: an unsupported metadata `Accept` still receives
-200 JSON, the valid `accept=application/dicom+json` query receives 400, and study
-QIDO with `includefield=all` returns only tags 0020000D and 00201208. Baseline
-metadata retrieval and authenticated import succeeded in the same instance.
+- [x] Weighted metadata/QIDO Accept selection, compatible accept query preferences,
+      explicit 406 responses and UTF-8 charset behavior. Unsupported charset names
+      are ignored as required by PS3.18 8.8.
+- [x] Six QIDO routes, required/conditional response attributes, supported inclusion
+      rules, same-item sequence matching, PN components, UID/numeric/date/time
+      matching and bounded live pagination. Counts describe attested membership.
+- [x] Positive, strictly ascending frame lists; decreasing/duplicate lists rejected.
+- [x] JSON and multipart Native DICOM Model XML, including PN/SQ/bulk values.
+- [x] Authenticated base OPTIONS/WADL capabilities, separate from CORS preflight.
+- [x] Streamed whole-study/series responses from individual admitted instances.
+      A live PACS aggregate export is never used, so late arrivals cannot enter.
+- [x] Study/series rendering and all four thumbnail resource levels through PACS.
+- [x] Opaque same-service bulk URIs and bounded native InlineBinary, with fresh
+      identity checks and explicit media/transfer-syntax handling.
+- [x] Publish an implementation conformance statement describing roles, resources,
+      media, authorization, limits and backend requirements. This describes the
+      supported profile; it does not assert universal DICOM/IHE certification.
 
-### Existing gateway behavior to correct first
+Verification: all five DICOM HTTP integration binaries passed, alongside the
+focused gateway tests, strict workspace Clippy and docs build. Both pinned
+Orthanc and dcm4chee passed the expanded gateway scenario with the original
+single-frame fixture, uncompressed multiframe and JPEG Baseline objects. Existing
+UPS behavior also passed. The release plan records the exact validation counts.
 
-- [ ] Negotiate the metadata and projected QIDO response media type. Both branches
-      currently call `json_response` without checking the incoming `Accept` header.
-      Unsupported requested representations must not silently receive a successful
-      JSON representation. Support the standard `accept` query parameter and
-      metadata `charset` negotiation, with explicit rejection of unsupported values.
-      The current query whitelist rejects both parameter names. Verify conflicting
-      header/query preferences and unsupported representations in HTTP tests.
-      See [PS3.18 10.4](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.4.html).
-- [ ] Complete the authorized-study QIDO response contract, or stop presenting
-      the projection as a conformant QIDO Search endpoint. `includefield` currently
-      passes validation but is ignored. The study projection only contains Study
-      Instance UID and Number of Study Related Instances, omitting the required
-      response attributes in Table 10.6.3-3. Resolve available attributes from
-      authorized metadata, implement the supported inclusion rules and report
-      truncated search results correctly. Never broaden the authorized membership
-      to satisfy a query. Test study/series/instance responses and inclusion rules.
-      See [PS3.18 10.6.3.3](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.6.3.3.html).
-- [ ] Validate ascending frame lists. `gateway/path.rs::frames` checks positive
-      bounded integers but currently accepts `2,1`. Define and test the handling
-      of duplicate entries as well as decreasing, empty and oversized lists.
-      See the `{frames}` definition in
-      [PS3.18 10.1.1](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/chapter_10.html).
-
-### Requirements before a full origin-server claim
-
-- [ ] Implement DICOM Retrieve Capabilities for any advertised origin-server
-      Studies Service and list exact resources, media types and limitations.
-      FHIR `/metadata` is a different capability mechanism. See
-      [PS3.18 10.2](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.2.html).
-- [ ] Decide and implement a safe whole-study/series retrieval contract before
-      claiming full WADO-RS origin-server support. Those binary routes are currently
-      deliberately denied: a live PACS response could contain new, unattested
-      instances. Supporting them must preserve the existing authorization boundary.
-- [ ] Resolve partial thumbnail support. Instance/frame thumbnail routes exist;
-      study/series thumbnail routes do not. An origin server supporting any
-      thumbnail resource must support all of them. See
-      [PS3.18 10.4.1.1.4](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.4.html).
-- [ ] Publish a DICOM Conformance Statement covering the actual user-agent and
-      gateway roles, supported transactions, SOP classes/transfer syntaxes,
-      configuration, failure behavior and test evidence. UPS user agents also
-      have conformance-statement requirements. See
-      [PS3.18 11.2](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_11.2.html).
+Normative references:
+[Studies conformance](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.2.html),
+[Retrieve](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.4.html),
+[Search](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.6.html),
+[Capabilities](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_8.9.html),
+[UPS role matrix](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_CC.2.html).
 
 ### Additional scope, not implicit requirements of the chosen roles
 
@@ -302,7 +281,7 @@ metadata retrieval and authenticated import succeeded in the same instance.
   FHIR/DICOMweb boundary and does not implement an autonomous external bridge.
 - Broader CT/MR, enhanced multiframe, compressed transfer-syntax and viewer testing
   remains necessary before broader compatibility claims. Current real-PACS tests
-  use a synthetic single-frame Secondary Capture object; real UPS coverage is one
+  use synthetic single-frame, multiframe and JPEG Baseline objects; real UPS coverage is one
   Task Manager plus an independent protocol peer. The unchanged portable FHIR R4
   scenario passes OctoFHIR and HAPI, not a two-server R4B/R5 conformance matrix.
 - General Binary/Attachment S3 storage remains the explicitly deferred stage 6;

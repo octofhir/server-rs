@@ -95,6 +95,9 @@ fml-lsp = { workspace = true }
 # UI embedding
 include_dir = "0.7"
 mime_guess = "2.0"
+mime = "0.3"
+multer = "3.1"
+async-stream = "0.3"
 quick-xml = "0.42"
 
 # HTTP date parsing/formatting

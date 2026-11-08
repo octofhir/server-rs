@@ -67,6 +67,7 @@ export default defineConfig({
           items: [
             { label: 'Transactions', link: 'transactions/' },
             { label: 'DICOM Integration', link: 'dicom/' },
+            { label: 'DICOM Conformance', link: 'dicom-conformance/' },
             { label: 'Storage Providers', link: 'storage-providers/' },
             { label: 'FHIR R6', link: 'fhir-r6/' },
             { label: 'Bulk Data', link: 'bulk-export/' },

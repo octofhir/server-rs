@@ -1,5 +1,11 @@
 //! Opt-in interoperability against an isolated external PACS with a synthetic image.
 //! Set DICOM_TEST_PACS and DICOM_TEST_UPLOAD; run this test with --ignored.
+//!
+//! # Contents
+//! Synthetic single/multiframe/JPEG retrieval, metadata, viewer and UPS checks.
+//! # Invariants
+//! Only explicitly selected loopback PACS receives synthetic fixture uploads.
+//! Disposable FHIR databases never store the fixture's DICOM or pixel bytes.
 use axum::{response::Html, routing::get};
 use futures_util::{SinkExt, StreamExt};
 use octofhir_config::ConfigurationManager;
@@ -10,6 +16,148 @@ use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 const STUDY: &str = "1.2.826.0.1.3680043.10.999.1";
 const DICOM: &[u8] = include_bytes!("fixtures/dicom/synthetic-secondary-capture.dcm");
+async fn parts(response: reqwest::Response) -> Vec<Vec<u8>> {
+    let content_type = response.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let boundary = content_type
+        .parse::<mime::Mime>()
+        .unwrap()
+        .get_param("boundary")
+        .unwrap()
+        .as_str()
+        .to_owned();
+    let bytes = response.bytes().await.unwrap();
+    let mut multipart = multer::Multipart::new(
+        futures_util::stream::once(async move { Ok::<_, std::io::Error>(bytes) }),
+        boundary,
+    );
+    let mut result = vec![];
+    while let Some(field) = multipart.next_field().await.unwrap() {
+        result.push(field.bytes().await.unwrap().to_vec());
+    }
+    result
+}
+async fn upload_fixture(http: &reqwest::Client, url: &str, data: &[u8]) {
+    let response = if url.ends_with("/instances") {
+        http.post(url)
+            .header("content-type", "application/dicom")
+            .body(data.to_vec())
+            .send()
+            .await
+            .unwrap()
+    } else {
+        let mut body = b"--octofhir-fixture\r\nContent-Type: application/dicom\r\n\r\n".to_vec();
+        body.extend_from_slice(data);
+        body.extend_from_slice(b"\r\n--octofhir-fixture--\r\n");
+        http.post(url)
+            .header(
+                "content-type",
+                "multipart/related; type=\"application/dicom\"; boundary=octofhir-fixture",
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+    };
+    assert!(
+        response.status().is_success(),
+        "Synthetic upload: {} {}",
+        response.status(),
+        response.text().await.unwrap()
+    );
+}
+async fn verify_variants(
+    client: &reqwest::Client,
+    pacs: &str,
+    upload: &str,
+    base: &str,
+    patient: &str,
+) {
+    for (data, uid, media, frames) in [
+        (
+            include_bytes!("fixtures/dicom/synthetic-multiframe.dcm").as_slice(),
+            "1.2.826.0.1.3680043.10.999.2",
+            "application/octet-stream",
+            "1,2",
+        ),
+        (
+            include_bytes!("fixtures/dicom/synthetic-jpeg-baseline.dcm").as_slice(),
+            "1.2.826.0.1.3680043.10.999.3",
+            "image/jpeg",
+            "1",
+        ),
+    ] {
+        upload_fixture(&reqwest::Client::new(), upload, data).await;
+        let response=client.post(format!("{base}/fhir/Patient/{patient}/$dicom-import")).json(&json!({"resourceType":"Parameters","parameter":[{"name":"connection","valueString":"pacs"},{"name":"study","valueString":uid}]})).send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "{uid}: {}",
+            response.text().await.unwrap()
+        );
+        let path = format!("studies/{uid}/series/{uid}.1/instances/{uid}.1.1/frames/{frames}");
+        let accept = format!("multipart/related; type=\"{media}\"");
+        let direct = reqwest::Client::new()
+            .get(format!("{}/{path}", pacs.trim_end_matches('/')))
+            .header("accept", &accept)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            direct.status(),
+            200,
+            "Direct frame {uid}: {}",
+            direct.text().await.unwrap()
+        );
+        let expected = parts(direct).await;
+        let proxied = client
+            .get(format!("{base}/dicomweb/pacs/{path}"))
+            .header("accept", &accept)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            proxied.status(),
+            200,
+            "Gateway frame {uid}: {}",
+            proxied.text().await.unwrap()
+        );
+        let actual = parts(proxied).await;
+        assert_eq!(actual, expected);
+        if frames == "1,2" {
+            assert_eq!(
+                actual,
+                vec![
+                    (0u8..=255).collect::<Vec<_>>(),
+                    (0u8..=255).rev().collect::<Vec<_>>()
+                ]
+            );
+        } else {
+            assert_eq!(actual.len(), 1);
+            assert!(actual[0].starts_with(&[0xff, 0xd8]));
+        }
+        let response = client
+            .get(format!("{base}/dicomweb/pacs/studies/{uid}"))
+            .header(
+                "accept",
+                "multipart/related; type=\"application/dicom\"; transfer-syntax=*",
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Collection {uid}: {}",
+            response.text().await.unwrap()
+        );
+        let objects = parts(response).await;
+        assert_eq!(objects.len(), 1);
+        assert_eq!(&objects[0][128..132], b"DICM");
+    }
+}
 #[test]
 #[ignore = "requires isolated DICOM_TEST_PACS and DICOM_TEST_UPLOAD endpoints"]
 fn real_pacs_metadata_frame_and_viewer_retrieval() {
@@ -194,6 +342,57 @@ async fn scenario() {
         .unwrap();
     assert_eq!(endpoint["address"], format!("{base}/dicomweb/pacs"));
     let root = format!("{base}/dicomweb/pacs/studies/{STUDY}");
+    let capabilities = client
+        .request(reqwest::Method::OPTIONS, format!("{base}/dicomweb/pacs"))
+        .header("accept", "application/vnd.sun.wadl+xml")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(capabilities.status(), 200);
+    assert!(capabilities.text().await.unwrap().contains("<application"));
+    let studies: Value = client
+        .get(format!(
+            "{base}/dicomweb/pacs/studies?StudyInstanceUID={STUDY}&includefield=all"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(studies[0]["00100020"]["Value"][0], "OCTOFHIR-DICOM-TEST");
+    assert_eq!(studies[0]["00201208"]["Value"][0], 1);
+    let xml = client
+        .get(format!("{root}/metadata"))
+        .header(
+            "accept",
+            "multipart/related; type=\"application/dicom+xml\"",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(xml.status(), 200);
+    assert!(xml.text().await.unwrap().contains("<NativeDicomModel"));
+    for target in [&root, &format!("{root}/series/{STUDY}.1")] {
+        let response = client
+            .get(target)
+            .header(
+                "accept",
+                "multipart/related; type=\"application/dicom\"; transfer-syntax=*",
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+        let parts = parts(response).await;
+        assert_eq!(parts.len(), 1);
+        assert_eq!(&parts[0][128..132], b"DICM");
+        assert!(
+            parts[0]
+                .windows(256)
+                .any(|part| part == (0u8..=255).collect::<Vec<_>>())
+        );
+    }
     let qido: Value = client
         .get(format!("{root}/series/{STUDY}.1/instances"))
         .send()
@@ -208,6 +407,42 @@ async fn scenario() {
     let metadata: Value = response.json().await.unwrap();
     assert_eq!(status, 200, "{metadata}");
     assert_eq!(metadata.as_array().unwrap().len(), 1);
+    for suffix in [
+        "thumbnail",
+        &format!("series/{STUDY}.1/thumbnail"),
+        &format!("series/{STUDY}.1/instances/{STUDY}.1.1/thumbnail"),
+        &format!("series/{STUDY}.1/instances/{STUDY}.1.1/frames/1/thumbnail"),
+    ] {
+        let response = client
+            .get(format!("{root}/{suffix}"))
+            .header("accept", "image/jpeg")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Thumbnail: {}",
+            response.text().await.unwrap()
+        );
+        assert!(response.bytes().await.unwrap().starts_with(&[0xff, 0xd8]));
+    }
+    let rendered = client
+        .get(format!("{root}/rendered"))
+        .header("accept", "multipart/related; type=\"image/jpeg\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        rendered.status(),
+        200,
+        "Rendered study: {}",
+        rendered.text().await.unwrap()
+    );
+    let renderings = parts(rendered).await;
+    assert_eq!(renderings.len(), 1);
+    assert!(renderings[0].starts_with(&[0xff, 0xd8]));
+    verify_variants(&client, &pacs, &upload, &base, patient_id).await;
     let instance = format!("{root}/series/{STUDY}.1/instances/{STUDY}.1.1");
     let response = client
         .get(format!("{instance}/frames/1"))
@@ -239,7 +474,7 @@ async fn scenario() {
     // Both pass-through DICOM objects and rewritten pixel references are real PACS requests.
     if let Some(uri) = metadata[0]["7FE00010"]["BulkDataURI"].as_str() {
         let response = client
-            .get(format!("{base}{uri}"))
+            .get(url::Url::parse(&base).unwrap().join(uri).unwrap())
             .header(
                 "accept",
                 "multipart/related; type=\"application/octet-stream\"",

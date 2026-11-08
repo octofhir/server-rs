@@ -181,14 +181,15 @@ async fn scenario() {
     });
     config.server.outbound_allowlist = vec!["127.0.0.1/32".into()];
     config.dicom=serde_json::from_value(json!({"connections":{"pacs":{"wado_url":format!("{archive_url}/wado"),"allow_http":true,"patient_identifier_systems":{"HOSPITAL":"urn:test:mrn"},"gateway":{"max_stream_bytes":64*1024*1024,"stream_seconds":30,"idle_seconds":5}}}})).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    config.server.base_url = Some(base.clone());
     let app = build_app(
         &config,
         Arc::new(ConfigurationManager::builder().build().await.unwrap()),
     )
     .await
     .unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
     let app_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let anonymous = reqwest::Client::new();
     let patient:Value=anonymous.post(format!("{base}/fhir/Patient")).json(&json!({"resourceType":"Patient","identifier":[{"system":"urn:test:mrn","value":"MRN-1"}]})).send().await.unwrap().json().await.unwrap();
@@ -286,7 +287,9 @@ async fn scenario() {
     let uri = result[0]["7FE00010"]["BulkDataURI"].as_str().unwrap();
     assert_eq!(
         uri,
-        "/dicomweb/pacs/studies/1.2.3/series/1.2.3.1/instances/1.2.3.1.1/bulkdata/7FE00010"
+        format!(
+            "{base}/dicomweb/pacs/studies/1.2.3/series/1.2.3.1/instances/1.2.3.1.1/bulkdata/7FE00010"
+        )
     );
     // The trusted record is independent of ordinary FHIR updates, even with a source tag.
     let original: Value = client

@@ -289,6 +289,8 @@ require the configured service identity.
 
 ## Optional authorized DICOMweb gateway
 
+The expanded gateway surface below is in the v0.0.6 development branch, pending release.
+
 Direct PACS access remains the default. To publish a gateway Endpoint for one
 connection, add the following table and re-import/reconcile its studies:
 
@@ -300,6 +302,8 @@ max_concurrent_streams = 16 # shared across connections; range 1..256
 max_stream_bytes = 8589934592 # 8 GiB per response; enforced for chunked bodies too
 stream_seconds = 300         # total stream lifetime, up to 3600
 idle_seconds = 30            # maximum wait for the next PACS chunk
+max_query_studies = 100      # bounded candidate set for a QIDO request; up to 1000
+max_query_bytes = 33554432   # combined transient query metadata/projection budget
 ```
 
 The Endpoint then points to `{server-base}/dicomweb/hospital`. Every gateway GET
@@ -314,37 +318,81 @@ Supported routes under that service root:
 
 | Resource | GET path |
 | --- | --- |
-| One known study | `/studies?StudyInstanceUID={uid}` |
-| Known series / instances | `/studies/{uid}/series`, `/studies/{uid}/series/{series}/instances` |
+| Studies | `/studies`, optionally filtered by StudyInstanceUID, PatientID, date, name and other supported matching keys |
+| Series | `/series`, `/studies/{uid}/series` |
+| Instances | `/instances`, `/studies/{uid}/instances`, `/studies/{uid}/series/{series}/instances` |
 | Metadata | `/studies/{uid}/metadata`, series or individual instance `/metadata` |
-| Individual DICOM object | `/studies/{uid}/series/{series}/instances/{instance}` |
+| DICOM objects | `/studies/{uid}`, `/studies/{uid}/series/{series}`, individual instance path |
 | Frames | Instance path + `/frames/1,2` |
-| Rendered instance/frames | Instance or frame path + `/rendered` |
-| Instance/frame thumbnail | Instance or frame path + `/thumbnail` |
-| Pixel data | Instance path + `/pixeldata` |
+| Renderings | Study, series, instance or frame path + `/rendered` |
+| Thumbnails | Study, series, instance or frame path + `/thumbnail` |
+| Pixel data | Study, series or instance path + `/pixeldata` |
 | Other bulk data | Rewritten `BulkDataURI` returned in metadata |
 
-This is a constrained retrieval service, not an unrestricted QIDO archive or full
-WADO-RS implementation. It does not expose STOW, worklists, study/series binary
-exports, study/series rendering, or an arbitrary URL fetch endpoint. Query results
-are synthesized from the authorized manifest. Unindexed new instances remain
-unavailable until reconciliation. Metadata is filtered to the same membership;
-fresh per-instance metadata verifies patient identity before any binary retrieval.
+`OPTIONS [dicom-base]` with `Accept: application/vnd.sun.wadl+xml` returns the
+DICOM capabilities document. It requires authentication. A browser CORS preflight
+remains a separate OPTIONS request with Origin and Access-Control-Request-Method.
+
+QIDO searches the caller's readable, attested FHIR studies. It obtains fresh PACS
+metadata for matching and response attributes, including counts and gateway
+Retrieve URLs. It supports keyword/tag keys, UID alternatives, wildcard matching,
+case-insensitive person-name components, date/time ranges, supported sequence
+item keys and repeated/comma-separated `includefield`. Use `limit`/`offset` for
+pagination; additional results have a `Link: rel=next` and a Warning status-report
+URL. Broad queries exceeding the configured candidate/metadata budget return 413;
+an exact StudyInstanceUID avoids scanning unrelated studies.
+
+Metadata and QIDO support both `application/dicom+json` and multipart
+`application/dicom+xml` (Native DICOM Model). Accept is required; query `accept`
+preferences must agree with the header. q-values and exclusions are respected.
+Local metadata is UTF-8; unsupported charset names are ignored. Unavailable
+representations return 406. Frame lists must be positive and strictly ascending.
+
+Study/series responses are assembled from their admitted instance set. They never
+request a live whole-study export from PACS, so late arrivals cannot enter the
+response before reconciliation. Authorization captures the current primary-backed
+manifest at request admission; each subsequent PACS GET verifies the exact SOP
+tuple and admitted Patient identity afresh. Thumbnails use a deterministic
+authorized representative. Renderings and transfer-syntax conversion are supplied
+by PACS; OctoFHIR does not run an image codec or inference engine.
 
 `Accept`, including Transfer Syntax parameters, and a single byte `Range` are
 forwarded; supported upstream multipart bodies remain byte-for-byte streams.
 Rendering accepts `viewport`, `window`, `quality`, `iccprofile` and `annotation`.
-Caller credentials/cookies are never forwarded to PACS, and upstream cookies,
+Single-resource `Range` requests are forwarded; generated collection responses
+reject byte ranges. Caller credentials/cookies are never forwarded to PACS, and upstream cookies,
 redirects and HTML error bodies are not forwarded to the viewer. Bulk references
-are resolved from fresh metadata, bound to the configured origin and exact
-instance, and rewritten as tag-path tokens. A deployment whose PACS returns bulk
-URLs outside its instance path must use direct PACS access for that representation.
+are resolved from the exact instance's fresh metadata and rewritten as tag-path
+tokens with absolute gateway URLs. Opaque bulk paths and source query strings are
+allowed inside the configured DICOMweb origin/service path. Cross-origin,
+cross-service, credential-bearing and escaping targets are rejected. A request
+cannot supply its own fetch URL. InlineBinary attributes can supply bounded native
+bulk bytes; they are not interpreted as another transfer syntax.
 
 Backpressure reaches the PACS connection. Disconnecting the downstream caller
 cancels its upstream body and releases the concurrency slot. Only bounded metadata
 is buffered; image bytes are never saved in PostgreSQL, job bodies, Binary or S3.
 Responses use `Cache-Control: no-store`. A midstream timeout/limit interrupts the
 body; an error OperationOutcome cannot replace a body whose headers were sent.
+Collection multipart headers/parts and the complete output share bounded limits.
+
+For example, with a bearer token and an already imported study:
+
+```bash
+curl -H "Authorization: Bearer $FHIR_TOKEN" \
+  -H 'Accept: application/dicom+json' \
+  "$DICOM_BASE/studies?StudyInstanceUID=$STUDY_UID&includefield=all"
+curl -H "Authorization: Bearer $FHIR_TOKEN" \
+  -H 'Accept: multipart/related; type="application/dicom"; transfer-syntax=*' \
+  "$DICOM_BASE/studies/$STUDY_UID" --output study.multipart
+curl -X OPTIONS -H "Authorization: Bearer $FHIR_TOKEN" \
+  -H 'Accept: application/vnd.sun.wadl+xml' "$DICOM_BASE"
+```
+
+STOW, UPS origin-server routes and arbitrary URL fetching are outside the gateway.
+The [DICOM conformance statement](/server-rs/dicom-conformance/) records the exact
+role, media, query and backend boundaries; a compatible PACS supplies rendering
+and codec support.
 
 ## UPS-RS Requestor and Watcher
 

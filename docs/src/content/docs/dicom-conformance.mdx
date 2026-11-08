@@ -1,0 +1,153 @@
+---
+title: DICOM Conformance Statement
+description: OctoFHIR DICOMweb gateway and UPS Requestor/Watcher implementation profile.
+---
+
+This statement describes the OctoFHIR v0.0.6 development implementation profile,
+pending release. OctoFHIR links
+clinical FHIR resources to a separately administered PACS. It stores FHIR metadata,
+attested instance membership and integration checkpoints. DICOM objects and image
+pixels remain in PACS. The optional gateway streams selected objects; it does not
+provide a DICOM archive, image codec or inference performer.
+
+## Roles and services
+
+| Role | Implemented service |
+| --- | --- |
+| DICOMweb user agent | QIDO study discovery and WADO JSON metadata retrieval for import/reconciliation |
+| Authenticated gateway | Studies Service Search, Retrieve and base Retrieve Capabilities over the admitted FHIR manifest |
+| UPS-RS user agent | Create, Retrieve, Request Cancellation, filtered Subscribe and Unsubscribe; WebSocket event reception and polling recovery |
+| FHIR server | R4/R4B/R5 ImagingStudy/Endpoint mappings; Task and explicitly configured result links with Provenance |
+
+STOW-RS, DIMSE services, a UPS Task Manager and UPS Pull/Performer ownership are
+not provided. A cancellation request does not constitute a confirmed state change.
+UPS notifications are wakeups; a fresh workitem GET determines every FHIR update.
+Persistent deletion locks release after the terminal FHIR checkpoint. Permanent
+source retirement uses the documented operator drain/removal procedure.
+
+These roles follow the transaction boundaries in
+[PS3.18 Studies Service](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/chapter_10.html)
+and the [PS3.4 UPS role matrix](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_CC.2.html).
+
+## Gateway resource surface
+
+All paths below are relative to `/dicomweb/{connection}`. The named connection must
+enable its gateway. Authenticated OPTIONS at that base returns WADL using
+`application/vnd.sun.wadl+xml`, including implemented resources and UTF-8 support.
+The mechanism is [PS3.18 Retrieve Capabilities](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_8.9.html),
+distinct from FHIR `/metadata` and browser CORS preflight.
+
+Search supports all six resource shapes: studies, global series/instances, a
+study's series/instances and a series' instances. Retrieve supports study, series
+and instance objects/metadata; instance frames; study/series/instance/frame
+renderings and thumbnails; pixel data and rewritten attribute bulk references.
+STOW and workitem origin-server methods are absent from the capabilities document.
+
+Authorization is based on the current primary Patient/ImagingStudy read policies
+and an independent connector attestation. Ordinary resource editing cannot forge
+that attestation. The admitted collection is fixed for the lifetime of its bounded
+HTTP request. Each object/bulk GET verifies the source's current Patient identity,
+SOP Class and Study/Series/Instance UIDs. New, unindexed PACS instances do not become
+visible during a collection response. Reconciliation changes future admissions.
+
+Study/series bodies are built sequentially from individual admitted instance URLs,
+with flat multipart output. Upstream Content-Location values are replaced by
+gateway URLs. Dropping a downstream response drops its active PACS body and stream
+permit. There is no background buffering queue or database payload store.
+
+## Representations and negotiation
+
+Metadata and QIDO provide DICOM JSON and multipart Native DICOM Model XML in UTF-8.
+Person names, sequences, scalar values, InlineBinary and rewritten bulk references
+retain their model structure. XML escapes source values.
+
+Accept is required. Supported `accept` query values must also be permitted by the
+header. Weighted preferences and explicit zero-weight exclusions participate in
+selection; unsupported representations produce 406. Charset names unsupported by
+the local metadata encoder are ignored. See
+[PS3.18 media selection](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_8.7.8.html)
+and [character sets](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_8.8.html).
+
+Encoded objects and native bulk collections use multipart DICOM/octet-stream.
+Frames and individual renderings pass through permitted PACS representations.
+JPEG, PNG, GIF, JPEG 2000/JPEG-LS/HTJ2K/JPEG XL, supported video and document MIME
+types can cross the transport; this list is a transport allowlist, not a claim that
+every configured PACS can encode/decode them. Rendering and transfer-syntax
+conversion are delegated to PACS. Generated render collections negotiate JPEG,
+PNG, PDF or plain-text parts. InlineBinary supplies native little-endian bytes,
+not an inferred compressed transfer syntax. HTML/XML representations use a sandbox
+content-security policy and nosniff protection.
+
+The gateway's own advertised resource surface does not establish full origin-server
+media conformance independently of PACS. Deployments must select a backend with
+the required SOP-class, rendering and codec capabilities. This statement does not
+assert support for untested media, all IHE actors or general OHIF/Stone compatibility.
+
+## Query behavior
+
+QIDO obtains candidate studies through authorized FHIR search, then verifies
+attestations and uses fresh PACS metadata. It does not expose an unrestricted
+archive search through the PACS credential. Exact Study Instance UID selection
+avoids unrelated candidates. Required/conditional response fields are projected
+at the requested information level; unavailable required values retain their VR.
+Counts and Retrieve URLs describe the admitted gateway collection.
+
+Supported matching keys include the required Study/Series/Instance keys in
+[PS3.18 10.6](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.6.html),
+plus PatientBirthDate, PatientSex, IssuerOfPatientID, StudyDescription,
+SeriesDescription, instance dimensions/frame count and available response attributes.
+Keywords and hexadecimal tags are accepted. RequestAttributesSequence supports
+ScheduledProcedureStepID and RequestedProcedureID, with multiple child constraints
+bound to one sequence item. PN matching uses case-insensitive component/group
+wildcards; phonetic/fuzzy matching is unavailable. Date/time ranges, partial time
+precision, numeric values, UID alternatives and universal empty values are handled
+explicitly. Combined date-time and repository cursor extensions are absent.
+
+`includefield` accepts repeated values, comma lists and `all` for supported
+attributes. Study/Series responses omit lower information-level attributes.
+Unsupported matching/include keys are rejected explicitly. `limit` and `offset`
+paginate a live result set; additional results provide a next Link and a Warning
+URL describing pagination status. Empty JSON results are `[]` with status 200.
+
+Query candidates and transient metadata/projections are bounded by
+`max_query_studies` and `max_query_bytes`. Requests exceeding those budgets return
+413 and require a narrower selection. They do not silently return a partial search.
+Frame lists use positive, strictly increasing integers and at most 1000 entries.
+Generated collections allow at most 10000 MIME parts, 64 KiB part headers and the
+configured total stream-byte/time budget. A single-resource byte range is forwarded;
+generated collection ranges are rejected. Native inline bulk supports direct
+single byte ranges. A limit/timeout after headers interrupts the body.
+
+## Bulk references, identity and credentials
+
+PatientID is matched using an explicitly configured assigning authority and FHIR
+identifier system. Names are never identity keys. Patient creation/merge, PIX/PDQ
+and cross-archive identity reconciliation are outside this connector.
+
+A bulk request supplies an attribute token, not a target URL. Its target is
+re-derived from fresh metadata for the admitted SOP. Opaque paths/query strings
+are allowed on the configured DICOMweb service; another origin/service, userinfo,
+fragment or escaping/double-encoded path is rejected. Cross-origin presigned object
+URLs require direct PACS access rather than sharing the connector credential.
+
+PACS is the authority linking an opaque URI to that attribute. Caller FHIR tokens
+and cookies never become PACS credentials. Only configured source credentials and
+selected negotiation/range headers cross the boundary. Redirects, ambient proxies,
+upstream cookies and remote error bodies are not forwarded. Credential-free
+Endpoint URLs and normal FHIR APIs remain the portable integration contract.
+
+## Verification scope
+
+The repository supplies an independent mutable protocol peer and isolated pinned
+Orthanc/dcm4chee environments. The matrix covers source membership changes,
+negotiation, QIDO fields/matching/pagination, XML, OPTIONS/CORS, thumbnails,
+multipart collection contents and cancellation. Synthetic fixtures cover an
+uncompressed single frame, two uncompressed grayscale frames and JPEG Baseline.
+These tests exercise transport and resource boundaries, not clinical diagnosis
+or every CT/MR/enhanced SOP class. UPS has one real Task Manager plus an independent
+protocol peer. The same standard FHIR R4 client scenario is checked on OctoFHIR and
+HAPI; this is not a two-server R4B/R5 conformance certification.
+
+See the [integration guide](/server-rs/dicom/) for configuration and reproducible
+commands. General Binary/Attachment S3 storage and semantic SR-to-Observation
+interpretation remain separate features.
