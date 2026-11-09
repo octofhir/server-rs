@@ -359,7 +359,7 @@ fn code_dataset(code: &Code) -> Value {
 }
 impl Request {
     pub(super) fn dataset(&self, connection: &DicomConnection) -> Result<Value, String> {
-        let mut dataset = json!({"00080005":attr("CS","ISO_IR 192"),"00741200":attr("CS",&self.priority),"00741204":attr("LO",&self.label),"00404005":attr("DT",&self.start),"00404018":sq(vec![code_dataset(&self.code)]),"00404041":attr("CS","READY"),"0020000D":attr("UI",&self.study_uid),"00100020":attr("LO",&self.patient_identifier),"00100021":attr("LO",&self.issuer),"00741000":attr("CS","SCHEDULED")});
+        let mut dataset = json!({"00080005":attr("CS","ISO_IR 192"),"00741200":attr("CS",&self.priority),"00741204":attr("LO",&self.label),"00404005":attr("DT",&self.start),"00404018":sq(vec![code_dataset(&self.code)]),"00404041":attr("CS","READY"),"00100020":attr("LO",&self.patient_identifier),"00100021":attr("LO",&self.issuer),"00741000":attr("CS","SCHEDULED")});
         if let Some(deadline) = &self.deadline {
             dataset["00404011"] = attr("DT", deadline);
         }
@@ -615,13 +615,12 @@ pub(super) fn references(dataset: &Value, tag: &str, max: usize) -> Result<Vec<I
 }
 pub(super) fn state(dataset: &Value) -> Result<&str, String> {
     let state = mapping::required(dataset, "00741000", "CS").map_err(|_| invalid())?;
-    if matches!(
-        state,
-        "SCHEDULED" | "IN PROGRESS" | "COMPLETED" | "CANCELED"
-    ) {
-        Ok(state)
-    } else {
-        Err("Unsupported UPS procedure state".into())
+    match state {
+        // Normalize the PACS spelling at ingress so transitions, persisted state,
+        // publication and subscription cleanup all use the standard spelling.
+        "CANCELLED" => Ok("CANCELED"),
+        "SCHEDULED" | "IN PROGRESS" | "COMPLETED" | "CANCELED" => Ok(state),
+        _ => Err("Unsupported UPS procedure state".into()),
     }
 }
 
@@ -702,6 +701,7 @@ mod tests {
         let request = request(&task, &patient, &study, "1.2.3", &config).unwrap();
         let dataset = request.dataset(&config).unwrap();
         assert!(dataset.get("00080018").is_none());
+        assert!(dataset.get("0020000D").is_none());
         assert!(dataset["00081195"].get("Value").is_none());
         assert_eq!(dataset["00741000"]["Value"][0], "SCHEDULED");
         assert!(dataset["00741216"]["Value"].as_array().unwrap().is_empty());
@@ -716,6 +716,14 @@ mod tests {
                 .ends_with("/studies/1.2.3/series/1.2.3.1/instances/1.2.3.1.1")
         );
         assert!(!serde_json::to_string(&request).unwrap().contains("\"vr\""));
+    }
+    #[test]
+    fn normalizes_remote_cancelled_state() {
+        for spelling in ["CANCELED", "CANCELLED"] {
+            let dataset = json!({"00741000":attr("CS", spelling)});
+            assert_eq!(state(&dataset).unwrap(), "CANCELED");
+        }
+        assert!(state(&json!({"00741000":attr("CS", "UNKNOWN")})).is_err());
     }
     #[test]
     fn rejects_negated_or_unknown_modifier_semantics_and_unmapped_performers() {

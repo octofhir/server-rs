@@ -37,7 +37,11 @@ impl Client {
     }
     pub async fn retrieve(&self, uid: &str) -> Result<Option<Value>, String> {
         crate::dicom::validate_uid(uid).map_err(|_| "Invalid UPS UID")?;
-        match self.inner.metadata(self.url(&["workitems", uid])?).await {
+        match self
+            .inner
+            .single_metadata(self.url(&["workitems", uid])?)
+            .await
+        {
             Ok(mut rows) if rows.len() == 1 => Ok(rows.pop()),
             Ok(_) => Err("UPS retrieve requires one workitem".into()),
             Err(DicomError::Status(404)) => Ok(None),

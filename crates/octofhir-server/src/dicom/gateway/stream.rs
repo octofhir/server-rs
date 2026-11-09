@@ -68,13 +68,16 @@ pub(super) async fn retrieve(
         .await
         .map_err(|_| ApiError::internal("PACS retrieval failed"))?;
     let status = response.status();
-    if status == StatusCode::NOT_ACCEPTABLE
-        || (status == StatusCode::RANGE_NOT_SATISFIABLE && range.is_some())
+    if matches!(
+        status,
+        StatusCode::BAD_REQUEST | StatusCode::NOT_ACCEPTABLE | StatusCode::NOT_IMPLEMENTED
+    ) || (status == StatusCode::RANGE_NOT_SATISFIABLE && range.is_some())
     {
-        let message = if status == StatusCode::NOT_ACCEPTABLE {
-            "PACS cannot provide the requested DICOM representation"
-        } else {
-            "Requested DICOM byte range is unavailable"
+        let message = match status {
+            StatusCode::BAD_REQUEST => "PACS rejected the DICOM retrieval parameters",
+            StatusCode::NOT_ACCEPTABLE => "PACS cannot provide the requested DICOM representation",
+            StatusCode::NOT_IMPLEMENTED => "PACS does not implement the requested DICOM retrieval",
+            _ => "Requested DICOM byte range is unavailable",
         };
         let mut result = ApiError::issues(
             status,
@@ -224,4 +227,49 @@ pub(super) async fn retrieve(
     *result.status_mut() = status;
     *result.headers_mut() = headers;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{dicom::DicomConnection, egress::EgressPolicy};
+    use std::sync::Arc;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    #[tokio::test]
+    async fn origin_parameter_errors_keep_status_without_remote_body_or_cookies() {
+        for status in [400, 406, 501] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(
+                    ResponseTemplate::new(status)
+                        .set_body_raw("<html>private-origin-error</html>", "text/html")
+                        .insert_header("set-cookie", "private-origin-cookie=secret"),
+                )
+                .mount(&server)
+                .await;
+            let source: DicomConnection = serde_json::from_value(serde_json::json!({
+                "wado_url":server.uri(),"allow_http":true,"patient_identifier_systems":{"HOSPITAL":"urn:test:mrn"}
+            })).unwrap();
+            let config: DicomGatewayConfig = serde_json::from_value(serde_json::json!({})).unwrap();
+            let client =
+                DicomWebClient::new(&source, Arc::new(EgressPolicy::permissive())).unwrap();
+            let response = retrieve(
+                &client,
+                url::Url::parse(&server.uri()).unwrap(),
+                &HeaderMap::new(),
+                &config,
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(response.status().as_u16(), status);
+            assert!(!response.headers().contains_key(header::SET_COOKIE));
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            assert!(!String::from_utf8_lossy(&body).contains("private-origin"));
+        }
+    }
 }

@@ -93,6 +93,7 @@ async fn create(
     assert_eq!(rows.len(), 1);
     let mut dataset = rows.pop().unwrap();
     assert!(dataset.get("00080018").is_none());
+    assert!(dataset.get("0020000D").is_none());
     assert!(dataset["00081195"].get("Value").is_none());
     assert_eq!(dataset["00741000"]["Value"][0], "SCHEDULED");
     assert!(
@@ -578,7 +579,7 @@ async fn scenario() {
         wait_task(&client, &base, &cancel_later, "in-progress").await["status"],
         "in-progress"
     );
-    set_state(&state, &cancel_uid, "CANCELED", false).await;
+    set_state(&state, &cancel_uid, "CANCELLED", false).await;
     wait_task(&client, &base, &cancel_later, "cancelled").await;
     assert_eq!(state.cancels.load(Ordering::SeqCst), 1);
     server.abort();

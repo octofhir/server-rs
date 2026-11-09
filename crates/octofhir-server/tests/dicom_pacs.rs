@@ -74,7 +74,8 @@ async fn verify_variants(
     upload: &str,
     base: &str,
     patient: &str,
-) {
+) -> Vec<Value> {
+    let mut checks = vec![];
     for (data, uid, media, frames) in [
         (
             include_bytes!("fixtures/dicom/synthetic-multiframe.dcm").as_slice(),
@@ -97,35 +98,42 @@ async fn verify_variants(
             "{uid}: {}",
             response.text().await.unwrap()
         );
-        let path = format!("studies/{uid}/series/{uid}.1/instances/{uid}.1.1/frames/{frames}");
+        let frame_root = format!("studies/{uid}/series/{uid}.1/instances/{uid}.1.1/frames");
         let accept = format!("multipart/related; type=\"{media}\"");
-        let direct = reqwest::Client::new()
-            .get(format!("{}/{path}", pacs.trim_end_matches('/')))
-            .header("accept", &accept)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(
-            direct.status(),
-            200,
-            "Direct frame {uid}: {}",
-            direct.text().await.unwrap()
-        );
-        let expected = parts(direct).await;
-        let proxied = client
-            .get(format!("{base}/dicomweb/pacs/{path}"))
-            .header("accept", &accept)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(
-            proxied.status(),
-            200,
-            "Gateway frame {uid}: {}",
-            proxied.text().await.unwrap()
-        );
-        let actual = parts(proxied).await;
-        assert_eq!(actual, expected);
+        let mut actual = vec![];
+        for frame in frames.split(',') {
+            let path = format!("{frame_root}/{frame}");
+            let direct = reqwest::Client::new()
+                .get(format!("{}/{path}", pacs.trim_end_matches('/')))
+                .header("accept", &accept)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                direct.status(),
+                200,
+                "Direct frame {uid}/{frame}: {}",
+                direct.text().await.unwrap()
+            );
+            let expected = parts(direct).await;
+            let proxied = client
+                .get(format!("{base}/dicomweb/pacs/{path}"))
+                .header("accept", &accept)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                proxied.status(),
+                200,
+                "Gateway frame {uid}/{frame}: {}",
+                proxied.text().await.unwrap()
+            );
+            let decoded = parts(proxied).await;
+            assert_eq!(decoded, expected);
+            assert_eq!(decoded.len(), 1);
+            actual.extend(decoded);
+        }
+        let mut list_status = 200;
         if frames == "1,2" {
             assert_eq!(
                 actual,
@@ -134,6 +142,34 @@ async fn verify_variants(
                     (0u8..=255).rev().collect::<Vec<_>>()
                 ]
             );
+            let path = format!("{frame_root}/{frames}");
+            let direct = reqwest::Client::new()
+                .get(format!("{}/{path}", pacs.trim_end_matches('/')))
+                .header("accept", &accept)
+                .send()
+                .await
+                .unwrap();
+            list_status = direct.status().as_u16();
+            let proxied = client
+                .get(format!("{base}/dicomweb/pacs/{path}"))
+                .header("accept", &accept)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                proxied.status(),
+                direct.status(),
+                "Frame-list support belongs to the origin"
+            );
+            if direct.status().is_success() {
+                assert_eq!(parts(direct).await, actual);
+                assert_eq!(parts(proxied).await, actual);
+            } else {
+                assert!(
+                    matches!(list_status, 400 | 406 | 501),
+                    "Unexpected frame-list failure: {list_status}"
+                );
+            }
         } else {
             assert_eq!(actual.len(), 1);
             assert!(actual[0].starts_with(&[0xff, 0xd8]));
@@ -156,6 +192,94 @@ async fn verify_variants(
         let objects = parts(response).await;
         assert_eq!(objects.len(), 1);
         assert_eq!(&objects[0][128..132], b"DICM");
+        checks.push(json!({"uid":uid,"media_type":media,"individual_frames":"passed","frame_list_status":list_status}));
+    }
+    checks
+}
+
+async fn verify_unicode_query(client: &reqwest::Client, pacs: &str, upload: &str, base: &str) {
+    let http = reqwest::Client::new();
+    for (suffix, label, data) in [
+        (
+            4,
+            "A",
+            include_bytes!("fixtures/dicom/synthetic-cyrillic-a.dcm").as_slice(),
+        ),
+        (
+            5,
+            "B",
+            include_bytes!("fixtures/dicom/synthetic-cyrillic-b.dcm").as_slice(),
+        ),
+    ] {
+        upload_fixture(&http, upload, data).await;
+        let patient: Value = client.post(format!("{base}/fhir/Patient"))
+            .json(&json!({"resourceType":"Patient","identifier":[{"system":"urn:test:mrn","value":format!("OCTOFHIR-DICOM-CYRILLIC-{label}")}]}))
+            .send().await.unwrap().json().await.unwrap();
+        let response = client.post(format!("{base}/fhir/Patient/{}/$dicom-import", patient["id"].as_str().unwrap()))
+            .json(&json!({"resourceType":"Parameters","parameter":[{"name":"connection","valueString":"pacs"},{"name":"study","valueString":format!("1.2.826.0.1.3680043.10.999.{suffix}")}]}))
+            .send().await.unwrap();
+        assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    }
+    for fuzzy in ["false", "true"] {
+        let mut expected = std::collections::BTreeSet::new();
+        for suffix in [4, 5] {
+            let uid = format!("1.2.826.0.1.3680043.10.999.{suffix}");
+            let response = http
+                .get(format!("{pacs}/studies"))
+                .query(&[
+                    ("StudyInstanceUID", uid.as_str()),
+                    ("PatientName", "Иванов^Иван"),
+                    ("fuzzymatching", fuzzy),
+                    ("includefield", "InstitutionName"),
+                ])
+                .header("accept", "application/dicom+json")
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                response.status().is_success(),
+                "Direct Unicode QIDO: {}",
+                response.status()
+            );
+            if response.status() != 204 {
+                let rows: Vec<Value> = response.json().await.unwrap();
+                expected.extend(
+                    rows.into_iter()
+                        .map(|row| row["0020000D"]["Value"][0].as_str().unwrap().to_owned()),
+                );
+            }
+        }
+        let response = client
+            .get(format!("{base}/dicomweb/pacs/studies"))
+            .query(&[
+                (
+                    "StudyInstanceUID",
+                    "1.2.826.0.1.3680043.10.999.4,1.2.826.0.1.3680043.10.999.5",
+                ),
+                ("PatientName", "Иванов^Иван"),
+                ("fuzzymatching", fuzzy),
+                ("includefield", "InstitutionName"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+        let rows: Vec<Value> = response.json().await.unwrap();
+        let actual = rows
+            .iter()
+            .map(|row| {
+                assert_eq!(
+                    row["00080080"]["Value"][0],
+                    "OctoFHIR synthetic institution"
+                );
+                row["0020000D"]["Value"][0].as_str().unwrap().to_owned()
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            actual, expected,
+            "Origin Unicode matching must be preserved (fuzzy={fuzzy})"
+        );
+        assert!(actual.contains("1.2.826.0.1.3680043.10.999.4"));
     }
 }
 #[test]
@@ -393,14 +517,13 @@ async fn scenario() {
                 .any(|part| part == (0u8..=255).collect::<Vec<_>>())
         );
     }
-    let qido: Value = client
+    let qido = client
         .get(format!("{root}/series/{STUDY}.1/instances"))
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
         .unwrap();
+    assert_eq!(qido.status(), 200, "{}", qido.text().await.unwrap());
+    let qido: Value = qido.json().await.unwrap();
     assert_eq!(qido[0]["00080016"]["Value"][0], "1.2.840.10008.5.1.4.1.1.7");
     let response = client.get(format!("{root}/metadata")).send().await.unwrap();
     let status = response.status();
@@ -442,7 +565,8 @@ async fn scenario() {
     let renderings = parts(rendered).await;
     assert_eq!(renderings.len(), 1);
     assert!(renderings[0].starts_with(&[0xff, 0xd8]));
-    verify_variants(&client, &pacs, &upload, &base, patient_id).await;
+    let transport = verify_variants(&client, &pacs, &upload, &base, patient_id).await;
+    verify_unicode_query(&client, &pacs, &upload, &base).await;
     let instance = format!("{root}/series/{STUDY}.1/instances/{STUDY}.1.1");
     let response = client
         .get(format!("{instance}/frames/1"))
@@ -503,8 +627,39 @@ async fn scenario() {
             .windows(4)
             .any(|s| s == b"DICM")
     );
-    if let Some(ups) = ups {
-        real_ups(&client, &http, &base, &ups, patient_id, &study_ref).await;
+    let ups_checks = if let Some(ups) = ups {
+        Some(real_ups(&client, &http, &base, &ups, patient_id, &study_ref).await)
+    } else {
+        None
+    };
+    if let Ok(file) = std::env::var("DICOM_VIEWER_SESSION_FILE") {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let session = json!({"session_id":session_id,"base_url":base,"gateway_url":format!("{base}/dicomweb/pacs"),"transport":transport,"ups":ups_checks,
+            "access_token":viewer_token.read().await.as_str(),
+            "studies":[{"uid":STUDY,"kind":"native"},
+                {"uid":"1.2.826.0.1.3680043.10.999.2","kind":"multiframe"},
+                {"uid":"1.2.826.0.1.3680043.10.999.3","kind":"jpeg"}]});
+        std::fs::write(&file, serde_json::to_vec(&session).unwrap()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
+        let done = format!("{file}.done");
+        let mut completed = false;
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(bytes) = std::fs::read(&done)
+                && let Ok(result) = serde_json::from_slice::<Value>(&bytes)
+                && result["session_id"] == session_id
+                && result["status"] == "passed"
+            {
+                completed = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        assert!(completed, "OHIF verification did not complete");
     }
     if let Ok(file) = std::env::var("DICOM_VIEWER_READY_FILE") {
         std::fs::write(file, format!("{base}/__dicom_viewer")).unwrap();
@@ -553,13 +708,22 @@ async fn real_ups(
     ups: &str,
     patient: &str,
     study: &str,
-) {
-    let task: Value = client.post(format!("{base}/fhir/Task")).json(&json!({
+) -> Value {
+    let definition = json!({
         "resourceType":"Task","status":"draft","intent":"order",
         "for":{"reference":format!("Patient/{patient}")},"focus":{"reference":study},
         "code":{"coding":[{"system":"urn:test:procedure","code":"TEST","display":"Synthetic interoperability procedure"}]},
         "input":[{"type":{"coding":[{"system":"urn:test:procedure","code":"PARAM","display":"Synthetic parameter"}]},"valueQuantity":{"value":0.7,"system":"http://unitsofmeasure.org","code":"1","unit":"ratio"}}]
-    })).send().await.unwrap().json().await.unwrap();
+    });
+    let task: Value = client
+        .post(format!("{base}/fhir/Task"))
+        .json(&definition)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     let id = task["id"].as_str().unwrap();
     let submitted = ups_command(client, base, id, "submit").await;
     let workitem = submitted["parameter"]
@@ -630,9 +794,18 @@ async fn real_ups(
         response.text().await.unwrap()
     );
     wait_real_task(client, base, id, "in-progress").await;
+    let direct_cancel = performer
+        .post(format!("{workitem}/cancelrequest?requester=OCTOFHIR"))
+        .header("content-type", "application/dicom+json")
+        .json(&json!([{}]))
+        .send()
+        .await
+        .unwrap();
+    let cancel_status = direct_cancel.status().as_u16();
+    assert!(matches!(cancel_status, 200 | 202 | 204 | 409));
     ups_command(client, base, id, "cancel").await;
     let mut delivered = false;
-    for _ in 0..100 {
+    for _ in 0..if cancel_status == 409 { 1 } else { 100 } {
         let status = ups_command(client, base, id, "status").await;
         if status["parameter"]
             .as_array()
@@ -645,7 +818,11 @@ async fn real_ups(
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    assert!(delivered, "Task Manager did not accept the cancel request");
+    assert_eq!(
+        delivered,
+        cancel_status != 409,
+        "Cancel delivery must reflect origin capability"
+    );
     let response = performer
         .get(&workitem)
         .header("accept", "application/dicom+json")
@@ -653,8 +830,13 @@ async fn real_ups(
         .await
         .unwrap();
     let remote: Value = response.json().await.unwrap();
+    let remote = if remote.is_array() {
+        &remote[0]
+    } else {
+        &remote
+    };
     assert_eq!(
-        remote[0]["00741000"]["Value"][0], "IN PROGRESS",
+        remote["00741000"]["Value"][0], "IN PROGRESS",
         "Cancel is only a request"
     );
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S+0000").to_string();
@@ -716,4 +898,49 @@ async fn real_ups(
             .any(|bytes| bytes == b"DICM")
     );
     notification_task.abort();
+    // Cancellation of an unclaimed workitem is supported independently of
+    // whether the origin can notify an already-running performer.
+    let queued: Value = client
+        .post(format!("{base}/fhir/Task"))
+        .json(&definition)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let queued_id = queued["id"].as_str().unwrap();
+    let submitted = ups_command(client, base, queued_id, "submit").await;
+    let queued_uri = submitted["parameter"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|parameter| parameter["name"] == "workitem")
+        .unwrap()["valueUri"]
+        .as_str()
+        .unwrap();
+    let mut created = false;
+    for _ in 0..200 {
+        if performer
+            .get(queued_uri)
+            .header("accept", "application/dicom+json")
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+        {
+            created = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        created,
+        "Queued cancellation requires an actual remote workitem"
+    );
+    ups_command(client, base, queued_id, "cancel").await;
+    wait_real_task(client, base, queued_id, "cancelled").await;
+    json!({"completion":"passed","output_publication":"passed","queued_cancel":"passed",
+        "cancel_in_progress_status":cancel_status,"cancel_in_progress_delivered":delivered})
 }

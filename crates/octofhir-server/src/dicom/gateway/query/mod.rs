@@ -9,6 +9,7 @@
 //! matches. No DICOM datasets are stored or used as a durable cursor.
 mod attributes;
 mod matching;
+mod remote;
 use super::{
     access::{self, Manifest},
     encoding, missing,
@@ -142,44 +143,49 @@ pub(super) async fn search(
         return Err(bad("QIDO limit must be positive"));
     }
     let page_query = query.clone();
+    let remote_query = config.qido_url.as_ref().map(|_| query.clone());
     let mut all = false;
     let mut include = BTreeSet::new();
     if let Some(fields) = query.remove("includefield") {
         for field in fields.split(',') {
             if field == "all" {
                 all = true;
-            } else {
-                include.insert(
-                    attributes::path(field)
-                        .ok_or_else(|| bad("Unsupported DICOM include attribute"))?[0]
-                        .clone(),
-                );
+            } else if let Some(path) = attributes::path(field) {
+                include.insert(path[0].clone());
+            } else if remote_query.is_none() {
+                return Err(bad("Unsupported DICOM include attribute"));
             }
         }
     }
-    if let Some(value) = query.remove("fuzzymatching")
-        && value != "false"
-    {
-        return Err(bad("Fuzzy person-name matching is not supported"));
-    }
-    let filters = query
-        .iter()
-        .map(|(key, value)| Filter::new(key, value))
-        .collect::<Result<Vec<_>, _>>()?;
     let level = match target.kind {
         Kind::Studies => Level::Study,
         Kind::Series => Level::Series,
         _ => Level::Instance,
     };
-    for key in query.keys() {
-        let path =
-            attributes::path(key).ok_or_else(|| bad("Unsupported DICOM matching attribute"))?;
-        if attributes::attribute(&path[0]).is_some_and(|a| a.level > level) {
-            return Err(bad(
-                "Matching attribute belongs to a lower DICOM information level",
-            ));
+    if remote_query.is_none() {
+        if let Some(value) = query.remove("fuzzymatching")
+            && value != "false"
+        {
+            return Err(bad("Fuzzy person-name matching requires qido_url"));
+        }
+        for key in query.keys() {
+            let path =
+                attributes::path(key).ok_or_else(|| bad("Unsupported DICOM matching attribute"))?;
+            if attributes::attribute(&path[0]).is_some_and(|a| a.level > level) {
+                return Err(bad(
+                    "Matching attribute belongs to a lower DICOM information level",
+                ));
+            }
         }
     }
+    let filters = if remote_query.is_some() {
+        Vec::new()
+    } else {
+        query
+            .iter()
+            .map(|(key, value)| Filter::new(key, value))
+            .collect::<Result<Vec<_>, _>>()?
+    };
     let mut requested = BTreeSet::new();
     if !target.study.is_empty() {
         requested.insert(target.study.clone());
@@ -251,6 +257,25 @@ pub(super) async fn search(
             Err(error) if error.status_code() == StatusCode::NOT_FOUND => continue,
             Err(error) => return Err(error),
         };
+        let selected = if let Some(query) = &remote_query {
+            let (keys, used) = remote::selection(
+                &client,
+                query,
+                &uid,
+                target.series.as_deref(),
+                level,
+                config.max_instances,
+                gateway.max_query_bytes.saturating_sub(bytes),
+            )
+            .await?;
+            bytes = bytes.saturating_add(used);
+            if keys.is_empty() {
+                continue;
+            }
+            Some(keys)
+        } else {
+            None
+        };
         let mut datasets = manifest
             .metadata(
                 &client,
@@ -260,7 +285,7 @@ pub(super) async fn search(
                     "{}/dicomweb/{connection}",
                     state.base_url.trim_end_matches('/')
                 ),
-                false,
+                remote_query.is_some(),
             )
             .await?;
         bytes = bytes.saturating_add(serde_json::to_vec(&datasets).map_err(|_| broad())?.len());
@@ -292,6 +317,11 @@ pub(super) async fn search(
             if !matching::all(&filters, row) {
                 continue;
             }
+            if let Some(selected) = &selected
+                && !selected.contains_key(&remote::key(row, level)?)
+            {
+                continue;
+            }
             let mut retrieve = format!(
                 "{}/dicomweb/{connection}/studies/{uid}",
                 state.base_url.trim_end_matches('/')
@@ -317,7 +347,15 @@ pub(super) async fn search(
                 },
             );
             if let std::collections::btree_map::Entry::Vacant(entry) = rows.entry(key) {
-                let projected = project(row, level, parent_defaults, &include, all);
+                let mut projected = project(row, level, parent_defaults, &include, all);
+                if let Some(selected) = &selected
+                    && let Some(origin) = selected.get(&remote::key(row, level)?)
+                {
+                    projected
+                        .as_object_mut()
+                        .expect("projected dataset")
+                        .extend(remote::project(row, origin, level)?);
+                }
                 bytes = bytes
                     .saturating_add(serde_json::to_vec(&projected).map_err(|_| broad())?.len());
                 if bytes > gateway.max_query_bytes {

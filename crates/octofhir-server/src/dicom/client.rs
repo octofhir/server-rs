@@ -81,6 +81,35 @@ impl DicomWebClient {
     pub(crate) async fn metadata(&self, url: url::Url) -> Result<Vec<Value>, DicomError> {
         self.datasets(url, false, self.config.max_instances).await
     }
+    pub(crate) async fn single_metadata(&self, url: url::Url) -> Result<Vec<Value>, DicomError> {
+        self.datasets_kind(url, false, 1, true).await
+    }
+    pub(crate) async fn query_page(
+        &self,
+        segments: &[&str],
+        query: &std::collections::BTreeMap<String, String>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Value>, DicomError> {
+        let base = self
+            .config
+            .qido_url
+            .as_deref()
+            .ok_or_else(|| DicomError::Configuration("QIDO-RS is not configured".into()))?;
+        let mut url = self
+            .config
+            .service_url(base)
+            .map_err(DicomError::Configuration)?;
+        url.path_segments_mut()
+            .map_err(|_| DicomError::Transport)?
+            .pop_if_empty()
+            .extend(segments.iter().copied());
+        url.query_pairs_mut()
+            .extend_pairs(query)
+            .append_pair("offset", &offset.to_string())
+            .append_pair("limit", &limit.to_string());
+        self.datasets(url, true, limit).await
+    }
     pub(crate) async fn stream(
         &self,
         url: url::Url,
@@ -183,7 +212,7 @@ impl DicomWebClient {
         }
         let datasets = self.datasets(url, true, limit as usize).await?;
         let mut seen = std::collections::BTreeSet::new();
-        datasets
+        let mut studies = datasets
             .into_iter()
             .map(|dataset| {
                 let uid = super::mapping::required(&dataset, "0020000D", "UI")?.to_owned();
@@ -222,7 +251,49 @@ impl DicomWebClient {
                     dataset,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, DicomError>>()?;
+        for study in &mut studies {
+            let missing_id = super::mapping::scalar(&study.dataset, "00100020", "LO")?.is_none();
+            let missing_issuer = super::mapping::scalar(&study.dataset, "00100021", "LO")?
+                .is_none()
+                && self.config.default_patient_issuer.is_none();
+            if !missing_id && !missing_issuer {
+                continue;
+            }
+            // Some origins omit requested identity fields from QIDO. Recover
+            // them only from a complete, internally consistent WADO snapshot.
+            let metadata = self.study_metadata(&study.uid).await?;
+            let first = &metadata[0];
+            let identity = super::mapping::patient_identifier(first, &self.config)?;
+            for instance in &metadata {
+                if super::mapping::required(instance, "0020000D", "UI")? != study.uid
+                    || super::mapping::patient_identifier(instance, &self.config)? != identity
+                {
+                    return Err(DicomError::Metadata(
+                        "Inconsistent study patient identity".into(),
+                    ));
+                }
+            }
+            for tag in ["00100020", "00100021"] {
+                let current = super::mapping::scalar(&study.dataset, tag, "LO")?;
+                let verified = super::mapping::scalar(first, tag, "LO")?.or(if tag == "00100021" {
+                    self.config.default_patient_issuer.as_deref()
+                } else {
+                    None
+                });
+                if current.is_some() && current != verified {
+                    return Err(DicomError::Metadata(
+                        "QIDO patient identity differs from metadata".into(),
+                    ));
+                }
+                if current.is_none()
+                    && let Some(attribute) = first.get(tag)
+                {
+                    study.dataset[tag] = attribute.clone();
+                }
+            }
+        }
+        Ok(studies)
     }
 
     async fn datasets(
@@ -230,6 +301,17 @@ impl DicomWebClient {
         url: url::Url,
         allow_empty: bool,
         max_datasets: usize,
+    ) -> Result<Vec<Value>, DicomError> {
+        self.datasets_kind(url, allow_empty, max_datasets, false)
+            .await
+    }
+
+    async fn datasets_kind(
+        &self,
+        url: url::Url,
+        allow_empty: bool,
+        max_datasets: usize,
+        single: bool,
     ) -> Result<Vec<Value>, DicomError> {
         self.policy
             .check_url(&url)
@@ -282,8 +364,13 @@ impl DicomWebClient {
             }
             body.extend_from_slice(&chunk);
         }
-        let datasets: Vec<Value> = serde_json::from_slice(&body)
-            .map_err(|_| DicomError::Metadata("invalid DICOM JSON array".into()))?;
+        let decoded: Value = serde_json::from_slice(&body)
+            .map_err(|_| DicomError::Metadata("invalid DICOM JSON".into()))?;
+        let datasets = match decoded {
+            Value::Array(datasets) => datasets,
+            Value::Object(dataset) if single => vec![Value::Object(dataset)],
+            _ => return Err(DicomError::Metadata("expected DICOM JSON array".into())),
+        };
         if datasets.len() > max_datasets {
             return Err(DicomError::Limit);
         }
@@ -323,6 +410,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovers_missing_qido_issuer_only_from_consistent_study_metadata() {
+        use serde_json::json;
+        for (second_study, second_patient, accepted) in [
+            ("1.2.3", "MRN-1", true),
+            ("1.2.3", "OTHER", false),
+            ("9.8.7", "MRN-1", false),
+        ] {
+            let server = MockServer::start().await;
+            let row = |study, patient| {
+                json!({"0020000D":{"vr":"UI","Value":[study]},
+                "00100020":{"vr":"LO","Value":[patient]},"00100021":{"vr":"LO","Value":["HOSPITAL"]}})
+            };
+            Mock::given(method("GET")).and(path("/dicom/studies"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    json!([{"0020000D":{"vr":"UI","Value":["1.2.3"]},"00100020":{"vr":"LO","Value":["MRN-1"]}}]).to_string(),
+                    "application/dicom+json")).mount(&server).await;
+            Mock::given(method("GET"))
+                .and(path("/dicom/studies/1.2.3/metadata"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    json!([row("1.2.3", "MRN-1"), row(second_study, second_patient)]).to_string(),
+                    "application/dicom+json",
+                ))
+                .mount(&server)
+                .await;
+            let config: DicomConnection = serde_json::from_value(json!({
+                "wado_url":format!("{}/dicom", server.uri()), "qido_url":format!("{}/dicom", server.uri()),
+                "allow_http":true,"patient_identifier_systems":{"HOSPITAL":"urn:test:mrn"}
+            })).unwrap();
+            let client =
+                DicomWebClient::new(&config, Arc::new(EgressPolicy::permissive())).unwrap();
+            let result = client
+                .query_studies(0, 10, Some(("MRN-1", "HOSPITAL")))
+                .await;
+            if accepted {
+                assert_eq!(
+                    result.unwrap()[0].dataset["00100021"]["Value"][0],
+                    "HOSPITAL"
+                );
+            } else {
+                assert!(result.is_err());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn requests_metadata_without_pixels_and_bounds_responses() {
         let (_server, client) = setup(
             ResponseTemplate::new(200).set_body_raw("[{}]", "application/dicom+json"),
@@ -337,6 +469,31 @@ mod tests {
         .await;
         assert!(matches!(
             client.study_metadata("1.2.3").await,
+            Err(DicomError::Limit)
+        ));
+    }
+
+    #[tokio::test]
+    async fn accepts_bare_dicom_json_only_for_single_resource_requests() {
+        let dataset = serde_json::json!({"0020000D":{"vr":"UI","Value":["1.2.3"]}});
+        let (server, client) = setup(
+            ResponseTemplate::new(200).set_body_raw(dataset.to_string(), "application/dicom+json"),
+            1000,
+        )
+        .await;
+        let url =
+            url::Url::parse(&format!("{}/dicom/studies/1.2.3/metadata", server.uri())).unwrap();
+        assert_eq!(client.single_metadata(url).await.unwrap(), vec![dataset]);
+        assert!(client.study_metadata("1.2.3").await.is_err());
+        let (server, client) = setup(
+            ResponseTemplate::new(200).set_body_raw("[{},{}]", "application/dicom+json"),
+            1000,
+        )
+        .await;
+        let url =
+            url::Url::parse(&format!("{}/dicom/studies/1.2.3/metadata", server.uri())).unwrap();
+        assert!(matches!(
+            client.single_metadata(url).await,
             Err(DicomError::Limit)
         ));
     }

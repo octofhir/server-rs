@@ -28,7 +28,7 @@ pub struct DicomConfig {
 pub struct DicomConnection {
     /// WADO-RS service root, also published in the FHIR Endpoint.
     pub wado_url: String,
-    /// Separate QIDO-RS root; required for scan discovery.
+    /// Separate QIDO-RS root; enables PACS matching in the gateway and scan discovery.
     pub qido_url: Option<String>,
     pub sync: Option<super::sync::DicomSyncConfig>,
     /// Enables only the explicitly supported, authorized retrieval routes.

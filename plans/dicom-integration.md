@@ -169,9 +169,12 @@ creation, missed notifications and restart, immutable inputs, publication from t
 output studies, clinical/security preservation, no-op refresh, cancellation races
 and deletion-lock release ordering. The pinned dcm4chee scenario exercises a separate
 external Performer, coded/numeric inputs, cancellation acknowledgment, completion,
-configured output publication and authenticated retrieval. Orthanc and dcm4chee both
-pass the independent QIDO/WADO scenario. Only one real UPS Task Manager plus the
-protocol peer have been checked: no broad UPS interoperability claim is made.
+configured output publication and authenticated retrieval. Orthanc, dcm4chee and
+Clarus pass the independent QIDO/WADO and pinned OHIF fixture scenarios, including
+Cyrillic matching. Clarus UPS passes with the reference-preservation fix in
+[the separate Clarus draft PR](https://github.com/octoshikari/clarus-pacs/pull/1);
+its released beta does not preserve the exact inputs. Two real Task Managers plus the protocol peer have
+been checked within this scope: no broad UPS interoperability claim is made.
 
 ### 6. Optional general file storage driver (S3, deferred draft)
 
@@ -281,8 +284,8 @@ Normative references:
   FHIR/DICOMweb boundary and does not implement an autonomous external bridge.
 - Broader CT/MR, enhanced multiframe, compressed transfer-syntax and viewer testing
   remains necessary before broader compatibility claims. Current real-PACS tests
-  use synthetic single-frame, multiframe and JPEG Baseline objects; real UPS coverage is one
-  Task Manager plus an independent protocol peer. The unchanged portable FHIR R4
+  use synthetic single-frame, multiframe and JPEG Baseline objects; real UPS coverage is
+  dcm4chee and patched Clarus plus an independent protocol peer. The unchanged portable FHIR R4
   scenario passes OctoFHIR and HAPI, not a two-server R4B/R5 conformance matrix.
 - General Binary/Attachment S3 storage remains the explicitly deferred stage 6;
   it is separate from DICOM protocol conformance and PACS ownership of images.

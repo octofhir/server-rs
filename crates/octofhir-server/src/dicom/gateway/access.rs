@@ -101,10 +101,12 @@ impl Manifest {
         }
         segments.push("metadata");
         let requested = client.resource_url(&segments).map_err(|_| missing())?;
-        let datasets = client
-            .metadata(requested.clone())
-            .await
-            .map_err(|_| ApiError::internal("PACS metadata is unavailable"))?;
+        let datasets = if target.instance.is_some() {
+            client.single_metadata(requested.clone()).await
+        } else {
+            client.metadata(requested.clone()).await
+        }
+        .map_err(|_| ApiError::internal("PACS metadata is unavailable"))?;
         let selected: BTreeMap<_, _> = self
             .instances
             .iter()
@@ -156,7 +158,7 @@ pub(super) async fn fresh(
     path.push("metadata");
     let url = client.resource_url(&path).map_err(|_| missing())?;
     let mut datasets = client
-        .metadata(url.clone())
+        .single_metadata(url.clone())
         .await
         .map_err(|_| ApiError::internal("PACS instance metadata is unavailable"))?;
     if datasets.len() != 1 {

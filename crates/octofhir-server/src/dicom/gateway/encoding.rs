@@ -24,12 +24,10 @@ pub(super) fn inline_binary(
     preferences: &Preferences,
     max: u64,
 ) -> Result<Response, ApiError> {
+    const OCTET_STREAM: &str = "application/octet-stream; transfer-syntax=1.2.840.10008.1.2.1";
     const MULTIPART: &str =
         "multipart/related; type=\"application/octet-stream\"; transfer-syntax=1.2.840.10008.1.2.1";
-    let selected = preferences.select(&[
-        MULTIPART,
-        "application/octet-stream; transfer-syntax=1.2.840.10008.1.2.1",
-    ])?;
+    let selected = preferences.select(&[MULTIPART, OCTET_STREAM])?;
     if data.len() as u64 > max {
         return Err(ApiError::bad_request(
             "DICOM bulk data exceeds stream limit",
@@ -90,8 +88,7 @@ pub(super) fn inline_binary(
         data[first..=last].to_vec()
     } else if selected == MULTIPART {
         let boundary = format!("octofhir-{}", uuid::Uuid::new_v4().simple());
-        let mut body =
-            format!("--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n").into_bytes();
+        let mut body = format!("--{boundary}\r\nContent-Type: {OCTET_STREAM}\r\n\r\n").into_bytes();
         body.extend(data);
         body.extend(format!("\r\n--{boundary}--\r\n").into_bytes());
         if body.len() as u64 > max {
@@ -126,10 +123,9 @@ pub(super) fn inline_binary(
         HeaderValue::from_static("identity"),
     );
     *response.status_mut() = status;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/octet-stream"),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(OCTET_STREAM));
     response
         .headers_mut()
         .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
@@ -332,6 +328,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 1-2/4");
         assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/octet-stream; transfer-syntax=1.2.840.10008.1.2.1"
+        );
+        assert_eq!(
             axum::body::to_bytes(response.into_body(), 1024)
                 .await
                 .unwrap()
@@ -339,6 +339,40 @@ mod tests {
             &[1, 2]
         );
         headers.remove(header::RANGE);
+        headers.insert(
+            header::ACCEPT,
+            "multipart/related; type=\"application/octet-stream\""
+                .parse()
+                .unwrap(),
+        );
+        let mut preferences =
+            Preferences::new(&headers, &mut std::collections::BTreeMap::new()).unwrap();
+        preferences.validate_category(true).unwrap();
+        let response = inline_binary(vec![0, 1, 2, 3], &preferences, 1024).unwrap();
+        let content_type = response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .parse::<mime::Mime>()
+            .unwrap();
+        let boundary = content_type
+            .get_param("boundary")
+            .unwrap()
+            .as_str()
+            .to_owned();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let mut parts = multer::Multipart::new(
+            futures_util::stream::once(async move { Ok::<_, std::io::Error>(body) }),
+            boundary,
+        );
+        let part = parts.next_field().await.unwrap().unwrap();
+        assert_eq!(
+            part.headers()[header::CONTENT_TYPE],
+            "application/octet-stream; transfer-syntax=1.2.840.10008.1.2.1"
+        );
+        assert_eq!(part.bytes().await.unwrap().as_ref(), &[0, 1, 2, 3]);
+        assert!(parts.next_field().await.unwrap().is_none());
         headers.insert(header::ACCEPT,"multipart/related; type=\"application/octet-stream\"; transfer-syntax=1.2.840.10008.1.2.4.50".parse().unwrap());
         let mut preferences =
             Preferences::new(&headers, &mut std::collections::BTreeMap::new()).unwrap();

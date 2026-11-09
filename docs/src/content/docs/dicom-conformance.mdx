@@ -78,10 +78,15 @@ PNG, PDF or plain-text parts. InlineBinary supplies native little-endian bytes,
 not an inferred compressed transfer syntax. HTML/XML representations use a sandbox
 content-security policy and nosniff protection.
 
+Generated InlineBinary responses declare `transfer-syntax=1.2.840.10008.1.2.1`
+in each octet-stream part's Content-Type, including direct octet-stream responses.
+
 The gateway's own advertised resource surface does not establish full origin-server
 media conformance independently of PACS. Deployments must select a backend with
 the required SOP-class, rendering and codec capabilities. This statement does not
 assert support for untested media, all IHE actors or general OHIF/Stone compatibility.
+Origin retrieval statuses 400/406/501 are returned as sanitized
+FHIR errors, without relaying origin error bodies or cookies.
 
 ## Query behavior
 
@@ -99,13 +104,25 @@ SeriesDescription, instance dimensions/frame count and available response attrib
 Keywords and hexadecimal tags are accepted. RequestAttributesSequence supports
 ScheduledProcedureStepID and RequestedProcedureID, with multiple child constraints
 bound to one sequence item. PN matching uses case-insensitive component/group
-wildcards; phonetic/fuzzy matching is unavailable. Date/time ranges, partial time
+wildcards. Without `qido_url`, phonetic/fuzzy matching is unavailable. Date/time ranges, partial time
 precision, numeric values, UID alternatives and universal empty values are handled
 explicitly. Combined date-time and repository cursor extensions are absent.
 
+With `qido_url`, matching is delegated to PACS, including `fuzzymatching`, Unicode
+names and origin-specific matching parameters. Queries are scoped to authorized
+Study Instance UIDs; returned Study/Series/Instance keys select verified manifest
+metadata. Origin-supported `includefield` keywords, private/hex tags, sequences,
+repeated fields and `all` are forwarded without a gateway allowlist. Origin-only
+attributes are retained; verified metadata, collection counts and gateway URLs
+take precedence. Unbound origin bulk links are omitted. Matching is not repeated locally. Origin pagination is exhausted within
+the configured budgets before gateway pagination, so unauthorized or newly arrived
+instances cannot contribute results. Response projections and counts still follow
+the admitted gateway manifest.
+
 `includefield` accepts repeated values, comma lists and `all` for supported
 attributes. Study/Series responses omit lower information-level attributes.
-Unsupported matching/include keys are rejected explicitly. `limit` and `offset`
+Without `qido_url`, unsupported local matching/include keys are rejected explicitly.
+`limit` and `offset`
 paginate a live result set; additional results provide a next Link and a Warning
 URL describing pagination status. Empty JSON results are `[]` with status 200.
 

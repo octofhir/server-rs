@@ -340,7 +340,31 @@ case-insensitive person-name components, date/time ranges, supported sequence
 item keys and repeated/comma-separated `includefield`. Use `limit`/`offset` for
 pagination; additional results have a `Link: rel=next` and a Warning status-report
 URL. Broad queries exceeding the configured candidate/metadata budget return 413;
-an exact StudyInstanceUID avoids scanning unrelated studies.
+an exact StudyInstanceUID avoids scanning unrelated studies. When `qido_url` is
+configured, matching parameters (including `fuzzymatching`, non-Latin names and
+PACS-specific keys) are forwarded to that origin, scoped to each authorized Study
+Instance UID. The PACS decides matching semantics; fuzzy matches are not subjected
+to a second exact-name comparison. Results are intersected with the admitted
+manifest, and gateway pagination is applied afterwards. Origin pages and fresh
+metadata share the query byte budget. Without `qido_url`, the gateway uses the
+local matching rules above and cannot perform fuzzy matching.
+
+Nested Series/Instance queries use the authorized Study UID in their resource
+path; the gateway does not duplicate it as a matching parameter on origins that
+reject redundant parent keys. The gateway recovers missing parent Study/Series
+UIDs from the authenticated resource path when an origin omits them; child UIDs
+remain mandatory and must match the manifest. Patient discovery recovers missing
+patient identity fields from a complete WADO metadata snapshot only when every instance agrees on
+the same Study UID and configured patient identifier system. It never guesses an
+assigning authority. Single-instance and single-workitem retrieval also accept a
+bare DICOM JSON object and normalize it to the gateway's standard array response.
+
+With `qido_url`, `includefield` is also forwarded, including repeated values,
+arbitrary origin-supported keywords, hexadecimal/private tags, sequences and
+`all`. The PACS resolves field names. Returned attributes retain their DICOM JSON
+structure; fresh verified instance metadata takes precedence, and counts/Retrieve
+URLs describe the authorized gateway collection. Bulk references are exposed only
+when they can be bound to verified instance metadata and rewritten to the gateway.
 
 Metadata and QIDO support both `application/dicom+json` and multipart
 `application/dicom+xml` (Native DICOM Model). Accept is required; query `accept`
@@ -418,6 +442,7 @@ max_references = 10000
 # output_stow_url = "https://pacs.example.org/dicom-web"
 
 [dicom.connections.hospital.ups.coding_schemes]
+# Use a private 99-prefixed designator for local procedure codes (for example 99OCTOFHIR).
 "https://hospital.example.org/procedures" = "99HOSPITAL"
 "http://unitsofmeasure.org" = "UCUM"
 
@@ -446,8 +471,13 @@ have its own credential reference. A notification URL must share the UPS origin.
 Create a Task with `status: draft` (or `requested`), `intent: order`, a local
 `for.reference: Patient/{id}`, and `focus.reference: ImagingStudy/{id}` imported
 from this connection. `code` must contain one supported Coding with a display;
-map its system to a DICOM Coding Scheme Designator explicitly. All attested input
-instances become UPS inputs. Optional Task inputs support String, dateTime,
+map its system to a DICOM Coding Scheme Designator explicitly. Private/local
+schemes should use a `99`-prefixed designator such as `99OCTOFHIR`; registered
+schemes such as UCUM retain their registered designators
+([PS3.3 8.2](https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_8.2.html)).
+All attested input instances become UPS inputs, with Study Instance UID nested
+inside Input Information Sequence (0040,4021), rather than at the workitem root.
+Optional Task inputs support String, dateTime,
 CodeableConcept and exact Quantity with explicitly mapped units. Unsupported
 value types, routing fields, repetitions and unknown modifier extensions fail
 admission. `doNotPerform: true` (including its standard modifier extension) cannot
@@ -488,7 +518,7 @@ can do so.
 | SCHEDULED | requested |
 | IN PROGRESS | in-progress |
 | COMPLETED | completed |
-| CANCELED | cancelled |
+| CANCELED (also accepts CANCELLED from PACS) | cancelled |
 
 The Watcher opens its WebSocket before creating a filtered global subscription
 with deletion locks. Its persistent source-label namespace selects only its own
@@ -541,18 +571,58 @@ DICOM_TEST_UPS=http://127.0.0.1:8090/dcm4chee-arc/aets/WORKLIST/rs \
 DICOM_TEST_UPS_WS=ws://127.0.0.1:8090/dcm4chee-arc/aets/WORKLIST/ws/subscribers/OCTOFHIR \
 cargo test -p octofhir-server --test dicom_pacs -- --ignored
 
+# Clarus 0.3.0-beta retrieval (DICOMweb root /dicomweb):
+DICOM_TEST_PACS=http://127.0.0.1:8024/dicomweb \
+DICOM_TEST_UPLOAD=http://127.0.0.1:8024/dicomweb/studies \
+cargo test -p octofhir-server --test dicom_pacs -- --ignored
+
 # Removes only this disposable project's containers and synthetic-data volumes:
 docker compose -p octofhir-dicom-local -f docker-compose.dicom.yml --profile orthanc --profile dcm4chee down --volumes
 ```
 
 The retrieval scenario covers QIDO discovery, FHIR import, rewritten metadata,
-multipart object/frame retrieval and bulk data against Orthanc 1.13.0 and dcm4chee
-5.35.2. A small test-only browser viewer additionally verifies the 256 source pixels.
+multipart object/frame retrieval, bulk data and Cyrillic exact/fuzzy queries against
+Orthanc 1.13.0, dcm4chee 5.35.2 and Clarus 0.3.0-beta. A small test-only browser viewer
+additionally verifies the 256 source pixels.
 UPS Requestor/Watcher is checked against dcm4chee and an independent protocol test
 peer exercising ambiguous creates, lost notifications, immutable inputs, result
 publication and cancellation races. Orthanc is a retrieval peer, not a UPS Task
 Manager. These checks do not claim broad UPS interoperability or complete
-OHIF/Stone viewer compatibility.
+OHIF/Stone viewer compatibility beyond the explicit fixture checks below.
+
+### OHIF browser verification
+
+`scripts/test-dicom-viewer.mjs` runs the pinned OHIF 3.13.14 Docker image in a
+local Chrome browser through a same-origin, test-only nginx proxy. It verifies
+successful gateway frame requests and non-uniform rendered canvas pixels for
+native, multiframe and JPEG Baseline fixtures. Scrolling to the second multiframe
+frame must reverse the synthetic gradient. It saves screenshots and a credential-free
+`ohif-results.json`. The Rust test waits for a matching session completion ID, so
+an old result cannot satisfy a later run.
+
+Install `playwright-core` in a temporary developer directory and use the installed
+Chrome. Start the PACS test with a fresh session path (add the appropriate UPS
+variables above for a Task Manager), then run the browser check in another shell:
+
+```sh
+verification_dir=$(mktemp -d)
+npm install --prefix "$verification_dir/browser" playwright-core
+# Shell 1: substitute the selected local PACS/upload URLs from the examples above.
+DICOM_TEST_PACS=http://127.0.0.1:8042/dicom-web \
+DICOM_TEST_UPLOAD=http://127.0.0.1:8042/instances \
+DICOM_VIEWER_SESSION_FILE="$verification_dir/session.json" \
+cargo test -p octofhir-server --test dicom_pacs -- --ignored
+
+# Shell 2: use the same verification_dir value.
+DICOM_PLAYWRIGHT_MODULE="file://$verification_dir/browser/node_modules/playwright-core/index.mjs" \
+node scripts/test-dicom-viewer.mjs "$verification_dir/session.json" "$verification_dir/results"
+```
+
+The browser runner creates and removes its own OHIF container. Only synthetic
+fixtures and the ephemeral test backend identity are used. Frame-list support is
+measured separately from individual-frame decoding: an origin's unsupported
+`/frames/1,2` response is preserved, while both individual frames must still match
+the source bytes and render correctly in OHIF.
 
 ## Retrieval and optional file storage
 

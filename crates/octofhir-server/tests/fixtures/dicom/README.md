@@ -15,6 +15,12 @@ Their Study UIDs end in `.999.2` and `.999.3`; they use the same artificial pati
 They exercise framing, compressed transfer syntax and gateway streaming, not
 clinical modality or diagnostic validation.
 
+`synthetic-cyrillic-a.dcm` and `synthetic-cyrillic-b.dcm` contain two distinct
+artificial patient identifiers and UTF-8 names (Иванов^Иван and Петров^Пётр).
+Their Study UIDs end in `.999.4` and `.999.5`. Real-PACS tests compare exact/fuzzy
+QIDO results with direct origin queries and request InstitutionName through the
+gateway, independently of its local attribute dictionary.
+
 Regenerate the additional files in a private Python environment with
 `pydicom==3.0.1` and `Pillow==12.0.0`, then run
 `python scripts/generate-dicom-gateway-fixtures.py`. These are developer-only

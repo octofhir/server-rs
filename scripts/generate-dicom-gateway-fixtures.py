@@ -72,13 +72,22 @@ def main():
     compressed.LossyImageCompressionRatio = f"{len(pixels) / len(jpeg):.6f}"
     compressed.save_as(args.output / "synthetic-jpeg-baseline.dcm", enforce_file_format=True)
 
+    for suffix, label, name in [(4, "A", "Иванов^Иван"), (5, "B", "Петров^Пётр")]:
+        unicode_patient = deepcopy(source)
+        identity(unicode_patient, suffix)
+        unicode_patient.SpecificCharacterSet = "ISO_IR 192"
+        unicode_patient.PatientID = f"OCTOFHIR-DICOM-CYRILLIC-{label}"
+        unicode_patient.PatientName = name
+        unicode_patient.InstitutionName = "OctoFHIR synthetic institution"
+        unicode_patient.save_as(args.output / f"synthetic-cyrillic-{label.lower()}.dcm", enforce_file_format=True)
+
     reread = pydicom.dcmread(args.output / "synthetic-multiframe.dcm")
     assert reread.NumberOfFrames == 2 and reread.PixelData == multi.PixelData
     reread = pydicom.dcmread(args.output / "synthetic-jpeg-baseline.dcm")
     frames = list(generate_frames(reread.PixelData, number_of_frames=1))
     assert len(frames) == 1 and frames[0] in (jpeg, jpeg + b"\0")
     assert Image.open(BytesIO(frames[0])).size == (64, 64)
-    for name in ["synthetic-multiframe.dcm", "synthetic-jpeg-baseline.dcm"]:
+    for name in ["synthetic-multiframe.dcm", "synthetic-jpeg-baseline.dcm", "synthetic-cyrillic-a.dcm", "synthetic-cyrillic-b.dcm"]:
         print(name, sha256((args.output / name).read_bytes()).hexdigest())
 
 
