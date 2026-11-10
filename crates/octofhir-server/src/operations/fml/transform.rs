@@ -35,6 +35,7 @@ use tokio::sync::OnceCell;
 
 use super::library::Library;
 use super::resolve::{self, ConceptMapCache, Models};
+use super::server::{FmlServerProvider, ServerExpressions};
 use crate::config::FmlConfig;
 use crate::operations::handler::OperationLevel;
 use crate::operations::{OperationContext, OperationError, OperationHandler};
@@ -271,12 +272,13 @@ impl Runner {
             library,
             found: Mutex::new(HashMap::new()),
         };
-        let expressions = runtime.expressions.clone();
+        let server = Arc::new(FmlServerProvider::new(state, context));
+        let expressions = ServerExpressions::new(&runtime.expressions, server.clone());
         let cancel_flag = cancel.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let setup = std::time::Instant::now();
             let set = SharedMaps(maps[1..].to_vec());
-            let engine = Engine::new(&definitions, SharedExpressions(expressions))
+            let engine = Engine::new(&definitions, expressions)
                 .with_maps(&set)
                 .with_concept_maps(&models.concept_maps)
                 .with_translator(&translator)
@@ -303,6 +305,9 @@ impl Runner {
             total_ms = started.elapsed().as_millis() as u64,
             "fml transform timings"
         );
+        if let Some(error) = server.take_error() {
+            return Err(error);
+        }
         let (result, primary) = outcome;
 
         let spans = |source: Option<&str>, position: &str| sources.span(source, position);
@@ -636,20 +641,6 @@ impl MapResolver for SharedMaps {
             })
             .cloned()
             .collect()
-    }
-}
-
-/// FHIRPath shared by every transform.
-struct SharedExpressions(Arc<FhirPathExpressions>);
-
-impl fml_engine::Expressions for SharedExpressions {
-    fn evaluate(
-        &self,
-        expression: &str,
-        focus: Option<&fml_engine::Item>,
-        variables: &[(String, fml_engine::Item)],
-    ) -> impl Future<Output = Result<Vec<fml_engine::Item>, String>> {
-        self.0.evaluate(expression, focus, variables)
     }
 }
 

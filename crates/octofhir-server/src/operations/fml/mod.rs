@@ -8,6 +8,7 @@ mod convert;
 mod extract;
 mod library;
 pub(crate) mod resolve;
+mod server;
 mod transform;
 
 use std::sync::Arc;

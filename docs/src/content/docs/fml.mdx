@@ -60,6 +60,29 @@ its line and column.
 `debug=true` returns a `Parameters` with the trace. The trace holds every value the map reads and writes,
 so only a user with the role in `fml.debug_role` may ask for it.
 
+## Reference resolution
+
+Mapping expressions can use `resolve()` and `%server.read(type, id)` to read resources
+from this server. Reads call the internal `OperationContext` with the invocation's
+identity, so the caller's grants and resource policies still apply. There are no
+HTTP requests back to the server and no extra server URL to configure.
+
+The FHIRPath engine and schemas are shared, but each map execution gets its own
+provider. Resource bodies and caller identities are not shared across invocations.
+Resolved resources retain their FHIR types and can be narrowed with `as` or
+`ofType`, or passed to typed groups.
+
+Only individual resource reads are enabled. Other `%server` operations, including
+writes, search and calls to another server via `%server.at(url)`, fail the operation.
+A missing resource returns an empty collection. A read error, including a denied
+read, stops the map and preserves the operation's error response rather than
+returning a partial result or a debug trace.
+
+Reference resolution follows the current FHIRPath implementation: local references
+are looked up in the evaluation root, and `Type/id` references can be read from the
+server. This integration does not add absolute, versioned or canonical reference
+resolution, or restore the original root when evaluating an isolated reference.
+
 ## $convert
 
 `$convert` converts a resource between FHIR versions with the HL7 cross-version maps. The input is in the

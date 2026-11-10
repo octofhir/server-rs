@@ -2523,9 +2523,9 @@ dependencies = [
 
 [[package]]
 name = "fml-check"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45ab3345fbaff3be3ff05b9864630867bf34f92fc68321e907b3e3a3be8e09a1"
+checksum = "f2af809f201eceee850cc51e47543412d7aaf4096bb7a86c3286c276323cee74"
 dependencies = [
  "fml-syntax",
  "octofhir-fhirschema",
@@ -2534,9 +2534,9 @@ dependencies = [
 
 [[package]]
 name = "fml-engine"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824bf8fd59e62e2dcbbaf0508c3a88daecc2cc31412b3c4b138f219ef8b805fb"
+checksum = "3cf27958cd9c97ae349efa05b135bb99b18c42249760b54f4fd6c1c7dc1d9d30"
 dependencies = [
  "fml-check",
  "fml-model",
@@ -2551,9 +2551,9 @@ dependencies = [
 
 [[package]]
 name = "fml-lsp"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5bcae079b61e1907f8e591bf7e3ba9a6c2f43fa02ce613c5e8e05cb6738d351"
+checksum = "f96496da5fdb59846501e46c63f9354446aa408a22971a7909b586fc55e31e13"
 dependencies = [
  "fml-check",
  "fml-model",
@@ -2565,9 +2565,9 @@ dependencies = [
 
 [[package]]
 name = "fml-model"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b292ffdb28e966fb9d74c69c1d7424f0e2289b25d42921122ce5dfdc34d31f58"
+checksum = "fabdb310df5dc6425b2493d90b068406b347c019d0018d7558e53083ce928e2e"
 dependencies = [
  "fml-syntax",
  "serde",
@@ -2576,9 +2576,9 @@ dependencies = [
 
 [[package]]
 name = "fml-syntax"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cf855bc9f5b0de05af1ec1849381eaa2672fb1294b8f1846befdec4b165e0f1"
+checksum = "425b9cf159b5cdc43558f1276e94e575ff46af30cd9d73b8cc60c65f288c7ad3"
 dependencies = [
  "rowan",
 ]
