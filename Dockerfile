@@ -117,6 +117,7 @@ port = 8888
 read_timeout_ms = 30000
 write_timeout_ms = 30000
 body_limit_bytes = 10485760
+allow_private_outbound = false
 
 [storage.postgres]
 host = "postgres"
@@ -212,8 +213,9 @@ terminology_ttl_secs = 3600
 local_cache_max_entries = 10000
 
 [db_console]
-enabled = true
+enabled = false
 sql_mode = "readonly"
+required_role = "admin"
 lsp_enabled = true
 
 [graphql]
@@ -228,10 +230,9 @@ enabled = true
 [audit]
 enabled = false
 
-[bootstrap.admin_user]
-username = "admin"
-password = "admin"
-email = "admin@octofhir.local"
+# Bootstrap an admin only through explicitly provided secrets:
+# OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME
+# OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD
 EOF
 
 RUN chown -R octofhir:octofhir /opt/octofhir

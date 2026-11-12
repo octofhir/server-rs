@@ -44,6 +44,12 @@ pub async fn handle_app(
     })?;
 
     let endpoint_url = &proxy_config.url;
+    let url = reqwest::Url::parse(endpoint_url)
+        .map_err(|error| GatewayError::InvalidConfig(error.to_string()))?;
+    state
+        .egress
+        .check_url(&url)
+        .map_err(GatewayError::Forbidden)?;
     let timeout = proxy_config.timeout.unwrap_or(30) as u64;
 
     info!(

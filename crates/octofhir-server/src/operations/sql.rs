@@ -38,6 +38,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx_core::column::Column;
@@ -131,7 +132,8 @@ pub async fn sql_operation(
     }
 
     // Check required role if configured
-    if let Some(ref required_role) = config.required_role {
+    {
+        let required_role = config.required_role.as_deref().unwrap_or("admin");
         let has_role = auth_context
             .user
             .as_ref()
@@ -177,23 +179,7 @@ pub async fn sql_operation(
     let start = Instant::now();
 
     // Build query with bind parameters
-    let rows = if req.params.is_empty() {
-        // No parameters - simple query
-        sqlx_core::query::query(AssertSqlSafe(req.query.to_string()))
-            .fetch_all(state.db_pool.as_ref())
-            .await
-    } else {
-        // Parameterized query - bind each parameter
-        let mut query = sqlx_core::query::query(AssertSqlSafe(req.query.to_string()));
-        for param in &req.params {
-            query = bind_json_value(query, param);
-        }
-        query.fetch_all(state.db_pool.as_ref()).await
-    }
-    .map_err(|e| {
-        warn!(error = %e, "SQL query execution failed");
-        ApiError::bad_request(format!("Query execution failed: {}", e))
-    })?;
+    let rows = execute_sql(&state, config.sql_mode, &req.query, &req.params).await?;
 
     let execution_time_ms = start.elapsed().as_millis() as u64;
 
@@ -257,6 +243,91 @@ pub async fn sql_operation(
     };
 
     Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+/// Shared execution boundary for console and gateway SQL. Restricted modes must
+/// never borrow a role capable of escaping PostgreSQL into server files/programs.
+pub(crate) async fn execute_sql(
+    state: &AppState,
+    mode: crate::config::SqlMode,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<sqlx_postgres::PgRow>, ApiError> {
+    use crate::config::SqlMode;
+    mode.is_query_allowed(sql).map_err(ApiError::forbidden)?;
+    let mut connection = state
+        .db_pool
+        .acquire()
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    // Committed SQL can change session settings. Never return that session to
+    // FHIR traffic; read-only requests roll back their settings with the query.
+    if mode != SqlMode::Readonly {
+        connection.close_on_drop();
+    }
+    let mut tx = sqlx_core::connection::Connection::begin(&mut *connection)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let db_error = |error: sqlx_core::error::Error| {
+        ApiError::bad_request(format!("Query execution failed: {error}"))
+    };
+    if mode == SqlMode::Readonly {
+        sqlx_core::query::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+    }
+    {
+        let dangerous: bool = sqlx_core::query_scalar::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_roles r \
+             WHERE (r.rolsuper OR r.rolcreaterole OR r.rolname IN \
+             ('pg_execute_server_program', 'pg_read_server_files', 'pg_write_server_files')) \
+             AND pg_has_role(current_user, r.oid, 'MEMBER'))",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        if dangerous {
+            return Err(ApiError::forbidden(
+                "SQL console requires a PostgreSQL role without superuser, CREATEROLE, or server file/program privileges",
+            ));
+        }
+    }
+    let timeout = state
+        .config
+        .read_timeout()
+        .min(std::time::Duration::from_secs(30));
+    sqlx_core::query::query("SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', '5000', true)")
+        .bind(timeout.as_millis().max(1).to_string())
+        .execute(&mut *tx).await.map_err(db_error)?;
+    let mut query = sqlx_core::query::query(AssertSqlSafe(sql.to_owned()));
+    for param in params {
+        query = bind_json_value(query, param);
+    }
+    let mut rows = Vec::new();
+    let mut bytes = 0usize;
+    {
+        let mut stream = query.fetch(&mut *tx);
+        while let Some(row) = stream.try_next().await.map_err(db_error)? {
+            for index in 0..row.columns().len() {
+                if let Ok(value) = row.try_get_raw(index) {
+                    bytes = bytes.saturating_add(value.as_bytes().map_or(0, |v| v.len()));
+                }
+            }
+            if rows.len() >= 10_000 || bytes > 16 * 1024 * 1024 {
+                return Err(ApiError::bad_request(
+                    "SQL result exceeds 10000 rows or 16 MiB; use LIMIT",
+                ));
+            }
+            rows.push(row);
+        }
+    }
+    if mode == SqlMode::Readonly {
+        tx.rollback().await.map_err(db_error)?;
+    } else {
+        tx.commit().await.map_err(db_error)?;
+    }
+    Ok(rows)
 }
 
 #[cfg(test)]

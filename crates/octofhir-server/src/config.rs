@@ -990,8 +990,8 @@ pub struct DbConsoleConfig {
 
     /// Required role for DB console access
     /// If set, user must have this role to access the DB console
-    /// If not set, any authenticated user can access
-    #[serde(default)]
+    /// Defaults to admin; omitting/nulling this value never grants public console access.
+    #[serde(default = "default_sql_required_role")]
     pub required_role: Option<String>,
 
     /// Enable LSP (Language Server Protocol) features
@@ -1009,6 +1009,10 @@ fn default_sql_mode() -> SqlMode {
     SqlMode::Readonly
 }
 
+fn default_sql_required_role() -> Option<String> {
+    Some("admin".into())
+}
+
 fn default_lsp_enabled() -> bool {
     true
 }
@@ -1018,7 +1022,7 @@ impl Default for DbConsoleConfig {
         Self {
             enabled: default_db_console_enabled(),
             sql_mode: default_sql_mode(),
-            required_role: None,
+            required_role: default_sql_required_role(),
             lsp_enabled: default_lsp_enabled(),
         }
     }
@@ -1039,55 +1043,7 @@ pub enum SqlMode {
 impl SqlMode {
     /// Check if a query is allowed in this mode
     pub fn is_query_allowed(&self, query: &str) -> Result<(), String> {
-        let query_upper = query.trim().to_uppercase();
-
-        match self {
-            SqlMode::Readonly => {
-                // Allow EXPLAIN/EXPLAIN ANALYZE for SELECT queries
-                let check_query = if query_upper.starts_with("EXPLAIN") {
-                    query_upper
-                        .strip_prefix("EXPLAIN ANALYZE")
-                        .or_else(|| query_upper.strip_prefix("EXPLAIN"))
-                        .map(|s| s.trim_start())
-                        .unwrap_or(&query_upper)
-                } else {
-                    &query_upper
-                };
-
-                // Must start with SELECT or WITH
-                if !check_query.starts_with("SELECT") && !check_query.starts_with("WITH") {
-                    return Err(
-                        "Only SELECT queries (and EXPLAIN of SELECT) are allowed in readonly mode"
-                            .to_string(),
-                    );
-                }
-                // Check for dangerous keywords that could be in subqueries
-                let forbidden = [
-                    "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT",
-                    "REVOKE",
-                ];
-                for kw in forbidden {
-                    if check_query.contains(kw) {
-                        return Err(format!("{} is not allowed in readonly mode", kw));
-                    }
-                }
-                Ok(())
-            }
-            SqlMode::Readwrite => {
-                // DDL operations not allowed
-                let forbidden = ["DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "REVOKE"];
-                for kw in forbidden {
-                    if query_upper.contains(kw) {
-                        return Err(format!("{} is not allowed in readwrite mode", kw));
-                    }
-                }
-                Ok(())
-            }
-            SqlMode::Admin => {
-                // All queries allowed
-                Ok(())
-            }
-        }
+        crate::sql_policy::validate(*self, query)
     }
 }
 

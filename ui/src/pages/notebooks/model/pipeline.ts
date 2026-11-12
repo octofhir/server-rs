@@ -3,7 +3,7 @@
 // See docs/ui-notebooks-spec.md §1.4.
 
 import type { TabularData } from "@octofhir/ui-kit";
-import { interpolate } from "./execution";
+import { compileExpression } from "./expression";
 import type { Agg, Scope, Step } from "./notebook";
 
 type Row = Record<string, unknown>;
@@ -25,14 +25,10 @@ function toTable(rows: Row[], columns?: string[]): TabularData {
 
 /** Compile a row expression (columns as identifiers) after ${var} interpolation. */
 function compileExpr(expr: string, columns: string[], scope: Scope): (row: Row) => unknown {
-  const src = interpolate(expr, scope);
-  // new Function over user-owned data, client-only — no server trust boundary crossed.
-  const fn = new Function(...columns, `"use strict"; return (${src});`) as (
-    ...args: unknown[]
-  ) => unknown;
+  const fn = compileExpression(expr, scope);
   return (row: Row) => {
     try {
-      return fn(...columns.map((c) => row[c]));
+      return fn(Object.fromEntries(columns.map((c) => [c, row[c]])));
     } catch {
       return undefined;
     }

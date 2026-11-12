@@ -14,7 +14,11 @@ type HmacSha256 = Hmac<Sha256>;
 
 pub struct WebhookAdapter {
     http_client: Client,
+    url_validator: Option<WebhookUrlValidator>,
 }
+
+pub type WebhookUrlValidator =
+    std::sync::Arc<dyn Fn(&reqwest::Url) -> Result<(), String> + Send + Sync>;
 
 impl WebhookAdapter {
     pub fn new() -> Self {
@@ -23,7 +27,15 @@ impl WebhookAdapter {
 
     /// Send through `http_client`, which can enforce where requests may go.
     pub fn with_client(http_client: Client) -> Self {
-        Self { http_client }
+        Self {
+            http_client,
+            url_validator: None,
+        }
+    }
+
+    pub fn with_url_validator(mut self, validator: WebhookUrlValidator) -> Self {
+        self.url_validator = Some(validator);
+        self
     }
 
     fn sign_payload(&self, payload: &str, secret: &str) -> String {
@@ -57,6 +69,12 @@ impl NotificationAdapter for WebhookAdapter {
             .ok_or(NotificationError::InvalidConfig(
                 "Missing webhook_url".into(),
             ))?;
+
+        let url = reqwest::Url::parse(url)
+            .map_err(|error| NotificationError::InvalidConfig(error.to_string()))?;
+        if let Some(validate) = &self.url_validator {
+            validate(&url).map_err(NotificationError::InvalidConfig)?;
+        }
 
         let now = OffsetDateTime::now_utc();
         let timestamp = now

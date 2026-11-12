@@ -296,6 +296,10 @@ fn start_notification_delivery(
         decrypt,
     )
     .with_http_client(client)
+    .with_webhook_url_validator({
+        let egress = egress.clone();
+        Arc::new(move |url| egress.check_url(url))
+    })
     .with_batch_size(i32::from(config.batch_size));
     let interval = std::time::Duration::from_millis(config.poll_interval_ms.max(100));
     background.spawn(async move { processor.run(interval).await });
@@ -841,7 +845,9 @@ async fn build_app_with_runtime(
     tracing::info!("Async job manager initialized");
 
     // Gateway router (creation is instant, route loading is async — done in Phase 2)
-    let gateway_router = Arc::new(crate::gateway::GatewayRouter::new());
+    let gateway_router = Arc::new(crate::gateway::GatewayRouter::with_egress(Arc::new(
+        crate::egress::EgressPolicy::from_server_config(&cfg.server).map_err(anyhow::Error::msg)?,
+    )));
 
     // ── Phase 2: Parallel heavy I/O operations ──
     // These are all independent: they need only db_pool, cfg, or canonical_manager
@@ -1985,6 +1991,7 @@ async fn build_app_with_runtime(
                 notification_queue.clone(),
                 fhirpath_engine.clone(),
                 client,
+                egress.clone(),
             );
             hook_registry.register_resource(Arc::new(hook)).await;
         }

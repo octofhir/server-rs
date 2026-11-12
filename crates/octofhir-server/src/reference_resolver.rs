@@ -29,7 +29,8 @@ fn shared_client(timeout_ms: u64) -> Option<reqwest::Client> {
     if let Some(client) = clients.get(&timeout_ms) {
         return Some(client.clone());
     }
-    let client = reqwest::Client::builder()
+    let client = Arc::new(crate::egress::EgressPolicy::default())
+        .client_builder()
         .timeout(Duration::from_millis(timeout_ms))
         // Never follow redirects: a public URL must not be able to
         // bounce the fetch to an internal address (SSRF).
@@ -138,7 +139,11 @@ impl StorageReferenceResolver {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Ok(None);
         }
-        if !host_is_allowed(&parsed).await {
+        if crate::egress::EgressPolicy::default()
+            .check_url(&parsed)
+            .is_err()
+            || !host_is_allowed(&parsed).await
+        {
             tracing::warn!(
                 target: "reference_resolver",
                 url = %url,

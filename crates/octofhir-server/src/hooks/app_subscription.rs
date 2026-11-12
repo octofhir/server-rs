@@ -26,6 +26,7 @@ pub struct AppSubscriptionHook {
     queue: Arc<dyn NotificationQueueStorage>,
     engine: Arc<FhirPathEngine>,
     client: reqwest::Client,
+    egress: Arc<crate::egress::EgressPolicy>,
     /// Active subscriptions; read again after an `AppSubscription` changes.
     subscriptions: RwLock<Option<Arc<Vec<AppSubscription>>>>,
 }
@@ -36,12 +37,14 @@ impl AppSubscriptionHook {
         queue: Arc<dyn NotificationQueueStorage>,
         engine: Arc<FhirPathEngine>,
         client: reqwest::Client,
+        egress: Arc<crate::egress::EgressPolicy>,
     ) -> Self {
         Self {
             storage,
             queue,
             engine,
             client,
+            egress,
             subscriptions: RwLock::new(None),
         }
     }
@@ -94,6 +97,13 @@ impl AppSubscriptionHook {
         if let Some(channel) = &subscription.channel
             && channel.channel_type == "webhook"
         {
+            let allowed = reqwest::Url::parse(&channel.endpoint)
+                .map_err(|error| error.to_string())
+                .and_then(|url| self.egress.check_url(&url));
+            if let Err(error) = allowed {
+                tracing::warn!(subscription = %id, %error, "App webhook destination refused");
+                return;
+            }
             let body = json!({"subscription": id, "event": event, "resource": resource});
             let sent = self.client.post(&channel.endpoint).json(&body).send().await;
             match sent.map(|response| response.status()) {

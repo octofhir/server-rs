@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["vendor/rusqlite", "vendor/lru"]
 members = [
     "crates/octofhir-api",
     "crates/octofhir-auth",
@@ -157,3 +158,8 @@ lto = "thin"
 codegen-units = 16
 debug = 2
 
+
+# Local security backports until the transitive upstream constraints accept fixed releases.
+[patch.crates-io]
+rusqlite = { path = "vendor/rusqlite" }
+lru = { path = "vendor/lru" }

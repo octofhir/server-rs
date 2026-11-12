@@ -54,6 +54,7 @@ pub mod routes;
 pub mod search_pages;
 pub mod secrets;
 pub mod server;
+mod sql_policy;
 pub mod subscriptions;
 pub mod terminology_service;
 pub mod validation;

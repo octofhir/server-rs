@@ -4,15 +4,38 @@
 
 use crate::server::AppState;
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, Query, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use octofhir_api::ApiError;
+use octofhir_auth::middleware::AuthContext;
 use octofhir_notebook::{self as nb, Format};
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::Arc;
+
+pub(crate) async fn authorize_notebook_read(
+    state: &AppState,
+    auth: &AuthContext,
+    id: &str,
+    doc: &Value,
+) -> Result<(), ApiError> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.'))
+    {
+        return Err(ApiError::bad_request("Invalid Notebook id"));
+    }
+    let entry = serde_json::json!({"request": {"method": "GET", "url": format!("Notebook/{id}")}});
+    if let Some(read) = crate::authorization::prepare_entry_read(state, auth, &entry).await? {
+        read.authorize(state, doc).await?;
+    }
+    Ok(())
+}
 
 #[derive(Deserialize)]
 pub struct FormatQuery {
@@ -45,6 +68,7 @@ pub async fn notebook_import(
 /// the stored Notebook and serialize it in the requested format.
 pub async fn notebook_export(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<AuthContext>>,
     Path(id): Path<String>,
     Query(q): Query<FormatQuery>,
 ) -> Result<Response, ApiError> {
@@ -57,6 +81,7 @@ pub async fn notebook_export(
         .ok_or_else(|| ApiError::not_found(format!("Notebook/{id} not found")))?;
     let doc: Value = serde_json::from_str(&stored.resource_json)
         .map_err(|e| ApiError::internal(e.to_string()))?;
+    authorize_notebook_read(&state, &auth, &id, &doc).await?;
     let notebook = nb::parse(&doc).map_err(|e| ApiError::internal(e.to_string()))?;
     let body = nb::export(&notebook, format).map_err(|e| ApiError::internal(e.to_string()))?;
 

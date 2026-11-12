@@ -33,9 +33,14 @@ pub struct GatewayRouter {
 impl GatewayRouter {
     /// Creates a new GatewayRouter.
     pub fn new() -> Self {
+        Self::with_egress(Arc::new(crate::egress::EgressPolicy::default()))
+    }
+
+    pub fn with_egress(egress: Arc<crate::egress::EgressPolicy>) -> Self {
         Self {
             routes: Arc::new(RwLock::new(HashMap::new())),
-            http_client: reqwest::Client::builder()
+            http_client: egress
+                .client_builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("Failed to create HTTP client"),

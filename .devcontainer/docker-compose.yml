@@ -1,0 +1,43 @@
+# Try OctoFHIR in GitHub Codespaces or a local dev container: the published server
+# image, PostgreSQL and a shell. Nothing here is for production; the data lives only
+# as long as the containers do.
+services:
+  workspace:
+    image: mcr.microsoft.com/devcontainers/base:bookworm
+    command: sleep infinity
+    # Shares the server's network, so http://localhost:8888 works from the terminal
+    # and the port forwards without further setup.
+    network_mode: service:octofhir
+    volumes:
+      - ..:/workspaces/server-rs:cached
+    depends_on:
+      octofhir:
+        condition: service_healthy
+
+  octofhir:
+    image: ghcr.io/octofhir/octofhir-server:latest
+    environment:
+      OCTOFHIR__STORAGE__POSTGRES__HOST: postgres
+      OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME: admin
+      OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD: admin123
+      OCTOFHIR__BOOTSTRAP__ADMIN_USER__EMAIL: admin@example.com
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8888/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: octofhir
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d octofhir"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

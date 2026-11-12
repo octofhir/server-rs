@@ -6,16 +6,34 @@
 
 use crate::server::AppState;
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, State},
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
 use base64::Engine as _;
 use octofhir_api::ApiError;
+use octofhir_auth::middleware::AuthContext;
 use octofhir_notebook::{Cell, Notebook, Output};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Headless cells share the caller's credentials, so they may only call this
+/// server's FHIR API. URL parsing also rejects encoded dot-segment escapes.
+fn headless_rest_url(base: &str, raw: &str) -> Result<reqwest::Url, String> {
+    if reqwest::Url::parse(raw).is_ok() || raw.starts_with("//") || raw.contains('\\') {
+        return Err("Headless REST cells require a relative FHIR path".into());
+    }
+    let base = reqwest::Url::parse(base).map_err(|error| error.to_string())?;
+    let url = base
+        .join(&format!("/fhir/{}", raw.trim_start_matches('/')))
+        .map_err(|error| error.to_string())?;
+    if url.origin() != base.origin() || !url.path().starts_with("/fhir/") {
+        return Err("Headless REST cells cannot leave the FHIR API".into());
+    }
+    Ok(url)
+}
 
 // ─────────────────────────── templating ───────────────────────────
 
@@ -411,15 +429,12 @@ async fn run_cell(
                     .unwrap_or(""),
                 scope,
             );
-            let url = if raw_url.starts_with("http") {
-                raw_url
-            } else if raw_url.starts_with('/') {
-                format!("{base}/fhir{raw_url}")
-            } else {
-                format!("{base}/fhir/{raw_url}")
+            let url = match headless_rest_url(base, &raw_url) {
+                Ok(url) => url,
+                Err(error) => return err_out(error),
             };
             let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
-            let mut req = client.request(m, &url);
+            let mut req = client.request(m, url);
             if method != "GET"
                 && let Some(b) = cell.source.get("body").filter(|b| !b.is_null())
             {
@@ -488,6 +503,7 @@ fn scope_insert(scope: &mut Map<String, Value>, name: &str, o: &Output) {
 /// it with fresh outputs. Does not persist (the caller decides whether to save).
 pub async fn notebook_run(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<AuthContext>>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
@@ -499,12 +515,16 @@ pub async fn notebook_run(
         .ok_or_else(|| ApiError::not_found(format!("Notebook/{id} not found")))?;
     let doc: Value = serde_json::from_str(&stored.resource_json)
         .map_err(|e| ApiError::internal(e.to_string()))?;
+    crate::notebook_api::authorize_notebook_read(&state, &auth, &id, &doc).await?;
     let mut nb: Notebook =
         octofhir_notebook::parse(&doc).map_err(|e| ApiError::internal(e.to_string()))?;
 
     // self-call the local server; forward the caller's auth
     let base = format!("http://127.0.0.1:{}", state.config.server.port);
-    let mut cb = reqwest::Client::builder();
+    let mut cb = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(state.config.read_timeout());
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
         let mut h = reqwest::header::HeaderMap::new();
         if let Ok(hv) = reqwest::header::HeaderValue::from_bytes(auth.as_bytes()) {
@@ -540,4 +560,31 @@ pub async fn notebook_run(
 
     let out = serde_json::to_value(&nb).map_err(|e| ApiError::internal(e.to_string()))?;
     Ok(Json(out).into_response())
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[test]
+    fn headless_rest_cannot_leave_the_authenticated_fhir_origin() {
+        let base = "http://127.0.0.1:8888";
+        for path in [
+            "http://127.0.0.1:8080/",
+            "https://example.org/",
+            "//example.org/",
+            "/../admin/config",
+            "/%2e%2e/admin/config",
+            "\\example.org/",
+            "file:///tmp/test",
+        ] {
+            assert!(headless_rest_url(base, path).is_err(), "{path}");
+        }
+        assert_eq!(
+            headless_rest_url(base, "/Patient?_count=1")
+                .unwrap()
+                .as_str(),
+            "http://127.0.0.1:8888/fhir/Patient?_count=1"
+        );
+    }
 }

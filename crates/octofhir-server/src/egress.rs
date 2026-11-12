@@ -140,6 +140,12 @@ impl EgressPolicy {
     /// Rejects a URL whose host is a disallowed IP literal. Host names are checked when they
     /// are resolved (see [`Self::client_builder`]).
     pub fn check_url(&self, url: &Url) -> Result<(), String> {
+        if !matches!(url.scheme(), "http" | "https" | "ws" | "wss")
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err("Outbound URL must use HTTP(S)/WS(S) without user information".into());
+        }
         let ip = match url.host() {
             Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip),
             Some(url::Host::Ipv6(ip)) => IpAddr::V6(ip),
@@ -185,11 +191,16 @@ impl EgressPolicy {
 
     /// A client builder whose connections only reach addresses this policy allows.
     pub fn client_builder(self: &Arc<Self>) -> reqwest::ClientBuilder {
-        let builder = reqwest::Client::builder();
+        // Redirects can bypass the resolver with an IP literal, and proxies can
+        // resolve unchecked destinations themselves. Validate the initial URL
+        // with check_url before sending, too.
+        let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
         if self.allow_private {
             builder
         } else {
-            builder.dns_resolver(Arc::new(PolicyResolver(self.clone())))
+            builder
+                .no_proxy()
+                .dns_resolver(Arc::new(PolicyResolver(self.clone())))
         }
     }
 }
@@ -327,6 +338,18 @@ mod tests {
     fn rejects_malformed_networks() {
         assert!(EgressPolicy::new(false, &["10.0.0.0/40".to_string()]).is_err());
         assert!(EgressPolicy::new(false, &["10.0.0/8".to_string()]).is_err());
+    }
+
+    #[test]
+    fn rejects_url_credentials_and_non_http_transports() {
+        let strict = policy(false, &[]);
+        for url in [
+            "https://user:secret@example.org/",
+            "ftp://example.org/",
+            "file:///etc/passwd",
+        ] {
+            assert!(strict.check_url(&Url::parse(url).unwrap()).is_err());
+        }
     }
 
     #[tokio::test]

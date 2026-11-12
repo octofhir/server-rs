@@ -30,7 +30,8 @@ fn check_db_console_access(
         return Err(ApiError::forbidden("DB console is disabled"));
     }
 
-    if let Some(ref required_role) = config.required_role {
+    {
+        let required_role = config.required_role.as_deref().unwrap_or("admin");
         let has_role = auth_context
             .user
             .as_ref()

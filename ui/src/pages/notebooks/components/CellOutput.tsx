@@ -73,8 +73,17 @@ export function CellOutput({ output, scope }: { output: Output; scope: Scope }) 
       return <Chart option={(output.spec as Record<string, unknown>) ?? {}} height={320} />;
 
     case "html":
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized upstream
-      return <div dangerouslySetInnerHTML={{ __html: output.html }} />;
+      // Imported/cached outputs are untrusted. A unique-origin sandbox and CSP
+      // allow formatting without granting scripts or network access to the UI.
+      return (
+        <iframe
+          title="Notebook HTML output"
+          sandbox=""
+          referrerPolicy="no-referrer"
+          srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">${output.html}`}
+          style={{ width: "100%", height: 300, border: 0 }}
+        />
+      );
 
     case "error":
       return (

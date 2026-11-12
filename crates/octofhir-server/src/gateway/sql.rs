@@ -11,11 +11,9 @@ use axum::{
 };
 use serde_json::{Value, json};
 use sqlx_core::column::Column;
-use sqlx_core::query::query;
 use sqlx_core::row::Row;
-use sqlx_core::sql_str::AssertSqlSafe;
 use std::collections::HashMap;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument};
 
 use super::error::GatewayError;
 use super::types::CustomOperation;
@@ -61,10 +59,14 @@ pub async fn handle_sql(
     info!("Executing SQL query");
 
     // Execute the query and convert rows to JSON
-    let rows = query(AssertSqlSafe((sql_query).to_string()))
-        .fetch_all(state.db_pool.as_ref())
-        .await
-        .map_err(|e| GatewayError::SqlError(format!("Query execution failed: {}", e)))?;
+    let rows = crate::operations::sql::execute_sql(
+        state,
+        crate::config::SqlMode::Readonly,
+        sql_query,
+        &[],
+    )
+    .await
+    .map_err(|error| GatewayError::SqlError(error.to_string()))?;
 
     // Convert rows to JSON array
     let mut results = Vec::new();
@@ -110,27 +112,9 @@ pub async fn handle_sql(
 /// This is a basic security check that prevents modification queries.
 /// It checks for common DML/DDL keywords.
 fn is_read_only_query(query: &str) -> bool {
-    let query_upper = query.trim().to_uppercase();
-
-    // Query must start with SELECT
-    if !query_upper.starts_with("SELECT") {
-        return false;
-    }
-
-    // Check for disallowed keywords anywhere in the query
-    let disallowed = [
-        "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "REVOKE",
-        "EXEC", "EXECUTE", "CALL",
-    ];
-
-    for keyword in &disallowed {
-        if query_upper.contains(keyword) {
-            warn!(keyword = keyword, "Disallowed SQL keyword detected");
-            return false;
-        }
-    }
-
-    true
+    crate::config::SqlMode::Readonly
+        .is_query_allowed(query)
+        .is_ok()
 }
 
 /// Extracts parameters from the request.

@@ -1,0 +1,15 @@
+{
+  "name": "OctoFHIR",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "workspace",
+  "workspaceFolder": "/workspaces/server-rs",
+  "shutdownAction": "stopCompose",
+  "forwardPorts": [8888],
+  "portsAttributes": {
+    "8888": {
+      "label": "OctoFHIR",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/seed.sh"
+}

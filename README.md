@@ -76,6 +76,10 @@
 
 ## Quick start
 
+**In the browser.** [Open in GitHub Codespaces](https://codespaces.new/octofhir/server-rs): the
+published image, PostgreSQL and one synthetic US Core patient, on your own Codespaces quota. When
+it is ready, open port 8888, go to `/ui` and sign in as `admin` / `admin123`.
+
 **With Docker.** The server image is published to GitHub Container Registry:
 
 ```bash
@@ -97,7 +101,8 @@ Open the console at <http://localhost:8888/ui> and sign in as `admin` / `admin12
 
 ```bash
 curl -X POST http://localhost:8888/auth/token \
-  -d "grant_type=password&username=admin&password=admin123"
+  -d "grant_type=password&client_id=octofhir-ui&username=admin&password=admin123" \
+  --data-urlencode "scope=user/*.cruds system/*.cruds"
 ```
 
 Configuration lives in `octofhir.toml`; point `OCTOFHIR_CONFIG` at another file, or override any

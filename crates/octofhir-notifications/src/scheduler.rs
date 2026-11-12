@@ -73,6 +73,16 @@ where
         self
     }
 
+    /// Validate IP-literal webhook destinations as well as the client's DNS checks.
+    #[cfg(feature = "http")]
+    pub fn with_webhook_url_validator(
+        mut self,
+        validator: crate::adapters::webhook::WebhookUrlValidator,
+    ) -> Self {
+        self.webhook_adapter = self.webhook_adapter.with_url_validator(validator);
+        self
+    }
+
     /// How many notifications one poll takes.
     pub fn with_batch_size(mut self, batch_size: i32) -> Self {
         self.batch_size = batch_size.max(1);
