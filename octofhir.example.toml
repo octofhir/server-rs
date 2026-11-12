@@ -243,7 +243,7 @@ allow_writes = false
 # wado_url = "https://pacs.example.org/dicom-web"
 # bearer_token_env = "PACS_BEARER_TOKEN"
 # timeout_seconds = 30
-# max_metadata_bytes = 8388608
+# max_metadata_bytes = 67108864 # 64 MiB per PACS metadata response; maximum 64 MiB
 # max_instances = 10000
 # [dicom.connections.hospital.patient_identifier_systems]
 # HOSPITAL = "https://hospital.example.org/mrn"
@@ -254,8 +254,8 @@ allow_writes = false
 # max_stream_bytes = 8589934592
 # stream_seconds = 300
 # idle_seconds = 30
-# max_query_studies = 100
-# max_query_bytes = 33554432
+# max_query_studies = 100       # requires v0.0.6 or newer
+# max_query_bytes = 134217728   # 128 MiB query budget and encoded metadata response cap
 #
 # [dicom.connections.hospital.ups]
 # url = "https://pacs.example.org/ups"

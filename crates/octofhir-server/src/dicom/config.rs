@@ -72,7 +72,7 @@ fn default_timeout() -> u64 {
     30
 }
 fn default_bytes() -> usize {
-    8 * 1024 * 1024
+    64 * 1024 * 1024
 }
 fn default_instances() -> usize {
     10_000
@@ -238,6 +238,42 @@ mod tests {
             timeout_seconds: 30,
             max_metadata_bytes: default_bytes(),
             max_instances: default_instances(),
+        }
+    }
+
+    #[test]
+    fn metadata_defaults_and_overrides_fit_connection_and_gateway_budgets() {
+        let value = serde_json::json!({
+            "wado_url": "https://pacs.example/dicom-web",
+            "patient_identifier_systems": {"HOSPITAL": "urn:test:mrn"},
+            "gateway": {}
+        });
+        for (limit, accepted) in [
+            (None, true),
+            (Some(8 * 1024 * 1024), true),
+            (Some(64 * 1024 * 1024), true),
+            (Some(64 * 1024 * 1024 + 1), false),
+        ] {
+            let mut value = value.clone();
+            if let Some(limit) = limit {
+                value["max_metadata_bytes"] = limit.into();
+            }
+            let connection: DicomConnection = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                connection.max_metadata_bytes,
+                limit.unwrap_or(64 * 1024 * 1024)
+            );
+            let gateway = connection.gateway.as_ref().unwrap();
+            assert_eq!(gateway.max_query_studies, 100);
+            assert_eq!(gateway.max_query_bytes, 128 * 1024 * 1024);
+            let config = DicomConfig {
+                connections: BTreeMap::from([("pacs".into(), connection)]),
+                ..Default::default()
+            };
+            assert_eq!(
+                config.validate(&EgressPolicy::default(), "R4").is_ok(),
+                accepted
+            );
         }
     }
 

@@ -3,8 +3,7 @@ title: DICOM Conformance Statement
 description: OctoFHIR DICOMweb gateway and UPS Requestor/Watcher implementation profile.
 ---
 
-This statement describes the OctoFHIR v0.0.6 development implementation profile,
-pending release. OctoFHIR links
+This statement describes the OctoFHIR v0.0.6 implementation profile. OctoFHIR links
 clinical FHIR resources to a separately administered PACS. It stores FHIR metadata,
 attested instance membership and integration checkpoints. DICOM objects and image
 pixels remain in PACS. The optional gateway streams selected objects; it does not
@@ -129,6 +128,10 @@ URL describing pagination status. Empty JSON results are `[]` with status 200.
 Query candidates and transient metadata/projections are bounded by
 `max_query_studies` and `max_query_bytes`. Requests exceeding those budgets return
 413 and require a narrower selection. They do not silently return a partial search.
+The per-PACS metadata response limit defaults to 64 MiB; the query/projection
+budget and encoded metadata response cap default to 128 MiB. Gateway metadata
+byte/instance limit failures also return 413, rather than an upstream-unavailable
+500. These limits are independent of incoming HTTP request-body limits.
 Frame lists use positive, strictly increasing integers and at most 1000 entries.
 Generated collections allow at most 10000 MIME parts, 64 KiB part headers and the
 configured total stream-byte/time budget. A single-resource byte range is forwarded;

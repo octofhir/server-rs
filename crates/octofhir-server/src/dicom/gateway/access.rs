@@ -10,7 +10,7 @@ use super::{
     path::{Kind, Target},
 };
 use crate::{
-    dicom::{DicomConnection, attestation, client::DicomWebClient, mapping},
+    dicom::{DicomConnection, DicomError, attestation, client::DicomWebClient, mapping},
     operations::OperationContext,
     server::AppState,
 };
@@ -106,7 +106,7 @@ impl Manifest {
         } else {
             client.metadata(requested.clone()).await
         }
-        .map_err(|_| ApiError::internal("PACS metadata is unavailable"))?;
+        .map_err(|error| metadata_error(error, "PACS metadata is unavailable"))?;
         let selected: BTreeMap<_, _> = self
             .instances
             .iter()
@@ -160,13 +160,21 @@ pub(super) async fn fresh(
     let mut datasets = client
         .single_metadata(url.clone())
         .await
-        .map_err(|_| ApiError::internal("PACS instance metadata is unavailable"))?;
+        .map_err(|error| metadata_error(error, "PACS instance metadata is unavailable"))?;
     if datasets.len() != 1 {
         return Err(ApiError::conflict("PACS instance metadata is incomplete"));
     }
     let dataset = datasets.pop().expect("one dataset");
     verify(&dataset, instance, patient, config)?;
     Ok((dataset, url))
+}
+fn metadata_error(error: DicomError, unavailable: &str) -> ApiError {
+    match error {
+        DicomError::Limit => super::metadata_limit(
+            "PACS metadata exceeds max_metadata_bytes or max_instances for this DICOM connection",
+        ),
+        _ => ApiError::internal(unavailable),
+    }
 }
 fn verify(
     dataset: &Value,

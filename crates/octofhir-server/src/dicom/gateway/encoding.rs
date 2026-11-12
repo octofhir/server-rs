@@ -157,7 +157,7 @@ fn xml_text(value: &str) -> Result<String, ApiError> {
 }
 fn checked(out: &str, max: usize) -> Result<(), ApiError> {
     if out.len() > max {
-        Err(ApiError::bad_request(
+        Err(super::metadata_limit(
             "DICOM metadata response exceeds configured limit",
         ))
     } else {
@@ -256,7 +256,7 @@ pub(super) fn response(
     let (body, content_type) = if representation == JSON {
         let bytes = serde_json::to_vec(records).map_err(|_| invalid())?;
         if bytes.len() > max {
-            return Err(ApiError::bad_request(
+            return Err(super::metadata_limit(
                 "DICOM metadata response exceeds configured limit",
             ));
         }
@@ -291,6 +291,7 @@ pub(super) fn response(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
     #[test]
     fn native_model_preserves_sequences_names_and_escaped_bulk_references() {
         let data = json!({"00100010":{"vr":"PN","Value":[{"Alphabetic":"A&B^<Given>"}]},"00400275":{"vr":"SQ","Value":[{"00401001":{"vr":"SH","Value":["request"]}}]},"7FE00010":{"vr":"OW","BulkDataURI":"/bulk?a=1&b=2"}});
@@ -300,7 +301,12 @@ mod tests {
         assert!(xml.contains("<GivenName>&lt;Given&gt;</GivenName>"));
         assert!(xml.contains("<Item number=\"1\">"));
         assert!(xml.contains("uri=\"/bulk?a=1&amp;b=2\""));
-        assert!(dataset(&data, &mut String::new(), 0, 8).is_err());
+        assert_eq!(
+            dataset(&data, &mut String::new(), 0, 8)
+                .unwrap_err()
+                .status_code(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
         assert!(
             dataset(
                 &json!({"00081030":{"vr":"LO","Value":["\u{0000}"]}}),
@@ -310,6 +316,21 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn metadata_response_budgets_return_payload_too_large_for_json_and_xml() {
+        let records = [json!({"00081030":{"vr":"LO","Value":["description"]}})];
+        for accept in [JSON, XML] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(header::ACCEPT, accept.parse().unwrap());
+            let preferences = Preferences::new(&headers, &mut BTreeMap::new()).unwrap();
+            assert_eq!(
+                response(&records, &preferences, 8)
+                    .unwrap_err()
+                    .status_code(),
+                StatusCode::PAYLOAD_TOO_LARGE
+            );
+        }
     }
     #[tokio::test]
     async fn native_inline_bulk_honors_ranges_and_rejects_compressed_syntax() {

@@ -45,6 +45,12 @@ pub(crate) fn routes() -> Router<AppState> {
 fn missing() -> ApiError {
     ApiError::not_found("DICOM study is unavailable")
 }
+fn metadata_limit(message: &str) -> ApiError {
+    ApiError::issues(
+        axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+        octofhir_api::OperationOutcome::single("error", "too-costly", message).issue,
+    )
+}
 fn rendering(query: &BTreeMap<String, String>, suffix: &[String]) -> Result<(), ApiError> {
     if !query.is_empty() && !suffix.iter().any(|s| s == "rendered" || s == "thumbnail") {
         return Err(ApiError::bad_request(

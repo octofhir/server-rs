@@ -474,6 +474,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn large_study_metadata_uses_configurable_limits_with_or_without_content_length() {
+        use axum::{
+            Router, body::Body, http::header::CONTENT_TYPE, response::Response, routing::get,
+        };
+
+        let payload = serde_json::to_vec(&serde_json::json!([{
+            "00081030": {"vr": "LO", "Value": ["x".repeat(11 * 1024 * 1024)]}
+        }]))
+        .unwrap();
+        for chunked in [false, true] {
+            let payload = payload.clone();
+            let app = Router::new().route(
+                "/studies/1.2.3/metadata",
+                get(move || {
+                    let payload = payload.clone();
+                    async move {
+                        let body = if chunked {
+                            let chunks: Vec<_> = payload
+                                .chunks(64 * 1024)
+                                .map(|chunk| Ok::<_, std::io::Error>(chunk.to_vec()))
+                                .collect();
+                            Body::from_stream(futures_util::stream::iter(chunks))
+                        } else {
+                            Body::from(payload)
+                        };
+                        Response::builder()
+                            .header(CONTENT_TYPE, "application/dicom+json")
+                            .body(body)
+                            .unwrap()
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            for limit in [None, Some(8 * 1024 * 1024)] {
+                let mut value = serde_json::json!({
+                    "wado_url": format!("http://{address}"), "allow_http": true,
+                    "patient_identifier_systems": {"HOSPITAL": "urn:test:mrn"}
+                });
+                if let Some(limit) = limit {
+                    value["max_metadata_bytes"] = limit.into();
+                }
+                let config = serde_json::from_value(value).unwrap();
+                let client =
+                    DicomWebClient::new(&config, Arc::new(EgressPolicy::permissive())).unwrap();
+                let result = client.study_metadata("1.2.3").await;
+                if limit.is_none() {
+                    assert_eq!(result.unwrap().len(), 1);
+                } else {
+                    assert!(matches!(result, Err(DicomError::Limit)));
+                }
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
     async fn accepts_bare_dicom_json_only_for_single_resource_requests() {
         let dataset = serde_json::json!({"0020000D":{"vr":"UI","Value":["1.2.3"]}});
         let (server, client) = setup(

@@ -104,7 +104,7 @@ Concurrent imports of the same connection/study return a retryable conflict.
 wado_url = "https://pacs.example.org/dicom-web"
 bearer_token_env = "PACS_BEARER_TOKEN" # optional when the PACS needs no credential
 timeout_seconds = 30
-max_metadata_bytes = 8388608
+max_metadata_bytes = 67108864 # 64 MiB per PACS metadata response; maximum 64 MiB
 max_instances = 10000
 
 [dicom.connections.hospital.patient_identifier_systems]
@@ -121,6 +121,12 @@ default; `allow_http = true` explicitly allows HTTP for a trusted deployment.
 URLs cannot contain credentials, query strings or fragments. Redirects and
 environment HTTP proxies are disabled. Credentials never enter FHIR resources.
 Changing connections requires a server restart.
+
+`max_metadata_bytes` defaults to 64 MiB and can be lowered per connection. It
+bounds each PACS metadata response, including a whole study, with or without
+Content-Length. Large MR studies can exceed the former 8 MiB default. This limit
+is independent of `server.body_limit_bytes` and reverse-proxy request-body limits:
+those control incoming requests, rather than metadata retrieved from PACS.
 
 ## Import or refresh one study
 
@@ -289,7 +295,7 @@ require the configured service identity.
 
 ## Optional authorized DICOMweb gateway
 
-The expanded gateway surface below is in the v0.0.6 development branch, pending release.
+The expanded gateway surface below requires v0.0.6 or newer.
 
 Direct PACS access remains the default. To publish a gateway Endpoint for one
 connection, add the following table and re-import/reconcile its studies:
@@ -303,8 +309,15 @@ max_stream_bytes = 8589934592 # 8 GiB per response; enforced for chunked bodies 
 stream_seconds = 300         # total stream lifetime, up to 3600
 idle_seconds = 30            # maximum wait for the next PACS chunk
 max_query_studies = 100      # bounded candidate set for a QIDO request; up to 1000
-max_query_bytes = 33554432   # combined transient query metadata/projection budget
+max_query_bytes = 134217728  # 128 MiB transient query budget and metadata response cap
 ```
+
+`max_query_studies` and `max_query_bytes` require v0.0.6 or newer; v0.0.5
+rejects these configuration keys. The query budget accounts for metadata and
+projections across selected studies, so a broad query can require more than one
+study's PACS response limit. It also caps the encoded JSON/XML metadata response.
+Exceeding a gateway metadata byte, instance or query budget returns HTTP 413;
+refine the selection or adjust the corresponding connection/gateway setting.
 
 The Endpoint then points to `{server-base}/dicomweb/hospital`. Every gateway GET
 requires an authenticated FHIR identity and current, primary-backed read access

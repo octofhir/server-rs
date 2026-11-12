@@ -28,6 +28,7 @@ use testcontainers_modules::postgres::Postgres;
 struct Pacs {
     late: Arc<AtomicBool>,
     large: Arc<AtomicBool>,
+    large_metadata: Arc<AtomicBool>,
     closed: Arc<AtomicUsize>,
     object_calls: Arc<std::sync::Mutex<Vec<String>>>,
 }
@@ -142,6 +143,9 @@ async fn archive(
             rows.retain(|r| path.contains(r["00080018"]["Value"][0].as_str().unwrap()));
         } else if path.contains("/series/") {
             rows.retain(|r| path.contains(r["0020000E"]["Value"][0].as_str().unwrap()));
+        }
+        if pacs.large_metadata.load(Ordering::SeqCst) {
+            rows[0]["77771001"] = json!({"vr":"UT","Value":["x".repeat(32 * 1024)]});
         }
         return (
             [(header::CONTENT_TYPE, "application/dicom+json")],
@@ -280,6 +284,11 @@ async fn scenario(remote: bool) {
     if remote {
         cfg.dicom.connections.get_mut("pacs").unwrap().qido_url = Some(format!("{origin}/qido"));
     }
+    cfg.dicom
+        .connections
+        .get_mut("pacs")
+        .unwrap()
+        .max_metadata_bytes = 16 * 1024;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     cfg.server.base_url = Some(base.clone());
@@ -322,6 +331,30 @@ async fn scenario(remote: bool) {
     let gateway = format!("{base}/dicomweb/pacs");
     let study = format!("{gateway}/studies/1.2.3");
     let instance = format!("{study}/series/1.2.3.1/instances/1.2.3.1.1");
+    pacs.large_metadata.store(true, Ordering::SeqCst);
+    for url in [
+        format!("{study}/metadata"),
+        format!("{instance}/metadata"),
+        instance.clone(),
+    ] {
+        let response = client.get(&url).send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            413,
+            "{url}: {}",
+            response.text().await.unwrap()
+        );
+        let outcome: Value = response.json().await.unwrap();
+        assert_eq!(outcome["resourceType"], "OperationOutcome");
+        assert_eq!(outcome["issue"][0]["code"], "too-costly");
+        assert!(
+            outcome["issue"][0]["diagnostics"]
+                .as_str()
+                .unwrap()
+                .contains("max_metadata_bytes")
+        );
+    }
+    pacs.large_metadata.store(false, Ordering::SeqCst);
     if remote {
         for fields in [
             "InstitutionName&includefield=PrivateOriginAttribute",
