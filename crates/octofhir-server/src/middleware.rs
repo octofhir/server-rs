@@ -969,11 +969,7 @@ fn should_skip_authorization(req: &Request<Body>, registry: &OperationRegistrySe
     }
 
     // UI paths are always public (not in operation registry as they're static files)
-    if path.starts_with("/ui") {
-        return true;
-    }
-
-    false
+    path.starts_with("/ui")
 }
 
 // =============================================================================
