@@ -166,11 +166,7 @@ pub trait ResourceHook: Send + Sync {
 
         // Check event type filter
         let event_types = self.event_types();
-        if !event_types.is_empty() && !event_types.contains(&event.event_type) {
-            return false;
-        }
-
-        true
+        event_types.is_empty() || event_types.contains(&event.event_type)
     }
 }
 
