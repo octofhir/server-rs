@@ -60,6 +60,11 @@ macro_rules! embedded_migrations {
                 "storage_providers",
                 include_str!("../../migrations/20261108000004_storage_providers.sql"),
             ),
+            (
+                20261113000001i64,
+                "dicom_ups_poll_only",
+                include_str!("../../migrations/20261113000001_dicom_ups_poll_only.sql"),
+            ),
         ]
     };
 }

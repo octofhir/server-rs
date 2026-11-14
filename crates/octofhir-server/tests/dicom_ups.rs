@@ -45,6 +45,9 @@ struct Pacs {
     entered: Arc<Notify>,
     release: Arc<Notify>,
     pool: sqlx_postgres::PgPool,
+    ws: Arc<AtomicBool>,
+    allow_subscribe: Arc<AtomicBool>,
+    notification_attempts: Arc<AtomicUsize>,
 }
 fn attribute(vr: &str, value: &str) -> Value {
     json!({"vr":vr,"Value":[value]})
@@ -147,10 +150,15 @@ async fn subscribe(
 ) -> Response {
     assert_eq!(uid, "1.2.840.10008.5.1.4.34.5.1");
     assert_eq!(ae, "OCTOFHIR");
-    assert!(
-        state.connected.load(Ordering::SeqCst) > 0,
-        "Subscribe ran before Open Notification Connection"
-    );
+    if state.ws.load(Ordering::SeqCst) {
+        assert!(
+            state.connected.load(Ordering::SeqCst) > 0,
+            "Subscribe ran before Open Notification Connection"
+        );
+    }
+    if !state.allow_subscribe.load(Ordering::SeqCst) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     assert_eq!(params.get("deletionlock").map(String::as_str), Some("true"));
     let label = &params["ProcedureStepLabel"];
     assert!(label.starts_with("OFHIR ") && label.ends_with('*'));
@@ -190,6 +198,10 @@ async fn notifications(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     assert_eq!(ae, "OCTOFHIR");
+    state.notification_attempts.fetch_add(1, Ordering::SeqCst);
+    if !state.ws.load(Ordering::SeqCst) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     upgrade.on_upgrade(move|mut socket|async move{
   state.connected.fetch_add(1,Ordering::SeqCst);let _guard=Connection(state.connected.clone());let mut events=state.events.subscribe();
   loop{tokio::select!{event=events.recv()=>{let Ok(event)=event else{break;};if socket.send(Message::Text(event.to_string().into())).await.is_err(){break;}},message=socket.next()=>{match message{Some(Ok(Message::Ping(value)))=>{if socket.send(Message::Pong(value)).await.is_err(){break;}},Some(Ok(Message::Close(_)))|None|Some(Err(_))=>break,_=>{}}}}}
@@ -344,6 +356,9 @@ async fn scenario() {
         entered: Arc::default(),
         release: Arc::default(),
         pool: pool.clone(),
+        ws: Arc::new(AtomicBool::new(true)),
+        allow_subscribe: Arc::new(AtomicBool::new(true)),
+        notification_attempts: Arc::default(),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let pacs = format!("http://{}", listener.local_addr().unwrap());
@@ -519,6 +534,12 @@ async fn scenario() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(state.released.load(Ordering::SeqCst) > 0);
+    let poll_only = query("SELECT poll_only FROM dicom_ups_sources WHERE connection_name='pacs'")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get::<bool, _>("poll_only");
+    assert!(!poll_only, "WS path must not set poll_only");
     let version = completed["meta"]["versionId"].clone();
     command(&client, &base, &id, "refresh").await;
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -582,6 +603,241 @@ async fn scenario() {
     set_state(&state, &cancel_uid, "CANCELLED", false).await;
     wait_task(&client, &base, &cancel_later, "cancelled").await;
     assert_eq!(state.cancels.load(Ordering::SeqCst), 1);
+    server.abort();
+    pacs_task.abort();
+}
+#[test]
+fn ups_poll_only_fallback_creates_without_websocket() {
+    // The canonical manager is process-global and keeps its original database
+    // pool. A separate process lets this scenario bootstrap its own fresh DB.
+    if std::env::var_os("OCTOFHIR_UPS_FALLBACK_TEST_CHILD").is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ups_poll_only_fallback_creates_without_websocket",
+                "--nocapture",
+            ])
+            .env("OCTOFHIR_UPS_FALLBACK_TEST_CHILD", "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "UPS polling fallback scenario failed");
+        return;
+    }
+    std::thread::Builder::new()
+        .name("dicom-ups-fallback".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(Box::pin(scenario_fallback()))
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+async fn scenario_fallback() {
+    let pg = Postgres::default()
+        .with_tag("18-alpine")
+        .start()
+        .await
+        .unwrap();
+    let database = format!(
+        "postgres://postgres:postgres@127.0.0.1:{}/postgres",
+        pg.get_host_port_ipv4(5432).await.unwrap()
+    );
+    let pool = sqlx_postgres::PgPoolOptions::new()
+        .max_connections(3)
+        .connect(&database)
+        .await
+        .unwrap();
+    let (events, _) = broadcast::channel(32);
+    let state = Pacs {
+        work: Arc::default(),
+        events,
+        metadata: Arc::new(Mutex::new(vec![dataset(
+            "1.2.3",
+            "1.2.3.1",
+            "1.2.3.1.1",
+            CT,
+            "CT",
+        )])),
+        connected: Arc::default(),
+        creates: Arc::default(),
+        cancels: Arc::default(),
+        released: Arc::default(),
+        subscriptions: Arc::default(),
+        lose_create_response: Arc::new(AtomicBool::new(false)),
+        block_input: Arc::default(),
+        entered: Arc::default(),
+        release: Arc::default(),
+        pool: pool.clone(),
+        ws: Arc::new(AtomicBool::new(false)),
+        allow_subscribe: Arc::new(AtomicBool::new(false)),
+        notification_attempts: Arc::default(),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let pacs = format!("http://{}", listener.local_addr().unwrap());
+    let router = Router::new()
+        .route("/wado/studies/{uid}/metadata", get(metadata))
+        .route("/ups/subscribers/{ae}", get(notifications))
+        .route("/ups/workitems", post(create))
+        .route("/ups/workitems/{uid}", get(retrieve))
+        .route(
+            "/ups/workitems/{uid}/subscribers/{ae}",
+            post(subscribe).delete(unsubscribe),
+        )
+        .with_state(state.clone());
+    let pacs_task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let mut config = AppConfig::default();
+    config.fhir.version = "R4".into();
+    config.storage.postgres = Some(PostgresStorageConfig {
+        url: Some(database),
+        pool_size: 10,
+        ..Default::default()
+    });
+    config.packages.load = vec![octofhir_server::config::PackageSpec::Table {
+        id: Some("hl7.fhir.r4.core".into()),
+        version: Some("4.0.1".into()),
+        path: None,
+        url: Some("https://hl7.org/fhir/R4/hl7.fhir.r4.core.tgz".into()),
+    }];
+    config.auth.policy.anonymous_access = true;
+    config.server.outbound_allowlist = vec!["127.0.0.1/32".into()];
+    config.bootstrap.backend_client = Some(octofhir_server::config::BackendClientConfig {
+        client_id: "ups-service".into(),
+        client_secret: Some("isolated-ups-secret".into()),
+        scopes: vec!["system/*.cruds".into()],
+        name: None,
+        description: None,
+    });
+    config.dicom=serde_json::from_value(json!({"connections":{"pacs":{"wado_url":format!("{pacs}/wado"),"allow_http":true,"patient_identifier_systems":{"HOSPITAL":"urn:test:mrn"},"ups":{"url":format!("{pacs}/ups"),"client_id":"ups-service","scopes":["system/*.cruds"],"ae_title":"OCTOFHIR","poll_seconds":1,"retry_seconds":1,"coding_schemes":{"urn:test:procedure":"99TEST","http://unitsofmeasure.org":"UCUM"},"result_mappings":{SR:{"kind":"diagnostic_report","system":"urn:test:result","code":"IMAGING","display":"Imaging output","report_status":"unknown"},SEG:{"kind":"document_reference","system":"urn:test:result","code":"SEG","display":"Segmentation"}}}}}})).unwrap();
+    let (base, server) = serve(&config).await;
+    let http = reqwest::Client::new();
+    let client = authenticated(&http, &base).await;
+    let patient:Value=client.post(format!("{base}/fhir/Patient")).json(&json!({"resourceType":"Patient","identifier":[{"system":"urn:test:mrn","value":"MRN-1"}]})).send().await.unwrap().json().await.unwrap();
+    let patient_id = patient["id"].as_str().unwrap();
+    let imported:Value=client.post(format!("{base}/fhir/Patient/{patient_id}/$dicom-import")).json(&json!({"resourceType":"Parameters","parameter":[{"name":"connection","valueString":"pacs"},{"name":"study","valueString":"1.2.3"}]})).send().await.unwrap().json().await.unwrap();
+    let study = imported["parameter"][0]["valueReference"]["reference"]
+        .as_str()
+        .unwrap();
+    let id = create_task(&client, &base, patient_id, study).await;
+    let submitted = command(&client, &base, &id, "submit").await;
+    let uid = parameter(&submitted, "workitem")["valueUri"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    // A stale poll-only flag (e.g. after a restart) never bypasses the live
+    // readiness lease. Failed Subscribe must keep the creation queued.
+    query("UPDATE dicom_ups_sources SET poll_only=true,watch_ready_until=NULL WHERE connection_name='pacs'")
+        .execute(&pool).await.unwrap();
+    let mut gated = false;
+    for _ in 0..150 {
+        let row = query("SELECT last_error FROM dicom_ups_tasks WHERE task_id=$1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        if row.get::<Option<String>, _>("last_error").is_some() {
+            gated = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert!(
+        gated,
+        "Worker must try the queued creation and reject stale readiness"
+    );
+    assert_eq!(state.creates.load(Ordering::SeqCst), 0);
+    assert_eq!(state.subscriptions.load(Ordering::SeqCst), 0);
+    let attempts = state.notification_attempts.load(Ordering::SeqCst);
+    assert!(
+        attempts > 0,
+        "Watcher must have attempted the notification connection"
+    );
+    state.allow_subscribe.store(true, Ordering::SeqCst);
+    // Creation proceeds only once Subscribe succeeds and readiness is renewed.
+    let mut created = false;
+    for _ in 0..150 {
+        let row = query(
+            "SELECT t.created_confirmed FROM dicom_ups_sources s JOIN dicom_ups_tasks t ON t.connection_name=s.connection_name WHERE t.task_id=$1",
+        )
+        .bind(&id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        if row.is_some_and(|row| row.get::<bool, _>("created_confirmed")) {
+            created = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert!(
+        created,
+        "Fallback creation did not proceed without a WebSocket"
+    );
+    assert_eq!(state.creates.load(Ordering::SeqCst), 1);
+    let source = query("SELECT poll_only,watch_ready_until>clock_timestamp() AS ready FROM dicom_ups_sources WHERE connection_name='pacs'")
+        .fetch_one(&pool).await.unwrap();
+    assert!(source.get::<bool, _>("poll_only"));
+    assert!(source.get::<bool, _>("ready"));
+    assert_eq!(
+        state.subscriptions.load(Ordering::SeqCst),
+        1,
+        "Fallback must hold exactly one deletion lock, not pile up duplicates"
+    );
+    // The performer completes the workitem with no channel event; the per-task
+    // poll (RAD-83 retrieve) must converge the Task to completed by itself.
+    set_state(&state, &uid, "COMPLETED", true).await;
+    let completed = wait_task(&client, &base, &id, "completed").await;
+    assert_eq!(completed["output"].as_array().unwrap().len(), 2);
+    for _ in 0..100 {
+        if state.released.load(Ordering::SeqCst) > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        state.released.load(Ordering::SeqCst) > 0,
+        "Polling must release terminal deletion locks"
+    );
+    assert_eq!(
+        state.subscriptions.load(Ordering::SeqCst),
+        1,
+        "Retries must reuse the filtered subscription"
+    );
+    assert!(
+        state.notification_attempts.load(Ordering::SeqCst) > attempts + 1,
+        "Polling must keep retrying the notification channel"
+    );
+    // Restore notifications without restarting the server. Recovery renews the
+    // filtered subscription, clears degraded status and releases terminal locks
+    // again, since resubscription may have reacquired them.
+    let released = state.released.load(Ordering::SeqCst);
+    state.ws.store(true, Ordering::SeqCst);
+    let mut recovered = false;
+    for _ in 0..150 {
+        let row = query("SELECT poll_only,watch_ready_until>clock_timestamp() AS ready FROM dicom_ups_sources WHERE connection_name='pacs'")
+            .fetch_one(&pool).await.unwrap();
+        if !row.get::<bool, _>("poll_only")
+            && row.get::<Option<bool>, _>("ready") == Some(true)
+            && state.connected.load(Ordering::SeqCst) > 0
+            && state.released.load(Ordering::SeqCst) > released
+        {
+            recovered = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        recovered,
+        "Notifications and terminal releases must recover from polling"
+    );
+    assert_eq!(state.subscriptions.load(Ordering::SeqCst), 2);
     server.abort();
     pacs_task.abort();
 }

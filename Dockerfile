@@ -47,6 +47,7 @@ WORKDIR /work/server-rs
 # Copy Cargo files first for dependency caching
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
+COPY vendor/ ./vendor/
 
 # Copy internal IGs (required for include_str! in bootstrap.rs)
 COPY igs/ ./igs/

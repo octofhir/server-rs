@@ -149,10 +149,12 @@ async fn run(state: &AppState, work: &Work, body: &Value) -> Result<Value, Strin
             return Ok(json!({"task":work.task,"cancelledBeforeSubmission":true}));
         }
         if config.notifications {
+            // poll_only describes the transport. Creation still requires a live,
+            // fenced subscription lease, including after a process restart.
             let ready:bool=sqlx_core::query_scalar::query_scalar("SELECT COALESCE(watch_ready_until>clock_timestamp(),false) FROM dicom_ups_sources WHERE connection_name=$1").bind(&work.connection).fetch_one(state.db_pool.as_ref()).await.map_err(|_|"Cannot verify UPS deletion-lock readiness")?;
             if !ready {
                 return Err(
-                    "UPS notification subscription is not ready; creation remains queued".into(),
+                    "UPS deletion-lock subscription is not ready; creation remains queued".into(),
                 );
             }
         }

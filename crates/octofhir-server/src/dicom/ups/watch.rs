@@ -2,20 +2,21 @@
 //!
 //! # Contents
 //! Egress-checked WebSocket transport, one source leader, filtered subscriptions,
-//! bounded frames, heartbeat readiness and terminal subscription release.
+//! bounded frames, leased polling fallback and terminal subscription release.
 //!
 //! # Invariants
-//! Open the notification connection before subscribing. Only the persistent source
+//! Attempt the notification connection before subscribing. Only the persistent source
 //! label namespace is subscribed, never the entire archive. Event bodies never
 //! become clinical state or durable replay cursors. A fresh GET drives every write.
 //! Deletion locks are released only after the terminal FHIR checkpoint is applied.
+//! Poll-only status never bypasses the live subscription readiness lease.
 use super::{config::DicomUpsConfig, protocol::Client};
 use crate::{operations::OperationContext, server::AppState};
 use futures_util::{SinkExt, StreamExt};
 use sqlx_core::{query::query, query_scalar::query_scalar, row::Row};
 use std::{sync::Arc, time::Duration};
 use tokio_tungstenite::{
-    client_async_tls_with_config,
+    MaybeTlsStream, WebSocketStream, client_async_tls_with_config,
     tungstenite::{
         client::IntoClientRequest,
         protocol::{Message, WebSocketConfig},
@@ -59,7 +60,7 @@ async fn session(state: &AppState, name: &str, execution: uuid::Uuid) -> Result<
     if !held {
         return Ok(());
     }
-    query("UPDATE dicom_ups_sources SET watch_execution=$2,watch_ready_until=NULL WHERE connection_name=$1").bind(name).bind(execution).execute(&mut *lock).await.map_err(|_|"Cannot fence UPS watcher")?;
+    query("UPDATE dicom_ups_sources SET watch_execution=$2,watch_ready_until=NULL,poll_only=false WHERE connection_name=$1").bind(name).bind(execution).execute(&mut *lock).await.map_err(|_|"Cannot fence UPS watcher")?;
     let prefix: String =
         query_scalar("SELECT subscription_prefix FROM dicom_ups_sources WHERE connection_name=$1")
             .bind(name)
@@ -69,6 +70,113 @@ async fn session(state: &AppState, name: &str, execution: uuid::Uuid) -> Result<
     let policy = Arc::new(crate::egress::EgressPolicy::from_server_config(
         &state.config.server,
     )?);
+    let mut socket = connect(state, name, policy.clone()).await.ok();
+    // Never infer subscription durability from an open WebSocket. Establish the
+    // filtered deletion lock, then recover every known active item by fresh queries.
+    let client = Client::new(connection, policy.clone())?;
+    client.subscribe(&prefix).await?;
+    if socket.is_none() {
+        tracing::warn!(
+            connection = name,
+            "UPS notifications unavailable; using polling with a filtered deletion lock"
+        );
+    }
+    wake(state, name).await?;
+    heartbeat(state, name, execution, config, socket.is_none(), &mut lock).await?;
+    let mut timer = tokio::time::interval(Duration::from_secs(5));
+    let mut last_seen = tokio::time::Instant::now();
+    let mut last_wake = last_seen - Duration::from_secs(1);
+    // Keep renewing readiness and releasing completed locks while attempts to
+    // restore the notification channel run, including slow TCP/TLS handshakes.
+    let reconnect = async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(config.retry_seconds.max(1))).await;
+            if let Ok(socket) = connect(state, name, policy.clone()).await {
+                return socket;
+            }
+        }
+    };
+    tokio::pin!(reconnect);
+    loop {
+        tokio::select! {
+            _ = timer.tick() => {
+                if socket.is_some() && last_seen.elapsed() > Duration::from_secs(30) {
+                    return Err("UPS notification heartbeat expired".into());
+                }
+                heartbeat(state, name, execution, config, socket.is_none(), &mut lock).await?;
+                release_completed(state, name, &client, execution).await?;
+                if let Some(socket) = socket.as_mut() {
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        socket.send(Message::Ping(Vec::new().into())),
+                    )
+                        .await
+                        .map_err(|_| "UPS ping timed out")?
+                        .map_err(|_| "UPS ping failed")?;
+                }
+            }
+            restored = &mut reconnect, if socket.is_none() => {
+                // A new channel is not proof of subscription durability. Renew
+                // the filtered subscription and revisit terminal releases, since
+                // subscribing again may reacquire their deletion locks.
+                client.subscribe(&prefix).await?;
+                query(
+                    "UPDATE dicom_ups_tasks SET subscription_release_execution=NULL
+                     WHERE connection_name=$1 AND subscription_release_execution=$2
+                       AND EXISTS(SELECT 1 FROM dicom_ups_sources
+                                  WHERE connection_name=$1 AND watch_execution=$2)",
+                )
+                .bind(name)
+                .bind(execution)
+                .execute(state.db_pool.as_ref())
+                .await
+                .map_err(|_| "Cannot reset UPS subscription releases")?;
+                wake(state, name).await?;
+                socket = Some(restored);
+                last_seen = tokio::time::Instant::now();
+                heartbeat(state, name, execution, config, false, &mut lock).await?;
+            }
+            message = async {
+                socket.as_mut().expect("active notification channel").next().await
+            }, if socket.is_some() => {
+                let message = message.ok_or("UPS notification connection closed")?
+                    .map_err(|_| "UPS notification transport failed")?;
+                last_seen = tokio::time::Instant::now();
+                match message {
+                    Message::Text(text) => {
+                        let dataset: serde_json::Value = serde_json::from_str(&text)
+                            .map_err(|_| "Invalid UPS event JSON")?;
+                        if !(dataset.is_object() || dataset.as_array().is_some_and(|rows| {
+                            rows.len() == 1 && rows[0].is_object()
+                        })) {
+                            return Err("Invalid UPS event dataset".into());
+                        }
+                        if last_wake.elapsed() >= Duration::from_secs(1) {
+                            wake(state, name).await?;
+                            last_wake = tokio::time::Instant::now();
+                        }
+                    }
+                    Message::Ping(_) | Message::Pong(_) => {}
+                    Message::Close(_) => return Err("UPS notification connection closed".into()),
+                    _ => return Err("UPS event reports require text frames".into()),
+                }
+            }
+        }
+    }
+}
+
+type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn connect(
+    state: &AppState,
+    name: &str,
+    policy: Arc<crate::egress::EgressPolicy>,
+) -> Result<Socket, String> {
+    let connection = &state.config.dicom.connections[name];
+    let config = connection
+        .ups
+        .as_ref()
+        .ok_or("UPS notifications are disabled")?;
     let url = config.notification_url(connection)?;
     let mut transport = url.clone();
     let tls = transport.scheme() == "wss";
@@ -116,55 +224,30 @@ async fn session(state: &AppState, name: &str, execution: uuid::Uuid) -> Result<
         .max_frame_size(Some(64 * 1024))
         .write_buffer_size(16 * 1024)
         .max_write_buffer_size(64 * 1024);
-    let (mut socket, _) = tokio::time::timeout(
+    let (socket, _) = tokio::time::timeout(
         Duration::from_secs(connection.timeout_seconds),
         client_async_tls_with_config(request, socket, Some(limits), None),
     )
     .await
     .map_err(|_| "UPS notification handshake timed out")?
     .map_err(|_| "UPS notification handshake failed")?;
-    // Never infer subscription durability from an open WebSocket. Establish the
-    // filtered deletion lock, then recover every known active item by fresh queries.
-    let client = Client::new(connection, policy)?;
-    client.subscribe(&prefix).await?;
-    wake(state, name).await?;
-    heartbeat(state, name, execution, config).await?;
-    let mut timer = tokio::time::interval(Duration::from_secs(5));
-    let mut last_seen = tokio::time::Instant::now();
-    let mut last_wake = last_seen - Duration::from_secs(1);
-    loop {
-        tokio::select! {
-         _=timer.tick()=>{
-          if last_seen.elapsed()>Duration::from_secs(30){return Err("UPS notification heartbeat expired".into());}
-          heartbeat(state,name,execution,config).await?;
-          release_completed(state,name,&client,execution).await?;
-          tokio::time::timeout(Duration::from_secs(5),socket.send(Message::Ping(Vec::new().into()))).await.map_err(|_|"UPS ping timed out")?.map_err(|_|"UPS ping failed")?;
-         },
-         message=socket.next()=>{
-          let message=message.ok_or("UPS notification connection closed")?.map_err(|_|"UPS notification transport failed")?;last_seen=tokio::time::Instant::now();
-          match message {
-           Message::Text(text)=>{
-            let dataset:serde_json::Value=serde_json::from_str(&text).map_err(|_|"Invalid UPS event JSON")?;
-            if !(dataset.is_object()||dataset.as_array().is_some_and(|rows|rows.len()==1&&rows[0].is_object())){return Err("Invalid UPS event dataset".into());}
-            if last_wake.elapsed()>=Duration::from_secs(1){wake(state,name).await?;last_wake=tokio::time::Instant::now();}
-           },
-           Message::Ping(_)|Message::Pong(_)=>{},Message::Close(_)=>return Err("UPS notification connection closed".into()),
-           _=>return Err("UPS event reports require text frames".into()),
-          }
-         }
-        }
-    }
+    Ok(socket)
 }
+
 async fn heartbeat(
     state: &AppState,
     name: &str,
     execution: uuid::Uuid,
     config: &DicomUpsConfig,
+    poll_only: bool,
+    lock: &mut sqlx_postgres::PgConnection,
 ) -> Result<(), String> {
     OperationContext::for_service(state, &config.client_id, &config.scopes)
         .await
         .map_err(|_| "UPS service identity is unavailable")?;
-    let updated=query("UPDATE dicom_ups_sources SET watch_ready_until=clock_timestamp()+interval '15 seconds',watch_error=NULL,updated_at=clock_timestamp() WHERE connection_name=$1 AND watch_execution=$2").bind(name).bind(execution).execute(state.db_pool.as_ref()).await.map_err(|_|"Cannot renew UPS watcher")?;
+    // Renew through the connection that holds the advisory lock. A lost lock
+    // connection must stop this leader from advertising subscription readiness.
+    let updated=query("UPDATE dicom_ups_sources SET watch_ready_until=clock_timestamp()+interval '15 seconds',watch_error=CASE WHEN $3 THEN 'notification_connection_unavailable' ELSE NULL END,poll_only=$3,updated_at=clock_timestamp() WHERE connection_name=$1 AND watch_execution=$2").bind(name).bind(execution).bind(poll_only).execute(lock).await.map_err(|_|"Cannot renew UPS watcher")?;
     if updated.rows_affected() != 1 {
         return Err("UPS watcher lost its source fence".into());
     }
