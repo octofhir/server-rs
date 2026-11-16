@@ -107,9 +107,12 @@ impl Client {
             "subscribers",
             &self.config.ae_title,
         ])?;
+        // PS3.18 11.10.1.2 carries matching keys inside the filter parameter.
+        // A top-level ProcedureStepLabel parameter can be ignored by the Task
+        // Manager, broadening both notifications and deletion locks.
         url.query_pairs_mut()
             .append_pair("deletionlock", "true")
-            .append_pair("ProcedureStepLabel", &format!("{prefix}*"));
+            .append_pair("filter", &format!("00741204={prefix}*"));
         let (status, _) = self
             .inner
             .command(Method::POST, url, None)

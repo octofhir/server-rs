@@ -147,6 +147,7 @@ async fn subscribe(
     State(state): State<Pacs>,
     Path((uid, ae)): Path<(String, String)>,
     Query(params): Query<BTreeMap<String, String>>,
+    body: axum::body::Bytes,
 ) -> Response {
     assert_eq!(uid, "1.2.840.10008.5.1.4.34.5.1");
     assert_eq!(ae, "OCTOFHIR");
@@ -160,8 +161,19 @@ async fn subscribe(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     assert_eq!(params.get("deletionlock").map(String::as_str), Some("true"));
-    let label = &params["ProcedureStepLabel"];
-    assert!(label.starts_with("OFHIR ") && label.ends_with('*'));
+    assert!(body.is_empty(), "PS3.18 Subscribe has no request payload");
+    assert_eq!(
+        params.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["deletionlock", "filter"],
+        "Matching keys must be inside filter, not ignored top-level parameters"
+    );
+    let prefix: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT subscription_prefix FROM dicom_ups_sources WHERE connection_name='pacs'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(params["filter"], format!("00741204={prefix}*"));
     state.subscriptions.fetch_add(1, Ordering::SeqCst);
     StatusCode::CREATED.into_response()
 }

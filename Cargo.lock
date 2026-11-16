@@ -4379,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-auth"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "arc-swap",
  "argon2",
@@ -4423,7 +4423,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-auth-postgres"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "argon2",
  "async-trait",
@@ -4496,7 +4496,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cli"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "clap",
@@ -4513,7 +4513,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-config"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "aes-gcm 0.10.3",
  "aes-gcm 0.11.1",
@@ -4539,7 +4539,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-core"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4663,7 +4663,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-cql-service"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4705,7 +4705,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-db-postgres"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4812,7 +4812,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-graphql"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "async-graphql",
  "async-graphql-parser",
@@ -4851,7 +4851,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-notifications"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "async-trait",
  "hex",
@@ -4869,7 +4869,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-search"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4899,7 +4899,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-server"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -5046,7 +5046,7 @@ dependencies = [
 
 [[package]]
 name = "octofhir-storage"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "async-trait",
  "metrics",
