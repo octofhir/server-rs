@@ -446,6 +446,8 @@ scopes = ["system/Task.ru", "system/Patient.r", "system/ImagingStudy.cru", "syst
 ae_title = "OCTOFHIR"
 # bearer_token_env = "UPS_BEARER_TOKEN"
 notifications = true
+# Standard PS3.18 filter parameter. Use "legacy_query" for dcm4chee 5.35.2.
+subscription_filter_format = "standard"
 poll_seconds = 30
 retry_seconds = 5
 max_references = 10000
@@ -480,6 +482,15 @@ Allow one additional PostgreSQL connection per notification-enabled source for
 watch leadership, in addition to the import-lock capacity. Credentials, private
 network allowlists and HTTPS rules follow the connection rules above. UPS can
 have its own credential reference. A notification URL must share the UPS origin.
+
+Filtered subscriptions use `filter=00741204=<source-prefix>*` by default.
+Task Managers such as dcm4chee 5.35.2 instead require top-level matching keys;
+configure `subscription_filter_format = "legacy_query"` for those connections.
+OctoFHIR never switches formats automatically after a rejected subscription:
+an archive that ignores the other format could silently subscribe the AE to
+every workitem. The selected format also applies during polling fallback and
+WebSocket recovery. Clarus 0.3.1/0.3.2 accept the standard format, but their
+wildcard-prefix notifications remain unsupported; exact-label filters work.
 
 Create a Task with `status: draft` (or `requested`), `intent: order`, a local
 `for.reference: Patient/{id}`, and `focus.reference: ImagingStudy/{id}` imported
@@ -582,6 +593,7 @@ DICOM_TEST_PACS=http://127.0.0.1:8090/dcm4chee-arc/aets/DCM4CHEE/rs \
 DICOM_TEST_UPLOAD=http://127.0.0.1:8090/dcm4chee-arc/aets/DCM4CHEE/rs/studies \
 DICOM_TEST_UPS=http://127.0.0.1:8090/dcm4chee-arc/aets/WORKLIST/rs \
 DICOM_TEST_UPS_WS=ws://127.0.0.1:8090/dcm4chee-arc/aets/WORKLIST/ws/subscribers/OCTOFHIR \
+DICOM_TEST_UPS_FILTER_FORMAT=legacy_query \
 cargo test -p octofhir-server --test dicom_pacs -- --ignored
 
 # Clarus 0.3.0-beta retrieval (DICOMweb root /dicomweb):

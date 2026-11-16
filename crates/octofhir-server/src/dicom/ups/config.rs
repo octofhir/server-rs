@@ -17,6 +17,9 @@ pub struct DicomUpsConfig {
     pub bearer_token_env: Option<String>,
     #[serde(default = "enabled")]
     pub notifications: bool,
+    /// Explicit compatibility mode for Task Managers using top-level matching keys.
+    #[serde(default)]
+    pub subscription_filter_format: SubscriptionFilterFormat,
     /// Optional same-origin WebSocket endpoint, including the configured AE title.
     pub notification_url: Option<String>,
     #[serde(default = "poll")]
@@ -30,6 +33,13 @@ pub struct DicomUpsConfig {
     #[serde(default)]
     pub result_mappings: BTreeMap<String, ResultMapping>,
     pub output_stow_url: Option<String>,
+}
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionFilterFormat {
+    #[default]
+    Standard,
+    LegacyQuery,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

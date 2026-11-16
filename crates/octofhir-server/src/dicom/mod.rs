@@ -24,7 +24,7 @@ pub(crate) mod security;
 pub(crate) mod sync;
 pub(crate) mod ups;
 pub use sync::{DicomSyncConfig, DiscoveryMode};
-pub use ups::{DicomUpsConfig, ResultKind, ResultMapping};
+pub use ups::{DicomUpsConfig, ResultKind, ResultMapping, SubscriptionFilterFormat};
 
 pub use config::{DicomConfig, DicomConnection};
 

@@ -13,6 +13,7 @@ use axum::{
 };
 use futures_util::StreamExt;
 use octofhir_config::ConfigurationManager;
+use octofhir_server::dicom::SubscriptionFilterFormat;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::{Value, json};
 use sqlx_core::{query::query, row::Row};
@@ -48,6 +49,7 @@ struct Pacs {
     ws: Arc<AtomicBool>,
     allow_subscribe: Arc<AtomicBool>,
     notification_attempts: Arc<AtomicUsize>,
+    legacy_filter: bool,
 }
 fn attribute(vr: &str, value: &str) -> Value {
     json!({"vr":vr,"Value":[value]})
@@ -162,18 +164,27 @@ async fn subscribe(
     }
     assert_eq!(params.get("deletionlock").map(String::as_str), Some("true"));
     assert!(body.is_empty(), "PS3.18 Subscribe has no request payload");
-    assert_eq!(
-        params.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["deletionlock", "filter"],
-        "Matching keys must be inside filter, not ignored top-level parameters"
-    );
     let prefix: String = sqlx_core::query_scalar::query_scalar(
         "SELECT subscription_prefix FROM dicom_ups_sources WHERE connection_name='pacs'",
     )
     .fetch_one(&state.pool)
     .await
     .unwrap();
-    assert_eq!(params["filter"], format!("00741204={prefix}*"));
+    if state.legacy_filter {
+        assert_eq!(
+            params.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["ProcedureStepLabel", "deletionlock"],
+            "Legacy Task Managers require explicit top-level matching keys"
+        );
+        assert_eq!(params["ProcedureStepLabel"], format!("{prefix}*"));
+    } else {
+        assert_eq!(
+            params.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["deletionlock", "filter"],
+            "Matching keys must be inside filter, not ignored top-level parameters"
+        );
+        assert_eq!(params["filter"], format!("00741204={prefix}*"));
+    }
     state.subscriptions.fetch_add(1, Ordering::SeqCst);
     StatusCode::CREATED.into_response()
 }
@@ -371,6 +382,7 @@ async fn scenario() {
         ws: Arc::new(AtomicBool::new(true)),
         allow_subscribe: Arc::new(AtomicBool::new(true)),
         notification_attempts: Arc::default(),
+        legacy_filter: false,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let pacs = format!("http://{}", listener.local_addr().unwrap());
@@ -688,6 +700,7 @@ async fn scenario_fallback() {
         ws: Arc::new(AtomicBool::new(false)),
         allow_subscribe: Arc::new(AtomicBool::new(false)),
         notification_attempts: Arc::default(),
+        legacy_filter: true,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let pacs = format!("http://{}", listener.local_addr().unwrap());
@@ -725,6 +738,16 @@ async fn scenario_fallback() {
         description: None,
     });
     config.dicom=serde_json::from_value(json!({"connections":{"pacs":{"wado_url":format!("{pacs}/wado"),"allow_http":true,"patient_identifier_systems":{"HOSPITAL":"urn:test:mrn"},"ups":{"url":format!("{pacs}/ups"),"client_id":"ups-service","scopes":["system/*.cruds"],"ae_title":"OCTOFHIR","poll_seconds":1,"retry_seconds":1,"coding_schemes":{"urn:test:procedure":"99TEST","http://unitsofmeasure.org":"UCUM"},"result_mappings":{SR:{"kind":"diagnostic_report","system":"urn:test:result","code":"IMAGING","display":"Imaging output","report_status":"unknown"},SEG:{"kind":"document_reference","system":"urn:test:result","code":"SEG","display":"Segmentation"}}}}}})).unwrap();
+    // Legacy matching-key syntax must remain explicit through polling and reconnect.
+    config
+        .dicom
+        .connections
+        .get_mut("pacs")
+        .unwrap()
+        .ups
+        .as_mut()
+        .unwrap()
+        .subscription_filter_format = SubscriptionFilterFormat::LegacyQuery;
     let (base, server) = serve(&config).await;
     let http = reqwest::Client::new();
     let client = authenticated(&http, &base).await;

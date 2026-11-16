@@ -12,7 +12,7 @@ mod model;
 mod protocol;
 mod store;
 mod watch;
-pub use config::{DicomUpsConfig, ResultKind, ResultMapping};
+pub use config::{DicomUpsConfig, ResultKind, ResultMapping, SubscriptionFilterFormat};
 
 mod operation;
 mod publication;

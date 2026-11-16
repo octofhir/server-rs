@@ -381,10 +381,13 @@ async fn scenario() {
     if let Some(url) = &ups {
         assert_eq!(url::Url::parse(url).unwrap().host_str(), Some("127.0.0.1"));
         let notification = std::env::var("DICOM_TEST_UPS_WS").expect("DICOM_TEST_UPS_WS");
+        let filter_format =
+            std::env::var("DICOM_TEST_UPS_FILTER_FORMAT").unwrap_or_else(|_| "standard".into());
         let connection = cfg.dicom.connections.get_mut("pacs").unwrap();
         connection.ups = Some(serde_json::from_value(json!({
             "url":url,"notification_url":notification,"client_id":"pacs-test","scopes":["system/*.cruds"],
             "ae_title":"OCTOFHIR","poll_seconds":1,"retry_seconds":1,
+            "subscription_filter_format":filter_format,
             "coding_schemes":{"urn:test:procedure":"99OCTOFHIR","http://unitsofmeasure.org":"UCUM"},
             "result_mappings":{"1.2.840.10008.5.1.4.1.1.7":{"kind":"document_reference","system":"urn:test:result","code":"synthetic-output"}}
         })).unwrap());

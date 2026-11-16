@@ -4,7 +4,10 @@
 //! Stable workitem UIDs make ambiguous creation recoverable by GET. The server
 //! never takes a performer transaction UID or changes a workitem's state. Cancel
 //! is a request; only a fresh Task Manager state becomes a FHIR transition.
-use super::{config::DicomUpsConfig, model::Request};
+use super::{
+    config::{DicomUpsConfig, SubscriptionFilterFormat},
+    model::Request,
+};
 use crate::dicom::{DicomConnection, DicomError, client::DicomWebClient};
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -110,9 +113,18 @@ impl Client {
         // PS3.18 11.10.1.2 carries matching keys inside the filter parameter.
         // A top-level ProcedureStepLabel parameter can be ignored by the Task
         // Manager, broadening both notifications and deletion locks.
-        url.query_pairs_mut()
-            .append_pair("deletionlock", "true")
-            .append_pair("filter", &format!("00741204={prefix}*"));
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("deletionlock", "true");
+            match self.config.subscription_filter_format {
+                SubscriptionFilterFormat::Standard => {
+                    query.append_pair("filter", &format!("00741204={prefix}*"));
+                }
+                SubscriptionFilterFormat::LegacyQuery => {
+                    query.append_pair("ProcedureStepLabel", &format!("{prefix}*"));
+                }
+            }
+        }
         let (status, _) = self
             .inner
             .command(Method::POST, url, None)
