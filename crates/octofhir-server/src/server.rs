@@ -2678,7 +2678,7 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         // POST /fhir - transaction/batch
         .route(
             "/",
-            get(handlers::fhir_root).post(handlers::transaction_handler),
+            get(handlers::fhir_root).post(handlers::transaction_http_handler),
         )
         // Gateway fallback - only called when no explicit route matches.
         // This allows users to define custom operations on any path.

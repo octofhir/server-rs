@@ -9,7 +9,7 @@ use axum::http::Request;
 use axum::response::Response;
 use axum::{
     Extension, Json,
-    extract::{Path, Query, RawQuery, State},
+    extract::{FromRequest, Path, Query, RawQuery, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
@@ -115,7 +115,7 @@ fn validate_bundle_entry_identity(entry: &Value) -> Result<(), ApiError> {
 
 async fn validate_bundle_writes(
     state: &crate::server::AppState,
-    resources: &[&Value],
+    resources: &[Arc<Value>],
     candidates: Arc<HashMap<String, Arc<Value>>>,
 ) -> Result<LocalReferenceSet, ApiError> {
     let resolver = Arc::new(
@@ -134,12 +134,7 @@ async fn validate_bundle_writes(
         );
         let outcome = state
             .validation_service
-            .validate_profiles_with_resolver(
-                resource,
-                &profiles,
-                Some(&local.aliases),
-                resolver.clone(),
-            )
+            .validate_shared_with_resolver(resource, profiles, &local.aliases, resolver.clone())
             .await;
         if !outcome.valid {
             return Err(validation_error(outcome));
@@ -5055,7 +5050,47 @@ async fn execute_bundle_search(
     bundle_search_response(state, prepared, result)
 }
 
-/// POST / - Process transaction or batch bundle
+pub(crate) struct BundleJson(Value);
+
+impl<S: Send + Sync> FromRequest<S> for BundleJson {
+    type Rejection = JsonRejection;
+
+    async fn from_request(request: Request<Body>, state: &S) -> Result<Self, Self::Rejection> {
+        let common_content_type =
+            request
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .is_some_and(|value| {
+                    matches!(
+                        value.as_bytes(),
+                        b"application/json" | b"application/fhir+json"
+                    )
+                });
+        if !common_content_type {
+            return Json::<Value>::from_request(request, state)
+                .await
+                .map(|Json(value)| Self(value));
+        }
+
+        let bytes = Bytes::from_request(request, state).await?;
+        // Value deserialization needs path tracking only to report an error.
+        match serde_json::from_slice(&bytes) {
+            Ok(value) => Ok(Self(value)),
+            Err(_) => Json::<Value>::from_bytes(&bytes).map(|Json(value)| Self(value)),
+        }
+    }
+}
+
+pub(crate) async fn transaction_http_handler(
+    state: State<crate::server::AppState>,
+    auth: Extension<Arc<octofhir_auth::middleware::AuthContext>>,
+    headers: HeaderMap,
+    BundleJson(bundle): BundleJson,
+) -> Result<impl IntoResponse, ApiError> {
+    transaction_handler(state, auth, headers, Json(bundle)).await
+}
+
+/// Process a decoded transaction or batch Bundle.
 #[tracing::instrument(name = "fhir.bundle", skip_all)]
 pub async fn transaction_handler(
     State(state): State<crate::server::AppState>,
@@ -5906,40 +5941,16 @@ async fn process_transaction(
         }
     }
 
-    let mut candidates = HashMap::new();
-    for (index, entry) in &resolved_entries {
-        let resource = if let Some(matched) = matched_conditional.get(index) {
-            Some(&matched.resource)
-        } else if let Some((patched, _)) = prepared_patches.get(index) {
-            Some(patched)
-        } else if entry["request"]["method"].as_str().is_some_and(|method| {
-            method.eq_ignore_ascii_case("POST") || method.eq_ignore_ascii_case("PUT")
-        }) {
-            entry.get("resource")
-        } else {
-            None
-        };
-        if let Some(resource) = resource {
-            let resource_type = resource["resourceType"].as_str().unwrap_or_default();
-            let id = resource["id"].as_str().unwrap_or_default();
-            let snapshot = Arc::new(resource.clone());
-            if let Some(version) = resource["meta"]["versionId"].as_str() {
-                candidates.insert(
-                    format!("{resource_type}/{id}/_history/{version}"),
-                    snapshot.clone(),
-                );
-            }
-            candidates.insert(format!("{resource_type}/{id}"), snapshot);
-        }
-    }
-    let candidates = Arc::new(candidates);
-    let mut validation_resources = Vec::new();
-    if !skip_validation {
+    let reference_checks = if skip_validation {
+        LocalReferenceSet::default()
+    } else {
+        let mut candidates = HashMap::new();
+        let mut validation_resources = Vec::new();
         for (index, entry) in &resolved_entries {
-            if matched_conditional.contains_key(index) {
-                continue;
-            }
-            let resource = if let Some((patched, _)) = prepared_patches.get(index) {
+            let matched = matched_conditional.get(index);
+            let resource = if let Some(matched) = matched {
+                Some(&matched.resource)
+            } else if let Some((patched, _)) = prepared_patches.get(index) {
                 Some(patched)
             } else if entry["request"]["method"].as_str().is_some_and(|method| {
                 method.eq_ignore_ascii_case("POST") || method.eq_ignore_ascii_case("PUT")
@@ -5949,15 +5960,23 @@ async fn process_transaction(
                 None
             };
             if let Some(resource) = resource {
-                validation_resources.push(resource);
+                let resource_type = resource["resourceType"].as_str().unwrap_or_default();
+                let id = resource["id"].as_str().unwrap_or_default();
+                let snapshot = Arc::new(resource.clone());
+                // The validator and the reference resolver share the same post-write snapshot.
+                if matched.is_none() {
+                    validation_resources.push(snapshot.clone());
+                }
+                if let Some(version) = resource["meta"]["versionId"].as_str() {
+                    candidates.insert(
+                        format!("{resource_type}/{id}/_history/{version}"),
+                        snapshot.clone(),
+                    );
+                }
+                candidates.insert(format!("{resource_type}/{id}"), snapshot);
             }
         }
-    }
-
-    let reference_checks = if skip_validation {
-        LocalReferenceSet::default()
-    } else {
-        validate_bundle_writes(state, &validation_resources, candidates).await?
+        validate_bundle_writes(state, &validation_resources, Arc::new(candidates)).await?
     };
 
     // Phase 3: Execute all entries in one database transaction.

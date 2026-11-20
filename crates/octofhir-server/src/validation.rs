@@ -328,8 +328,13 @@ impl ValidationService {
             }
         };
 
-        self.run_validation(resource, Self::schemas_for(resource, resource_type), None)
-            .await
+        self.run_validation(
+            resource,
+            None,
+            Self::schemas_for(resource, resource_type),
+            None,
+        )
+        .await
     }
 
     /// Validate a resource, treating `known_refs` (`Type/id` strings) as existing.
@@ -351,6 +356,7 @@ impl ValidationService {
 
         self.run_validation(
             resource,
+            None,
             Self::schemas_for(resource, resource_type),
             Some(known_refs),
         )
@@ -360,6 +366,7 @@ impl ValidationService {
     async fn run_validation(
         &self,
         resource: &JsonValue,
+        shared_resource: Option<&Arc<JsonValue>>,
         schemas: Vec<String>,
         known_refs: Option<&std::collections::HashSet<String>>,
     ) -> ValidationOutcome {
@@ -387,10 +394,18 @@ impl ValidationService {
                 });
             }
         }
-        let result = self
-            .validator
-            .validate_with_known_references(resource, available, known_refs)
-            .await;
+        let result = match shared_resource {
+            Some(resource) => {
+                self.validator
+                    .validate_shared_with_known_references(resource, available, known_refs)
+                    .await
+            }
+            None => {
+                self.validator
+                    .validate_with_known_references(resource, available, known_refs)
+                    .await
+            }
+        };
         let mut outcome = Self::convert_result(result);
         outcome.issues.extend(unavailable);
         let constraints = resource_constraints(resource);
@@ -501,7 +516,7 @@ impl ValidationService {
         resource: &JsonValue,
         profile_urls: &[String],
     ) -> ValidationOutcome {
-        self.run_validation(resource, profile_urls.to_vec(), None)
+        self.run_validation(resource, None, profile_urls.to_vec(), None)
             .await
     }
 
@@ -515,7 +530,22 @@ impl ValidationService {
         INVOCATION_RESOLVER
             .scope(
                 resolver,
-                self.run_validation(resource, profiles.to_vec(), known_refs),
+                self.run_validation(resource, None, profiles.to_vec(), known_refs),
+            )
+            .await
+    }
+
+    pub(crate) async fn validate_shared_with_resolver(
+        &self,
+        resource: &Arc<JsonValue>,
+        profiles: Vec<String>,
+        known_refs: &std::collections::HashSet<String>,
+        resolver: Arc<dyn ReferenceResolver>,
+    ) -> ValidationOutcome {
+        INVOCATION_RESOLVER
+            .scope(
+                resolver,
+                self.run_validation(resource, Some(resource), profiles, Some(known_refs)),
             )
             .await
     }
