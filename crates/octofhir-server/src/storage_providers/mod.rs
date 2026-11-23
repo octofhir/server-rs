@@ -9,5 +9,6 @@
 //! or audit history. Provider schema is available before canonical packages load.
 pub mod api;
 pub(crate) mod model;
+pub(crate) mod signing;
 pub(crate) mod store;
 pub use model::{AddressingStyle, ProviderCredentials, ProviderMeta, StorageProvider};

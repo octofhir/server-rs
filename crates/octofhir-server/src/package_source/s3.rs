@@ -11,11 +11,11 @@
 //! local package path performs extraction, manifest/release checks and installation.
 
 mod config;
-mod signing;
 #[cfg(test)]
 mod tests;
 
 use crate::egress::EgressPolicy;
+use crate::storage_providers::signing;
 use aws_credential_types::Credentials;
 pub use config::S3PackageSource;
 use sha2::{Digest, Sha256};
@@ -136,7 +136,12 @@ async fn fetch(
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .build()
         .map_err(|_| "Cannot build S3 package request")?;
-    signing::sign(&mut request, credentials, &provider.region)?;
+    signing::sign(
+        &mut request,
+        credentials,
+        &provider.region,
+        aws_sigv4::http_request::SignableBody::Bytes(&[]),
+    )?;
     let mut response = client
         .execute(request)
         .await

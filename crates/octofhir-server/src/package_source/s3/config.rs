@@ -43,17 +43,7 @@ impl Default for S3PackageSource {
 impl S3PackageSource {
     pub fn validate(&self) -> Result<(), String> {
         crate::storage_providers::model::validate_id(&self.provider)?;
-        if !(3..=63).contains(&self.bucket.len())
-            || !self
-                .bucket
-                .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b".-".contains(&c))
-            || !self.bucket.as_bytes()[0].is_ascii_alphanumeric()
-            || !self.bucket.as_bytes()[self.bucket.len() - 1].is_ascii_alphanumeric()
-            || self.bucket.contains("..")
-        {
-            return Err("S3 package bucket must be a valid bucket name".into());
-        }
+        crate::storage_providers::model::validate_bucket(&self.bucket)?;
         if self.key.is_empty()
             || self.key.len() > 1024
             || self.key.chars().any(char::is_control)

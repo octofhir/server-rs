@@ -10,7 +10,7 @@ use axum::response::Response;
 use axum::{
     Extension, Json,
     extract::{FromRequest, Path, Query, RawQuery, State, rejection::JsonRejection},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, Method, StatusCode, header},
     response::IntoResponse,
 };
 use include_dir::{Dir, include_dir};
@@ -8959,6 +8959,11 @@ pub async fn async_job_cancel(
             _ => ApiError::Internal(format!("Failed to cancel job: {}", e)),
         })?;
 
+    if job.request_type == "bulk_export"
+        && let Err(error) = delete_bulk_export_objects(&state, &job).await
+    {
+        tracing::warn!(%job_id, %error, "Cannot delete bulk export S3 objects");
+    }
     if matches!(
         job.request_type.as_str(),
         "bulk_export" | "viewdefinition_export" | crate::operations::sof::SQL_EXPORT_JOB
@@ -8981,6 +8986,20 @@ pub async fn async_job_cancel(
             StatusCode::NO_CONTENT
         },
     )
+}
+
+async fn delete_bulk_export_objects(
+    state: &crate::server::AppState,
+    job: &crate::async_jobs::AsyncJob,
+) -> Result<(), String> {
+    use crate::operations::bulk::s3::{ExportBucket, job_destination};
+    if let Some(destination) = job_destination(job.request_body.as_ref())? {
+        ExportBucket::open(state, destination)
+            .await?
+            .delete_job(job.id)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Helper: Create 202 Accepted response for async job submission
@@ -9018,10 +9037,10 @@ pub fn create_async_accepted_response(
 pub async fn bulk_export_file(
     State(state): State<crate::server::AppState>,
     Path((job_id, filename)): Path<(String, String)>,
+    method: Method,
     context: crate::operations::OperationContext,
 ) -> Result<impl IntoResponse, ApiError> {
-    use std::path::PathBuf;
-    use tokio::fs;
+    use crate::operations::bulk::s3::{ExportBucket, job_destination};
 
     // Validate job_id is a valid UUID to prevent path traversal
     let uuid = uuid::Uuid::parse_str(&job_id)
@@ -9073,26 +9092,57 @@ pub async fn bulk_export_file(
         return Err(ApiError::not_found("Export file is unavailable"));
     }
 
-    // Construct the file path
-    let export_path = &state.config.bulk_export.export_path;
-    let file_path = PathBuf::from(export_path).join(&job_id).join(&filename);
-
-    // Check if file exists and is within the export directory
-    if !file_path.exists() {
-        return Err(ApiError::NotFound(format!(
-            "Export file not found: {}",
-            filename
-        )));
-    }
-
-    // Files can be far larger than memory should hold.
-    let file = fs::File::open(&file_path)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to read export file: {}", e)))?;
-    let contents = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
+    let destination = if job.request_type == "bulk_export" {
+        job_destination(job.request_body.as_ref()).map_err(ApiError::Internal)?
+    } else {
+        None
+    };
+    // Stream files of any size once the caller and manifest entry are verified.
+    let head = method == Method::HEAD;
+    let (size, contents) = if let Some(destination) = destination {
+        let object = ExportBucket::open(&state, destination)
+            .await
+            .map_err(ApiError::Internal)?
+            .get(uuid, &filename, method)
+            .await
+            .map_err(ApiError::Internal)?
+            .ok_or_else(|| ApiError::not_found("Export file is unavailable"))?;
+        let size = object.headers().get(header::CONTENT_LENGTH).cloned();
+        let body = if head {
+            Body::empty()
+        } else {
+            Body::from_stream(object.bytes_stream())
+        };
+        (size, body)
+    } else {
+        let file_path = std::path::Path::new(bulk_path)
+            .join(&job_id)
+            .join(&filename);
+        let file = tokio::fs::File::open(&file_path).await.map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ApiError::not_found("Export file is unavailable")
+            } else {
+                ApiError::Internal(format!("Failed to read export file: {error}"))
+            }
+        })?;
+        let size = file
+            .metadata()
+            .await
+            .ok()
+            .map(|metadata| header::HeaderValue::from(metadata.len()));
+        let body = if head {
+            Body::empty()
+        } else {
+            Body::from_stream(tokio_util::io::ReaderStream::new(file))
+        };
+        (size, body)
+    };
 
     // Build response with NDJSON content type
     let mut headers = HeaderMap::new();
+    if let Some(size) = size {
+        headers.insert(header::CONTENT_LENGTH, size);
+    }
     headers.insert(
         header::CONTENT_TYPE,
         header::HeaderValue::from_static(if sql_export {

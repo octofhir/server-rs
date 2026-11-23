@@ -98,7 +98,7 @@ mime_guess = "2.0"
 mime = "0.3"
 multer = "3.1"
 async-stream = "0.3"
-quick-xml = "0.42"
+quick-xml = { version = "0.42", features = ["serialize"] }
 
 # HTTP date parsing/formatting
 httpdate = "1.0"
@@ -107,7 +107,7 @@ httpdate = "1.0"
 urlencoding = "2.1"
 
 # HTTP client
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
 
 # Email (SMTP)
 lettre = { version = "0.11", features = ["tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }

@@ -1,6 +1,6 @@
 ---
 title: Storage Providers
-description: Reusable database-backed S3 connections for private IG packages.
+description: Reusable database-backed S3 connections for private IG packages and Bulk Data exports.
 ---
 
 A `StorageProvider` is an administrative resource describing an S3 connection.
@@ -104,6 +104,13 @@ To retain existing stored credentials, send only `{"type":"stored"}`. To rotate,
 send both access key and secret key together, with a new optional session token.
 Rotation without a session token removes the previous token. Switching to environment
 credentials removes the stored key material.
+
+## Allow buckets for Bulk Data export
+
+Set the provider's `exportBuckets` field to an array of private bucket names.
+New providers start with an empty list. Add or remove names through the console
+or the administrative API. See [Bulk Data export](/server-rs/bulk-export/#store-output-in-a-private-s3-bucket)
+for destination selection and bucket permissions.
 
 ## Reference a provider from packages
 

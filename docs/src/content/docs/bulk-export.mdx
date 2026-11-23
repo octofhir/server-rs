@@ -37,6 +37,47 @@ STU 4, but it works with either setting, and its status manifest always has the 
 
 ## Export
 
+### Store output in a private S3 bucket
+
+The default file store is the local directory configured as `bulk_export.export_path`.
+To store system, Patient and Group exports in S3, select a bucket and a database-backed
+[StorageProvider](/server-rs/storage-providers/) in the server configuration:
+
+```toml
+[bulk_export.s3]
+provider = "fhir-exports"
+bucket = "clinical-exports"
+```
+
+The provider holds the endpoint, region, addressing style and credential references.
+Set its `exportBuckets` array in the storage provider editor or `/admin/StorageProvider`
+to the private buckets that can receive exports. Existing exports keep the destination
+selected at kick-off.
+
+To select an allowed destination for one export, provide both `_storageProvider` and
+`_storageBucket`. They override the optional default above. With neither a request
+destination nor a default, output goes to the local directory. The existing FHIR
+export permissions still apply.
+
+```http
+GET /fhir/$export?_storageProvider=fhir-exports&_storageBucket=clinical-exports
+Prefer: respond-async
+```
+
+For POST, send the same two names as `valueString` entries in FHIR `Parameters`.
+Changes to the provider's allowed buckets apply to new exports without a restart.
+Create a private bucket and grant the provider `PutObject`, `GetObject`, `DeleteObject`
+and `ListBucket` for the `bulk-export/` prefix. For RustFS use a path-style provider
+with the RustFS endpoint. For an internal HTTP endpoint, set `allowHttp` on that provider
+and allow its hostname in `server.outbound_allowlist`.
+
+Finished files are uploaded before they appear in the manifest. The manifest still
+uses OctoFHIR URLs. OctoFHIR authorizes downloads and streams the objects from the
+bucket. Keep the configured local directory writable for temporary NDJSON files and
+partial manifest pages. Configure a bucket expiration policy for `bulk-export/` to
+match the export retention period and remove objects left by interrupted jobs. A
+DELETE on the status URL also attempts to remove the job’s objects.
+
 ### Kick-off
 
 Export is available at three levels:

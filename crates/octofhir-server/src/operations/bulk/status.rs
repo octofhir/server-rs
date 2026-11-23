@@ -111,6 +111,10 @@ pub struct BulkExportParams {
     #[serde(rename = "allowPartialManifests", default)]
     pub allow_partial_manifests: bool,
 
+    /// Selected at kick-off and stored with the job's server configuration.
+    #[serde(skip)]
+    pub s3_destination: Option<crate::config::BulkExportS3Config>,
+
     /// Input ignored under `Prefer: handling=lenient`, reported in the manifest
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignored: Vec<String>,
@@ -140,6 +144,7 @@ impl Default for BulkExportParams {
             associated_data: None,
             organize_output_by: None,
             allow_partial_manifests: false,
+            s3_destination: None,
             ignored: Vec::new(),
         }
     }

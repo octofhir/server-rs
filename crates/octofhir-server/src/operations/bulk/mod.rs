@@ -45,6 +45,7 @@ use uuid::Uuid;
 mod export;
 mod import;
 pub(crate) mod manifest;
+pub(crate) mod s3;
 mod status;
 pub(crate) mod submit;
 mod writer;

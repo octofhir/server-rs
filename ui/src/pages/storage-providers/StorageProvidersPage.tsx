@@ -17,7 +17,7 @@ export function StorageProvidersPage() {
     mutationFn: (provider: StorageProvider) => serverApi.deleteStorageProvider(provider),
     onSuccess: () => { setDeleting(null); void cache.invalidateQueries({ queryKey }); },
   });
-  return <WorkspacePageLayout title="Storage providers" description="Reusable S3 connections for private implementation guide packages" actions={<div className={classes.actions}><Button variant="outline" onClick={() => providers.refetch()}>Refresh</Button><Button onClick={() => setEditing("new")}><Plus size={16} /> Add provider</Button></div>}>
+  return <WorkspacePageLayout title="Storage providers" description="Reusable S3 connections for private implementation guide packages and Bulk Data exports" actions={<div className={classes.actions}><Button variant="outline" onClick={() => providers.refetch()}>Refresh</Button><Button onClick={() => setEditing("new")}><Plus size={16} /> Add provider</Button></div>}>
     <Card className={classes.card}>
       {providers.isPending ? <Text>Loading storage providers…</Text> : providers.isError ?
         <EmptyState title="Cannot load storage providers" description={providers.error.message} actions={[<Button key="retry" onClick={() => providers.refetch()}>Retry</Button>]} /> :
@@ -49,6 +49,7 @@ function ProviderEditor({ provider, onClose }: { provider: StorageProvider | nul
   const [addressing, setAddressing] = useState<StorageProvider["addressingStyle"]>(provider?.addressingStyle || "path");
   const [enabled, setEnabled] = useState(provider?.enabled ?? true);
   const [allowHttp, setAllowHttp] = useState(provider?.allowHttp ?? false);
+  const [exportBuckets, setExportBuckets] = useState(provider?.exportBuckets?.join(", ") || "");
   const [credentialType, setCredentialType] = useState(provider?.credentials.type || "environment");
   const env = provider?.credentials.type === "environment" ? provider.credentials : null;
   const [accessEnv, setAccessEnv] = useState(env?.accessKeyIdEnv || "AWS_ACCESS_KEY_ID");
@@ -67,6 +68,7 @@ function ProviderEditor({ provider, onClose }: { provider: StorageProvider | nul
     if (!/^[A-Za-z0-9_.-]{1,64}$/.test(id)) { setValidation("Provider ID must contain 1–64 letters, digits, dots, underscores or hyphens."); return; }
     if (credentialType === "stored" && ((!!accessKey !== !!secretKey) || (!!token && !accessKey) || (!accessKey && provider?.credentials.type !== "stored"))) { setValidation("Provide both access key ID and secret key when creating or rotating stored credentials."); return; }
     save.mutate({ resourceType: "StorageProvider", id, name: name || null, enabled, type: "s3", endpoint: endpoint || null, region, addressingStyle: addressing, allowHttp,
+      exportBuckets: [...new Set(exportBuckets.split(",").map(bucket => bucket.trim()).filter(Boolean))],
       credentials: credentialType === "environment" ? { type: "environment", accessKeyIdEnv: accessEnv, secretAccessKeyEnv: secretEnv, sessionTokenEnv: tokenEnv || null } : { type: "stored", ...(accessKey ? { accessKeyId: accessKey, secretAccessKey: secretKey, ...(token ? { sessionToken: token } : {}) } : {}) },
       ...(provider?.meta ? { meta: provider.meta } : {}),
     });
@@ -76,6 +78,7 @@ function ProviderEditor({ provider, onClose }: { provider: StorageProvider | nul
       <div className={classes.grid}><TextInput label="Provider ID" required disabled={!!provider} value={id} onChange={setId} placeholder="private-igs" /><TextInput label="Display name" value={name} onChange={setName} /></div>
       <TextInput label="S3 endpoint" value={endpoint} onChange={setEndpoint} placeholder="https://objects.example.org" description="Leave empty for the AWS regional endpoint. Use the S3 API origin without a bucket or path." />
       <div className={classes.grid}><TextInput label="Signing region" required value={region} onChange={setRegion} placeholder="us-east-1" /><Select label="Bucket addressing" value={addressing} onChange={v => setAddressing(v === "virtual_hosted" ? "virtual_hosted" : "path")} data={[{ value: "path", label: "Path: endpoint/bucket/key" }, { value: "virtual_hosted", label: "Virtual host: bucket.endpoint/key" }]} /></div>
+      <TextInput label="Bulk export buckets" value={exportBuckets} onChange={setExportBuckets} description="Comma-separated private bucket names that export jobs can use." />
       <Switch label="Enabled" checked={enabled} onChange={setEnabled} />
       <Switch label="Allow HTTP for this connection" checked={allowHttp} onChange={setAllowHttp} />
       <Select label="Credentials" value={credentialType} onChange={v => { setCredentialType(v === "stored" ? "stored" : "environment"); setAccessKey(""); setSecretKey(""); setToken(""); }} data={[{ value: "environment", label: "Environment variable references" }, { value: "stored", label: "Encrypted keys in database" }]} />

@@ -111,6 +111,8 @@ pub struct StorageProvider {
     pub addressing_style: AddressingStyle,
     #[serde(default)]
     pub allow_http: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub export_buckets: Vec<String>,
     #[serde(default)]
     pub credentials: ProviderCredentials,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -135,6 +137,9 @@ impl StorageProvider {
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         {
             return Err("Invalid S3 signing region".into());
+        }
+        for bucket in &self.export_buckets {
+            validate_bucket(bucket)?;
         }
         policy.check_url(&self.endpoint_url()?)?;
         match &self.credentials {
@@ -241,6 +246,20 @@ impl StorageProvider {
         Ok(url)
     }
 }
+pub(crate) fn validate_bucket(bucket: &str) -> Result<(), String> {
+    if !(3..=63).contains(&bucket.len())
+        || !bucket
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b".-".contains(&c))
+        || !bucket.as_bytes()[0].is_ascii_alphanumeric()
+        || !bucket.as_bytes()[bucket.len() - 1].is_ascii_alphanumeric()
+        || bucket.contains("..")
+    {
+        return Err("S3 bucket must be a valid bucket name".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_id(id: &str) -> Result<(), String> {
     if matches!(id, "." | "..")
         || id.is_empty()

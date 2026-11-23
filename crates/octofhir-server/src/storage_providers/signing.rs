@@ -1,7 +1,7 @@
 //! Apply the AWS-maintained SigV4 signer with S3's URI rules.
 //!
 //! # Contents
-//! Signing settings and sensitive HTTP header installation for a bodyless GET.
+//! Signing settings and sensitive HTTP header installation for an S3 request.
 //!
 //! # Invariants
 //! Signing does not normalize or double-encode S3 object paths. Secret-bearing
@@ -14,10 +14,11 @@ use aws_sigv4::http_request::{
 };
 use aws_sigv4::sign::v4;
 
-pub(super) fn sign(
+pub(crate) fn sign(
     request: &mut reqwest::Request,
     credentials: &Credentials,
     region: &str,
+    body: SignableBody<'_>,
 ) -> Result<(), String> {
     let identity = credentials.clone().into();
     let mut settings = SigningSettings::default();
@@ -40,7 +41,7 @@ pub(super) fn sign(
             .headers()
             .iter()
             .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or_default())),
-        SignableBody::Bytes(&[]),
+        body,
     )
     .map_err(|_| "Cannot prepare S3 request signing")?;
     let (instructions, _) = aws_sign(signable, &params)

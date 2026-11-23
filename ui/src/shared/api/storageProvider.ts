@@ -12,6 +12,7 @@ export interface StorageProvider {
   region: string;
   addressingStyle: "path" | "virtual_hosted";
   allowHttp: boolean;
+  exportBuckets?: string[];
   credentials: StorageCredentials;
   meta?: { versionId: string; lastUpdated: string };
 }

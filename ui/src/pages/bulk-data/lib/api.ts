@@ -22,6 +22,8 @@ export interface ExportRequest {
   associatedData?: AssociatedData;
   organizeByPatient?: boolean;
   partialManifests?: boolean;
+  storageProvider?: string;
+  storageBucket?: string;
 }
 
 export interface ImportInput {
@@ -92,6 +94,10 @@ export function exportParameters(request: ExportRequest): unknown[] {
   }
   if (request.organizeByPatient) parameter.push({ name: "organizeOutputBy", valueString: "Patient" });
   if (request.partialManifests) parameter.push({ name: "allowPartialManifests", valueBoolean: true });
+  if (request.storageProvider && request.storageBucket) {
+    parameter.push({ name: "_storageProvider", valueString: request.storageProvider });
+    parameter.push({ name: "_storageBucket", valueString: request.storageBucket });
+  }
   return parameter;
 }
 

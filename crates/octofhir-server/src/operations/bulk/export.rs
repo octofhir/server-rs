@@ -28,7 +28,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::async_jobs::AsyncJobRequest;
-use crate::config::{BulkExportConfig, BulkSpecVersion};
+use crate::config::{BulkExportConfig, BulkExportS3Config, BulkSpecVersion};
 use crate::operations::OperationContext;
 use crate::operations::handler::{OperationError, OperationHandler};
 use crate::server::AppState;
@@ -36,11 +36,12 @@ use octofhir_sof::ViewDefinition;
 
 use super::NDJSON_CONTENT_TYPE;
 use super::manifest::{ManifestFile, ManifestHeader, ManifestPages};
+use super::s3::{ExportBucket, check_destination, job_destination};
 use super::status::{AssociatedData, BulkExportLevel, BulkExportParams};
 use super::writer::{ClosedFile, NdjsonWriter};
 
 /// Parameters this server accepts on a kick-off request.
-const EXPORT_PARAMETERS: [&str; 10] = [
+const EXPORT_PARAMETERS: [&str; 12] = [
     "_outputFormat",
     "_since",
     "_until",
@@ -51,15 +52,19 @@ const EXPORT_PARAMETERS: [&str; 10] = [
     "includeAssociatedData",
     "organizeOutputBy",
     "allowPartialManifests",
+    "_storageProvider",
+    "_storageBucket",
 ];
 
 /// Parameters with cardinality 0..1.
-const SINGLE_VALUED: [&str; 5] = [
+const SINGLE_VALUED: [&str; 7] = [
     "_outputFormat",
     "_since",
     "_until",
     "organizeOutputBy",
     "allowPartialManifests",
+    "_storageProvider",
+    "_storageBucket",
 ];
 
 /// Parameters STU 3 lets a client comma-delimit. A comma inside `_typeFilter` is
@@ -330,6 +335,22 @@ impl ExportOperation {
             }
         };
 
+        let s3_destination = match (single("_storageProvider"), single("_storageBucket")) {
+            (None, None) => None,
+            (Some(provider), Some(bucket)) => {
+                let destination = BulkExportS3Config {
+                    provider: provider.clone(),
+                    bucket: bucket.clone(),
+                };
+                destination.validate().map_err(bad_input)?;
+                Some(destination)
+            }
+            _ => {
+                return Err(bad_input(
+                    "Provide _storageProvider and _storageBucket together".into(),
+                ));
+            }
+        };
         let joined = |name: &str| values.get(name).map(|values| values.join(","));
         let params = BulkExportParams {
             output_format,
@@ -343,6 +364,7 @@ impl ExportOperation {
             associated_data,
             organize_output_by,
             allow_partial_manifests,
+            s3_destination,
             ignored,
         };
         params
@@ -605,6 +627,16 @@ impl ExportOperation {
         permitted.dedup();
         params.resource_types = Some(permitted.join(","));
 
+        let s3_destination = params
+            .s3_destination
+            .take()
+            .or_else(|| self.config.s3.clone());
+        if let Some(destination) = &s3_destination {
+            check_destination(state, destination)
+                .await
+                .map_err(ApiError::forbidden)?;
+        }
+
         // Store job parameters as JSON for the async job
         // The async job manager will assign its own job ID
         let job_params = json!({
@@ -612,6 +644,7 @@ impl ExportOperation {
             "params": params,
             "config": {
                 "export_path": self.config.export_path,
+                "s3": s3_destination,
                 "max_resources_per_file": self.config.max_resources_per_file,
                 "max_files_per_manifest": self.config.max_files_per_manifest,
                 "batch_size": self.config.batch_size,
@@ -855,6 +888,7 @@ struct ExportRun<'a> {
     batch_size: u32,
     started_at: DateTime<Utc>,
     writer: NdjsonWriter,
+    bucket: Option<ExportBucket<'a>>,
     sink: ManifestSink,
     deleted: Vec<ManifestFile>,
     outcome: Vec<ManifestFile>,
@@ -925,6 +959,10 @@ pub async fn execute_bulk_export(
         Some(export_params.patients.clone())
     };
 
+    let bucket = match job_destination(Some(&params))? {
+        Some(destination) => Some(ExportBucket::open_for_upload(&state, destination).await?),
+        None => None,
+    };
     let config = params.get("config").ok_or("Missing config")?;
     let export_path = config
         .get("export_path")
@@ -1004,6 +1042,7 @@ pub async fn execute_bulk_export(
         batch_size: batch_size as u32,
         started_at,
         writer,
+        bucket,
         sink,
         deleted: Vec::new(),
         outcome: Vec::new(),
@@ -1026,11 +1065,7 @@ pub async fn execute_bulk_export(
 }
 
 impl ExportRun<'_> {
-    fn file_url(&self, path: &std::path::Path) -> String {
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("unknown");
+    fn file_url(&self, name: &str) -> String {
         format!(
             "{}/_bulk-files/{}/{name}",
             self.state.fhir_base_url(),
@@ -1047,9 +1082,19 @@ impl ExportRun<'_> {
             bytes,
         } in self.writer.take_closed()
         {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("Invalid export file name")?;
+            if let Some(bucket) = &self.bucket {
+                bucket.put(self.job_id, name, &path, bytes).await?;
+                tokio::fs::remove_file(&path)
+                    .await
+                    .map_err(|_| "Cannot remove staged export file")?;
+            }
             let mut file = ManifestFile {
                 resource_type: None,
-                url: self.file_url(&path),
+                url: self.file_url(name),
                 count,
                 bytes,
                 severities: Vec::new(),
@@ -1803,6 +1848,32 @@ mod tests {
             Some("Patient,Observation".to_string())
         );
         assert!(result.since.is_some());
+    }
+
+    #[test]
+    fn s3_export_parameters_select_a_destination_and_require_both_values() {
+        let operation = ExportOperation::new(BulkExportConfig::default());
+        let get = json!({"_storageProvider": "local-rustfs", "_storageBucket": "private-a"});
+        let post = json!({"resourceType": "Parameters", "parameter": [
+            {"name": "_storageProvider", "valueString": "local-rustfs"},
+            {"name": "_storageBucket", "valueString": "private-b"}
+        ]});
+        for (input, expected) in [(get, "private-a"), (post, "private-b")] {
+            let destination = operation
+                .parse_params(&input, false)
+                .unwrap()
+                .s3_destination
+                .unwrap();
+            assert_eq!(destination.provider, "local-rustfs");
+            assert_eq!(destination.bucket, expected);
+        }
+
+        for invalid in [
+            json!({"_storageProvider": "local-rustfs"}),
+            json!({"_storageProvider": "local-rustfs", "_storageBucket": "../other"}),
+        ] {
+            assert!(operation.parse_params(&invalid, true).is_err());
+        }
     }
 
     #[test]

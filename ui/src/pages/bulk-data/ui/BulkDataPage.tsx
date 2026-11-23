@@ -190,6 +190,8 @@ function ExportForm() {
   const [associatedData, setAssociatedData] = useState<AssociatedData>("");
   const [organizeByPatient, setOrganizeByPatient] = useState(false);
   const [partialManifests, setPartialManifests] = useState(false);
+  const [storageProvider, setStorageProvider] = useState("");
+  const [storageBucket, setStorageBucket] = useState("");
   const [pending, setPending] = useState(false);
 
   const request = {
@@ -208,9 +210,12 @@ function ExportForm() {
     associatedData,
     organizeByPatient,
     partialManifests,
+    storageProvider: storageProvider.trim(),
+    storageBucket: storageBucket.trim(),
   };
   const parameterCount = exportParameters(request).length;
-  const blocked = level === "group" && !request.groupId;
+  const incompleteDestination = Boolean(request.storageProvider) !== Boolean(request.storageBucket);
+  const blocked = (level === "group" && !request.groupId) || incompleteDestination;
   const queryClient = useQueryClient();
 
   const submit = async () => {
@@ -297,6 +302,21 @@ function ExportForm() {
         value={typeFilters}
         onChange={setTypeFilters}
       />
+      <div className={classes.fields}>
+        <TextInput
+          label="S3 provider (optional)"
+          value={storageProvider}
+          onChange={setStorageProvider}
+          className={classes.urlInput}
+        />
+        <TextInput
+          label="S3 bucket (optional)"
+          value={storageBucket}
+          onChange={setStorageBucket}
+          className={classes.urlInput}
+        />
+        {incompleteDestination && <span className={classes.muted}>Enter both the provider ID and bucket name.</span>}
+      </div>
       <div className={classes.fields}>
         <Switch label="Organize by Patient" checked={organizeByPatient} onChange={setOrganizeByPatient} />
         <Switch label="Partial manifests" checked={partialManifests} onChange={setPartialManifests} />

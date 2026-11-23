@@ -98,6 +98,9 @@ impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
         let egress = crate::egress::EgressPolicy::from_server_config(&self.server)?;
         self.dicom.validate(&egress, &self.fhir.version)?;
+        if let Some(s3) = &self.bulk_export.s3 {
+            s3.validate()?;
+        }
         let mut provider_ids = std::collections::BTreeSet::new();
         for provider in &self.storage_providers {
             // Existing database resources win; validate seed connection settings only if inserted.
@@ -1209,6 +1212,10 @@ pub struct BulkExportConfig {
     #[serde(default = "default_bulk_export_path")]
     pub export_path: String,
 
+    /// Store finished FHIR Bulk Data files in a private S3 bucket.
+    #[serde(default)]
+    pub s3: Option<BulkExportS3Config>,
+
     /// Maximum concurrent export jobs
     /// Default: 5
     #[serde(default = "default_bulk_export_max_concurrent")]
@@ -1252,6 +1259,21 @@ pub struct BulkExportConfig {
     pub default_resource_types: Vec<String>,
 }
 
+/// Destination of a FHIR Bulk Data export. Credentials belong to the provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BulkExportS3Config {
+    pub provider: String,
+    pub bucket: String,
+}
+
+impl BulkExportS3Config {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        crate::storage_providers::model::validate_id(&self.provider)?;
+        crate::storage_providers::model::validate_bucket(&self.bucket)
+    }
+}
+
 fn default_bulk_export_enabled() -> bool {
     true
 }
@@ -1289,6 +1311,7 @@ impl Default for BulkExportConfig {
         Self {
             enabled: default_bulk_export_enabled(),
             export_path: default_bulk_export_path(),
+            s3: None,
             max_concurrent_jobs: default_bulk_export_max_concurrent(),
             retention_hours: default_bulk_export_retention_hours(),
             max_resources_per_file: default_bulk_export_max_resources_per_file(),

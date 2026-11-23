@@ -163,6 +163,17 @@ async fn delete(
             "Provider is referenced by configured IG packages; remove those references before deleting",
         ));
     }
+    if state
+        .config
+        .bulk_export
+        .s3
+        .as_ref()
+        .is_some_and(|s3| s3.provider == id)
+    {
+        return Err(ApiError::conflict(
+            "Provider is configured as the default S3 export destination",
+        ));
+    }
     store::remove(&state.db_pool, &id, expected(&headers)?, &admin.user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
